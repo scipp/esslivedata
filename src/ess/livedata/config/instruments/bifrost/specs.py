@@ -104,10 +104,7 @@ class DetectorRatemeterOutputs(WorkflowOutputsBase):
         OutputView(
             name='detector_region_counts',
             title='Detector Region Counts',
-            fields={
-                'since_start': 'detector_region_counts_cumulative',
-                'per_update': 'detector_region_counts',
-            },
+            fields=('detector_region_counts_cumulative', 'detector_region_counts'),
             description=(
                 'Counts for the selected arc and pixel range. With "since run '
                 'start" shows the count accumulated since the start of the run; '

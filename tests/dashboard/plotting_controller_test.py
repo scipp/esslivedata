@@ -1,6 +1,8 @@
 # SPDX-License-Identifier: BSD-3-Clause
 # Copyright (c) 2025 Scipp contributors (https://github.com/scipp)
 
+from typing import Annotated, ClassVar
+
 import holoviews as hv
 import pydantic
 import pytest
@@ -8,6 +10,7 @@ import scipp as sc
 
 from ess.livedata.config.workflow_spec import (
     REDUCTION,
+    Temporality,
     WorkflowId,
     WorkflowOutputsBase,
     WorkflowSpec,
@@ -492,8 +495,6 @@ class TestOverlayPatterns:
 
 class TestOutputViewSupportsWindowing:
     def test_true_when_view_has_both_streams(self) -> None:
-        from typing import ClassVar
-
         from ess.livedata.config.workflow_spec import OutputView
 
         class Outputs(WorkflowOutputsBase):
@@ -501,18 +502,20 @@ class TestOutputViewSupportsWindowing:
                 OutputView(
                     name='image',
                     title='Image',
-                    fields={'since_start': 'cumulative', 'per_update': 'current'},
+                    fields=('cumulative', 'current'),
                 ),
             )
 
-            current: sc.DataArray = pydantic.Field(
+            current: Annotated[sc.DataArray, Temporality.window] = pydantic.Field(
                 default_factory=lambda: sc.DataArray(
                     sc.zeros(dims=['x'], shape=[0]),
                 )
             )
-            cumulative: sc.DataArray = pydantic.Field(
-                default_factory=lambda: sc.DataArray(
-                    sc.zeros(dims=['x'], shape=[0]),
+            cumulative: Annotated[sc.DataArray, Temporality.cumulative] = (
+                pydantic.Field(
+                    default_factory=lambda: sc.DataArray(
+                        sc.zeros(dims=['x'], shape=[0]),
+                    )
                 )
             )
 
@@ -538,7 +541,7 @@ class TestOutputViewSupportsWindowing:
                 OutputView(
                     name='i_of_q',
                     title='I(Q)',
-                    fields={'since_start': 'i_of_q'},
+                    fields=('i_of_q',),
                 ),
             )
             i_of_q: sc.DataArray = pydantic.Field(
@@ -562,8 +565,6 @@ class TestOutputViewSupportsWindowing:
     def test_true_for_per_update_only_view(self) -> None:
         # A per_update-only view still supports the duration/aggregation controls;
         # the since_start mode is rejected at config time, not by hiding controls.
-        from typing import ClassVar
-
         from ess.livedata.config.workflow_spec import OutputView
 
         class Outputs(WorkflowOutputsBase):
@@ -571,10 +572,10 @@ class TestOutputViewSupportsWindowing:
                 OutputView(
                     name='total',
                     title='Total',
-                    fields={'per_update': 'counts_total'},
+                    fields=('counts_total',),
                 ),
             )
-            counts_total: sc.DataArray = pydantic.Field(
+            counts_total: Annotated[sc.DataArray, Temporality.window] = pydantic.Field(
                 default_factory=lambda: sc.DataArray(sc.scalar(0, unit='counts'))
             )
 
@@ -624,8 +625,6 @@ class TestSinceStartAvailable:
         )
 
     def test_true_when_view_has_since_start_stream(self) -> None:
-        from typing import ClassVar
-
         from ess.livedata.config.workflow_spec import OutputView
 
         class Outputs(WorkflowOutputsBase):
@@ -633,13 +632,15 @@ class TestSinceStartAvailable:
                 OutputView(
                     name='total',
                     title='Total',
-                    fields={'since_start': 'cumulative', 'per_update': 'current'},
+                    fields=('cumulative', 'current'),
                 ),
             )
-            cumulative: sc.DataArray = pydantic.Field(
-                default_factory=lambda: sc.DataArray(sc.scalar(0, unit='counts'))
+            cumulative: Annotated[sc.DataArray, Temporality.cumulative] = (
+                pydantic.Field(
+                    default_factory=lambda: sc.DataArray(sc.scalar(0, unit='counts'))
+                )
             )
-            current: sc.DataArray = pydantic.Field(
+            current: Annotated[sc.DataArray, Temporality.window] = pydantic.Field(
                 default_factory=lambda: sc.DataArray(sc.scalar(0, unit='counts'))
             )
 
@@ -647,17 +648,13 @@ class TestSinceStartAvailable:
         assert since_start_available(spec, 'total') is True
 
     def test_false_for_per_update_only_view(self) -> None:
-        from typing import ClassVar
-
         from ess.livedata.config.workflow_spec import OutputView
 
         class Outputs(WorkflowOutputsBase):
             output_views: ClassVar[tuple[OutputView, ...]] = (
-                OutputView(
-                    name='total', title='Total', fields={'per_update': 'counts_total'}
-                ),
+                OutputView(name='total', title='Total', fields=('counts_total',)),
             )
-            counts_total: sc.DataArray = pydantic.Field(
+            counts_total: Annotated[sc.DataArray, Temporality.window] = pydantic.Field(
                 default_factory=lambda: sc.DataArray(sc.scalar(0, unit='counts'))
             )
 
@@ -727,12 +724,10 @@ class TestCreateExtractorsFromParams:
         )
 
 
-class TestResolveFieldName:
-    """Verify ``resolve_field_name`` maps (view, windowing) to the backing field."""
+class TestWorkflowSpecFieldFor:
+    """Verify ``WorkflowSpec.field_for`` maps (view, windowing) to the backing field."""
 
     def _spec(self) -> WorkflowSpec:
-        from typing import ClassVar
-
         from ess.livedata.config.workflow_spec import OutputView
 
         class Outputs(WorkflowOutputsBase):
@@ -740,17 +735,19 @@ class TestResolveFieldName:
                 OutputView(
                     name='image',
                     title='Image',
-                    fields={'since_start': 'cumulative', 'per_update': 'current'},
+                    fields=('cumulative', 'current'),
                 ),
                 OutputView(
                     name='total_counts',
                     title='Total',
-                    fields={'per_update': 'counts_total'},
+                    fields=('counts_total',),
                 ),
             )
-            cumulative: sc.DataArray = pydantic.Field()
-            current: sc.DataArray = pydantic.Field()
-            counts_total: sc.DataArray = pydantic.Field()
+            cumulative: Annotated[sc.DataArray, Temporality.cumulative] = (
+                pydantic.Field()
+            )
+            current: Annotated[sc.DataArray, Temporality.window] = pydantic.Field()
+            counts_total: Annotated[sc.DataArray, Temporality.window] = pydantic.Field()
 
         return WorkflowSpec(
             instrument='test',
@@ -764,35 +761,22 @@ class TestResolveFieldName:
         )
 
     def test_since_start_windowing_resolves_to_cumulative(self) -> None:
-        from ess.livedata.dashboard.plot_orchestrator import resolve_field_name
-
-        assert (
-            resolve_field_name(self._spec(), 'image', windowing='since_start')
-            == 'cumulative'
-        )
+        assert self._spec().field_for('image', windowing='since_start') == 'cumulative'
 
     def test_per_update_windowing_resolves_to_current(self) -> None:
-        from ess.livedata.dashboard.plot_orchestrator import resolve_field_name
-
-        assert (
-            resolve_field_name(self._spec(), 'image', windowing='per_update')
-            == 'current'
-        )
+        assert self._spec().field_for('image', windowing='per_update') == 'current'
 
     def test_falls_back_to_other_windowing_when_requested_missing(self) -> None:
         """``total_counts`` only declares ``per_update``; asking for
         ``since_start`` falls back to it."""
-        from ess.livedata.dashboard.plot_orchestrator import resolve_field_name
-
         assert (
-            resolve_field_name(self._spec(), 'total_counts', windowing='since_start')
+            self._spec().field_for('total_counts', windowing='since_start')
             == 'counts_total'
         )
 
     def test_falls_back_to_view_name_when_no_view_declared(self) -> None:
         """For unannotated outputs classes, the view name is treated as the
         backing field name."""
-        from ess.livedata.dashboard.plot_orchestrator import resolve_field_name
 
         class BareOutputs(WorkflowOutputsBase):
             result: sc.DataArray = pydantic.Field()
@@ -809,4 +793,4 @@ class TestResolveFieldName:
         )
         # The auto-generated view maps `result` via since_start. Asking for
         # per_update on this view falls back to since_start.
-        assert resolve_field_name(spec, 'result', windowing='per_update') == 'result'
+        assert spec.field_for('result', windowing='per_update') == 'result'

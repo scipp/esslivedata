@@ -286,18 +286,18 @@ class _CouplingOutputs(WorkflowOutputsBase):
         OutputView(
             name='histogram',
             title='Histogram',
-            fields={'since_start': 'histogram'},
+            fields=('histogram',),
             params=('coordinate_mode', 'toa_edges'),
         ),
         OutputView(
             name='total',
             title='Total',
-            fields={'since_start': 'total'},
+            fields=('total',),
         ),
         OutputView(
             name='total_in_range',
             title='Total in range',
-            fields={'since_start': 'total_in_range'},
+            fields=('total_in_range',),
             params=('coordinate_mode', 'toa_range'),
         ),
     )
@@ -324,7 +324,7 @@ class TestParamOutputCoupling:
     """Tests for OutputView.params and the WorkflowSpec coupling resolvers."""
 
     def test_output_view_params_default_empty(self) -> None:
-        view = OutputView(name='x', title='X', fields={'since_start': 'x'})
+        view = OutputView(name='x', title='X', fields=('x',))
         assert view.params == ()
 
     def test_get_output_param_titles_resolves_in_model_order(self) -> None:
@@ -949,8 +949,9 @@ class TestOutputViews:
         views = spec.get_output_views()
         assert [v.name for v in views] == ['result', 'transmission']
         assert [v.title for v in views] == ['I(Q)', 'Transmission']
-        # Default fallback maps the field via `since_start`.
-        assert views[0].fields == {'since_start': 'result'}
+        # Default fallback creates views with field names as tuple; windowing is
+        # derived from field Temporality annotations (defaulting to cumulative).
+        assert views[0].fields == ('result',)
 
     def test_declared_views_take_precedence(self) -> None:
         """When ``output_views`` is declared, it overrides the fallback."""
@@ -960,11 +961,15 @@ class TestOutputViews:
                 OutputView(
                     name='histogram',
                     title='Histogram',
-                    fields={'since_start': 'cumulative', 'per_update': 'current'},
+                    fields=('cumulative', 'current'),
                 ),
             )
-            cumulative: sc.DataArray = Field(title='cumulative-field')
-            current: sc.DataArray = Field(title='current-field')
+            cumulative: Annotated[sc.DataArray, Temporality.cumulative] = Field(
+                title='cumulative-field'
+            )
+            current: Annotated[sc.DataArray, Temporality.window] = Field(
+                title='current-field'
+            )
 
         spec = WorkflowSpec(
             instrument='test',
@@ -1004,15 +1009,15 @@ class TestOutputViews:
                 OutputView(
                     name='histogram',
                     title='Histogram',
-                    fields={'since_start': 'cumulative', 'per_update': 'current'},
+                    fields=('cumulative', 'current'),
                 ),
             )
-            cumulative: sc.DataArray = Field(
+            cumulative: Annotated[sc.DataArray, Temporality.cumulative] = Field(
                 default_factory=lambda: sc.DataArray(
                     sc.zeros(dims=['x'], shape=[3], unit='counts')
                 )
             )
-            current: sc.DataArray = Field(
+            current: Annotated[sc.DataArray, Temporality.window] = Field(
                 default_factory=lambda: sc.DataArray(
                     sc.zeros(dims=['x'], shape=[3], unit='counts')
                 )
@@ -1037,8 +1042,8 @@ class TestOutputViews:
 
         class Outputs(WorkflowOutputsBase):
             output_views: ClassVar[tuple[OutputView, ...]] = (
-                OutputView(name='a', title='Same', fields={'since_start': 'field_a'}),
-                OutputView(name='b', title='Same', fields={'since_start': 'field_b'}),
+                OutputView(name='a', title='Same', fields=('field_a',)),
+                OutputView(name='b', title='Same', fields=('field_b',)),
             )
             field_a: sc.DataArray = Field()
             field_b: sc.DataArray = Field()
@@ -1060,8 +1065,8 @@ class TestOutputViews:
 
         class Outputs(WorkflowOutputsBase):
             output_views: ClassVar[tuple[OutputView, ...]] = (
-                OutputView(name='a', title='A', fields={'since_start': 'field_a'}),
-                OutputView(name='b', title='B', fields={'since_start': 'field_b'}),
+                OutputView(name='a', title='A', fields=('field_a',)),
+                OutputView(name='b', title='B', fields=('field_b',)),
             )
             field_a: sc.DataArray = Field()
             field_b: sc.DataArray = Field()
@@ -1077,3 +1082,65 @@ class TestOutputViews:
             group=REDUCTION,
         )
         assert [v.title for v in spec.get_output_views()] == ['A', 'B']
+
+
+class TestUnambiguousWindowing:
+    """Tests for the view-level windowing ambiguity check."""
+
+    def _spec(self, outputs: type[WorkflowOutputsBase]) -> WorkflowSpec:
+        return WorkflowSpec(
+            instrument='test',
+            name='wf',
+            version=1,
+            title='T',
+            description='D',
+            params=None,
+            outputs=outputs,
+            group=REDUCTION,
+        )
+
+    def test_rejects_two_fields_backing_the_same_windowing(self) -> None:
+        class Outputs(WorkflowOutputsBase):
+            output_views: ClassVar[tuple[OutputView, ...]] = (
+                OutputView(name='v', title='V', fields=('a', 'b')),
+            )
+            a: Annotated[sc.DataArray, Temporality.window] = Field(title='A')
+            b: Annotated[sc.DataArray, Temporality.window] = Field(title='B')
+
+        with pytest.raises(ValueError, match="multiple fields backing 'per_update'"):
+            self._spec(Outputs)
+
+    def test_rejects_missing_annotation_colliding_on_cumulative(self) -> None:
+        class Outputs(WorkflowOutputsBase):
+            output_views: ClassVar[tuple[OutputView, ...]] = (
+                OutputView(name='v', title='V', fields=('a', 'b')),
+            )
+            a: sc.DataArray = Field(title='A')
+            b: sc.DataArray = Field(title='B')
+
+        with pytest.raises(ValueError, match="multiple fields backing 'since_start'"):
+            self._spec(Outputs)
+
+    def test_accepts_distinct_windowings(self) -> None:
+        class Outputs(WorkflowOutputsBase):
+            output_views: ClassVar[tuple[OutputView, ...]] = (
+                OutputView(name='v', title='V', fields=('a', 'b')),
+            )
+            a: Annotated[sc.DataArray, Temporality.cumulative] = Field(title='A')
+            b: Annotated[sc.DataArray, Temporality.window] = Field(title='B')
+
+        spec = self._spec(Outputs)
+        assert spec.field_for('v', 'since_start') == 'a'
+        assert spec.field_for('v', 'per_update') == 'b'
+        assert spec.windowing_options('v') == frozenset({'since_start', 'per_update'})
+
+    def test_series_field_backs_per_update_only(self) -> None:
+        class Outputs(WorkflowOutputsBase):
+            output_views: ClassVar[tuple[OutputView, ...]] = (
+                OutputView(name='v', title='V', fields=('delta',)),
+            )
+            delta: Annotated[sc.DataArray, Temporality.series] = Field(title='Delta')
+
+        spec = self._spec(Outputs)
+        assert spec.windowing_options('v') == frozenset({'per_update'})
+        assert spec.field_for('v', 'since_start') == 'delta'

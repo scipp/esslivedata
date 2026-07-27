@@ -67,17 +67,20 @@ The naming stack, from the Kafka wire inwards (see ADR 0004 and
 - **DataKey** — stable identity `(workflow_id, source_name, output_name)`,
   i.e. a ResultKey with the job number stripped. The dashboard data plane and
   NICOS derived devices (ADR 0006) key by DataKey, not ResultKey.
-- **OutputView** — user-facing presentation of a workflow output, bundling
-  backend output fields by `Windowing` (`since_start`/`per_update`)
-  (`config/workflow_spec.py`).
+- **OutputView** — user-facing presentation of a workflow output, bundling the
+  backend output fields that carry one quantity (`config/workflow_spec.py`).
 - **Temporality** — how one output field's values relate to time:
   `window` (covers `[start_time, end_time)`, successive windows disjoint),
   `cumulative` (value as of `end_time`, `start_time` pinned for the
   generation), or `series` (carries its own per-point `time` axis). Declared
-  per field via `Annotated` on the outputs model; decides which aggregations
-  over successive messages are valid. Not the same axis as `Windowing`, which
-  merely selects *which* field a view exposes for the user's window mode
+  per field via `Annotated` on the outputs model. It decides which aggregations
+  over successive messages are valid, and which `Windowing` the field backs —
+  a view states its member fields, and the binding follows
   (`config/workflow_spec.py`).
+- **Windowing** — the user-facing window-mode selector
+  (`since_start`/`per_update`) resolved against a view to pick the backing
+  field. Derived from `Temporality`, never declared alongside it
+  (`WorkflowSpec.field_for`, `WorkflowSpec.windowing_options`).
 
 ### Data kinds and services
 

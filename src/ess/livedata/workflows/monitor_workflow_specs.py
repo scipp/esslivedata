@@ -193,7 +193,7 @@ class MonitorHistogramOutputs(WorkflowOutputsBase):
         OutputView(
             name='histogram',
             title='Histogram',
-            fields={'since_start': 'cumulative', 'per_update': 'current'},
+            fields=('cumulative', 'current'),
             description=(
                 'Monitor histogram. With "since run start" shows accumulated '
                 'counts; with "latest update" or a window, shows recent counts.'
@@ -203,10 +203,7 @@ class MonitorHistogramOutputs(WorkflowOutputsBase):
         OutputView(
             name='total_counts',
             title='Total',
-            fields={
-                'since_start': 'counts_total_cumulative',
-                'per_update': 'counts_total',
-            },
+            fields=('counts_total_cumulative', 'counts_total'),
             description=(
                 'Total number of monitor events. With "since run start" shows '
                 'the accumulated total; with "latest update" or a window, shows '
@@ -216,10 +213,7 @@ class MonitorHistogramOutputs(WorkflowOutputsBase):
         OutputView(
             name='total_in_range',
             title='Total in range',
-            fields={
-                'since_start': 'counts_in_toa_range_cumulative',
-                'per_update': 'counts_in_toa_range',
-            },
+            fields=('counts_in_toa_range_cumulative', 'counts_in_toa_range'),
             description=(
                 'Number of monitor events within the configured range filter. '
                 'With "since run start" shows the accumulated total; with '

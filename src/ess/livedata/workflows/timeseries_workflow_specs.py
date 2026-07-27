@@ -34,7 +34,7 @@ class TimeseriesOutputs(WorkflowOutputsBase):
         OutputView(
             name='delta',
             title='Timeseries',
-            fields={'per_update': 'delta'},
+            fields=('delta',),
             description='Timestamped device values; plots accumulate the history.',
         ),
     )

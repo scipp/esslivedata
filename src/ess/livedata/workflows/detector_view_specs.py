@@ -212,7 +212,7 @@ _BASE_DETECTOR_VIEWS: tuple[OutputView, ...] = (
     OutputView(
         name='image',
         title='Image',
-        fields={'since_start': 'cumulative', 'per_update': 'current'},
+        fields=('cumulative', 'current'),
         description=(
             'Detector image. With "since run start" shows accumulated counts; '
             'with "latest update" or a window, shows recent counts.'
@@ -227,19 +227,13 @@ _BASE_DETECTOR_VIEWS: tuple[OutputView, ...] = (
     OutputView(
         name='total_counts',
         title='Total',
-        fields={
-            'since_start': 'counts_total_cumulative',
-            'per_update': 'counts_total',
-        },
+        fields=('counts_total_cumulative', 'counts_total'),
         description='Total number of detector events.',
     ),
     OutputView(
         name='total_in_range',
         title='Total in range',
-        fields={
-            'since_start': 'counts_in_toa_range_cumulative',
-            'per_update': 'counts_in_toa_range',
-        },
+        fields=('counts_in_toa_range_cumulative', 'counts_in_toa_range'),
         description=('Number of detector events within the configured range filter.'),
         params=('coordinate_mode', 'toa_range', 'wavelength_range'),
     ),
@@ -313,23 +307,20 @@ class DetectorViewOutputs(DetectorViewOutputsBase):
         OutputView(
             name='roi_spectra',
             title='ROI spectra',
-            fields={
-                'since_start': 'roi_spectra_cumulative',
-                'per_update': 'roi_spectra_current',
-            },
+            fields=('roi_spectra_cumulative', 'roi_spectra_current'),
             description='Histogram for each active ROI region.',
             params=('coordinate_mode', 'toa_edges', 'wavelength_edges'),
         ),
         OutputView(
             name='roi_rectangle',
             title='ROI Rectangles (readback)',
-            fields={'since_start': 'roi_rectangle'},
+            fields=('roi_rectangle',),
             description='Current rectangle ROI geometries confirmed by backend.',
         ),
         OutputView(
             name='roi_polygon',
             title='ROI Polygons (readback)',
-            fields={'since_start': 'roi_polygon'},
+            fields=('roi_polygon',),
             description='Current polygon ROI geometries confirmed by backend.',
         ),
     )
@@ -464,7 +455,7 @@ def make_detector_view_outputs(
                 OutputView(
                     name='spectrum_view',
                     title=title,
-                    fields={'since_start': 'spectrum_view'},
+                    fields=('spectrum_view',),
                     description=description,
                     params=(
                         'coordinate_mode',
