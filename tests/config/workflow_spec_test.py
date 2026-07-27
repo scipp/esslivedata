@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: BSD-3-Clause
 # Copyright (c) 2025 Scipp contributors (https://github.com/scipp)
 import uuid
-from typing import ClassVar
+from typing import Annotated, ClassVar
 
 import pytest
 import scipp as sc
@@ -14,6 +14,7 @@ from ess.livedata.config.workflow_spec import (
     AuxSources,
     JobId,
     OutputView,
+    Temporality,
     WorkflowConfig,
     WorkflowId,
     WorkflowOutputsBase,
@@ -711,19 +712,65 @@ class TestJobId:
         assert str(job_id_2) == f'detector_2/{job_number}'
 
 
+class TestTemporality:
+    """Tests for the per-field Temporality declaration."""
+
+    class Outputs(WorkflowOutputsBase):
+        current: Annotated[sc.DataArray, Temporality.window] = Field(title='Current')
+        total: Annotated[sc.DataArray, Temporality.cumulative] = Field(title='Total')
+        readings: Annotated[sc.DataArray, Temporality.series] = Field(title='Readings')
+        readback: sc.DataArray = Field(title='Readback')
+
+    @pytest.mark.parametrize(
+        ('field_name', 'expected'),
+        [
+            ('current', Temporality.window),
+            ('total', Temporality.cumulative),
+            ('readings', Temporality.series),
+        ],
+    )
+    def test_returns_declared_temporality(
+        self, field_name: str, expected: Temporality
+    ) -> None:
+        assert self.Outputs.temporality(field_name) is expected
+
+    def test_undeclared_field_defaults_to_cumulative(self) -> None:
+        assert self.Outputs.temporality('readback') is Temporality.cumulative
+
+    def test_fields_with_selects_by_temporality(self) -> None:
+        assert self.Outputs.fields_with(Temporality.window) == ('current',)
+        assert self.Outputs.fields_with(Temporality.series) == ('readings',)
+        assert self.Outputs.fields_with(Temporality.cumulative) == ('total', 'readback')
+
+    def test_declaration_is_inherited_and_overridable(self) -> None:
+        class Derived(self.Outputs):
+            readback: Annotated[sc.DataArray, Temporality.window] = Field(
+                title='Readback'
+            )
+            extra: Annotated[sc.DataArray, Temporality.window] = Field(title='Extra')
+
+        assert Derived.temporality('current') is Temporality.window
+        assert Derived.fields_with(Temporality.window) == (
+            'current',
+            'readback',
+            'extra',
+        )
+
+    def test_unknown_field_raises(self) -> None:
+        with pytest.raises(KeyError):
+            self.Outputs.temporality('nonexistent')
+
+
 class TestFindTimeseriesOutputs:
     """Tests for find_timeseries_outputs() helper function."""
 
-    def test_finds_timeseries_output_with_time_coord(self) -> None:
-        """Test that outputs with 0-D data and time coord are found."""
+    def test_finds_0d_series_output(self) -> None:
+        """Test that 0-D outputs declaring Temporality.series are found."""
         from ess.livedata.config.workflow_spec import find_timeseries_outputs
 
         class TimeseriesOutputs(WorkflowOutputsBase):
-            delta: sc.DataArray = Field(
-                default_factory=lambda: sc.DataArray(
-                    sc.scalar(0.0),
-                    coords={'time': sc.scalar(0, unit='ns')},
-                ),
+            delta: Annotated[sc.DataArray, Temporality.series] = Field(
+                default_factory=lambda: sc.DataArray(sc.scalar(0.0)),
             )
 
         workflow_id = WorkflowId(instrument='test', name='test', version=1)
@@ -751,11 +798,8 @@ class TestFindTimeseriesOutputs:
         from ess.livedata.config.workflow_spec import find_timeseries_outputs
 
         class NonTimeseriesOutputs(WorkflowOutputsBase):
-            histogram: sc.DataArray = Field(
-                default_factory=lambda: sc.DataArray(
-                    sc.zeros(dims=['x'], shape=[10]),
-                    coords={'time': sc.scalar(0, unit='ns')},
-                ),
+            histogram: Annotated[sc.DataArray, Temporality.window] = Field(
+                default_factory=lambda: sc.DataArray(sc.zeros(dims=['x'], shape=[10])),
             )
 
         workflow_id = WorkflowId(instrument='test', name='test', version=1)
@@ -775,8 +819,8 @@ class TestFindTimeseriesOutputs:
 
         assert len(results) == 0
 
-    def test_ignores_outputs_without_time_coord(self) -> None:
-        """Test that 0-D outputs without time coord are not identified as timeseries."""
+    def test_ignores_cumulative_outputs(self) -> None:
+        """Test that 0-D cumulative outputs are not identified as timeseries."""
         from ess.livedata.config.workflow_spec import find_timeseries_outputs
 
         class NoTimeCoordOutputs(WorkflowOutputsBase):
@@ -838,11 +882,8 @@ class TestFindTimeseriesOutputs:
         from ess.livedata.config.workflow_spec import find_timeseries_outputs
 
         class TimeseriesOutputs(WorkflowOutputsBase):
-            delta: sc.DataArray = Field(
-                default_factory=lambda: sc.DataArray(
-                    sc.scalar(0.0),
-                    coords={'time': sc.scalar(0, unit='ns')},
-                ),
+            delta: Annotated[sc.DataArray, Temporality.series] = Field(
+                default_factory=lambda: sc.DataArray(sc.scalar(0.0)),
             )
 
         class NonTimeseriesOutputs(WorkflowOutputsBase):

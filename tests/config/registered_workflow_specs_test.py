@@ -17,7 +17,12 @@ import pytest
 
 from ess.livedata.config.instrument import instrument_registry
 from ess.livedata.config.instruments import available_instruments, get_config
-from ess.livedata.config.workflow_spec import JobId, WorkflowConfig, WorkflowId
+from ess.livedata.config.workflow_spec import (
+    JobId,
+    Temporality,
+    WorkflowConfig,
+    WorkflowId,
+)
 from ess.livedata.dashboard.plotter_registry import plotter_registry
 from ess.livedata.dashboard.workflow_configuration_adapter import (
     WorkflowConfigurationAdapter,
@@ -272,4 +277,33 @@ def test_workflow_output_has_compatible_plotter(
         f"View '{view_name}' of {workflow_id} has no compatible plotter. "
         f"Template: ndim={template.ndim}, dims={template.dims}, "
         f"coords={list(template.coords)}"
+    )
+
+
+@pytest.mark.parametrize(("instrument_name", "workflow_id"), _collect_workflow_specs())
+def test_per_update_bindings_agree_with_declared_temporality(
+    instrument_name: str, workflow_id: WorkflowId
+):
+    """Test that ``per_update`` view bindings and ``Temporality.window`` agree.
+
+    The two declare the same fact from opposite ends: ``OutputView.fields``
+    names the field a view exposes when the user asks for a window, and
+    ``Temporality.window`` marks the fields that actually reset each update
+    interval. Drift between them would offer window aggregation over a field
+    that never resets, silently double-counting.
+    """
+    instrument = instrument_registry[instrument_name]
+    spec = instrument.workflow_factory[workflow_id]
+
+    bound_per_update = {
+        field_name
+        for view in spec.get_output_views()
+        if (field_name := view.fields.get('per_update')) is not None
+    }
+    declared_window = set(spec.outputs.fields_with(Temporality.window))
+
+    assert bound_per_update == declared_window, (
+        f"{workflow_id}: fields bound as 'per_update' {sorted(bound_per_update)} "
+        f"disagree with fields declaring Temporality.window "
+        f"{sorted(declared_window)}"
     )

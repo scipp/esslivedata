@@ -70,6 +70,14 @@ The naming stack, from the Kafka wire inwards (see ADR 0004 and
 - **OutputView** — user-facing presentation of a workflow output, bundling
   backend output fields by `Windowing` (`since_start`/`per_update`)
   (`config/workflow_spec.py`).
+- **Temporality** — how one output field's values relate to time:
+  `window` (covers `[start_time, end_time)`, successive windows disjoint),
+  `cumulative` (value as of `end_time`, `start_time` pinned for the
+  generation), or `series` (carries its own per-point `time` axis). Declared
+  per field via `Annotated` on the outputs model; decides which aggregations
+  over successive messages are valid. Not the same axis as `Windowing`, which
+  merely selects *which* field a view exposes for the user's window mode
+  (`config/workflow_spec.py`).
 
 ### Data kinds and services
 
@@ -176,7 +184,8 @@ The naming stack, from the Kafka wire inwards (see ADR 0004 and
   role*: the logical name of an auxiliary workflow input a user selects a
   stream for (`AuxSources`). Qualify the word when ambiguity is possible. The
   time-window flavor of an output field (`since_start`/`per_update`) is
-  `Windowing`, not a role (`config/workflow_spec.py`).
+  `Windowing`, not a role, and how its values relate to time is `Temporality`
+  (`config/workflow_spec.py`).
 - **stream** — (1) a Kafka/internal data stream (`StreamId`); (2) a dashboard
   subscriber pipeline (`StreamManager.make_stream`); (3) an
   `hv.streams.Pipe` per-session channel. Sense (1) is the default; qualify

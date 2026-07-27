@@ -21,8 +21,10 @@ from ess.reduce.unwrap import GenericUnwrapWorkflow, LookupTableFilename
 from ess.reduce.unwrap.types import LookupTableRelativeErrorThreshold, WavelengthMonitor
 from scippnexus import NXmonitor
 
+from ..config.workflow_spec import Temporality
 from ..preprocessors.accumulation_mode import AccumulationMode, Cumulative, Current
 from .geometry_signal import geometry_signal
+from .monitor_workflow_specs import MonitorHistogramOutputs
 from .monitor_workflow_types import (
     AccumulatedMonitorHistogram,
     HistogramEdges,
@@ -325,5 +327,5 @@ def create_monitor_workflow(
             AccumulatedMonitorHistogram[Cumulative]: cumulative,
             AccumulatedMonitorHistogram[Current]: window,
         },
-        window_outputs=['current', 'counts_total', 'counts_in_toa_range'],
+        window_outputs=MonitorHistogramOutputs.fields_with(Temporality.window),
     )
