@@ -2567,3 +2567,119 @@ class TestTimeoutFactorValidation:
     def test_horizon_boundary_is_accepted(self):
         batcher = RateAwareMessageBatcher(batch_length_s=1.0, timeout_s=3.0)
         assert batcher.timeout_factor == 3.0
+
+
+class TestClockCreep:
+    """One device clock creeping relative to another must not disturb delivery.
+
+    Production devices creep by O(1 s/day) against the shared pulse clock.
+    Unlike the jump pathologies above, creep crosses every bound gradually:
+    the timeout margin (0.2 s), the timeout threshold (1.2 s), the
+    plausibility horizon (3 s), eventually the disjoint-epoch horizon.  The
+    creep rate here is accelerated (10 ms/s) so one simulation sweeps all
+    the near-term crossings.
+
+    These tests pin liveness and delivery through every crossing.  They do
+    not assert batch-content alignment: once the offset exceeds the timeout
+    margin, closure degenerates to the timeout path and the non-anchor
+    stream's messages land outside their batch's time range.  That is a
+    known quality degradation, not a liveness failure; detecting skew needs
+    arrival-time evidence at the adapter boundary, which placement
+    deliberately has no access to (see the module's clock policy).
+    """
+
+    CREEP_PER_S = 0.010
+    SIM_S = 600  # final offset 6 s: past the 3 s plausibility horizon
+
+    def _drive_with_creep(
+        self, creep_per_s: float
+    ) -> tuple[RateAwareMessageBatcher, dict[str, float]]:
+        """Feed a healthy 14 Hz stream plus a creeping 10 Hz stream.
+
+        Returns the batcher and stats: longest data-time silence, delivered
+        fraction per stream, and the final window offset from true time.
+        """
+        clock = FakeClock()
+        batcher = RateAwareMessageBatcher(batch_length_s=1.0, clock=clock)
+        polls = 10
+        step = 1.0 / polls
+        t = 100.0
+        fed: dict[StreamId, int] = {DETECTOR: 0, MONITOR: 0}
+        delivered: dict[StreamId, int] = {DETECTOR: 0, MONITOR: 0}
+        last_delivery = t
+        worst = 0.0
+        for _ in range(self.SIM_S * polls):
+            offset = creep_per_s * (t - 100.0)
+            batch_msgs = [msg(t + i * step / 2, DETECTOR) for i in range(2)]
+            batch_msgs.append(msg(t + offset, MONITOR))
+            fed[DETECTOR] += 2
+            fed[MONITOR] += 1
+            out = batcher.batch(batch_msgs)
+            t += step
+            clock.advance(step)
+            if out is not None and out.messages:
+                last_delivery = t
+                for m in out.messages:
+                    delivered[m.stream] += 1
+            worst = max(worst, t - last_delivery)
+        stats = {
+            'silence': worst,
+            'detector_fraction': delivered[DETECTOR] / fed[DETECTOR],
+            'monitor_fraction': delivered[MONITOR] / fed[MONITOR],
+            'window_offset': batcher._active_window.start.to_ns() / 1e9 - t,
+        }
+        return batcher, stats
+
+    @pytest.mark.parametrize('sign', [1.0, -1.0], ids=['ahead', 'behind'])
+    def test_creep_keeps_delivery_flowing(self, sign: float):
+        _, stats = self._drive_with_creep(sign * self.CREEP_PER_S)
+        assert stats['silence'] < 5.0, (
+            f"delivery silent for {stats['silence']:.1f}s of data time"
+        )
+        assert stats['detector_fraction'] > 0.99
+        assert stats['monitor_fraction'] > 0.99
+
+    def test_window_adopts_the_fastest_clock(self):
+        """Documents (not endorses) the ahead-creep equilibrium: the timeout
+        path follows the high-water mark, a bare max over all streams, so
+        the window tracks the fastest clock and with it the service's data
+        clock (batch end times drive job activation and run resets).  If
+        skew handling ever prefers the majority clock, flipping this test
+        is the deliberate act."""
+        _, stats = self._drive_with_creep(self.CREEP_PER_S)
+        final_offset = self.CREEP_PER_S * self.SIM_S
+        assert stats['window_offset'] > final_offset / 2, (
+            f"window {stats['window_offset']:+.1f}s from true time; expected it "
+            f"to track the creeping clock (~{final_offset:+.1f}s)"
+        )
+
+    def test_persistent_offset_with_quiet_spells_does_not_ping_pong(self):
+        """Months of accumulated creep is a static offset of minutes.  During
+        a majority quiet spell the offset stream's overflow is the only
+        pending traffic, so gap recovery jumps the window to the wrong
+        clock; resumed majority traffic must then keep flowing as late
+        deliveries rather than triggering repeated stall/recovery cycles."""
+        offset_s = 240.0
+        clock = FakeClock()
+        batcher = RateAwareMessageBatcher(batch_length_s=1.0, clock=clock)
+        polls = 10
+        step = 1.0 / polls
+        t = 100.0
+        last_delivery = t
+        worst = 0.0
+        for _ in range(6):
+            for phase_dur, quiet in ((60, False), (20, True)):
+                for _ in range(phase_dur * polls):
+                    batch_msgs = [msg(t + offset_s, MONITOR)]
+                    if not quiet:
+                        detector_msgs = [
+                            msg(t + i * step / 2, DETECTOR) for i in range(2)
+                        ]
+                        batch_msgs += detector_msgs
+                    out = batcher.batch(batch_msgs)
+                    t += step
+                    clock.advance(step)
+                    if out is not None and out.messages:
+                        last_delivery = t
+                    worst = max(worst, t - last_delivery)
+        assert worst < 5.0, f"delivery silent for {worst:.1f}s of data time"
