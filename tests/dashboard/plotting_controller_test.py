@@ -11,11 +11,14 @@ import scipp as sc
 from ess.livedata.config.workflow_spec import (
     REDUCTION,
     CumulativeOutput,
+    DataKey,
+    Temporality,
     WindowOutput,
     WorkflowId,
     WorkflowOutputsBase,
     WorkflowSpec,
 )
+from ess.livedata.dashboard.data_roles import PRIMARY
 from ess.livedata.dashboard.data_service import DataService
 from ess.livedata.dashboard.plotting_controller import (
     PlottingController,
@@ -687,7 +690,7 @@ class TestCreateExtractorsFromParams:
 
         keys = self._make_keys()
         params = TimeWindowParams(mode=TimeWindowMode.since_start)
-        extractors = create_extractors_from_params(keys, params)
+        extractors = create_extractors_from_params(keys, params, {})
         assert all(isinstance(e, LatestValueExtractor) for e in extractors.values())
 
     def test_window_with_zero_duration_uses_latest_value_extractor(self) -> None:
@@ -701,7 +704,7 @@ class TestCreateExtractorsFromParams:
         params = TimeWindowParams(
             mode=TimeWindowMode.window, window_duration_seconds=0.0
         )
-        extractors = create_extractors_from_params(keys, params)
+        extractors = create_extractors_from_params(keys, params, {})
         assert all(isinstance(e, LatestValueExtractor) for e in extractors.values())
 
     def test_window_uses_window_aggregating_extractor(self) -> None:
@@ -715,10 +718,78 @@ class TestCreateExtractorsFromParams:
         params = TimeWindowParams(
             mode=TimeWindowMode.window, window_duration_seconds=5.0
         )
-        extractors = create_extractors_from_params(keys, params)
+        extractors = create_extractors_from_params(keys, params, {})
         assert all(
             isinstance(e, WindowAggregatingExtractor) for e in extractors.values()
         )
+
+    def test_required_extractor_ignores_cumulative_temporality(self) -> None:
+        # A plotter fixing its extractor never aggregates, so the window params
+        # it was handed say nothing about what its data will be put through.
+        from ess.livedata.dashboard.extractors import FullHistoryExtractor
+        from ess.livedata.dashboard.plot_params import TimeWindowMode, TimeWindowParams
+        from ess.livedata.dashboard.plotter_registry import plotter_registry
+        from ess.livedata.dashboard.plotting_controller import (
+            create_extractors_from_params,
+        )
+
+        keys = self._make_keys()
+        params = TimeWindowParams(
+            mode=TimeWindowMode.window, window_duration_seconds=5.0
+        )
+        extractors = create_extractors_from_params(
+            keys,
+            params,
+            dict.fromkeys(keys, Temporality.cumulative),
+            plotter_registry.get_spec('timeseries'),
+        )
+        assert all(isinstance(e, FullHistoryExtractor) for e in extractors.values())
+
+
+class TestAggregationOfCumulativeIsRejected:
+    """Summing consecutive messages of a cumulative field double-counts.
+
+    The window controls are hidden for views without a per-update field, but
+    ``field_for`` falls back to the cumulative field, so a persisted config can
+    still ask for it.
+    """
+
+    def _setup(self, controller, temporality, duration_seconds: float):
+        from ess.livedata.dashboard.plot_params import (
+            PlotParams1d,
+            TimeWindowMode,
+            TimeWindowParams,
+        )
+
+        wf_id = WorkflowId(instrument='test', name='wf', version=1)
+        keys = [DataKey(workflow_id=wf_id, source_name='src', output_name='total')]
+        params = PlotParams1d(
+            time_window=TimeWindowParams(
+                mode=TimeWindowMode.window, window_duration_seconds=duration_seconds
+            )
+        )
+        return controller.setup_pipeline(
+            keys_by_role={PRIMARY: keys},
+            plot_name='lines',
+            params=params,
+            on_update=lambda: None,
+            temporality_by_role={PRIMARY: temporality},
+        )
+
+    def test_aggregating_a_cumulative_field_raises(self, plotting_controller):
+        with pytest.raises(ValueError, match='total'):
+            self._setup(plotting_controller, Temporality.cumulative, 5.0)
+
+    @pytest.mark.parametrize(
+        'temporality', [Temporality.window, Temporality.series, None]
+    )
+    def test_aggregating_other_temporalities_is_allowed(
+        self, plotting_controller, temporality
+    ):
+        assert self._setup(plotting_controller, temporality, 5.0) is not None
+
+    def test_cumulative_without_aggregation_is_allowed(self, plotting_controller):
+        assert self._setup(plotting_controller, Temporality.cumulative, 0.0) is not None
 
 
 class TestWorkflowSpecFieldFor:

@@ -158,6 +158,7 @@ class FakePlottingController:
         plot_name: str,
         params,
         on_update,
+        temporality_by_role,
     ):
         """Set up data pipeline using real StreamManager (unified interface)."""
         from ess.livedata.dashboard.data_roles import PRIMARY
@@ -173,6 +174,7 @@ class FakePlottingController:
                 'source_names': source_names,
                 'output_name': output_name,
                 'plot_name': plot_name,
+                'temporality_by_role': temporality_by_role,
             }
         )
 
@@ -2192,6 +2194,92 @@ class TestTitleResolverOutputViews:
         assert resolver.output('cumulative') == 'Histogram'
         assert resolver.output('current') == 'Histogram'
         assert resolver.output('unknown_field') == 'unknown_field'
+
+
+class TestTemporalityOfResolvedField:
+    """The pipeline is told what the field a view resolved to means.
+
+    ``PlottingController`` refuses to aggregate a window over a cumulative
+    field; without this wiring the guard would never see one.
+    """
+
+    @pytest.fixture
+    def workflow_spec(self, workflow_id):
+        import scipp as sc
+
+        from ess.livedata.config.workflow_spec import (
+            REDUCTION,
+            CumulativeOutput,
+            OutputView,
+            WindowOutput,
+            WorkflowOutputsBase,
+            WorkflowSpec,
+        )
+
+        class Params(pydantic.BaseModel):
+            threshold: float = 100.0
+
+        class MixedOutputs(WorkflowOutputsBase):
+            output_views = (
+                OutputView(
+                    name='histogram',
+                    title='Histogram',
+                    fields=('cumulative', 'current'),
+                ),
+                OutputView(name='total', title='Total', fields=('total',)),
+            )
+
+            cumulative: CumulativeOutput = pydantic.Field(
+                default_factory=lambda: sc.DataArray(sc.scalar(0.0)),
+                title='Cumulative',
+            )
+            current: WindowOutput = pydantic.Field(
+                default_factory=lambda: sc.DataArray(sc.scalar(0.0)), title='Current'
+            )
+            total: CumulativeOutput = pydantic.Field(
+                default_factory=lambda: sc.DataArray(sc.scalar(0.0)), title='Total'
+            )
+
+        return WorkflowSpec(
+            instrument=workflow_id.instrument,
+            name=workflow_id.name,
+            version=workflow_id.version,
+            title='Test Workflow',
+            description='A test workflow',
+            source_names=['source1'],
+            params=Params,
+            aux_sources=None,
+            outputs=MixedOutputs,
+            group=REDUCTION,
+        )
+
+    @pytest.mark.parametrize(
+        ('view_name', 'expected'),
+        [('histogram', 'window'), ('total', 'cumulative')],
+        ids=['per_update_field', 'cumulative_only_view_falls_back'],
+    )
+    def test_temporality_follows_the_resolved_field(
+        self,
+        plot_orchestrator,
+        workflow_id,
+        workflow_spec,
+        job_orchestrator,
+        fake_plotting_controller,
+        view_name,
+        expected,
+    ):
+        from ess.livedata.config.workflow_spec import Temporality
+        from ess.livedata.dashboard.data_roles import PRIMARY
+
+        commit_workflow_for_test(job_orchestrator, workflow_id, workflow_spec)
+        grid_id = plot_orchestrator.add_grid(title='Test Grid', nrows=1, ncols=1)
+        config = make_plot_config(
+            workflow_id, source_names=['source1'], output_name=view_name
+        )
+        add_cell_with_layer(plot_orchestrator, grid_id, DEFAULT_GEOMETRY, config)
+
+        (setup,) = fake_plotting_controller.get_pipeline_setups()
+        assert setup['temporality_by_role'][PRIMARY] is Temporality(expected)
 
 
 class TestRenameGrid:

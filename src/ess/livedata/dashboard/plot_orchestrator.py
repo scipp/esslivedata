@@ -29,6 +29,7 @@ from ess.livedata.config.grid_template import GridSpec
 from ess.livedata.config.workflow_spec import (
     DataKey,
     JobNumber,
+    Temporality,
     Windowing,
     WorkflowId,
     WorkflowSpec,
@@ -97,12 +98,14 @@ class ResolvedDataSource:
     Produced by :func:`_build_resolved_data_sources` from a
     :class:`DataSourceConfig`: ``output_name`` carries the backend pydantic
     field name selected for the current window mode, ready to key a
-    :class:`DataKey`. Runtime-only — never persisted.
+    :class:`DataKey`, and ``temporality`` what that field's messages mean.
+    Runtime-only — never persisted.
     """
 
     workflow_id: WorkflowId
     source_names: list[str]
     output_name: str
+    temporality: Temporality | None = None
 
 
 @dataclass
@@ -223,20 +226,29 @@ def _build_resolved_data_sources(
 
     Falls back to the view name verbatim when the data source's workflow is
     not in the registry (lets a layer whose workflow has not been seen yet
-    still set up a pipeline, keyed by whatever name it was given).
+    still set up a pipeline, keyed by whatever name it was given); its
+    temporality is unknown in that case.
     """
     resolved: dict[str, ResolvedDataSource] = {}
     for role, ds in config.data_sources.items():
         spec = registry.get(ds.workflow_id)
-        output_name = (
-            spec.field_for(ds.view_name, _windowing_for_role(role, config.params))
-            if spec is not None
-            else ds.view_name
-        )
+        if spec is None:
+            output_name, temporality = ds.view_name, None
+        else:
+            output_name = spec.field_for(
+                ds.view_name, _windowing_for_role(role, config.params)
+            )
+            # An unknown view resolves to its own name, which need not be a field.
+            temporality = (
+                spec.outputs.temporality(output_name)
+                if output_name in spec.outputs.model_fields
+                else None
+            )
         resolved[role] = ResolvedDataSource(
             workflow_id=ds.workflow_id,
             source_names=ds.source_names,
             output_name=output_name,
+            temporality=temporality,
         )
     return resolved
 
@@ -1279,6 +1291,10 @@ class PlotOrchestrator:
                     plot_name=config.plot_name,
                     params=config.params,
                     on_update=lambda: self._mark_layer_dirty(layer_id),
+                    temporality_by_role={
+                        role: ds.temporality
+                        for role, ds in resolved_data_sources.items()
+                    },
                 )
                 self._data_subscriptions[layer_id] = subscriber
                 self._mark_layer_dirty(layer_id)

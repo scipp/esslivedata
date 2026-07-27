@@ -255,6 +255,15 @@ class TimeWindowParams(pydantic.BaseModel):
         title="Aggregation",
     )
 
+    def aggregates_updates(self) -> bool:
+        """Whether these params combine several updates into one value.
+
+        ``since_start`` and a zero duration both reduce to taking the most
+        recent value of the subscribed stream; only window mode with a nonzero
+        duration sums or averages across updates.
+        """
+        return self.mode is TimeWindowMode.window and self.window_duration_seconds > 0
+
 
 class PlotParamsBase(pydantic.BaseModel):
     """Base class for plot parameters."""
