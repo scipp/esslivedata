@@ -304,10 +304,12 @@ class DataServiceRunner:
         self._parser.add_argument(
             '--batcher',
             choices=list(_INNER_BATCHER_FACTORIES),
-            default='simple',
-            help='Inner batcher wrapped by AdaptiveMessageBatcher: "simple" uses'
-            ' SimpleMessageBatcher (pre-existing default); "rate-aware" uses'
-            ' RateAwareMessageBatcher (per-stream pulse-slot completion).',
+            default='rate-aware',
+            help='Inner batcher wrapped by AdaptiveMessageBatcher: "rate-aware"'
+            ' (default) uses RateAwareMessageBatcher (per-stream pulse-slot'
+            ' completion, wall-clock liveness backstop); "simple" uses'
+            ' SimpleMessageBatcher, retained as a fallback until the rate-aware'
+            ' batcher has proven itself in production.',
         )
         self._parser.add_argument(
             '--check',

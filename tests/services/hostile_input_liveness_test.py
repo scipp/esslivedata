@@ -7,19 +7,19 @@ poll as a batch and therefore cannot detect the most severe corruption class
 found in the backend audit (#1038): inputs that stall the *production*
 batcher, silently stopping all output service-wide while the process looks
 healthy. This harness runs the monitor service with the production-default
-``AdaptiveMessageBatcher`` (wrapping ``SimpleMessageBatcher``, which uses
-data-derived timestamps as its only clock) and asserts one invariant:
+``AdaptiveMessageBatcher`` and asserts one invariant:
 
     After consuming any single hostile payload, the service still publishes
     results for subsequent well-formed data.
 
 Payloads come from ``tests/helpers/hostile_wire``.
 
-Every test runs against both inner batchers: ``SimpleMessageBatcher`` and
-``RateAwareMessageBatcher``, which production selects per instrument via
-``--batcher``. The two reach batch closure by different mechanisms (fixed
-windows versus per-stream pulse-slot gating), so a hostile input that stalls
-one need not stall the other, and both are deployed.
+Every test runs against both inner batchers, selected in production via
+``--batcher``: ``RateAwareMessageBatcher`` (the default) and
+``SimpleMessageBatcher`` (retained as a fallback until the rate-aware batcher
+has proven itself in production). The two reach batch closure by different
+mechanisms (fixed windows versus per-stream pulse-slot gating), so a hostile
+input that stalls one need not stall the other.
 """
 
 from __future__ import annotations
