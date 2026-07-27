@@ -167,9 +167,10 @@ class SimpleMessageBatcher(MessageBatcher):
     and returned, even if no messages were received for it.
 
     Attention: This means that if messages arrive very infrequently, the batcher may
-    return messages very late (or never, if the stream stops). This might cause issues
-    but for now we want to avoid relying on wall-clock time. Instead, raw data messages
-    serve as our clock.
+    return messages very late (or never, if the stream stops). Raw data messages serve
+    as this batcher's only clock; unlike :class:`RateAwareMessageBatcher` it has no
+    wall-clock liveness backstop (see that module's clock policy), so a window
+    misplaced by a pathological timestamp can only heal by data time catching up.
     """
 
     def __init__(self, batch_length_s: float = 1.0) -> None:

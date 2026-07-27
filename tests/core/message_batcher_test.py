@@ -893,3 +893,54 @@ class TestSimpleBatcherFutureTimestampLiveness:
         self.longest_silence(batcher, poison_ahead_s=240.0)
         buffered = len(batcher._active_batch.messages) + len(batcher._future_messages)
         assert buffered < self.RATE_HZ * 10, f"messages accumulating: {buffered}"
+
+    def test_parked_future_message_is_eventually_delivered(self):
+        """The parked outlier rides along once the window reaches it --
+        dropping is the adapter's job, not the batcher's."""
+        second = 1_000_000_000
+        batcher = SimpleMessageBatcher(batch_length_s=1.0)
+        t = 100 * second
+        batcher.batch([make_message(t)])
+        poison = make_message(t + 30 * second, value="poison")
+        batcher.batch([poison])
+        step = second // self.POLLS_PER_BATCH
+        for _ in range(60 * self.POLLS_PER_BATCH):
+            batch = batcher.batch([make_message(t)])
+            t += step
+            if batch is not None and poison in batch.messages:
+                return
+        raise AssertionError("parked future message was never delivered")
+
+    @pytest.mark.xfail(
+        strict=True,
+        reason='#1047: the empty-batch exemption in _may_advance_to lets a '
+        'parked future message fast-forward the window one batch per poll '
+        'through a silence gap; once traffic resumes, every message is '
+        '"late", no future message exists, and nothing closes a batch until '
+        'data time reaches the outlier. Indistinguishable from a legitimate '
+        'silence gap without arrival-time evidence at the adapter boundary; '
+        'the rate-aware batcher recovers via its wall-clock backstop.',
+    )
+    def test_poison_then_silence_then_resumed_traffic_recovers(self):
+        second = 1_000_000_000
+        per_poll = self.RATE_HZ // self.POLLS_PER_BATCH
+        step = second // self.POLLS_PER_BATCH
+        batcher = SimpleMessageBatcher(batch_length_s=1.0)
+        t = 100 * second
+        for _ in range(20 * self.POLLS_PER_BATCH):  # establish steady traffic
+            batcher.batch([make_message(t + i * step) for i in range(per_poll)])
+            t += step
+        batcher.batch([make_message(t + 240 * second)])
+        for _ in range(30 * self.POLLS_PER_BATCH):  # silence gap
+            batcher.batch([])
+        t += 30 * second
+        last_delivery = t
+        worst = 0
+        for _ in range(300 * self.POLLS_PER_BATCH):
+            batch = batcher.batch([make_message(t + i * step) for i in range(per_poll)])
+            t += step
+            if batch is not None and batch.messages:
+                last_delivery = t
+            worst = max(worst, t - last_delivery)
+        gap = worst / second
+        assert gap < 10.0, f"delivery silent for {gap:.1f}s of data time"

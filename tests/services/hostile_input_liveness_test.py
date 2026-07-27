@@ -45,7 +45,35 @@ from tests.helpers.livedata_app import LivedataApp
 SOURCE = 'monitor1'
 SECOND_NS = 1_000_000_000
 
-InnerBatcherFactory = Callable[[float], MessageBatcher]
+
+class _FakeWallClock:
+    """Wall clock the harness advances in lockstep with the data clock.
+
+    The rate-aware batcher's liveness backstop is wall-clock driven; a real
+    monotonic clock would need the test to sleep through the stall threshold.
+    """
+
+    def __init__(self) -> None:
+        self.now = 0.0
+
+    def __call__(self) -> float:
+        return self.now
+
+    def advance(self, dt: float) -> None:
+        self.now += dt
+
+
+InnerBatcherFactory = Callable[[float, Callable[[], float]], MessageBatcher]
+
+
+def _simple_inner(batch_length_s: float, clock: Callable[[], float]) -> MessageBatcher:
+    return SimpleMessageBatcher(batch_length_s)
+
+
+def _rate_aware_inner(
+    batch_length_s: float, clock: Callable[[], float]
+) -> MessageBatcher:
+    return RateAwareMessageBatcher(batch_length_s, clock=clock)
 
 
 def _monitor_workflow_id(instrument: str) -> workflow_spec.WorkflowId:
@@ -65,9 +93,14 @@ class MonitorServiceHarness:
 
     def __init__(self, inner_factory: InnerBatcherFactory) -> None:
         builder = make_monitor_service_builder(instrument='dummy')
+        self.clock = _FakeWallClock()
         # Production default; LivedataApp would otherwise install the naive
         # batcher, which hides batching-level failure modes.
-        builder.message_batcher = AdaptiveMessageBatcher(inner_factory=inner_factory)
+        builder.message_batcher = AdaptiveMessageBatcher(
+            inner_factory=lambda batch_length_s: inner_factory(
+                batch_length_s, self.clock
+            )
+        )
         self.app = LivedataApp.from_service_builder(
             builder, use_naive_message_batcher=False
         )
@@ -90,8 +123,13 @@ class MonitorServiceHarness:
         return self._time_ns
 
     def publish_good(self) -> None:
-        """Queue a well-formed event message one second after the previous."""
+        """Queue a well-formed event message one second after the previous.
+
+        Wall time advances in lockstep with the data clock, as a live
+        (non-replay) service experiences it.
+        """
         self._seed += 1
+        self.clock.advance(1.0)
         self.publish_payload(
             hostile_wire.ev44_events(
                 SOURCE, reference_time_ns=self.next_time_ns(), seed=self._seed
@@ -115,7 +153,7 @@ class MonitorServiceHarness:
 
 
 @pytest.fixture(
-    params=[SimpleMessageBatcher, RateAwareMessageBatcher],
+    params=[_simple_inner, _rate_aware_inner],
     ids=['simple', 'rate_aware'],
 )
 def harness(request: pytest.FixtureRequest) -> MonitorServiceHarness:
@@ -157,8 +195,8 @@ def test_far_future_timestamp_mid_stream_does_not_stall_service(
 
     The batchers must refuse to let the insane value steer window placement,
     however far ahead it sits. The rate-aware batcher may stay silent for up
-    to ``_REANCHOR_STALLED_CALLS`` polls before re-anchoring, so the liveness
-    window must exceed that.
+    to its wall-clock stall threshold before the liveness backstop re-places
+    the window, so the liveness window must exceed that.
     """
     harness.run_good_cycles(3)
     harness.publish_payload(
@@ -223,7 +261,7 @@ def test_mismatched_event_vectors_do_not_stall_service(
     'harness',
     [
         pytest.param(
-            SimpleMessageBatcher,
+            _simple_inner,
             marks=pytest.mark.xfail(
                 strict=True,
                 reason='#1038 finding 1 / #1047: a lone far-future timestamp in '
@@ -235,7 +273,7 @@ def test_mismatched_event_vectors_do_not_stall_service(
                 'i.e. validation where messages enter (#1047).',
             ),
         ),
-        pytest.param(RateAwareMessageBatcher),
+        pytest.param(_rate_aware_inner),
     ],
     indirect=True,
     ids=['simple', 'rate_aware'],
@@ -247,9 +285,9 @@ def test_far_future_timestamp_in_first_batch_does_not_stall_service(
     it would anchor the first batch boundary, and every real message would
     then look early forever. With only one good message beside the outlier,
     ``plausible_anchor`` has no bulk of traffic to weigh against it, so the
-    first anchor lands on the outlier. The rate-aware batcher recovers by
-    re-anchoring once the buffered traffic unanimously contradicts the
-    window; the simple batcher stays wedged (see the xfail).
+    first anchor lands on the outlier. The rate-aware batcher's wall-clock
+    backstop re-places the window at the buffered traffic; the simple
+    batcher stays wedged (see the xfail).
     """
     harness.publish_payload(
         hostile_wire.ev44_events(SOURCE, reference_time_ns=hostile_wire.FAR_FUTURE_NS)

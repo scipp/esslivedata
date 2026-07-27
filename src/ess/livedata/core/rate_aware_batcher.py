@@ -6,14 +6,37 @@ Batches messages based on per-stream rate estimation and slot-based completion.
 A batch is considered complete for a given stream when a message arrives whose
 timestamp falls in the last expected "pulse slot" for that stream within the
 batch window — not when a fixed message count is reached.
+
+Clock policy
+------------
+Data-derived timestamps are the batcher's clock for *placement*: where windows
+sit, when gates and timeouts close them, how far gap recovery jumps.  Wall
+time never influences placement or window sizing — during Kafka backlog
+catch-up, hours of data time pass in seconds of wall time, and wall-clock
+windows would batch that backlog wrongly.
+
+Wall time is consulted for exactly one thing: *liveness*.  A window placed by
+a pathological timestamp can make closure impossible (no slot gate satisfiable,
+the timeout threshold unreachable), and no data-derived signal distinguishes
+that from a quiet stream — the data clock is the very thing that broke.  So
+when no batch has closed for a bounded wall-clock interval while traffic is
+buffered, the window is re-placed at the plausible anchor of that traffic
+(see ``_recover_from_stall``).  The backstop is self-correcting: a wrong
+re-placement is just another stall, corrected the same way, so it needs no
+per-pathology analysis of *how* the window got misplaced.
 """
 
 from __future__ import annotations
 
+import math
 import statistics
+import time
 from collections import defaultdict, deque
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any
+
+import structlog
 
 from ess.livedata.core.message import Message, StreamId, StreamKind
 from ess.livedata.core.message_batcher import (
@@ -23,6 +46,8 @@ from ess.livedata.core.message_batcher import (
     plausible_anchor,
 )
 from ess.livedata.core.timestamp import Duration, Timestamp
+
+logger = structlog.get_logger(__name__)
 
 GATED_STREAM_KINDS = frozenset(
     {
@@ -37,16 +62,13 @@ MIN_DIFFS_FOR_GATE = 4
 DIFF_BUFFER_SIZE = 32
 ABSENT_BATCHES_FOR_EVICTION = 5
 
-# Quorum for window re-anchoring (see ``_should_reanchor``): the minimum
-# number of buffered messages that must unanimously contradict the window
-# placement before the window follows them.
-_MIN_REANCHOR_MESSAGES = 4
-
-# Consecutive non-closing calls before re-anchoring is even considered.  The
-# pathologies it corrects never resolve on their own, so this only delays an
-# unavoidable correction, while keeping the scan off the healthy hot path and
-# ignoring momentary buffer states such as a single poll of lagging traffic.
-_REANCHOR_STALLED_CALLS = 20
+# Wall-clock stall threshold for the liveness backstop, in multiples of the
+# batch length (see the module docstring's clock policy).  It must sit above
+# the slowest legitimate close so healthy operation never triggers it: the
+# timeout path closes within ``timeout_factor`` batch lengths of data time,
+# which under live traffic is roughly wall time.  Scaling with the batch
+# length keeps the margin when the adaptive wrapper escalates the window.
+_STALL_THRESHOLD_BATCHES = 10
 
 # Tolerance for snapping the raw rate to its nearest integer Hz.  Uses
 # the larger of a relative bound and an absolute floor: relative scales
@@ -86,7 +108,10 @@ _MAX_ORIGIN_OFFSET_BATCHES = 1000
 # plausibility horizon shared by all uses in this module: the HWM clamp,
 # the future-message hold-back cap, and the outlier absorption in
 # ``_route_message``.  It must be >= ``timeout_factor`` (default 1.2) for
-# the timeout path to ever fire -- and comfortably above that for
+# the timeout path to ever fire -- the HWM clamp caps how far past the
+# window the HWM can reach, so a larger timeout_factor would starve the
+# timeout permanently; the constructor and setter enforce the invariant.
+# It should also sit comfortably above the default for
 # sub-Hz-only streams whose sparse arrivals rely on multi-batch HWM jumps
 # to trigger cascading timeout closes of empty batches between pulses.
 # Three batches allows one pulse's worth of HWM advance to cover the
@@ -352,6 +377,24 @@ def _origin_too_far(
     return abs(origin_ns - batch_start.to_ns()) > max_offset_ns
 
 
+def _validate_timeout_factor(timeout_factor: float) -> None:
+    """Reject a timeout the HWM clamp makes unreachable.
+
+    The clamp caps the high-water mark at ``MAX_TIMESTAMP_AHEAD_BATCHES``
+    past the window start, so a finite timeout threshold beyond that can
+    never be reached and the timeout path would silently never fire.  An
+    explicit ``inf`` states the intent instead: closure by slot gates only.
+    """
+    if math.isinf(timeout_factor) and timeout_factor > 0:
+        return
+    if not 0.0 < timeout_factor <= MAX_TIMESTAMP_AHEAD_BATCHES:
+        raise ValueError(
+            f"timeout_factor must be in (0, {MAX_TIMESTAMP_AHEAD_BATCHES}] "
+            f"(the HWM plausibility horizon) or inf to disable the timeout, "
+            f"got {timeout_factor}"
+        )
+
+
 class RateAwareMessageBatcher(MessageBatcher):
     """A batcher that uses per-stream rate estimation and slot-based completion.
 
@@ -385,11 +428,13 @@ class RateAwareMessageBatcher(MessageBatcher):
         self,
         batch_length_s: float = 1.0,
         timeout_s: float | None = None,
+        clock: Callable[[], float] = time.monotonic,
     ) -> None:
         self._batch_length = Duration.from_seconds(batch_length_s)
         self._timeout_factor = (
             timeout_s / batch_length_s if timeout_s is not None else 1.2
         )
+        _validate_timeout_factor(self._timeout_factor)
 
         self._streams: defaultdict[StreamId, _GatedStream] = defaultdict(_GatedStream)
 
@@ -399,7 +444,8 @@ class RateAwareMessageBatcher(MessageBatcher):
         self._overflow: list[Message[Any]] = []
         self._non_gated: list[Message[Any]] = []
         self._future: list[Message[Any]] = []
-        self._stalled_calls = 0
+        self._clock = clock
+        self._last_close_wall = clock()
 
     @property
     def batch_length_s(self) -> float:
@@ -421,6 +467,7 @@ class RateAwareMessageBatcher(MessageBatcher):
 
     @timeout_factor.setter
     def timeout_factor(self, value: float) -> None:
+        _validate_timeout_factor(value)
         self._timeout_factor = value
 
     @property
@@ -451,14 +498,11 @@ class RateAwareMessageBatcher(MessageBatcher):
 
         if self._should_recover_from_gap(window):
             window = self._recover_from_gap(window)
-        elif self._should_reanchor(window):
-            window = self._reanchor(window)
-            self._stalled_calls = 0
+        elif self._is_stalled():
+            window = self._recover_from_stall(window)
 
         if self._is_batch_complete(window):
-            self._stalled_calls = 0
             return self._close_batch(window)
-        self._stalled_calls += 1
         return None
 
     def _clamped_hwm(self, latest: Timestamp) -> Timestamp:
@@ -512,6 +556,7 @@ class RateAwareMessageBatcher(MessageBatcher):
             start=end_time, end=end_time + self._batch_length
         )
         self._high_water_mark = end_time
+        self._last_close_wall = self._clock()
         for stream in self._streams.values():
             stream.refresh_grid(end_time, self._batch_length)
         return MessageBatch(start_time=start_time, end_time=end_time, messages=messages)
@@ -570,7 +615,7 @@ class RateAwareMessageBatcher(MessageBatcher):
         return msg.timestamp - window.end <= cap
 
     def _is_batch_complete(self, window: _ActiveWindow) -> bool:
-        if self._high_water_mark is not None:
+        if self._high_water_mark is not None and not math.isinf(self._timeout_factor):
             threshold = window.start + Duration.from_seconds(self.timeout_s)
             if self._high_water_mark >= threshold:
                 return True
@@ -628,66 +673,57 @@ class RateAwareMessageBatcher(MessageBatcher):
             self._route_message(msg, window)
         return window
 
-    def _should_reanchor(self, window: _ActiveWindow) -> bool:
-        """True if buffered traffic consistently contradicts the window placement.
+    def _is_stalled(self) -> bool:
+        """True if traffic is buffered but no batch has closed for too long.
 
-        Two mirror-image pathologies share this signature:
+        This is the liveness backstop of the module docstring's clock
+        policy: it makes no attempt to diagnose *why* nothing closes (a
+        window misplaced by a poisoned bootstrap, a poisoned gap jump, an
+        upstream clock jump, ...) -- any placement the buffered traffic
+        cannot close is corrected the same way, by re-placing the window
+        at that traffic.
 
-        - Every buffered message is beyond the disjoint-epoch horizon ahead
-          of the window: traffic lives in a later epoch than the window
-          (e.g. an upstream clock jumped, or the plausible part of a
-          poisoned bootstrap backlog was stale).  Such messages bypass slot
-          gates and overflow, so neither gate closure nor gap recovery
-          would ever move the window to them.
-        - The newest buffered message is implausibly far behind the window:
-          the window was anchored ahead of real traffic (e.g. by a poisoned
-          gap jump), so no slot gate can ever be satisfied and the
-          high-water mark can never reach the timeout threshold.
-
-        Held-back future or overflow messages disprove both conditions,
-        since they sit near the window by construction.  The quorum keeps a
-        lone stray (one late replayed message, one poisoned timestamp) from
-        re-anchoring the window that all other traffic agrees with; below
-        the quorum, strays simply ride along with the next batch close.
-
-        Only a batcher that has failed to close for ``_REANCHOR_STALLED_CALLS``
-        consecutive calls is considered.  Both pathologies are permanent
-        until corrected, so waiting costs nothing, whereas evaluating every
-        call would scan the whole buffer on the healthy hot path and would
-        also let one poll carrying only a lagging partition's backlog --
-        every message of it legitimately behind the window -- drag the
-        window backwards and emit a batch starting before its predecessor
-        ended.
+        The wall-clock threshold is what makes this safe against ordinary
+        buffer states: a healthy batcher closes several times per threshold
+        interval, so a single poll carrying only a lagging partition's
+        backlog -- every message of it legitimately behind the window --
+        can never drag the window backwards.  Without buffered traffic
+        there is nothing to re-place onto: a quiet stream is not a stall,
+        and the data clock must not advance on wall-time evidence alone.
         """
-        if self._stalled_calls < _REANCHOR_STALLED_CALLS:
+        threshold = _STALL_THRESHOLD_BATCHES * self.batch_length_s
+        if self._clock() - self._last_close_wall < threshold:
             return False
-        if self._future or self._overflow:
-            return False
-        buffered = self._buffered_messages()
-        if len(buffered) < _MIN_REANCHOR_MESSAGES:
-            return False
-        # The message that misplaced the window is itself buffered, so a bare
-        # max would let it veto the recovery it caused.
-        newest = plausible_anchor([m.timestamp for m in buffered], self._batch_length)
-        if window.start - newest > MAX_TIMESTAMP_AHEAD_BATCHES * self._batch_length:
-            return True
-        oldest = min(m.timestamp for m in buffered)
-        return oldest - window.end > _MAX_ORIGIN_OFFSET_BATCHES * self._batch_length
+        return bool(self._buffered_messages())
 
-    def _reanchor(self, window: _ActiveWindow) -> _ActiveWindow:
-        """Re-anchor the window at the buffered traffic and re-route it.
+    def _recover_from_stall(self, window: _ActiveWindow) -> _ActiveWindow:
+        """Re-place the window at the buffered traffic and re-route it.
 
-        The high-water mark is reset to the new anchor: it was derived from
-        the same implausible timestamps that misplaced the window, and
-        keeping it would force a long cascade of empty timeout closures
-        instead of an immediate recovery.  Grids with implausible origins
-        rebuild at the next close via ``_refresh_stream_registry``.
+        The anchor follows the bulk of the buffered traffic, not a bare
+        max: the message that misplaced the window may itself be buffered,
+        and must not veto the recovery it caused.  The high-water mark is
+        reset likewise -- it was derived from the same timestamps that
+        misplaced the window, and keeping it would force a long cascade of
+        empty timeout closures instead of an immediate recovery.  Grids
+        with implausible origins rebuild at the next close via
+        ``_refresh_stream_registry``.
+
+        A wrong re-placement (e.g. onto a lone stray while real traffic is
+        silent) is not a hazard: it is just another stall, corrected the
+        same way once real traffic buffers up again.
         """
         stashed = self._drain_window()
         anchor = plausible_anchor([m.timestamp for m in stashed], self._batch_length)
+        logger.warning(
+            'batcher_stall_recovery',
+            window_start_ns=window.start.to_ns(),
+            anchor_ns=anchor.to_ns(),
+            buffered_messages=len(stashed),
+        )
         window = _ActiveWindow(start=anchor, end=anchor + self._batch_length)
         self._active_window = window
         self._high_water_mark = anchor
+        self._last_close_wall = self._clock()
         for msg in stashed:
             self._route_message(msg, window)
         return window
@@ -712,6 +748,7 @@ class RateAwareMessageBatcher(MessageBatcher):
         return any(stream.is_gating for stream in self._streams.values())
 
     def _close_batch(self, window: _ActiveWindow) -> MessageBatch:
+        self._last_close_wall = self._clock()
         self._refresh_stream_registry(window)
         messages = self._drain_window()
 
