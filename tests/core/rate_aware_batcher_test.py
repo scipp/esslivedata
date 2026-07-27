@@ -2427,12 +2427,49 @@ class TestFarFutureTimestampLiveness:
     def test_in_band_future_timestamp_stall_is_brief(self):
         """Delivery must resume promptly, not merely eventually: the wedge
         this guards against is bounded by the poison's distance ahead, which
-        for an in-band value is minutes of silent data loss."""
+        for an in-band value is minutes of silent data loss.  The observed
+        stall is the backstop threshold (~10 s): the poison triggers a gap
+        jump that a lone in-band value right after a close is
+        indistinguishable from, and only the stall backstop can undo it."""
         clock = FakeClock()
         batcher, start = make_converged_batcher(rate_hz=14.0, clock=clock)
         batcher.batch([msg(start + self.IN_BAND_S)])
         gap = longest_silence(batcher, start=start, cycles=300, clock=clock)
         assert gap < 15.0, f"delivery silent for {gap:.1f}s of data time"
+
+    def test_in_band_future_timestamp_costs_one_stall_and_no_clock_skew(self):
+        """The wrong gap jump must cost its one backstop interval and nothing
+        more.  Stall recovery evicts the poison to delivery instead of
+        re-caching it, and overflow implausibly far ahead carries no slot-gate
+        evidence -- otherwise the retained poison pre-satisfies the gate at
+        every close, racing the window (and with it the data clock, which
+        fires job schedules) toward the outlier at poll rate, then stalling
+        ~10 s at every encounter until data time reaches the poison."""
+        clock = FakeClock()
+        batcher, start = make_converged_batcher(rate_hz=14.0, clock=clock)
+        poison = msg(start + self.IN_BAND_S, value="poison")
+        batcher.batch([poison])
+        step = 0.1
+        t = start
+        last_delivery = t
+        stalls = 0
+        delivered_poison = False
+        for _ in range(300 * 10):
+            out = batcher.batch(msgs_at(14.0, t, step))
+            t += step
+            clock.advance(step)
+            if out is None or not out.messages:
+                continue
+            if t - last_delivery > 5.0:
+                stalls += 1
+            last_delivery = t
+            end_s = out.end_time.to_ns() / 1e9
+            assert abs(end_s - t) < 5.0, (
+                f"batch end_time {end_s:.1f}s detached from traffic at {t:.1f}s"
+            )
+            delivered_poison |= poison in out.messages
+        assert stalls <= 1, f"{stalls} separate >5s delivery stalls"
+        assert delivered_poison, "poison was neither delivered nor dropped"
 
 
 class TestStallBackstop:

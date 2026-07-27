@@ -260,8 +260,14 @@ class _GatedStream:
     def route(self, msg: Message[Any], window_start: Timestamp) -> Message[Any] | None:
         """Place ``msg`` in the bucket; return it unchanged if it overflows.
 
-        Overflow still bumps ``max_slot`` to the last grid slot so the
-        slot gate observes that the window's final pulse was reached.
+        Overflow *near* the window bumps ``max_slot`` to the last grid slot:
+        a pulse just past the window is evidence that the window's final
+        pulse was reached.  A pulse implausibly far ahead is no such
+        evidence, and because overflow is re-routed into every new window at
+        close, an unbounded bump would pre-satisfy the gate on every window
+        -- the batcher then closes a batch per *call*, racing the window
+        toward the outlier at poll rate with time ranges detached from the
+        traffic it delivers.
         """
         self.observe(msg)
         if self.grid is None:
@@ -269,9 +275,11 @@ class _GatedStream:
             return None
         slot = self.grid.slot_in_batch(msg.timestamp, window_start)
         if slot >= self.grid.slots_per_batch:
-            last = self.grid.slots_per_batch - 1
-            if last > self.max_slot:
-                self.max_slot = last
+            horizon = self.grid.slots_per_batch * (1 + MAX_TIMESTAMP_AHEAD_BATCHES)
+            if slot < horizon:
+                last = self.grid.slots_per_batch - 1
+                if last > self.max_slot:
+                    self.max_slot = last
             return msg
         self._add(msg, slot)
         return None
@@ -711,8 +719,17 @@ class RateAwareMessageBatcher(MessageBatcher):
         A wrong re-placement (e.g. onto a lone stray while real traffic is
         silent) is not a hazard: it is just another stall, corrected the
         same way once real traffic buffers up again.
+
+        Held-back and overflow messages are drained along with the window
+        buckets, and any message still implausibly far ahead of the
+        recovered window is diverted to delivery rather than re-cached: a
+        stall proves the placement such messages drove was wrong, and
+        re-caching the driver would re-trigger the same wrong gap jump --
+        and with it a stall per encounter -- until data time reaches it.
         """
-        stashed = self._drain_window()
+        stashed = self._drain_window() + self._overflow + self._future
+        self._overflow = []
+        self._future = []
         anchor = plausible_anchor([m.timestamp for m in stashed], self._batch_length)
         logger.warning(
             'batcher_stall_recovery',
@@ -724,8 +741,12 @@ class RateAwareMessageBatcher(MessageBatcher):
         self._active_window = window
         self._high_water_mark = anchor
         self._last_close_wall = self._clock()
+        hold_back = MAX_TIMESTAMP_AHEAD_BATCHES * self._batch_length
         for msg in stashed:
-            self._route_message(msg, window)
+            if msg.timestamp - window.end > hold_back:
+                self._non_gated.append(msg)
+            else:
+                self._route_message(msg, window)
         return window
 
     def _buffered_messages(self) -> list[Message[Any]]:
