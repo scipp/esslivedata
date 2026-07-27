@@ -200,9 +200,13 @@ Groups messages into time-aligned windows for time-aligned processing, job sched
 
 `MessageBatch` = `(start_time, end_time, messages)`. Times in nanoseconds, `[start_time, end_time)` (inclusive, exclusive).
 
+### RateAwareMessageBatcher
+
+Default inner batcher (wrapped by `AdaptiveMessageBatcher`, selected via `--batcher`). Per-stream rate estimation and pulse-slot completion; wall-clock liveness backstop re-places a window the buffered traffic cannot close (placement stays data-time driven — see the module's clock policy). See the [rate-aware batcher explainer](rate-aware-batcher.md).
+
 ### SimpleMessageBatcher
 
-Time-aligned batching used by `OrchestratingProcessor`. Initial batch contains all messages; subsequent batches aligned to `batch_length_s` intervals. Late messages included in next batch. Empty batches returned when next batch starts. Batch completion triggered by first message for next batch.
+Fixed time-aligned batching, retained as `--batcher simple` fallback until the rate-aware batcher has proven itself in production. Initial batch contains all messages; subsequent batches aligned to `batch_length_s` intervals. Late messages included in next batch. Empty batches returned when next batch starts. Batch completion triggered by first message for next batch.
 
 **Important**: Relies on message timestamps (not wall-clock time). If messages stop arriving, current batch may never complete.
 
