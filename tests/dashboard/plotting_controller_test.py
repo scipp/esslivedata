@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: BSD-3-Clause
 # Copyright (c) 2025 Scipp contributors (https://github.com/scipp)
 
-from typing import Annotated, ClassVar
+from typing import ClassVar
 
 import holoviews as hv
 import pydantic
@@ -10,7 +10,8 @@ import scipp as sc
 
 from ess.livedata.config.workflow_spec import (
     REDUCTION,
-    Temporality,
+    CumulativeOutput,
+    WindowOutput,
     WorkflowId,
     WorkflowOutputsBase,
     WorkflowSpec,
@@ -506,16 +507,14 @@ class TestOutputViewSupportsWindowing:
                 ),
             )
 
-            current: Annotated[sc.DataArray, Temporality.window] = pydantic.Field(
+            current: WindowOutput = pydantic.Field(
                 default_factory=lambda: sc.DataArray(
                     sc.zeros(dims=['x'], shape=[0]),
                 )
             )
-            cumulative: Annotated[sc.DataArray, Temporality.cumulative] = (
-                pydantic.Field(
-                    default_factory=lambda: sc.DataArray(
-                        sc.zeros(dims=['x'], shape=[0]),
-                    )
+            cumulative: CumulativeOutput = pydantic.Field(
+                default_factory=lambda: sc.DataArray(
+                    sc.zeros(dims=['x'], shape=[0]),
                 )
             )
 
@@ -575,7 +574,7 @@ class TestOutputViewSupportsWindowing:
                     fields=('counts_total',),
                 ),
             )
-            counts_total: Annotated[sc.DataArray, Temporality.window] = pydantic.Field(
+            counts_total: WindowOutput = pydantic.Field(
                 default_factory=lambda: sc.DataArray(sc.scalar(0, unit='counts'))
             )
 
@@ -635,12 +634,10 @@ class TestSinceStartAvailable:
                     fields=('cumulative', 'current'),
                 ),
             )
-            cumulative: Annotated[sc.DataArray, Temporality.cumulative] = (
-                pydantic.Field(
-                    default_factory=lambda: sc.DataArray(sc.scalar(0, unit='counts'))
-                )
+            cumulative: CumulativeOutput = pydantic.Field(
+                default_factory=lambda: sc.DataArray(sc.scalar(0, unit='counts'))
             )
-            current: Annotated[sc.DataArray, Temporality.window] = pydantic.Field(
+            current: WindowOutput = pydantic.Field(
                 default_factory=lambda: sc.DataArray(sc.scalar(0, unit='counts'))
             )
 
@@ -654,7 +651,7 @@ class TestSinceStartAvailable:
             output_views: ClassVar[tuple[OutputView, ...]] = (
                 OutputView(name='total', title='Total', fields=('counts_total',)),
             )
-            counts_total: Annotated[sc.DataArray, Temporality.window] = pydantic.Field(
+            counts_total: WindowOutput = pydantic.Field(
                 default_factory=lambda: sc.DataArray(sc.scalar(0, unit='counts'))
             )
 
@@ -743,11 +740,9 @@ class TestWorkflowSpecFieldFor:
                     fields=('counts_total',),
                 ),
             )
-            cumulative: Annotated[sc.DataArray, Temporality.cumulative] = (
-                pydantic.Field()
-            )
-            current: Annotated[sc.DataArray, Temporality.window] = pydantic.Field()
-            counts_total: Annotated[sc.DataArray, Temporality.window] = pydantic.Field()
+            cumulative: CumulativeOutput = pydantic.Field()
+            current: WindowOutput = pydantic.Field()
+            counts_total: WindowOutput = pydantic.Field()
 
         return WorkflowSpec(
             instrument='test',

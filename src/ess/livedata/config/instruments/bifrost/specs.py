@@ -12,7 +12,7 @@ for full instrument details.
 """
 
 from enum import StrEnum
-from typing import Annotated, ClassVar, Literal
+from typing import ClassVar, Literal
 
 import pydantic
 import scipp as sc
@@ -24,8 +24,9 @@ from ess.livedata.config import (
     name_streams,
 )
 from ess.livedata.config.workflow_spec import (
+    CumulativeOutput,
     OutputView,
-    Temporality,
+    WindowOutput,
     WorkflowOutputsBase,
 )
 from ess.livedata.parameter_models import EnergyEdges, QEdges
@@ -115,22 +116,18 @@ class DetectorRatemeterOutputs(WorkflowOutputsBase):
         ),
     )
 
-    detector_region_counts: Annotated[sc.DataArray, Temporality.window] = (
-        pydantic.Field(
-            default_factory=lambda: sc.DataArray(
-                sc.scalar(0, unit='counts'),
-                coords={'time': sc.scalar(0, unit='ns')},
-            ),
-            title='Detector Region Counts',
-            description=(
-                'Counts for the selected arc and pixel range, for the latest update '
-                'interval only. Resets each update interval.'
-            ),
-        )
+    detector_region_counts: WindowOutput = pydantic.Field(
+        default_factory=lambda: sc.DataArray(
+            sc.scalar(0, unit='counts'),
+            coords={'time': sc.scalar(0, unit='ns')},
+        ),
+        title='Detector Region Counts',
+        description=(
+            'Counts for the selected arc and pixel range, for the latest update '
+            'interval only. Resets each update interval.'
+        ),
     )
-    detector_region_counts_cumulative: Annotated[
-        sc.DataArray, Temporality.cumulative
-    ] = pydantic.Field(
+    detector_region_counts_cumulative: CumulativeOutput = pydantic.Field(
         default_factory=lambda: sc.DataArray(sc.scalar(0, unit='counts')),
         title='Detector Region Counts',
         description=(

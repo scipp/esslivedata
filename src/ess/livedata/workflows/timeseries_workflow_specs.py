@@ -4,7 +4,7 @@
 
 from __future__ import annotations
 
-from typing import Annotated, ClassVar
+from typing import ClassVar
 
 import pydantic
 import scipp as sc
@@ -13,7 +13,7 @@ from ..config.instrument import Instrument
 from ..config.workflow_spec import (
     TIMESERIES,
     OutputView,
-    Temporality,
+    SeriesOutput,
     WorkflowOutputsBase,
 )
 from .workflow_factory import SpecHandle
@@ -39,7 +39,7 @@ class TimeseriesOutputs(WorkflowOutputsBase):
         ),
     )
 
-    delta: Annotated[sc.DataArray, Temporality.series] = pydantic.Field(
+    delta: SeriesOutput = pydantic.Field(
         default_factory=lambda: sc.DataArray(
             sc.scalar(0.0),
             coords={'time': sc.scalar(0, unit='ns')},

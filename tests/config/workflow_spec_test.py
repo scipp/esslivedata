@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: BSD-3-Clause
 # Copyright (c) 2025 Scipp contributors (https://github.com/scipp)
 import uuid
-from typing import Annotated, ClassVar
+from typing import ClassVar
 
 import pytest
 import scipp as sc
@@ -12,9 +12,12 @@ from ess.livedata.config.workflow_spec import (
     TIMESERIES,
     AuxInput,
     AuxSources,
+    CumulativeOutput,
     JobId,
     OutputView,
+    SeriesOutput,
     Temporality,
+    WindowOutput,
     WorkflowConfig,
     WorkflowId,
     WorkflowOutputsBase,
@@ -716,9 +719,9 @@ class TestTemporality:
     """Tests for the per-field Temporality declaration."""
 
     class Outputs(WorkflowOutputsBase):
-        current: Annotated[sc.DataArray, Temporality.window] = Field(title='Current')
-        total: Annotated[sc.DataArray, Temporality.cumulative] = Field(title='Total')
-        readings: Annotated[sc.DataArray, Temporality.series] = Field(title='Readings')
+        current: WindowOutput = Field(title='Current')
+        total: CumulativeOutput = Field(title='Total')
+        readings: SeriesOutput = Field(title='Readings')
         readback: sc.DataArray = Field(title='Readback')
 
     @pytest.mark.parametrize(
@@ -744,10 +747,8 @@ class TestTemporality:
 
     def test_declaration_is_inherited_and_overridable(self) -> None:
         class Derived(self.Outputs):
-            readback: Annotated[sc.DataArray, Temporality.window] = Field(
-                title='Readback'
-            )
-            extra: Annotated[sc.DataArray, Temporality.window] = Field(title='Extra')
+            readback: WindowOutput = Field(title='Readback')
+            extra: WindowOutput = Field(title='Extra')
 
         assert Derived.temporality('current') is Temporality.window
         assert Derived.fields_with(Temporality.window) == (
@@ -769,7 +770,7 @@ class TestFindTimeseriesOutputs:
         from ess.livedata.config.workflow_spec import find_timeseries_outputs
 
         class TimeseriesOutputs(WorkflowOutputsBase):
-            delta: Annotated[sc.DataArray, Temporality.series] = Field(
+            delta: SeriesOutput = Field(
                 default_factory=lambda: sc.DataArray(sc.scalar(0.0)),
             )
 
@@ -798,7 +799,7 @@ class TestFindTimeseriesOutputs:
         from ess.livedata.config.workflow_spec import find_timeseries_outputs
 
         class NonTimeseriesOutputs(WorkflowOutputsBase):
-            histogram: Annotated[sc.DataArray, Temporality.window] = Field(
+            histogram: WindowOutput = Field(
                 default_factory=lambda: sc.DataArray(sc.zeros(dims=['x'], shape=[10])),
             )
 
@@ -882,7 +883,7 @@ class TestFindTimeseriesOutputs:
         from ess.livedata.config.workflow_spec import find_timeseries_outputs
 
         class TimeseriesOutputs(WorkflowOutputsBase):
-            delta: Annotated[sc.DataArray, Temporality.series] = Field(
+            delta: SeriesOutput = Field(
                 default_factory=lambda: sc.DataArray(sc.scalar(0.0)),
             )
 
@@ -964,12 +965,8 @@ class TestOutputViews:
                     fields=('cumulative', 'current'),
                 ),
             )
-            cumulative: Annotated[sc.DataArray, Temporality.cumulative] = Field(
-                title='cumulative-field'
-            )
-            current: Annotated[sc.DataArray, Temporality.window] = Field(
-                title='current-field'
-            )
+            cumulative: CumulativeOutput = Field(title='cumulative-field')
+            current: WindowOutput = Field(title='current-field')
 
         spec = WorkflowSpec(
             instrument='test',
@@ -1012,12 +1009,12 @@ class TestOutputViews:
                     fields=('cumulative', 'current'),
                 ),
             )
-            cumulative: Annotated[sc.DataArray, Temporality.cumulative] = Field(
+            cumulative: CumulativeOutput = Field(
                 default_factory=lambda: sc.DataArray(
                     sc.zeros(dims=['x'], shape=[3], unit='counts')
                 )
             )
-            current: Annotated[sc.DataArray, Temporality.window] = Field(
+            current: WindowOutput = Field(
                 default_factory=lambda: sc.DataArray(
                     sc.zeros(dims=['x'], shape=[3], unit='counts')
                 )
@@ -1104,8 +1101,8 @@ class TestUnambiguousWindowing:
             output_views: ClassVar[tuple[OutputView, ...]] = (
                 OutputView(name='v', title='V', fields=('a', 'b')),
             )
-            a: Annotated[sc.DataArray, Temporality.window] = Field(title='A')
-            b: Annotated[sc.DataArray, Temporality.window] = Field(title='B')
+            a: WindowOutput = Field(title='A')
+            b: WindowOutput = Field(title='B')
 
         with pytest.raises(ValueError, match="multiple fields backing 'per_update'"):
             self._spec(Outputs)
@@ -1126,8 +1123,8 @@ class TestUnambiguousWindowing:
             output_views: ClassVar[tuple[OutputView, ...]] = (
                 OutputView(name='v', title='V', fields=('a', 'b')),
             )
-            a: Annotated[sc.DataArray, Temporality.cumulative] = Field(title='A')
-            b: Annotated[sc.DataArray, Temporality.window] = Field(title='B')
+            a: CumulativeOutput = Field(title='A')
+            b: WindowOutput = Field(title='B')
 
         spec = self._spec(Outputs)
         assert spec.field_for('v', 'since_start') == 'a'
@@ -1139,7 +1136,7 @@ class TestUnambiguousWindowing:
             output_views: ClassVar[tuple[OutputView, ...]] = (
                 OutputView(name='v', title='V', fields=('delta',)),
             )
-            delta: Annotated[sc.DataArray, Temporality.series] = Field(title='Delta')
+            delta: SeriesOutput = Field(title='Delta')
 
         spec = self._spec(Outputs)
         assert spec.windowing_options('v') == frozenset({'per_update'})

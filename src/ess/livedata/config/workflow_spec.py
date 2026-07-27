@@ -26,7 +26,7 @@ import uuid
 from collections import defaultdict
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
-from typing import Any, ClassVar, Literal, TypeVar
+from typing import Annotated, Any, ClassVar, Literal, TypeVar
 
 import scipp as sc
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
@@ -43,10 +43,11 @@ Windowing = Literal['since_start', 'per_update']
 class Temporality(enum.Enum):
     """How an output field's values relate to time.
 
-    Declared per output field via :class:`typing.Annotated` and read back with
+    Declared per output field by annotating it :data:`WindowOutput`,
+    :data:`CumulativeOutput` or :data:`SeriesOutput`, and read back with
     :meth:`WorkflowOutputsBase.temporality`::
 
-        current: Annotated[sc.DataArray, Temporality.window] = pydantic.Field(...)
+        current: WindowOutput = pydantic.Field(...)
 
     Distinct from :data:`Windowing`, which selects *which* backing field a
     user-facing view exposes for the window mode the user picked. Temporality is
@@ -70,6 +71,21 @@ class Temporality(enum.Enum):
     """Carries its own per-point ``time`` axis. Messages are disjoint chunks of
     samples concatenated along that axis, so there is no single window duration
     to normalize by."""
+
+
+WindowOutput = Annotated[sc.DataArray, Temporality.window]
+"""An output field covering one update interval. See :attr:`Temporality.window`."""
+
+CumulativeOutput = Annotated[sc.DataArray, Temporality.cumulative]
+"""An output field accumulating over a job generation.
+
+See :attr:`Temporality.cumulative`. This is also what a bare ``sc.DataArray``
+field means, so reduction outputs need no annotation; spell it out where a
+model mixes temporalities and the contrast carries information.
+"""
+
+SeriesOutput = Annotated[sc.DataArray, Temporality.series]
+"""An output field carrying its own ``time`` axis. See :attr:`Temporality.series`."""
 
 
 WINDOWING_FOR_TEMPORALITY: Mapping[Temporality, Windowing] = {
