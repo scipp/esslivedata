@@ -354,6 +354,14 @@ class WorkflowSpec(BaseModel):
             "runs (e.g., timeseries)."
         ),
     )
+    supports_reset: bool = Field(
+        default=True,
+        description=(
+            "Whether jobs of this workflow support the manual reset action. "
+            "When False, the dashboard disables the reset button and the "
+            "backend rejects reset commands."
+        ),
+    )
     params: type[BaseModel] | None = Field(description="Model for workflow param.")
     outputs: type[BaseModel] = Field(
         default=DefaultOutputs,

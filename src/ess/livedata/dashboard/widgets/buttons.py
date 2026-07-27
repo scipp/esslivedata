@@ -8,6 +8,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 
 import panel as pn
+from bokeh.models import Tooltip
 
 from .icons import get_icon
 from .styles import HoverColors, StatusColors
@@ -134,6 +135,8 @@ def create_tool_button(
     hover_color: str,
     on_click_callback: Callable[[], None],
     css_classes: list[str] | None = None,
+    disabled: bool = False,
+    description: str | None = None,
 ) -> pn.widgets.Button:
     """
     Create a styled tool button.
@@ -155,12 +158,27 @@ def create_tool_button(
         ``lt-tool-{icon_name}`` classes; callers pass context (e.g. a workflow
         name) for finer targeting. These classes have no associated style rules
         and are visually inert.
+    disabled:
+        Whether the button is disabled.
+    description:
+        Tooltip text shown on hover. Anchored to the left of the button:
+        tool buttons typically sit at the right edge of their row, where the
+        default right-anchored tooltip would be clipped by the viewport.
 
     Returns
     -------
     :
         Panel Button widget styled as a tool button.
     """
+    tooltip = (
+        Tooltip(
+            content=description,
+            position='left',
+            stylesheets=[':host { white-space: initial; max-width: 300px; }'],
+        )
+        if description is not None
+        else None
+    )
     button = pn.widgets.Button(
         label='',
         icon=get_icon(icon_name),
@@ -170,6 +188,8 @@ def create_tool_button(
         color='light',
         sizing_mode='fixed',
         margin=0,
+        disabled=disabled,
+        description=tooltip,
         css_classes=['lt-tool', f'lt-tool-{icon_name}', *(css_classes or [])],
         stylesheets=create_tool_button_stylesheet(button_color, hover_color),
     )

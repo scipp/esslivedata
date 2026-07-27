@@ -32,12 +32,18 @@ class SimpleTestOutputs(WorkflowOutputsBase):
 class FakeJobFactory(JobFactory):
     """Fake implementation of JobFactory for testing."""
 
-    def __init__(self, reset_on_run_transition: dict[WorkflowId, bool] | None = None):
+    def __init__(
+        self,
+        reset_on_run_transition: dict[WorkflowId, bool] | None = None,
+        supports_reset: dict[WorkflowId, bool] | None = None,
+    ):
         self.created_jobs = []
         self.processors: dict[JobId, FakeProcessor] = {}
-        # Faithful analog of the real factory reading reset_on_run_transition from
-        # the workflow spec: tests configure it per workflow, defaulting to True.
+        # Faithful analog of the real factory reading reset_on_run_transition and
+        # supports_reset from the workflow spec: tests configure them per
+        # workflow, defaulting to True.
         self._reset_on_run_transition = reset_on_run_transition or {}
+        self._supports_reset = supports_reset or {}
 
     def get_workflow_spec(self, workflow_id):
         """Return None for tests - no enrichment needed in test scenarios."""
@@ -67,6 +73,7 @@ class FakeJobFactory(JobFactory):
             reset_on_run_transition=self._reset_on_run_transition.get(
                 config.identifier, True
             ),
+            supports_reset=self._supports_reset.get(config.identifier, True),
         )
 
         self.created_jobs.append((job_id, config))
@@ -368,6 +375,27 @@ class TestJobManager:
 
         with pytest.raises(KeyError, match="Job 999 not found"):
             manager.reset_job(999)
+
+    def test_reset_job_unsupported_raises_and_leaves_job_untouched(self):
+        """A reset command for a supports_reset=False job is rejected."""
+        config = _make_config("test_source")
+        factory = FakeJobFactory(supports_reset={config.identifier: False})
+        manager = JobManager(factory, context_reader=no_cached_context)
+
+        job_id = manager.schedule_job(config)
+        manager.push_data(
+            WorkflowData(
+                start_time=Timestamp.from_ns(100),
+                end_time=Timestamp.from_ns(200),
+                data={StreamId(name="test_source"): sc.scalar(42.0)},
+            )
+        )
+
+        with pytest.raises(ValueError, match="does not support reset"):
+            manager.reset_job(job_id)
+
+        assert factory.processors[job_id].clear_calls == 0
+        assert manager.active_jobs[0].start_time == Timestamp.from_ns(100)
 
     def test_job_command_reset_by_workflow_id_resets_all_its_sources_only(
         self, fake_job_factory

@@ -4,11 +4,13 @@
 
 from __future__ import annotations
 
+from typing import ClassVar
+
 import pydantic
 import scipp as sc
 
 from ..config.instrument import Instrument
-from ..config.workflow_spec import TIMESERIES, WorkflowOutputsBase
+from ..config.workflow_spec import TIMESERIES, OutputView, WorkflowOutputsBase
 from .workflow_factory import SpecHandle
 
 
@@ -22,6 +24,15 @@ class TimeseriesOutputs(WorkflowOutputsBase):
     it signals that the data carries its own wall-clock timestamps, so
     ``_add_time_coords`` will not attach ``start_time``/``end_time``.
     """
+
+    output_views: ClassVar[tuple[OutputView, ...]] = (
+        OutputView(
+            name='delta',
+            title='Timeseries',
+            fields={'per_update': 'delta'},
+            description='Timestamped device values; plots accumulate the history.',
+        ),
+    )
 
     delta: sc.DataArray = pydantic.Field(
         default_factory=lambda: sc.DataArray(
@@ -66,4 +77,10 @@ def register_timeseries_workflow_specs(
         source_names=source_names,
         outputs=TimeseriesOutputs,
         reset_on_run_transition=False,
+        # Reset would clear only the job's publication bookkeeping while the
+        # shared ToNXlog preprocessor keeps its cumulative buffer, so the next
+        # finalize re-emits the full history as a delta and every downstream
+        # buffer duplicates it. Restarting the workflow already provides
+        # correct clear-and-refill semantics via the generation flip.
+        supports_reset=False,
     )

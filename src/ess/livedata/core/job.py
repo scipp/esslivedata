@@ -263,6 +263,7 @@ class Job:
         input_streams: set[str],
         gating_streams: set[str],
         reset_on_run_transition: bool = True,
+        supports_reset: bool = True,
     ) -> None:
         """
         Initialize a Job with the given parameters.
@@ -291,6 +292,9 @@ class Job:
             ADR 0002.
         reset_on_run_transition:
             Whether this job should be reset when a run transition occurs.
+        supports_reset:
+            Whether this job supports the manual reset action. See
+            :attr:`WorkflowSpec.supports_reset`.
         """
         self._job_id = job_id
         self._workflow_id = workflow_id
@@ -299,6 +303,7 @@ class Job:
         self._end_time: Timestamp | None = None
         self._source_names = source_names
         self._reset_on_run_transition = reset_on_run_transition
+        self._supports_reset = supports_reset
         self._input_streams: set[str] = input_streams
         self._gating_streams: set[str] = gating_streams
 
@@ -355,6 +360,10 @@ class Job:
     @property
     def reset_on_run_transition(self) -> bool:
         return self._reset_on_run_transition
+
+    @property
+    def supports_reset(self) -> bool:
+        return self._supports_reset
 
     def add(self, data: JobData) -> JobReply:
         try:
