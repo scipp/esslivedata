@@ -5,6 +5,7 @@ from dataclasses import replace
 from typing import Any, Generic, Protocol, TypeVar
 
 import numpy as np
+import numpy.typing as npt
 import pydantic
 import scipp as sc
 import streaming_data_types
@@ -193,11 +194,33 @@ class KafkaAdapter(MessageAdapter[KafkaMessage, Message[T]]):
         )
 
 
+def _vector_or_empty(vector: np.ndarray | int, dtype: npt.DTypeLike) -> np.ndarray:
+    """Normalize the result of a flatbuffers ``*AsNumpy()`` accessor.
+
+    The accessors return scalar ``0`` for a vector that is *absent* from the
+    buffer, as opposed to present but empty. The ev44 schema does not require
+    the event vectors, so producers may legitimately omit them; without this
+    the sentinel reaches consumers that expect an array and the message is
+    lost instead of being treated as carrying no events.
+    """
+    return vector if isinstance(vector, np.ndarray) else np.empty(0, dtype=dtype)
+
+
+def _normalize_ev44(ev44: eventdata_ev44.EventData) -> eventdata_ev44.EventData:
+    """Replace absent-vector sentinels of a deserialized ev44 payload."""
+    return ev44._replace(
+        reference_time=_vector_or_empty(ev44.reference_time, np.int64),
+        reference_time_index=_vector_or_empty(ev44.reference_time_index, np.int32),
+        time_of_flight=_vector_or_empty(ev44.time_of_flight, np.int32),
+        pixel_id=_vector_or_empty(ev44.pixel_id, np.int32),
+    )
+
+
 class KafkaToEv44Adapter(KafkaAdapter[eventdata_ev44.EventData]):
     schema = 'ev44'
 
     def adapt(self, message: KafkaMessage) -> Message[eventdata_ev44.EventData]:
-        ev44 = eventdata_ev44.deserialise_ev44(message.value())
+        ev44 = _normalize_ev44(eventdata_ev44.deserialise_ev44(message.value()))
         stream = self.get_stream_id(topic=message.topic(), source_name=ev44.source_name)
         # A fallback, useful in particular for testing so serialized data can be reused.
         if ev44.reference_time.size > 0:
@@ -392,8 +415,8 @@ class KafkaToMonitorEventsAdapter(KafkaAdapter[MonitorEvents | DetectorEvents]):
         event = Event44Message.Event44Message.GetRootAs(buffer, 0)
         source_name = event.SourceName().decode("utf-8")
         stream = self.get_stream_id(topic=message.topic(), source_name=source_name)
-        reference_time = event.ReferenceTimeAsNumpy()
-        time_of_arrival = event.TimeOfFlightAsNumpy()
+        reference_time = _vector_or_empty(event.ReferenceTimeAsNumpy(), np.int64)
+        time_of_arrival = _vector_or_empty(event.TimeOfFlightAsNumpy(), np.int32)
 
         # A fallback, useful in particular for testing so serialized data can be reused.
         if reference_time.size > 0:
@@ -403,7 +426,7 @@ class KafkaToMonitorEventsAdapter(KafkaAdapter[MonitorEvents | DetectorEvents]):
 
         if stream.name in self._pixellated_sources:
             value: MonitorEvents | DetectorEvents = DetectorEvents(
-                pixel_id=event.PixelIdAsNumpy(),
+                pixel_id=_vector_or_empty(event.PixelIdAsNumpy(), np.int32),
                 time_of_arrival=time_of_arrival,
                 unit='ns',
             )

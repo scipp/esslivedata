@@ -29,6 +29,8 @@ from ess.livedata.core.message import StreamKind
 from ess.livedata.core.timestamp import Timestamp
 from ess.livedata.kafka.message_adapter import (
     AdaptingMessageSource,
+    ChainedAdapter,
+    Ev44ToDetectorEventsAdapter,
     FakeKafkaMessage,
     KafkaAdapter,
     KafkaMessage,
@@ -101,16 +103,26 @@ def test_ev44_mismatched_event_vectors_accepted_on_plain_monitor_path() -> None:
     assert len(adapted.value.time_of_arrival) == 10
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason='#1038 finding 2: absent event vectors raise deep in the adapter '
-    'and the message is dropped instead of using the Kafka-timestamp fallback',
-)
 def test_ev44_without_event_vectors_falls_back_to_kafka_timestamp() -> None:
     payload = hostile_wire.ev44_without_event_vectors(SOURCE)
     message = _kafka_message(payload, timestamp_ms=5678)
     adapted = _monitor_adapter().adapt(message)
     assert adapted.timestamp == Timestamp.from_ms(5678)
+    assert len(adapted.value.time_of_arrival) == 0
+
+
+def test_ev44_without_event_vectors_reaches_detector_events() -> None:
+    """The absent vectors must survive as empty arrays all the way into the
+    preprocessor input, not just past the timestamp extraction.
+    """
+    payload = hostile_wire.ev44_without_event_vectors(SOURCE)
+    adapter = ChainedAdapter(
+        first=KafkaToEv44Adapter(stream_kind=StreamKind.DETECTOR_EVENTS),
+        second=Ev44ToDetectorEventsAdapter(),
+    )
+    events = adapter.adapt(_kafka_message(payload, timestamp_ms=5678)).value
+    assert len(events.time_of_arrival) == 0
+    assert len(events.pixel_id) == 0
 
 
 def _far_future_cases() -> list[tuple[str, KafkaAdapter, bytes]]:

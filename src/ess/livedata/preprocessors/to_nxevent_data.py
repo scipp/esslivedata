@@ -15,8 +15,18 @@ from ess.livedata.core.timestamp import Timestamp
 
 
 def _require_single_pulse(ev44: eventdata_ev44.EventData) -> None:
+    """Reject payloads spanning more than one pulse.
+
+    A payload without reference times carries no pulse at all, which is not
+    multi-pulse and therefore accepted (as an empty event list).
+    """
     index = ev44.reference_time_index
-    if len(index) > 1 or index[0] != 0 or len(ev44.reference_time) > 1:
+    multi_pulse = (
+        len(ev44.reference_time) > 1
+        or len(index) > 1
+        or (len(index) == 1 and index[0] != 0)
+    )
+    if multi_pulse:
         raise NotImplementedError("Processing multi-pulse messages is not supported.")
 
 

@@ -95,8 +95,9 @@ def ev44_without_event_vectors(source_name: str) -> bytes:
     ``serialise_ev44`` always writes the vectors, but the flatbuffer schema
     does not require them, so other producers can omit them. The
     flatbuffers-python accessors then return scalar ``0`` instead of an empty
-    array, which trips code expecting ``.size``/``len()`` — see #1038
-    (finding 2).
+    array. Not in :func:`malformed_corpus`: the payload is well-formed and
+    must be *accepted* as carrying no events, with the timestamp coming from
+    the Kafka broker fallback.
     """
     import flatbuffers
 
@@ -220,7 +221,6 @@ def malformed_corpus(source_name: str) -> dict[str, bytes]:
         'truncated_ev44': truncated(
             ev44_events(source_name, reference_time_ns=REALISTIC_EPOCH_NS)
         ),
-        'ev44_without_event_vectors': ev44_without_event_vectors(source_name),
         'wrong_schema_f144': f144_log(source_name, timestamp_ns=REALISTIC_EPOCH_NS),
         'unmapped_source': ev44_events(
             'not_a_known_source', reference_time_ns=REALISTIC_EPOCH_NS

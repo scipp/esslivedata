@@ -202,6 +202,19 @@ def test_mismatched_event_vectors_do_not_stall_service(
     assert_service_live(harness)
 
 
+def test_absent_event_vectors_do_not_stall_service(
+    harness: MonitorServiceHarness,
+) -> None:
+    """A payload omitting the event vectors is accepted as carrying no events
+    (timestamp from the Kafka broker), and must neither be dropped nor upset
+    the accumulator that receives the empty chunk.
+    """
+    harness.run_good_cycles(3)
+    harness.publish_payload(hostile_wire.ev44_without_event_vectors(SOURCE))
+    harness.app.step()
+    assert_service_live(harness)
+
+
 @pytest.mark.xfail(
     strict=True,
     reason='#1038 finding 1 / #1047: a far-future data timestamp in the first '

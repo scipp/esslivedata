@@ -28,6 +28,22 @@ def test_MonitorEvents_from_ev44() -> None:
 
 
 @pytest.mark.parametrize('events_cls', [MonitorEvents, DetectorEvents])
+def test_from_ev44_accepts_message_without_reference_times(
+    events_cls: MonitorEvents,
+) -> None:
+    """No reference time means no pulse, which is not a multi-pulse message."""
+    ev44 = eventdata_ev44.EventData(
+        source_name='ignored',
+        message_id=0,
+        reference_time=[],
+        reference_time_index=[],
+        pixel_id=[],
+        time_of_flight=[],
+    )
+    assert len(events_cls.from_ev44(ev44).time_of_arrival) == 0
+
+
+@pytest.mark.parametrize('events_cls', [MonitorEvents, DetectorEvents])
 def test_MonitorEvents_from_ev44_raises_with_multi_pulse_message(
     events_cls: MonitorEvents,
 ) -> None:
