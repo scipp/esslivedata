@@ -13,28 +13,67 @@ data-derived timestamps as its only clock) and asserts one invariant:
     After consuming any single hostile payload, the service still publishes
     results for subsequent well-formed data.
 
-Payloads come from ``tests/helpers/hostile_wire``. Cases the current code
-survives are regression guards; the reproduced wedge (#1038 finding 1) is a
-strict xfail that doubles as the acceptance test for the adapter-boundary
-validation proposed in #1047.
+Payloads come from ``tests/helpers/hostile_wire``.
+
+Every test runs against both inner batchers: ``SimpleMessageBatcher`` and
+``RateAwareMessageBatcher``, which production selects per instrument via
+``--batcher``. The two reach batch closure by different mechanisms (fixed
+windows versus per-stream pulse-slot gating), so a hostile input that stalls
+one need not stall the other, and both are deployed.
 """
 
 from __future__ import annotations
 
 import uuid
+from collections.abc import Callable
 
 import pytest
 
 from ess.livedata.config import instrument_registry, workflow_spec
 from ess.livedata.config.workflow_spec import JobId
 from ess.livedata.core.message import StreamKind
-from ess.livedata.core.message_batcher import AdaptiveMessageBatcher
+from ess.livedata.core.message_batcher import (
+    AdaptiveMessageBatcher,
+    MessageBatcher,
+    SimpleMessageBatcher,
+)
+from ess.livedata.core.rate_aware_batcher import RateAwareMessageBatcher
 from ess.livedata.services.monitor_data import make_monitor_service_builder
 from tests.helpers import hostile_wire
 from tests.helpers.livedata_app import LivedataApp
 
 SOURCE = 'monitor1'
 SECOND_NS = 1_000_000_000
+
+
+class _FakeWallClock:
+    """Wall clock the harness advances in lockstep with the data clock.
+
+    The rate-aware batcher's liveness backstop is wall-clock driven; a real
+    monotonic clock would need the test to sleep through the stall threshold.
+    """
+
+    def __init__(self) -> None:
+        self.now = 0.0
+
+    def __call__(self) -> float:
+        return self.now
+
+    def advance(self, dt: float) -> None:
+        self.now += dt
+
+
+InnerBatcherFactory = Callable[[float, Callable[[], float]], MessageBatcher]
+
+
+def _simple_inner(batch_length_s: float, clock: Callable[[], float]) -> MessageBatcher:
+    return SimpleMessageBatcher(batch_length_s)
+
+
+def _rate_aware_inner(
+    batch_length_s: float, clock: Callable[[], float]
+) -> MessageBatcher:
+    return RateAwareMessageBatcher(batch_length_s, clock=clock)
 
 
 def _monitor_workflow_id(instrument: str) -> workflow_spec.WorkflowId:
@@ -52,11 +91,16 @@ class MonitorServiceHarness:
     timestamps (the batcher's clock) and observes published workflow results.
     """
 
-    def __init__(self) -> None:
+    def __init__(self, inner_factory: InnerBatcherFactory) -> None:
         builder = make_monitor_service_builder(instrument='dummy')
+        self.clock = _FakeWallClock()
         # Production default; LivedataApp would otherwise install the naive
         # batcher, which hides batching-level failure modes.
-        builder.message_batcher = AdaptiveMessageBatcher()
+        builder.message_batcher = AdaptiveMessageBatcher(
+            inner_factory=lambda batch_length_s: inner_factory(
+                batch_length_s, self.clock
+            )
+        )
         self.app = LivedataApp.from_service_builder(
             builder, use_naive_message_batcher=False
         )
@@ -79,8 +123,13 @@ class MonitorServiceHarness:
         return self._time_ns
 
     def publish_good(self) -> None:
-        """Queue a well-formed event message one second after the previous."""
+        """Queue a well-formed event message one second after the previous.
+
+        Wall time advances in lockstep with the data clock, as a live
+        (non-replay) service experiences it.
+        """
         self._seed += 1
+        self.clock.advance(1.0)
         self.publish_payload(
             hostile_wire.ev44_events(
                 SOURCE, reference_time_ns=self.next_time_ns(), seed=self._seed
@@ -103,9 +152,12 @@ class MonitorServiceHarness:
         return self.result_count() - before
 
 
-@pytest.fixture
-def harness() -> MonitorServiceHarness:
-    return MonitorServiceHarness()
+@pytest.fixture(
+    params=[_simple_inner, _rate_aware_inner],
+    ids=['simple', 'rate_aware'],
+)
+def harness(request: pytest.FixtureRequest) -> MonitorServiceHarness:
+    return MonitorServiceHarness(inner_factory=request.param)
 
 
 def assert_service_live(harness: MonitorServiceHarness, cycles: int = 10) -> None:
@@ -139,16 +191,19 @@ def test_malformed_payload_does_not_stall_service(
 def test_far_future_timestamp_mid_stream_does_not_stall_service(
     harness: MonitorServiceHarness,
 ) -> None:
-    """A far-future timestamp *after* the first batch degrades the batcher
-    (the message lingers as a pending future message) but must not stop
-    output. Guards the boundary of the wedge in #1038 finding 1.
+    """A far-future timestamp *after* the first batch must not stop output.
+
+    The batchers must refuse to let the insane value steer window placement,
+    however far ahead it sits. The rate-aware batcher may stay silent for up
+    to its wall-clock stall threshold before the liveness backstop re-places
+    the window, so the liveness window must exceed that.
     """
     harness.run_good_cycles(3)
     harness.publish_payload(
         hostile_wire.ev44_events(SOURCE, reference_time_ns=hostile_wire.FAR_FUTURE_NS)
     )
     harness.app.step()
-    assert_service_live(harness)
+    assert_service_live(harness, cycles=40)
 
 
 @pytest.mark.parametrize(
@@ -202,18 +257,41 @@ def test_mismatched_event_vectors_do_not_stall_service(
     assert_service_live(harness)
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason='#1038 finding 1 / #1047: a far-future data timestamp in the first '
-    'consumed batch becomes the batch boundary, after which no batch is ever '
-    'emitted — the service goes silent while appearing healthy',
+@pytest.mark.parametrize(
+    'harness',
+    [
+        pytest.param(
+            _simple_inner,
+            marks=pytest.mark.xfail(
+                strict=True,
+                reason='#1038 finding 1 / #1047: a lone far-future timestamp in '
+                'the startup backlog wins plausible_anchor\'s tie-break (one '
+                'message on each side carries no evidence), anchors the first '
+                'batch boundary, and the simple batcher has no recovery path — '
+                'the service goes silent while appearing healthy. Telling a '
+                'lone outlier from real traffic needs arrival-time evidence, '
+                'i.e. validation where messages enter (#1047).',
+            ),
+        ),
+        pytest.param(_rate_aware_inner),
+    ],
+    indirect=True,
+    ids=['simple', 'rate_aware'],
 )
 def test_far_future_timestamp_in_first_batch_does_not_stall_service(
     harness: MonitorServiceHarness,
 ) -> None:
+    """The startup backlog is where a far-future timestamp is most dangerous:
+    it would anchor the first batch boundary, and every real message would
+    then look early forever. With only one good message beside the outlier,
+    ``plausible_anchor`` has no bulk of traffic to weigh against it, so the
+    first anchor lands on the outlier. The rate-aware batcher's wall-clock
+    backstop re-places the window at the buffered traffic; the simple
+    batcher stays wedged (see the xfail).
+    """
     harness.publish_payload(
         hostile_wire.ev44_events(SOURCE, reference_time_ns=hostile_wire.FAR_FUTURE_NS)
     )
     harness.publish_good()
     harness.app.step()
-    assert_service_live(harness, cycles=20)
+    assert_service_live(harness, cycles=60)
