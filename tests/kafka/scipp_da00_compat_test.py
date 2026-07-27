@@ -423,3 +423,99 @@ def test_da00_to_scipp_keeps_scalar_coords():
     assert 'x' in da.coords
     assert 'temperature' in da.coords
     assert da.coords['temperature'].dims == ()
+
+
+def _signal(variables: list[dataarray_da00.Variable]) -> np.ndarray:
+    return np.asarray(next(var for var in variables if var.name == 'signal').data)
+
+
+def _errors(variables: list[dataarray_da00.Variable]) -> np.ndarray:
+    return np.asarray(next(var for var in variables if var.name == 'errors').data)
+
+
+def test_scipp_to_da00_replaces_masked_values_with_nan():
+    da = sc.DataArray(
+        data=sc.array(dims=['x'], values=[1.0, 2.0, 3.0], unit='counts'),
+        masks={'bad': sc.array(dims=['x'], values=[False, True, False])},
+    )
+
+    variables = scipp_to_da00(da)
+
+    assert np.array_equal(_signal(variables), [1.0, np.nan, 3.0], equal_nan=True)
+
+
+def test_scipp_to_da00_replaces_masked_errors_with_nan():
+    da = sc.DataArray(
+        data=sc.array(
+            dims=['x'], values=[1.0, 2.0, 3.0], variances=[0.1, 0.2, 0.3], unit='counts'
+        ),
+        masks={'bad': sc.array(dims=['x'], values=[False, True, False])},
+    )
+
+    variables = scipp_to_da00(da)
+
+    assert np.array_equal(_signal(variables), [1.0, np.nan, 3.0], equal_nan=True)
+    expected = [np.sqrt(0.1), np.nan, np.sqrt(0.3)]
+    assert np.allclose(_errors(variables), expected, equal_nan=True)
+
+
+def test_scipp_to_da00_combines_multiple_masks():
+    da = sc.DataArray(
+        data=sc.array(dims=['x'], values=[1.0, 2.0, 3.0], unit='counts'),
+        masks={
+            'a': sc.array(dims=['x'], values=[True, False, False]),
+            'b': sc.array(dims=['x'], values=[False, True, False]),
+        },
+    )
+
+    variables = scipp_to_da00(da)
+
+    assert np.array_equal(_signal(variables), [np.nan, np.nan, 3.0], equal_nan=True)
+
+
+def test_scipp_to_da00_broadcasts_mask_over_missing_dims():
+    da = sc.DataArray(
+        data=sc.ones(dims=['x', 'y'], shape=[2, 3], unit='counts'),
+        masks={'row': sc.array(dims=['x'], values=[False, True])},
+    )
+
+    variables = scipp_to_da00(da)
+
+    expected = np.array([[1.0, 1.0, 1.0], [np.nan, np.nan, np.nan]])
+    assert np.array_equal(_signal(variables), expected, equal_nan=True)
+
+
+def test_scipp_to_da00_promotes_masked_integer_data_to_float():
+    da = sc.DataArray(
+        data=sc.array(dims=['x'], values=[1, 2, 3], unit='counts'),
+        masks={'bad': sc.array(dims=['x'], values=[False, True, False])},
+    )
+
+    variables = scipp_to_da00(da)
+
+    signal = _signal(variables)
+    assert signal.dtype == np.float64
+    assert np.array_equal(signal, [1.0, np.nan, 3.0], equal_nan=True)
+
+
+def test_scipp_to_da00_preserves_dtype_when_unmasked():
+    da = sc.DataArray(data=sc.array(dims=['x'], values=[1, 2, 3], unit='counts'))
+
+    assert np.asarray(_signal(scipp_to_da00(da))).dtype == np.int64
+
+
+def test_roundtrip_with_masks_yields_nan_and_no_masks():
+    da = sc.DataArray(
+        data=sc.array(dims=['x'], values=[1.0, 2.0, 3.0], unit='counts'),
+        coords={'x': sc.array(dims=['x'], values=[10, 20, 30], unit='m')},
+        masks={'bad': sc.array(dims=['x'], values=[False, True, False])},
+    )
+
+    result = da00_to_scipp(scipp_to_da00(da))
+
+    assert len(result.masks) == 0
+    expected = sc.DataArray(
+        data=sc.array(dims=['x'], values=[1.0, np.nan, 3.0], unit='counts'),
+        coords={'x': sc.array(dims=['x'], values=[10, 20, 30], unit='m')},
+    )
+    assert sc.identical(result, expected, equal_nan=True)
