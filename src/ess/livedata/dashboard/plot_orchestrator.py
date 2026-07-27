@@ -1036,7 +1036,7 @@ class PlotOrchestrator:
             if spec is None:
                 return field_name
             for view in spec.get_output_views():
-                if field_name in view.fields.values():
+                if field_name in view.fields:
                     return view.title
             return field_name
 
