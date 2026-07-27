@@ -87,7 +87,7 @@ it, on a port other than 5009 (interactive dev uses 5009):
 ```sh
 cp -r tests/dashboard/ui_config_fixtures/dummy "$TMP/cfg/dummy"
 python -m ess.livedata.dashboard.reduction --instrument dummy --transport fake \
-    --port 5011 --config-dir "$TMP/cfg" --no-fetch-announcements
+    --port 5011 --config-dir "$TMP/cfg" --no-fetch-announcements --collapsed-sidebar
 ```
 
 Add `--auto-start` (requires `--transport fake`) to commit every staged workflow on
@@ -104,6 +104,12 @@ button with a *compound* selector on one element:
 - ✅ `.lt-wf-total_counts.lt-tool-player-stop` (both classes on the same button)
 - ❌ `.lt-wf-total_counts .lt-tool-player-stop` (matches nothing — the descendant
   crosses a shadow boundary)
+
+**Sidebar.** `--launch` passes `--collapsed-sidebar`, so the main content gets the full
+window width: the sidebar is static in automation runs (announcements are off) and an
+open drawer only narrows the plots under test and their screenshots. Pass the flag when
+running a server by hand too. It sets `MaterialTemplate.collapsed_sidebar`, so the page
+arrives collapsed — no clicking the hamburger, and it survives `page.reload()`.
 
 **Tabs.** The top-level tabs are Bokeh-owned `.bk-tab` divs with no `lt-*` hooks, so
 navigate by visible text (`page.get_by_text("Detectors", exact=True)`). Static tab
