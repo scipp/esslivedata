@@ -1,5 +1,6 @@
 # SPDX-License-Identifier: BSD-3-Clause
 # Copyright (c) 2024 Scipp contributors (https://github.com/scipp)
+import time
 import uuid
 from collections.abc import Generator
 from contextlib import contextmanager
@@ -7,9 +8,26 @@ from typing import Any
 
 import confluent_kafka as kafka
 import structlog
+from confluent_kafka import KafkaError
 from confluent_kafka.error import KafkaException
 
 logger = structlog.get_logger(__name__)
+
+#: Broker errors meaning "this partition has no usable leader yet, ask again".
+#: Leadership is not established atomically with topic creation or a broker
+#: restart, so a partition can be present in cluster metadata while the broker
+#: hosting it has not yet applied the leadership change.
+_LEADER_PENDING_ERRORS = frozenset(
+    {
+        KafkaError.UNKNOWN_TOPIC_OR_PART,
+        KafkaError.LEADER_NOT_AVAILABLE,
+        KafkaError.NOT_LEADER_FOR_PARTITION,
+    }
+)
+
+#: How long to wait for partition leadership to settle before giving up.
+_LEADER_TIMEOUT = 30.0
+_LEADER_POLL_INTERVAL = 0.5
 
 
 def validate_topics_exist(consumer: kafka.Consumer, topics: list[str]) -> None:
@@ -28,6 +46,41 @@ def validate_topics_exist(consumer: kafka.Consumer, topics: list[str]) -> None:
         raise ValueError(f"Failed to fetch topic metadata: {e}") from e
 
 
+def _high_watermark(
+    consumer: kafka.Consumer, topic: str, partition: int, *, deadline: float
+) -> int:
+    """Fetch a partition's high watermark, waiting for its leader to settle.
+
+    Only the partition leader answers ``ListOffsets``, and librdkafka does not
+    retry this query on our behalf. Without the wait a consumer created inside a
+    leader-election window -- a just-created topic, a restarted broker -- fails
+    closed on an error the broker itself considers transient.
+    """
+    while True:
+        try:
+            _low, high = consumer.get_watermark_offsets(
+                kafka.TopicPartition(topic, partition), timeout=5.0
+            )
+            return high
+        except KafkaException as e:
+            expired = time.monotonic() >= deadline
+            if e.args[0].code() not in _LEADER_PENDING_ERRORS or expired:
+                logger.exception(
+                    "watermark_fetch_failed", topic=topic, partition=partition
+                )
+                raise ValueError(
+                    f"Failed to fetch watermark for '{topic}' partition"
+                    f" {partition}: {e}"
+                ) from e
+            logger.info(
+                "awaiting_partition_leader",
+                topic=topic,
+                partition=partition,
+                error=str(e.args[0]),
+            )
+            time.sleep(_LEADER_POLL_INTERVAL)
+
+
 def assign_all_partitions(consumer: kafka.Consumer, topics: list[str]) -> None:
     """Manually assign every partition of every topic to a consumer.
 
@@ -41,7 +94,11 @@ def assign_all_partitions(consumer: kafka.Consumer, topics: list[str]) -> None:
     first fetch would be skipped silently (e.g. a command sent right after a
     service reports ready). Pinning makes the contract deterministic: every
     message produced after assignment is consumed.
+
+    Resolving the watermarks may block for up to ``_LEADER_TIMEOUT`` in total
+    while partition leadership settles; see :func:`_high_watermark`.
     """
+    deadline = time.monotonic() + _LEADER_TIMEOUT
     assignment: list[kafka.TopicPartition] = []
     for topic in topics:
         try:
@@ -55,21 +112,10 @@ def assign_all_partitions(consumer: kafka.Consumer, topics: list[str]) -> None:
             logger.error("topic_has_no_partitions", topic=topic)
             raise ValueError(f"Topic '{topic}' exists but has no partitions")
         partition_ids = list(partitions.keys())
-        offsets: dict[int, int] = {}
-        for partition in partition_ids:
-            try:
-                _low, high = consumer.get_watermark_offsets(
-                    kafka.TopicPartition(topic, partition), timeout=5.0
-                )
-            except KafkaException as e:
-                logger.exception(
-                    "watermark_fetch_failed", topic=topic, partition=partition
-                )
-                raise ValueError(
-                    f"Failed to fetch watermark for '{topic}' partition"
-                    f" {partition}: {e}"
-                ) from e
-            offsets[partition] = high
+        offsets = {
+            partition: _high_watermark(consumer, topic, partition, deadline=deadline)
+            for partition in partition_ids
+        }
         assignment.extend(
             kafka.TopicPartition(topic, p, offsets[p]) for p in partition_ids
         )

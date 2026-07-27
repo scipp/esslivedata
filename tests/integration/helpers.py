@@ -151,12 +151,20 @@ def _get_job_data(
     The data plane is keyed by the stable ``DataKey`` (workflow, source,
     output); the per-commit job_number is provenance, not identity, so jobs
     are matched via their source_name.
+
+    Iteration already hides cleared keys, but it takes the lock separately from
+    each read: the dashboard's ingestion thread can flip a generation in
+    between (heartbeat adoption) and empty a key this call already accepted.
+    Such a key reads as absent -- there is genuinely no data for it yet.
     """
-    return {
-        key: data_service[key]
-        for key in data_service
-        if key.workflow_id == workflow_id and key.source_name == source_name
-    }
+    data: dict[DataKey, Any] = {}
+    for key in data_service:
+        if key.workflow_id == workflow_id and key.source_name == source_name:
+            try:
+                data[key] = data_service[key]
+            except KeyError:
+                continue
+    return data
 
 
 def get_output_data(
