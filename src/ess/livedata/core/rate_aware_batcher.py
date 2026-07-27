@@ -506,11 +506,18 @@ class RateAwareMessageBatcher(MessageBatcher):
 
         if self._should_recover_from_gap(window):
             window = self._recover_from_gap(window)
-        elif self._is_stalled():
-            window = self._recover_from_stall(window)
 
+        # Stall recovery is a last resort, checked only when nothing closes:
+        # checking it first would preempt the timeout close of a stream
+        # sparser than the stall threshold (e.g. a log value every 15 s),
+        # re-placing the window and resetting the HWM on every arrival
+        # instead of delivering it.
         if self._is_batch_complete(window):
             return self._close_batch(window)
+        if self._is_stalled():
+            window = self._recover_from_stall(window)
+            if self._is_batch_complete(window):
+                return self._close_batch(window)
         return None
 
     def _clamped_hwm(self, latest: Timestamp) -> Timestamp:
@@ -726,11 +733,23 @@ class RateAwareMessageBatcher(MessageBatcher):
         stall proves the placement such messages drove was wrong, and
         re-caching the driver would re-trigger the same wrong gap jump --
         and with it a stall per encounter -- until data time reaches it.
+
+        An anchor already inside the active window means placement agrees
+        with the buffered traffic and the stall is mere quietness (e.g. the
+        trailing partial batch after a stream stops -- deliberately not
+        delivered, since the data clock must not advance on wall time
+        alone).  Re-placing would only shift the boundaries and log a
+        recovery per threshold interval, so the backstop re-arms instead.
         """
+        anchor = plausible_anchor(
+            [m.timestamp for m in self._buffered_messages()], self._batch_length
+        )
+        self._last_close_wall = self._clock()
+        if window.start <= anchor < window.end:
+            return window
         stashed = self._drain_window() + self._overflow + self._future
         self._overflow = []
         self._future = []
-        anchor = plausible_anchor([m.timestamp for m in stashed], self._batch_length)
         logger.warning(
             'batcher_stall_recovery',
             window_start_ns=window.start.to_ns(),
@@ -740,7 +759,6 @@ class RateAwareMessageBatcher(MessageBatcher):
         window = _ActiveWindow(start=anchor, end=anchor + self._batch_length)
         self._active_window = window
         self._high_water_mark = anchor
-        self._last_close_wall = self._clock()
         hold_back = MAX_TIMESTAMP_AHEAD_BATCHES * self._batch_length
         for msg in stashed:
             if msg.timestamp - window.end > hold_back:

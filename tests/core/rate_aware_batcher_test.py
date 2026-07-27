@@ -19,6 +19,7 @@ service would experience.
 import random
 
 import pytest
+from structlog.testing import capture_logs
 
 from ess.livedata.core.message import Message, StreamId, StreamKind
 from ess.livedata.core.message_batcher import MessageBatch
@@ -2522,6 +2523,42 @@ class TestStallBackstop:
                 if batch is not None and stray in batch.messages:
                     return
         raise AssertionError("disjoint-epoch message was never delivered")
+
+    def test_sparse_stream_closes_via_timeout_not_backstop(self):
+        """A stream sparser than the stall threshold (e.g. a log value every
+        15 s) must keep closing via the timeout on each arrival.  The stall
+        check runs only when nothing closes; checked first, it would preempt
+        the timeout, re-place the window, and reset the HWM on every arrival
+        -- deferring each delivery by a full period and logging a recovery
+        per message."""
+        clock = FakeClock()
+        batcher = RateAwareMessageBatcher(batch_length_s=1.0, clock=clock)
+        delivered = 0
+        with capture_logs() as logs:
+            for i in range(3000):
+                batch_msgs = [hwm_trigger(100.0 + i * 0.1)] if i % 150 == 0 else []
+                out = batcher.batch(batch_msgs)
+                clock.advance(0.1)
+                if out is not None:
+                    delivered += len(out.messages)
+        assert delivered == 20, f"delivered {delivered} of 20 sparse messages"
+        assert not [e for e in logs if e['event'] == 'batcher_stall_recovery']
+
+    def test_quiet_trailing_batch_does_not_thrash(self):
+        """A partial batch left by a stopped stream is quietness, not a
+        stall: placement already agrees with the buffered traffic, so the
+        backstop must re-arm silently instead of re-placing the window and
+        logging a recovery every threshold interval."""
+        clock = FakeClock()
+        batcher, start = make_converged_batcher(rate_hz=14.0, clock=clock)
+        batcher.batch(msgs_at(14.0, start, 0.5))  # half a window, no close
+        before = batcher._active_window.start
+        with capture_logs() as logs:
+            for _ in range(1000):
+                clock.advance(0.1)
+                assert batcher.batch([]) is None
+        assert batcher._active_window.start == before
+        assert not [e for e in logs if e['event'] == 'batcher_stall_recovery']
 
     def test_quiet_stream_does_not_trigger_the_backstop(self):
         """Without buffered traffic there is nothing to re-place onto: a
