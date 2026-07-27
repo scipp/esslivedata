@@ -37,6 +37,7 @@ class AreaDetectorView(Workflow):
         self._cumulative: sc.DataArray | None = None
         self._previous: sc.DataArray | None = None
         self._current_start_time: Timestamp | None = None
+        self._current_end_time: Timestamp | None = None
 
     def accumulate(
         self, data: dict[str, Any], *, start_time: Timestamp, end_time: Timestamp
@@ -53,7 +54,6 @@ class AreaDetectorView(Workflow):
         end_time:
             End time of the data window in nanoseconds since epoch.
         """
-        _ = end_time  # unused
         if len(data) != 1:
             raise ValueError("AreaDetectorView expects exactly one detector data item.")
 
@@ -74,8 +74,10 @@ class AreaDetectorView(Workflow):
                 self._previous = None
                 self._current_start_time = None
 
+        # Track time range of data since last finalize.
         if self._current_start_time is None:
             self._current_start_time = start_time
+        self._current_end_time = end_time
 
     def finalize(self) -> dict[str, sc.DataArray]:
         """
@@ -98,9 +100,18 @@ class AreaDetectorView(Workflow):
             current = current - self._previous
         self._previous = cumulative
 
-        time_coord = self._current_start_time.to_scipp()
-        current = current.assign_coords(time=time_coord)
+        # 'current' covers only the window since the last finalize, so it carries
+        # its own bounds instead of the job-level ones Job._add_time_coords would
+        # otherwise stamp. 'cumulative' has no time coords and gets those.
+        start_time_coord = self._current_start_time.to_scipp()
+        end_time_coord = self._current_end_time.to_scipp()
+        current = current.assign_coords(
+            time=start_time_coord,
+            start_time=start_time_coord,
+            end_time=end_time_coord,
+        )
         self._current_start_time = None
+        self._current_end_time = None
 
         return {'cumulative': cumulative, 'current': current}
 
@@ -109,6 +120,7 @@ class AreaDetectorView(Workflow):
         self._cumulative = None
         self._previous = None
         self._current_start_time = None
+        self._current_end_time = None
 
     @staticmethod
     def view_factory(
