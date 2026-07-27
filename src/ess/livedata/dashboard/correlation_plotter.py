@@ -169,6 +169,35 @@ class AxisSpec:
     """Number of bins for this axis."""
 
 
+_CONSTANT_AXIS_REL_TOL = 1e-9
+"""Relative span below which correlation axis values count as constant.
+
+The axis carries device readings such as a temperature or a motor position,
+never epoch timestamps, so a span this small next to the magnitude is jitter in
+the last bits rather than a range worth binning over.
+"""
+
+
+def _axis_bins(values: sc.Variable, axis: AxisSpec) -> sc.Variable | int:
+    """Binning for ``values``: a bin count, or explicit edges if constant.
+
+    ``hist`` derives edges from the value range and does not guard a degenerate
+    one. A stationary device, or a single axis reading correlated with every
+    data point, yields bins of zero width: nothing is drawn, and the axis range
+    derived from the edges collapses to a point. Spread the edges over a visible
+    interval around the value instead, widening as ``plots._ensure_span`` does
+    for degenerate view ranges.
+    """
+    lo = sc.nanmin(values).value
+    hi = sc.nanmax(values).value
+    if abs(hi - lo) > _CONSTANT_AXIS_REL_TOL * max(abs(lo), abs(hi)):
+        return axis.bins
+    offset = max(abs(lo) * 0.05, 0.5)
+    return sc.linspace(
+        axis.name, lo - offset, hi + offset, axis.bins + 1, unit=values.unit
+    )
+
+
 class CorrelationHistogramPlotter:
     """Base plotter for correlation histograms with arbitrary number of axes.
 
@@ -228,9 +257,6 @@ class CorrelationHistogramPlotter:
                 )
             axis_data[axis.name] = ax
 
-        # Build bin spec
-        bin_spec = {axis.name: axis.bins for axis in self._axes}
-
         histograms: dict[DataKey, sc.DataArray] = {}
         for key, source_data in histogram_data.items():
             dependent = source_data.copy(deep=False)
@@ -240,6 +266,11 @@ class CorrelationHistogramPlotter:
             for axis in self._axes:
                 lut = _make_lookup(axis_data[axis.name], data_max_time)
                 dependent.coords[axis.name] = lut[dependent.coords['time']]
+
+            bin_spec = {
+                axis.name: _axis_bins(dependent.coords[axis.name], axis)
+                for axis in self._axes
+            }
 
             # Bin data with optional normalization by time width
             if self._normalize:
