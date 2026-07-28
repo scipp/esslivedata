@@ -194,6 +194,18 @@ class ActiveJobRegistry:
                     return gen.config
             return None
 
+    def stale_count(self, workflow_id: WorkflowId) -> int:
+        """Number of data messages dropped since the current generation began.
+
+        Every :py:meth:`begin_generation` resets the counter, so the value is
+        scoped to the workflow's current generation: it measures how much
+        in-flight data the latest commit superseded. Zero for a workflow with
+        no generation record.
+        """
+        with self._lock:
+            record = self._generations.get(workflow_id)
+            return 0 if record is None else record.stale_count
+
     def record_stale(self, workflow_id: WorkflowId, job_number: JobNumber) -> None:
         """Count a dropped data message from a non-current generation.
 

@@ -639,6 +639,7 @@ class TestMessagePumpGenerationFiltering:
         result_key = self._forward_data(message_pump, old_number)
 
         assert result_key.data_key not in data_service
+        assert registry.stale_count(self._workflow_id) == 1
 
     def test_discards_data_for_unknown_generation(self) -> None:
         message_pump, data_service, _, _ = self._make_message_pump(
