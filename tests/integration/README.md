@@ -6,7 +6,7 @@ Integration tests verify end-to-end behavior of ESSlivedata by running actual se
 
 - **`@pytest.mark.integration`**: Marks a test as an integration test
 - **`@pytest.mark.instrument('name')`**: Runs test with specified instrument (default: 'dummy')
-- **`@pytest.mark.services('name')`**: **Required** when using `integration_env` fixture. Valid values: `'monitor'`, `'detector'`, or `'reduction'` (specifies which services to run)
+- **`@pytest.mark.services('name')`**: **Required** when using `integration_env` fixture. Selects the `<name>_services` fixture. `'monitor'`, `'detector'` and `'reduction'` come from `conftest.py`; a test module can define its own group via `create_service_group()`
 
 ## Available Fixtures
 
