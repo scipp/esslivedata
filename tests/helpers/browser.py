@@ -15,6 +15,9 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(REPO_ROOT / "scripts"))
 
+# Re-exported so tests reach the driving kit through this module, which owns the
+# scripts/ sys.path seam above, rather than each repeating it.
+import drive_dashboard  # noqa: E402,F401
 from drive_dashboard import Dashboard, _fake_dashboard  # noqa: E402
 
 fake_dashboard = _fake_dashboard

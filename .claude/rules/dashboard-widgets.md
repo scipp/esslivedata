@@ -97,6 +97,11 @@ UI, then copying the persisted `workflow_configs.yaml` (strip the runtime
 `current_job` key, keep `jobs`) and `plot_configs.yaml` from the config
 dir back into the fixture; `ui_config_fixtures_test.py` guards against drift.
 
+**Ports.** `fake_dashboard(...)` without a port takes one the OS reports free — how the
+browser tests launch, so two checkouts (or a suite next to an interactive dashboard) can
+run at once. Do not hand a test a port literal; they collide silently across branches.
+Pass an explicit port only when the URL must be known up front, e.g. to open it by hand.
+
 **Shadow DOM selectors.** Tool buttons and rows live in per-widget *open* shadow roots.
 Plain Playwright CSS locators pierce these, so `page.locator(".lt-tool-settings")` works
 — **but descendant combinators do not cross shadow boundaries.** Target a workflow's
