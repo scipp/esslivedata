@@ -941,13 +941,26 @@ class PlotGridManager:
             self._update_preview()
 
     def _on_save_changes(self, event) -> None:
-        """Handle Save Changes button click in edit mode."""
+        """Handle Save Changes button click in edit mode.
+
+        The click is queued client-side before this session's next topology
+        poll, so it can arrive after another session already replaced or
+        removed this grid: ``_editing_grid_id`` is then stale (or, if our own
+        poll ran first, already ``None`` from :meth:`on_topology_changed`).
+        Re-check existence the same way that poll does before touching the
+        orchestrator, and drop the edit instead of saving over a grid that no
+        longer exists.
+        """
         grid_id = self._editing_grid_id
         cells_to_add = self._editing_cells or ()
         title = self._title_input.value
         nrows = self._nrows_input.value
         ncols = self._ncols_input.value
         self._exit_edit_mode()
+
+        if grid_id is None or self._orchestrator.peek_grid(grid_id) is None:
+            show_error('Cannot save changes: the grid was removed.')
+            return
 
         new_grid_id = self._orchestrator.replace_grid(
             grid_id, title=title, nrows=nrows, ncols=ncols

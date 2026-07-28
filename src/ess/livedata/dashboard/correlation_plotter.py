@@ -29,7 +29,15 @@ from .plot_params import (
     PlotDisplayParams1d,
     PlotDisplayParams2d,
 )
-from .plots import ImagePlotter, LinePlotter, PresenterBase, TimeBounds, TitleResolver
+from .plots import (
+    ImagePlotter,
+    LinePlotter,
+    PresenterBase,
+    TimeBounds,
+    TitleResolver,
+    ensure_span,
+    is_degenerate_span,
+)
 from .range_hook import Axis, RangeTargets
 
 
@@ -139,24 +147,6 @@ CORRELATION_HISTOGRAM_PLOTTERS = frozenset(
 )
 
 
-def _make_lookup(axis_data: sc.DataArray, data_max_time: sc.Variable) -> sc.bins.Lookup:
-    """Create lookup table with appropriate mode based on time overlap.
-
-    Uses 'previous' mode normally, but falls back to 'nearest' if all data
-    timestamps are before the first axis timestamp (which would produce NaNs).
-    """
-    axis_values = sc.values(axis_data) if axis_data.variances is not None else axis_data
-    axis_min_time = axis_data.coords['time'].min()
-    mode = 'nearest' if data_max_time < axis_min_time else 'previous'
-    if mode == 'nearest':  # scipp>=25.11.0 rejects int coords in this mode
-        dim = axis_values.dim
-        coord = axis_values.coords[dim]
-        # Only convert to float64 if needed; datetime64 coords are accepted as-is
-        if coord.dtype != sc.DType.datetime64:
-            axis_values = axis_values.assign_coords({dim: coord.astype('float64')})
-    return sc.lookup(axis_values, mode=mode)
-
-
 @dataclass(frozen=True)
 class AxisSpec:
     """Specification for a correlation axis."""
@@ -169,12 +159,39 @@ class AxisSpec:
     """Number of bins for this axis."""
 
 
+def _axis_bins(values: sc.Variable, axis: AxisSpec) -> sc.Variable | int:
+    """Binning for ``values``: a bin count, or explicit edges if degenerate.
+
+    ``hist`` derives edges from the value range and does not guard a degenerate
+    one (scipp/scipp#3935). A stationary device, or a single axis reading
+    correlated with every data point, yields bins of zero width: nothing is
+    drawn, and the axis range derived from those edges collapses to a point.
+    Bin over the interval such a range is widened to instead -- fixing the edges
+    rather than the view, because zero-width bars stay invisible however wide
+    the axis around them.
+    """
+    lo = sc.nanmin(values).value
+    hi = sc.nanmax(values).value
+    if not is_degenerate_span(lo, hi):
+        return axis.bins
+    return sc.linspace(
+        axis.name, *ensure_span(lo, hi, log=False), axis.bins + 1, unit=values.unit
+    )
+
+
 class CorrelationHistogramPlotter:
     """Base plotter for correlation histograms with arbitrary number of axes.
 
     Receives role-grouped data from DataSubscriber:
     - "primary": dict[DataKey, DataArray] - data to histogram
     - One or more axis roles (e.g., "x_axis", "y_axis") containing correlation values
+
+    Each point of the primary data is correlated with the axis value in effect at
+    its timestamp, i.e. the most recent axis reading at or before it. Points
+    predating the first reading of any axis have no such value and are excluded
+    from the histogram; correlating them with a reading taken later would be
+    fabricating the axis history. The plot therefore starts empty until the axes
+    and the data overlap in time.
     """
 
     AUTOSCALE_AXES: ClassVar[frozenset[Axis]] = frozenset()
@@ -203,6 +220,10 @@ class CorrelationHistogramPlotter:
     ) -> None:
         """Compute histograms for all data sources and render.
 
+        Data points predating the first reading of any axis are excluded. If that
+        leaves nothing to histogram, the render is skipped and the layer keeps
+        showing its placeholder.
+
         Parameters
         ----------
         data
@@ -228,18 +249,28 @@ class CorrelationHistogramPlotter:
                 )
             axis_data[axis.name] = ax
 
-        # Build bin spec
-        bin_spec = {axis.name: axis.bins for axis in self._axes}
+        lookups = {
+            name: sc.lookup(sc.values(ax), mode='previous')
+            for name, ax in axis_data.items()
+        }
+        # Earliest time at which every axis has a reading. Before it, 'previous'
+        # lookup yields NaN, which hist()/bin() would drop without a trace.
+        start = max(ax.coords['time'].min() for ax in axis_data.values())
 
         histograms: dict[DataKey, sc.DataArray] = {}
         for key, source_data in histogram_data.items():
-            dependent = source_data.copy(deep=False)
-            data_max_time = dependent.coords['time'].max()
+            dependent = source_data['time', start:].copy(deep=False)
+            if dependent.sizes['time'] == 0:
+                continue
 
             # Add all axis coordinates via lookup
-            for axis in self._axes:
-                lut = _make_lookup(axis_data[axis.name], data_max_time)
-                dependent.coords[axis.name] = lut[dependent.coords['time']]
+            for name, lut in lookups.items():
+                dependent.coords[name] = lut[dependent.coords['time']]
+
+            bin_spec = {
+                axis.name: _axis_bins(dependent.coords[axis.name], axis)
+                for axis in self._axes
+            }
 
             # Bin data with optional normalization by time width
             if self._normalize:
@@ -250,6 +281,9 @@ class CorrelationHistogramPlotter:
                 histograms[key] = dependent.bin(bin_spec).bins.mean()
             else:
                 histograms[key] = dependent.hist(bin_spec)
+
+        if not histograms:
+            return
 
         self._renderer.compute({PRIMARY: histograms}, title_resolver=title_resolver)
 

@@ -85,10 +85,13 @@ def _get_instrument_and_log_level(request):
     return instrument, log_level_name
 
 
-def _create_service_group(
+def create_service_group(
     request, services_config: dict[str, tuple[str, dict]]
 ) -> Generator[ServiceGroup, None, None]:
     """Common service group creation and lifecycle management.
+
+    Public so that a test module can define its own ``<name>_services`` fixture
+    for a service combination the shared fixtures do not offer.
 
     Parameters
     ----------
@@ -242,7 +245,7 @@ def monitor_services(request) -> Generator[ServiceGroup, None, None]:
     :
         ServiceGroup containing fake_monitors and monitor_data
     """
-    yield from _create_service_group(
+    yield from create_service_group(
         request,
         {
             'fake_monitors': (
@@ -276,7 +279,7 @@ def detector_services(request) -> Generator[ServiceGroup, None, None]:
     :
         ServiceGroup containing fake_detectors and detector_data
     """
-    yield from _create_service_group(
+    yield from create_service_group(
         request,
         {
             'fake_detectors': ('ess.livedata.services.fake_detectors', {}),
@@ -307,7 +310,7 @@ def reduction_services(request) -> Generator[ServiceGroup, None, None]:
     :
         ServiceGroup containing all reduction pipeline services
     """
-    yield from _create_service_group(
+    yield from create_service_group(
         request,
         {
             'fake_detectors': ('ess.livedata.services.fake_detectors', {}),

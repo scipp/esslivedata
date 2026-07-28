@@ -42,6 +42,7 @@ class DashboardBase(ServiceBase, ABC):
         transport: str = 'kafka',
         config_dir: str | None = None,
         auto_start: bool = False,
+        collapsed_sidebar: bool = False,
         basic_auth_password: str | None = None,
         basic_auth_cookie_secret: str | None = None,
     ):
@@ -56,6 +57,7 @@ class DashboardBase(ServiceBase, ABC):
         self._port = port
         self._dev = dev
         self._auto_start = auto_start
+        self._collapsed_sidebar = collapsed_sidebar
         self._basic_auth_password = basic_auth_password
         self._basic_auth_cookie_secret = basic_auth_cookie_secret
 
@@ -252,6 +254,7 @@ class DashboardBase(ServiceBase, ABC):
         template = pn.template.MaterialTemplate(
             title=self.get_dashboard_title(),
             sidebar=sidebar_with_heartbeat,
+            collapsed_sidebar=self._collapsed_sidebar,
             main=main_content,
             header_background=self.get_header_background(),
             header=header,

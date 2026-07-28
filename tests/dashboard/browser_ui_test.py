@@ -10,7 +10,9 @@ through the stable ``lt-*`` automation hooks:
 - a grid created in one session appears in others without stealing focus;
 - a cell title survives a no-op Save of the cell-properties modal;
 - disabling or removing a grid keeps the remaining tabs resolving and
-  updating.
+  updating;
+- two sessions racing to save edits on the same grid converge on one title,
+  without a server-side exception or a duplicated/lost tab.
 
 Each test launches its own dashboard on a dedicated port for isolation, since
 grid topology changes are process-global. Runs via ``pytest -m browser``
@@ -55,7 +57,7 @@ def _add_grid(dash: Dashboard, title: str) -> None:
 
 @pytest.mark.browser
 def test_session_reload_restores_tabs_and_live_updates():
-    with fake_dashboard("dummy", 5033) as url, Dashboard.connect(url) as dash:
+    with fake_dashboard("dummy", 5033) as fake, Dashboard.connect(fake.url) as dash:
         dash.goto_tab("Detectors")
         assert_updating(dash, "session before reload")
 
@@ -72,8 +74,8 @@ def test_session_reload_restores_tabs_and_live_updates():
 @pytest.mark.browser
 def test_grid_created_in_one_session_appears_in_other_without_stealing_focus():
     with (
-        fake_dashboard("dummy", 5034) as url,
-        Dashboard.connect_many(2, url) as (creator, observer),
+        fake_dashboard("dummy", 5034) as fake,
+        Dashboard.connect_many(2, fake.url) as (creator, observer),
     ):
         observer_tab = _active_tab(observer)
         creator.goto_tab("Manage Plots")
@@ -101,7 +103,7 @@ def test_cell_title_survives_noop_save_of_cell_properties_modal():
     # The per-cell hook (not DOM order) addresses the cell: a rebuilt cell --
     # e.g. after the rename below -- moves to the end of the document.
     pencil = ".lt-cell-r0c0.lt-tool-pencil"
-    with fake_dashboard("dummy", 5035) as url, Dashboard.connect(url) as dash:
+    with fake_dashboard("dummy", 5035) as fake, Dashboard.connect(fake.url) as dash:
         page = dash.page
         dash.goto_tab("Detectors")
 
@@ -131,7 +133,7 @@ def test_cell_title_survives_noop_save_of_cell_properties_modal():
 
 @pytest.mark.browser
 def test_remaining_tabs_keep_updating_after_disabling_and_removing_grids():
-    with fake_dashboard("dummy", 5036) as url, Dashboard.connect(url) as dash:
+    with fake_dashboard("dummy", 5036) as fake, Dashboard.connect(fake.url) as dash:
         # Arrange three grids ordered [Bravo, Charlie, Detectors]: two empty
         # grids ahead of the fixture's populated one, so disabling the first
         # and removing the middle both shift the Detectors tab position --
@@ -174,3 +176,129 @@ def test_remaining_tabs_keep_updating_after_disabling_and_removing_grids():
         )
         dash.goto_tab("Detectors")
         assert_updating(dash, "Detectors tab after removing middle grid")
+
+
+@pytest.mark.browser
+def test_multi_layer_cell_gear_picks_the_layer_to_configure():
+    # A cell with several layers turns its gear into a layer picker. Both the
+    # gear and the entry it routes to are addressed per cell, since DOM order
+    # across cells is not stable.
+    gear = ".lt-cell-r2c0.lt-tool-settings"
+    with fake_dashboard("dummy", 5038) as fake, Dashboard.connect(fake.url) as dash:
+        page = dash.page
+        dash.goto_tab("Detectors")
+
+        # The picker lists one entry per layer, named after it.
+        dash.click(gear)
+        entries = [
+            page.get_by_text(f"Beam monitor → Histogram → Lines ({source})").first
+            for source in ("monitor1", "monitor2")
+        ]
+        for entry in entries:
+            wait_until(dash, entry.is_visible, label="layer menu entry")
+
+        # Choosing one opens the config modal for that layer, not the cell's
+        # first: the source selector is pre-filled with the chosen layer's
+        # source. (The dialog's own inner_text is empty -- Panel renders each
+        # widget into its own shadow root -- so assert on the chip itself.)
+        entries[1].click()
+        page.locator("[role=dialog]").first.wait_for(state="visible", timeout=10000)
+        chip = page.locator(".choices__list--multiple .choices__item").first
+        chip.wait_for(state="visible", timeout=10000)
+        assert chip.inner_text().startswith("monitor2")
+
+
+@pytest.mark.browser
+def test_concurrent_grid_property_edits_resolve_to_one_title_without_crash():
+    """Two sessions racing to save edits on the same grid's properties.
+
+    Grid edit is inline (a Manage Plots form switching into an edit state),
+    not a modal, despite the wording in
+    ``.claude/rules/dashboard-widgets.md``.
+
+    There is no true last-writer-wins conflict resolution here: each
+    session's Save Changes targets the grid it started editing, captured by
+    id when the edit form opened. Whichever save reaches the orchestrator
+    while that grid still exists commits; a save that arrives once the grid
+    is already gone (replaced by the other session) is dropped -- with an
+    error notification, not an unhandled exception (the bug this test
+    guards: it used to be an unhandled ``KeyError``). In a tight race,
+    which of the two saves actually lands first is not something this test
+    controls or asserts on -- only the invariants that must hold regardless:
+    exactly one of the two submitted titles survives, the losing session is
+    told its edit did not apply, no server-side exception is logged, and the
+    tab set stays intact and live.
+    """
+    pencil = ".lt-grid-detectors.lt-tool-pencil"
+    first_title = "First Session Title"
+    second_title = "Second Session Title"
+    with (
+        fake_dashboard("dummy", 5037) as fake,
+        Dashboard.connect_many(2, fake.url) as (first, second),
+    ):
+        for dash in (first, second):
+            dash.goto_tab("Manage Plots")
+
+        # Both sessions open the same grid's edit form and type a different
+        # title before either saves.
+        first.click(pencil)
+        first.page.locator(_GRID_TITLE_INPUT).fill(first_title)
+        first.page.keyboard.press("Enter")
+
+        second.click(pencil)
+        second.page.locator(_GRID_TITLE_INPUT).fill(second_title)
+        second.page.keyboard.press("Enter")
+
+        log_offset = fake.log.stat().st_size
+
+        # Fire both saves back-to-back, no wait in between, to race each
+        # click against the other session's own topology poll.
+        first.page.get_by_role("button", name="Save Changes", exact=True).click()
+        second.page.get_by_role("button", name="Save Changes", exact=True).click()
+
+        wait_until(
+            first,
+            lambda: (
+                first_title in first.tab_names() or second_title in first.tab_names()
+            ),
+            label="one of the two submitted titles to win the race",
+        )
+        winning_title, losing_title = (
+            (first_title, second_title)
+            if first_title in first.tab_names()
+            else (second_title, first_title)
+        )
+        winner, loser = (
+            (first, second) if winning_title == first_title else (second, first)
+        )
+
+        for dash in (first, second):
+            wait_until(
+                dash,
+                lambda dash=dash: winning_title in dash.tab_names(),
+                label="both sessions to converge on the same grid title",
+            )
+            tabs = dash.tab_names()
+            assert tabs.count(winning_title) == 1, tabs
+            assert losing_title not in tabs
+            assert "Detectors" not in tabs
+
+        # The losing session is told its edit did not apply -- a dropped
+        # save is a deliberate, user-visible outcome, not silent data loss.
+        wait_until(
+            loser,
+            lambda: loser.page.locator('.notyf__message').count() > 0,
+            label="the losing session's error notification",
+        )
+        assert (
+            'grid was removed'
+            in loser.page.locator('.notyf__message').first.inner_text()
+        )
+
+        new_log = fake.log.read_text()[log_offset:]
+        assert "Traceback" not in new_log, (
+            f"server logged an exception while saving concurrent grid edits:\n{new_log}"
+        )
+
+        winner.goto_tab(winning_title)
+        assert_updating(winner, "surviving grid after concurrent edit race")

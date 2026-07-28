@@ -1,15 +1,19 @@
 # SPDX-License-Identifier: BSD-3-Clause
 # Copyright (c) 2025 Scipp contributors (https://github.com/scipp)
 import uuid
+from collections.abc import Iterator
 
 import pytest
 import scipp as sc
 from pydantic import Field
 
+from ess.livedata.config import instrument_registry
 from ess.livedata.config.acknowledgement import (
     AcknowledgementResponse,
     CommandAcknowledgement,
 )
+from ess.livedata.config.models import Interval, PolygonROI, RectangleROI
+from ess.livedata.config.roi_names import ROIGeometryType, get_roi_mapper
 from ess.livedata.config.workflow_spec import (
     REDUCTION,
     JobId,
@@ -26,7 +30,14 @@ from ess.livedata.core.message import (
     STATUS_STREAM_ID,
     StreamKind,
 )
-from ess.livedata.dashboard.fake_backend import FakeBackend, expand_template
+from ess.livedata.dashboard.command_service import CommandService
+from ess.livedata.dashboard.fake_backend import (
+    FakeBackend,
+    FakeBackendTransport,
+    expand_template,
+)
+from ess.livedata.dashboard.roi_publisher import ROIPublisher
+from ess.livedata.dashboard.transport import DashboardResources
 
 
 class Outputs1D(WorkflowOutputsBase):
@@ -270,6 +281,134 @@ class TestFakeBackend:
     def test_poll_is_empty_without_active_jobs(self) -> None:
         backend = FakeBackend({})
         assert backend.poll() == []
+
+
+_DETECTOR_SOURCE = 'panel_0'
+
+
+def _rectangle(x: float, y: float) -> RectangleROI:
+    return RectangleROI(
+        x=Interval(min=x, max=x + 10.0), y=Interval(min=y, max=y + 10.0)
+    )
+
+
+def _polygon(x: float) -> PolygonROI:
+    return PolygonROI(x=[x, x + 5.0, x], y=[0.0, 5.0, 10.0], x_unit=None, y_unit=None)
+
+
+class _DetectorSession:
+    """A started detector-view job, driven through the fake transport.
+
+    Uses the real :class:`CommandService` and :class:`ROIPublisher` so the ROIs
+    take the same route as those drawn in the UI.
+    """
+
+    def __init__(self, resources: DashboardResources) -> None:
+        self._source = resources.message_source
+        self.workflow_id = next(
+            workflow_id
+            for workflow_id in instrument_registry['dummy'].workflow_factory
+            if workflow_id.name == 'panel_0_xy'
+        )
+        job_id = JobId(source_name=_DETECTOR_SOURCE, job_number=uuid.uuid4())
+        self.publisher = ROIPublisher(sink=resources.roi_sink)
+        self.publisher.set_job_number_resolver(lambda _: job_id.job_number)
+        CommandService(sink=resources.command_sink).send(
+            WorkflowConfig.from_params(workflow_id=self.workflow_id, job_id=job_id)
+        )
+
+    def publish(self, rois: dict, geometry_type: ROIGeometryType = 'rectangle') -> None:
+        """Publish the full ROI set for one geometry, as the UI does."""
+        self.publisher.publish(
+            self.workflow_id,
+            _DETECTOR_SOURCE,
+            rois,
+            get_roi_mapper().geometry_for_type(geometry_type),
+        )
+
+    def results(self) -> dict[str, sc.DataArray]:
+        """Poll the backend, returning the freshest result per output name."""
+        return {
+            ResultKey.model_validate_json(m.stream.name).output_name: m.value
+            for m in self._source.get_messages()
+            if m.stream.kind is StreamKind.LIVEDATA_DATA
+        }
+
+
+@pytest.fixture
+def session(monkeypatch: pytest.MonkeyPatch) -> Iterator[_DetectorSession]:
+    # Zero update period makes every poll due, so each poll yields fresh results.
+    monkeypatch.setattr(
+        'ess.livedata.dashboard.fake_backend._UPDATE_PERIOD_SECONDS', 0.0
+    )
+    with FakeBackendTransport(instrument='dummy') as resources:
+        yield _DetectorSession(resources)
+
+
+class TestROILoopback:
+    def test_spectra_are_empty_until_an_roi_is_drawn(
+        self, session: _DetectorSession
+    ) -> None:
+        results = session.results()
+        spectra = results['roi_spectra_cumulative']
+        assert spectra.sizes['roi'] == 0
+        assert spectra.sizes['time_of_arrival'] == 64
+        assert len(results['roi_rectangle']) == 0
+
+    def test_roi_dim_follows_published_rois(self, session: _DetectorSession) -> None:
+        session.publish({0: _rectangle(0.0, 0.0), 1: _rectangle(20.0, 20.0)})
+        assert session.results()['roi_spectra_cumulative'].sizes['roi'] == 2
+
+        session.publish({0: _rectangle(0.0, 0.0)})
+        spectra = session.results()['roi_spectra_cumulative']
+        assert spectra.sizes['roi'] == 1
+        assert spectra.coords['roi'].values.tolist() == [0]
+
+        session.publish({})
+        assert session.results()['roi_spectra_cumulative'].sizes['roi'] == 0
+
+    def test_roi_coord_carries_published_indices(
+        self, session: _DetectorSession
+    ) -> None:
+        session.publish({1: _rectangle(0.0, 0.0), 3: _rectangle(20.0, 20.0)})
+        spectra = session.results()['roi_spectra_cumulative']
+        assert spectra.coords['roi'].values.tolist() == [1, 3]
+
+    def test_geometries_share_the_roi_dim(self, session: _DetectorSession) -> None:
+        session.publish({0: _rectangle(0.0, 0.0)})
+        session.publish({4: _polygon(0.0)}, geometry_type='polygon')
+        spectra = session.results()['roi_spectra_cumulative']
+        assert spectra.coords['roi'].values.tolist() == [0, 4]
+
+    def test_spectra_follow_roi_geometry(self, session: _DetectorSession) -> None:
+        # Comparing rows within one update isolates the ROI dependence from the
+        # update counter, which also varies the data.
+        session.publish({0: _rectangle(0.0, 0.0), 1: _rectangle(0.0, 0.0)})
+        spectra = session.results()['roi_spectra_cumulative']
+        assert sc.identical(spectra['roi', 0].data, spectra['roi', 1].data)
+
+        session.publish({0: _rectangle(0.0, 0.0), 1: _rectangle(20.0, 20.0)})
+        spectra = session.results()['roi_spectra_cumulative']
+        assert not sc.allclose(spectra['roi', 0].data, spectra['roi', 1].data)
+
+    def test_current_spectra_are_stamped_with_time(
+        self, session: _DetectorSession
+    ) -> None:
+        session.publish({0: _rectangle(0.0, 0.0)})
+        spectra = session.results()['roi_spectra_current']
+        assert spectra.sizes['roi'] == 1
+        assert spectra.coords['time'].ndim == 0
+
+    def test_readback_echoes_published_rois(self, session: _DetectorSession) -> None:
+        rois = {0: _rectangle(0.0, 0.0), 2: _rectangle(20.0, 20.0)}
+        session.publish(rois)
+        readback = session.results()['roi_rectangle']
+        assert RectangleROI.from_concatenated_data_array(readback) == rois
+
+    def test_rois_of_other_jobs_are_ignored(self, session: _DetectorSession) -> None:
+        session.publisher.set_job_number_resolver(lambda _: uuid.uuid4())
+        session.publish({0: _rectangle(0.0, 0.0)})
+        assert session.results()['roi_spectra_cumulative'].sizes['roi'] == 0
 
 
 @pytest.mark.parametrize('update', [0, 1, 7])

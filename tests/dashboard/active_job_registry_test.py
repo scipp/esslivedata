@@ -212,6 +212,11 @@ class TestUnobservedWorkflow:
 
         assert not registry.is_current(_workflow_id, uuid.uuid4())
 
+    def test_has_no_stale_drops(self):
+        registry, _ds, _js = _make_registry()
+
+        assert registry.stale_count(_workflow_id) == 0
+
 
 class TestRecordStale:
     def test_counts_without_side_effects(self):
@@ -224,5 +229,22 @@ class TestRecordStale:
         for _ in range(3):
             registry.record_stale(_workflow_id, uuid.uuid4())
 
+        assert registry.stale_count(_workflow_id) == 3
         assert registry.is_current(_workflow_id, current)
         assert key in ds
+
+    def test_counts_per_workflow(self):
+        registry, _ds, _js = _make_registry()
+
+        registry.record_stale(_workflow_id, uuid.uuid4())
+
+        assert registry.stale_count(_workflow_id) == 1
+        assert registry.stale_count(_other_workflow_id) == 0
+
+    def test_count_is_scoped_to_the_current_generation(self):
+        registry, _ds, _js = _make_registry()
+        registry.record_stale(_workflow_id, uuid.uuid4())
+
+        registry.begin_generation(_workflow_id, uuid.uuid4(), config={})
+
+        assert registry.stale_count(_workflow_id) == 0

@@ -114,6 +114,41 @@ def wait_for_watermark_stall(
         previous = current
 
 
+def wait_for_watermark_advance(topic: str, *, since: int, timeout: float = 30.0) -> int:
+    """Wait until a topic's high watermark exceeds ``since``, then return it.
+
+    Complements :func:`wait_for_watermark_stall`: proves a producer is live
+    (e.g. before asserting a later stop makes it go quiet) without a fixed
+    sleep, which would either be too short in a slow CI run or waste time
+    otherwise.
+
+    Parameters
+    ----------
+    topic:
+        Topic whose single-partition high watermark to observe.
+    since:
+        Watermark value that must be exceeded for the wait to succeed.
+    timeout:
+        Maximum time to wait in seconds.
+
+    Raises
+    ------
+    WaitTimeout:
+        If the watermark has not advanced past ``since`` within the timeout.
+    """
+    deadline = time.time() + timeout
+    while True:
+        current = topic_high_watermark(topic)
+        if current > since:
+            return current
+        if time.time() > deadline:
+            raise WaitTimeout(
+                f"Watermark of {topic} did not advance past {since} "
+                f"after {timeout} seconds"
+            )
+        time.sleep(0.2)
+
+
 def wait_for_condition(
     condition: Callable[[], bool], timeout: float = 5.0, poll_interval: float = 0.1
 ) -> None:
