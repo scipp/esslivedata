@@ -12,8 +12,13 @@ from tests.integration.conftest import IntegrationEnv
 from tests.integration.helpers import (
     topic_high_watermark,
     wait_for_job_data,
+    wait_for_watermark_advance,
     wait_for_watermark_stall,
 )
+
+# Gap between detecting the stall and reconfirming it, so the reconfirmation
+# is not just re-reading the sample that triggered the stall detection.
+STALL_RECHECK_GAP = 8.0
 
 # fake_monitors keeps publishing raw ev44 data on this topic regardless of
 # whether any workflow is running, so it must not be used for the stall
@@ -54,13 +59,14 @@ def test_stop_workflow_halts_backend_publishing(
     # a later stall assertion would be vacuous (e.g. if the topic name were
     # wrong, or the pipeline had already stalled for an unrelated reason).
     first = topic_high_watermark(DATA_TOPIC)
-    time.sleep(4.0)
-    second = topic_high_watermark(DATA_TOPIC)
-    assert second > first, "Data topic watermark must be advancing before stop"
+    wait_for_watermark_advance(DATA_TOPIC, since=first, timeout=30.0)
 
     assert backend.job_orchestrator.stop_workflow(WORKFLOW_ID)
 
     # Watermark stalls once the worker consumes the stop command...
     stalled_watermark = wait_for_watermark_stall(DATA_TOPIC)
-    # ...and stays stalled -- no further messages trickle in afterwards.
+    # ...and stays stalled: a real gap separates detection from
+    # reconfirmation, so this rules out a late trickle rather than
+    # re-reading the sample that triggered the stall detection.
+    time.sleep(STALL_RECHECK_GAP)
     assert topic_high_watermark(DATA_TOPIC) == stalled_watermark
