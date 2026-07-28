@@ -119,12 +119,19 @@ def test_malformed_payloads_do_not_stall_service(
     # the proof rests on every probe sitting behind the poison in the partition.
     producer.flush(timeout=30.0)
 
-    def probe_output_arrived() -> bool:
-        """Keep the probe source fed until its first result comes back."""
+    def feed_probe_and_check_for_output() -> bool:
+        """Publish one probe message, then report whether a result came back.
+
+        The probe source is fed on every poll rather than in one burst up
+        front: a batcher completes a stream's slot on the *next* message of
+        that stream, so a burst can leave its own tail unclosed until some
+        later probe message arrives. A steady feed keeps that from being
+        mistaken for a stalled service.
+        """
         _publish_probe(producer)
         return bool(_probe_outputs(backend))
 
     wait_for_backend_condition(
-        backend, probe_output_arrived, timeout=60.0, poll_interval=1.0
+        backend, feed_probe_and_check_for_output, timeout=60.0, poll_interval=1.0
     )
     assert integration_env.services['monitor_data'].is_running()
