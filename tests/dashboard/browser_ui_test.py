@@ -174,3 +174,33 @@ def test_remaining_tabs_keep_updating_after_disabling_and_removing_grids():
         )
         dash.goto_tab("Detectors")
         assert_updating(dash, "Detectors tab after removing middle grid")
+
+
+@pytest.mark.browser
+def test_multi_layer_cell_gear_picks_the_layer_to_configure():
+    # A cell with several layers turns its gear into a layer picker. Both the
+    # gear and the entry it routes to are addressed per cell, since DOM order
+    # across cells is not stable.
+    gear = ".lt-cell-r2c0.lt-tool-settings"
+    with fake_dashboard("dummy", 5038) as url, Dashboard.connect(url) as dash:
+        page = dash.page
+        dash.goto_tab("Detectors")
+
+        # The picker lists one entry per layer, named after it.
+        dash.click(gear)
+        entries = [
+            page.get_by_text(f"Beam monitor → Histogram → Lines ({source})").first
+            for source in ("monitor1", "monitor2")
+        ]
+        for entry in entries:
+            wait_until(dash, entry.is_visible, label="layer menu entry")
+
+        # Choosing one opens the config modal for that layer, not the cell's
+        # first: the source selector is pre-filled with the chosen layer's
+        # source. (The dialog's own inner_text is empty -- Panel renders each
+        # widget into its own shadow root -- so assert on the chip itself.)
+        entries[1].click()
+        page.locator("[role=dialog]").first.wait_for(state="visible", timeout=10000)
+        chip = page.locator(".choices__list--multiple .choices__item").first
+        chip.wait_for(state="visible", timeout=10000)
+        assert chip.inner_text().startswith("monitor2")
