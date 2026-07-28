@@ -14,8 +14,9 @@ through the stable ``lt-*`` automation hooks:
 - two sessions racing to save edits on the same grid converge on one title,
   without a server-side exception or a duplicated/lost tab.
 
-Each test launches its own dashboard on a dedicated port for isolation, since
-grid topology changes are process-global. Runs via ``pytest -m browser``
+Each test launches its own dashboard for isolation, since grid topology changes
+are process-global; ports are allocated per launch, so concurrent runs of this
+suite do not fight over them. Runs via ``pytest -m browser``
 (excluded from the default run; CI runs them via ``tox -e browser``; skips
 cleanly where Playwright is absent).
 """
@@ -57,7 +58,7 @@ def _add_grid(dash: Dashboard, title: str) -> None:
 
 @pytest.mark.browser
 def test_session_reload_restores_tabs_and_live_updates():
-    with fake_dashboard("dummy", 5033) as fake, Dashboard.connect(fake.url) as dash:
+    with fake_dashboard("dummy") as fake, Dashboard.connect(fake.url) as dash:
         dash.goto_tab("Detectors")
         assert_updating(dash, "session before reload")
 
@@ -74,7 +75,7 @@ def test_session_reload_restores_tabs_and_live_updates():
 @pytest.mark.browser
 def test_grid_created_in_one_session_appears_in_other_without_stealing_focus():
     with (
-        fake_dashboard("dummy", 5034) as fake,
+        fake_dashboard("dummy") as fake,
         Dashboard.connect_many(2, fake.url) as (creator, observer),
     ):
         observer_tab = _active_tab(observer)
@@ -103,7 +104,7 @@ def test_cell_title_survives_noop_save_of_cell_properties_modal():
     # The per-cell hook (not DOM order) addresses the cell: a rebuilt cell --
     # e.g. after the rename below -- moves to the end of the document.
     pencil = ".lt-cell-r0c0.lt-tool-pencil"
-    with fake_dashboard("dummy", 5035) as fake, Dashboard.connect(fake.url) as dash:
+    with fake_dashboard("dummy") as fake, Dashboard.connect(fake.url) as dash:
         page = dash.page
         dash.goto_tab("Detectors")
 
@@ -133,7 +134,7 @@ def test_cell_title_survives_noop_save_of_cell_properties_modal():
 
 @pytest.mark.browser
 def test_remaining_tabs_keep_updating_after_disabling_and_removing_grids():
-    with fake_dashboard("dummy", 5036) as fake, Dashboard.connect(fake.url) as dash:
+    with fake_dashboard("dummy") as fake, Dashboard.connect(fake.url) as dash:
         # Arrange three grids ordered [Bravo, Charlie, Detectors]: two empty
         # grids ahead of the fixture's populated one, so disabling the first
         # and removing the middle both shift the Detectors tab position --
@@ -184,7 +185,7 @@ def test_multi_layer_cell_gear_picks_the_layer_to_configure():
     # gear and the entry it routes to are addressed per cell, since DOM order
     # across cells is not stable.
     gear = ".lt-cell-r2c0.lt-tool-settings"
-    with fake_dashboard("dummy", 5038) as fake, Dashboard.connect(fake.url) as dash:
+    with fake_dashboard("dummy") as fake, Dashboard.connect(fake.url) as dash:
         page = dash.page
         dash.goto_tab("Detectors")
 
@@ -233,7 +234,7 @@ def test_concurrent_grid_property_edits_resolve_to_one_title_without_crash():
     first_title = "First Session Title"
     second_title = "Second Session Title"
     with (
-        fake_dashboard("dummy", 5037) as fake,
+        fake_dashboard("dummy") as fake,
         Dashboard.connect_many(2, fake.url) as (first, second),
     ):
         for dash in (first, second):

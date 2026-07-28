@@ -38,7 +38,7 @@ from tests.helpers.browser import (
 @pytest.mark.browser
 def test_two_sessions_see_plots_and_keep_receiving_updates():
     with (
-        fake_dashboard("dummy", 5032) as fake,
+        fake_dashboard("dummy") as fake,
         Dashboard.connect_many(2, fake.url) as (
             first,
             second,
