@@ -99,6 +99,13 @@ def test_rapid_recommit_admits_only_latest_generation(
     # deterministic instead of a race: the observed message predates the flip
     # below, so whichever generation stamped it is superseded by the time the
     # dashboard forwards it.
+    #
+    # The helper choice is load-bearing. wait_for_condition only polls;
+    # wait_for_backend_condition calls backend.update() before every check and
+    # would forward the very message this waits for, letting it meet the filter
+    # while its generation is still current. The stale drop then depends on
+    # winning the race this construction exists to avoid — and the test would
+    # most often still pass, hiding the loss.
     watermark = topic_high_watermark(data_topic)
     wait_for_condition(
         lambda: topic_high_watermark(data_topic) > watermark,
@@ -111,14 +118,21 @@ def test_rapid_recommit_admits_only_latest_generation(
     assert len(job_numbers) == _BURST_RECOMMITS + 2, "commits reused a job_number"
 
     # The final commit cleared the buffers, so data reappears only once the
-    # backend runs the final generation. Stale drops are counted against the
-    # same generation record and are not reset again: no further commit
-    # follows, and a heartbeat of a superseded generation is recognized as such
-    # instead of being adopted.
-    def settled() -> bool:
-        return bool(stamps()) and registry.stale_count(workflow_id) > 0
+    # backend runs the final generation.
+    wait_for_backend_condition(
+        backend, lambda: bool(stamps()), timeout=90.0, poll_interval=0.1
+    )
 
-    wait_for_backend_condition(backend, settled, timeout=90.0, poll_interval=0.1)
+    # The topic has a single partition and is therefore forwarded in offset
+    # order: the pre-flip message observed above met the generation filter
+    # before the final generation's first result did. Its count survives, the
+    # counter being reset only by a generation flip and none following — a
+    # superseded generation's heartbeat is recognized as such rather than
+    # adopted.
+    assert registry.stale_count(workflow_id) > 0, (
+        "no stale-generation drop was counted, although data published before "
+        "the final commit was still unforwarded when it happened"
+    )
 
     polls: list[dict[DataKey, JobNumber]] = []
 
@@ -132,8 +146,4 @@ def test_rapid_recommit_admits_only_latest_generation(
     assert admitted == {final_job.job_number}, (
         f"data from superseded generations reached DataService: "
         f"{admitted - {final_job.job_number}}"
-    )
-    assert registry.stale_count(workflow_id) > 0, (
-        "no stale-generation drop was counted, although data published before "
-        "the final commit was still unforwarded when it happened"
     )
