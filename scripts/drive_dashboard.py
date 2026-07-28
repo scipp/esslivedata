@@ -48,6 +48,7 @@ import tempfile
 import time
 import urllib.request
 from contextlib import contextmanager
+from dataclasses import dataclass
 from pathlib import Path
 from urllib.error import URLError
 
@@ -204,6 +205,23 @@ def _wait_until_ready(url: str, log: Path, *, timeout_s: float = 60.0) -> None:
     raise TimeoutError(f"Dashboard at {url} not ready within {timeout_s}s.\n{tail}")
 
 
+@dataclass
+class FakeDashboard:
+    """A launched fake-backend dashboard: its URL plus its server log.
+
+    ``log`` is the path to the server's merged stdout/stderr (still being
+    appended to while the dashboard runs), for tests that need to assert on
+    server-side behavior a browser can't observe directly -- e.g. that an
+    action didn't raise an unhandled exception. Read only the tail written
+    after your action (``log.read_text()[offset:]``, with ``offset`` taken
+    from ``log.stat().st_size`` beforehand) so unrelated startup log lines
+    can't produce a false positive.
+    """
+
+    url: str
+    log: Path
+
+
 @contextmanager
 def _fake_dashboard(instrument: str, port: int):
     """Launch a Kafka-free fake-backend dashboard seeded from the fixture.
@@ -212,6 +230,7 @@ def _fake_dashboard(instrument: str, port: int):
     to its config dir), waits for readiness, and tears the server down on exit.
     The sidebar starts collapsed: it is static here (announcements are off), so
     an open drawer would only narrow the plots under test and their screenshots.
+    Yields a :class:`FakeDashboard`.
     """
     fixture = REPO_ROOT / "tests/dashboard/ui_config_fixtures" / instrument
     if not fixture.is_dir():
@@ -249,7 +268,7 @@ def _fake_dashboard(instrument: str, port: int):
             )
             try:
                 _wait_until_ready(f"http://localhost:{port}", log)
-                yield f"http://localhost:{port}"
+                yield FakeDashboard(url=f"http://localhost:{port}", log=log)
             finally:
                 proc.terminate()
                 try:
@@ -284,8 +303,8 @@ def main() -> None:
     @contextmanager
     def target_url():
         if args.launch:
-            with _fake_dashboard(args.instrument, args.port) as url:
-                yield url
+            with _fake_dashboard(args.instrument, args.port) as fake:
+                yield fake.url
         else:
             yield args.url
 
