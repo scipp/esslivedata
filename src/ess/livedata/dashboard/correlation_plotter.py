@@ -181,11 +181,12 @@ def _axis_bins(values: sc.Variable, axis: AxisSpec) -> sc.Variable | int:
     """Binning for ``values``: a bin count, or explicit edges if degenerate.
 
     ``hist`` derives edges from the value range and does not guard a degenerate
-    one. A stationary device, or a single axis reading correlated with every
-    data point, yields bins of zero width: nothing is drawn, and the axis range
-    derived from those edges collapses to a point. Bin over the interval such a
-    range is widened to instead -- fixing the edges rather than the view,
-    because zero-width bars stay invisible however wide the axis around them.
+    one (scipp/scipp#3935). A stationary device, or a single axis reading
+    correlated with every data point, yields bins of zero width: nothing is
+    drawn, and the axis range derived from those edges collapses to a point.
+    Bin over the interval such a range is widened to instead -- fixing the edges
+    rather than the view, because zero-width bars stay invisible however wide
+    the axis around them.
     """
     lo = sc.nanmin(values).value
     hi = sc.nanmax(values).value
