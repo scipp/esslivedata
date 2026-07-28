@@ -153,7 +153,7 @@ def assert_server_still_serves(browser: Browser, url: str) -> None:
 
 @pytest.mark.browser
 def test_session_churn_returns_to_baseline_and_server_stays_usable() -> None:
-    with fake_dashboard("dummy", 5070) as fake, open_browser() as browser:
+    with fake_dashboard("dummy") as fake, open_browser() as browser:
         churned_at = fake.log.stat().st_size
         for _ in range(CHURN_CYCLES):
             contexts = [
