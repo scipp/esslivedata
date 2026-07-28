@@ -252,6 +252,7 @@ def _create_toolbar_visibility_button(
     *,
     visible: bool,
     on_toggle: Callable[[bool], None],
+    css_classes: list[str] | None = None,
 ) -> pn.widgets.Button:
     """Adjustments button toggling per-layer info-row visibility for a cell."""
 
@@ -274,7 +275,7 @@ def _create_toolbar_visibility_button(
         # Hand-rolled (toggling icon) so it bypasses create_tool_button; tag it
         # with the stable automation hooks by hand. Icon name varies, so use a
         # semantic suffix rather than lt-tool-{icon_name}.
-        css_classes=['lt-tool', 'lt-tool-layer-details'],
+        css_classes=['lt-tool', 'lt-tool-layer-details', *(css_classes or [])],
         stylesheets=create_tool_button_stylesheet(Colors.TEXT_MUTED, HoverColors.MUTED),
     )
     state = {'visible': visible}
@@ -293,6 +294,7 @@ def _create_configure_button_or_menu(
     *,
     layers: list[tuple[LayerId, str]],
     on_configure: Callable[[LayerId], None],
+    css_classes: list[str] | None = None,
 ) -> pn.widgets.Button | pn.widgets.MenuButton:
     """
     Gear button (single layer) or menu picking which layer to configure.
@@ -307,6 +309,8 @@ def _create_configure_button_or_menu(
         ``(layer_id, title)`` pairs for the cell's layers, in display order.
     on_configure:
         Callback invoked with the layer ID to configure.
+    css_classes:
+        Extra context classes, so the button is addressable per cell.
     """
     button_color = Colors.TEXT_MUTED
     hover_color = HoverColors.MUTED
@@ -318,6 +322,7 @@ def _create_configure_button_or_menu(
             button_color=button_color,
             hover_color=hover_color,
             on_click_callback=lambda: on_configure(layer_id),
+            css_classes=css_classes,
         )
 
     # Titles carry HTML entities (e.g. '&rarr;'); unescape for plain menu
@@ -356,7 +361,7 @@ def _create_configure_button_or_menu(
         margin=0,
         # MenuButton (dropdown), so it bypasses create_tool_button; tag it with
         # the same hooks as the single-layer gear for consistent automation.
-        css_classes=['lt-tool', 'lt-tool-settings'],
+        css_classes=['lt-tool', 'lt-tool-settings', *(css_classes or [])],
         stylesheets=stylesheets,
     )
 
@@ -412,9 +417,10 @@ def create_cell_titlebar(
         Optional pane showing the data freshness/lag indicator, placed between
         the title and the action buttons. Updated in place by the caller.
     css_classes:
-        Extra context classes for the edit (pencil) button so repeated cell
-        instances are uniquely addressable in automation (e.g.
-        ``lt-cell-r0c0``); a rebuilt cell's DOM position is not stable.
+        Extra context classes for every button in the titlebar, so repeated
+        cell instances are uniquely addressable in automation (e.g.
+        ``lt-cell-r0c0``); a rebuilt cell's DOM position is not stable, and
+        the three buttons are distinguished by their ``lt-tool-*`` class.
 
     Returns
     -------
@@ -432,6 +438,7 @@ def create_cell_titlebar(
     gear_button = _create_configure_button_or_menu(
         layers=configure_layers,
         on_configure=on_configure_layer,
+        css_classes=css_classes,
     )
     edit_button = create_tool_button(
         icon_name='pencil',
@@ -443,6 +450,7 @@ def create_cell_titlebar(
     toggle_button = _create_toolbar_visibility_button(
         visible=toolbars_visible,
         on_toggle=on_toggle_toolbars_callback,
+        css_classes=css_classes,
     )
 
     right_buttons: list = [gear_button, edit_button, toggle_button]

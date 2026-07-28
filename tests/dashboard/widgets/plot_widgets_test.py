@@ -1,6 +1,7 @@
 # SPDX-License-Identifier: BSD-3-Clause
 # Copyright (c) 2025 Scipp contributors (https://github.com/scipp)
 import pydantic
+import pytest
 import scipp as sc
 
 from ess.livedata.config.workflow_spec import (
@@ -56,30 +57,35 @@ class TestPerPanelToolHooks:
         assert 'lt-tool' in menu.css_classes
         assert 'lt-tool-settings' in menu.css_classes
 
-    def test_titlebar_pencil_carries_per_cell_context_hook(self) -> None:
-        """The edit pencil must carry the caller's per-cell context class.
+    @pytest.mark.parametrize('n_layers', [1, 2], ids=['gear', 'layer_menu'])
+    def test_titlebar_tools_carry_per_cell_context_hook(self, n_layers: int) -> None:
+        """Every titlebar tool must carry the caller's per-cell context class.
 
-        A rebuilt cell's DOM position is not stable, so automation addresses
-        the pencil via the cell-position context (e.g. lt-cell-r0c0) instead
-        of DOM order.
+        A rebuilt cell's DOM position is not stable, so automation addresses a
+        cell's tools by a compound selector combining the cell-position context
+        with the tool (e.g. ``.lt-cell-r0c0.lt-tool-settings``). A descendant
+        selector cannot serve: each button lives in its own shadow root.
         """
         titlebar = create_cell_titlebar(
             title='T',
             has_user_title=False,
             on_edit_title_callback=lambda: None,
-            configure_layers=[(LayerId('a'), 'A')],
+            configure_layers=[
+                (LayerId(name), name.upper()) for name in 'ab'[:n_layers]
+            ],
             on_configure_layer=lambda _: None,
             toolbars_visible=True,
             on_toggle_toolbars_callback=lambda _: None,
             css_classes=['lt-cell-r0c0'],
         )
-        pencils = [
-            obj
-            for obj in titlebar.objects
-            if 'lt-tool-pencil' in (getattr(obj, 'css_classes', None) or [])
-        ]
-        assert len(pencils) == 1
-        assert 'lt-cell-r0c0' in pencils[0].css_classes
+        for tool in ('lt-tool-settings', 'lt-tool-pencil', 'lt-tool-layer-details'):
+            matches = [
+                obj
+                for obj in titlebar.objects
+                if tool in (getattr(obj, 'css_classes', None) or [])
+            ]
+            assert len(matches) == 1, tool
+            assert 'lt-cell-r0c0' in matches[0].css_classes, tool
 
 
 class _FakeParams(TimeWindowMixin):
