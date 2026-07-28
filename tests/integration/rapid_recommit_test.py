@@ -6,25 +6,19 @@ from collections.abc import Iterable, Mapping
 
 import pytest
 
-from ess.livedata.config.streams import get_stream_mapping
 from ess.livedata.config.workflow_spec import DataKey, JobId, JobNumber, WorkflowId
 from ess.livedata.dashboard.data_service import DataServiceSubscriber
 from ess.livedata.dashboard.extractors import LatestValueExtractor, UpdateExtractor
 from ess.livedata.workflows.monitor_workflow_specs import MonitorDataParams
 from tests.integration.conftest import IntegrationEnv
-from tests.integration.helpers import (
-    topic_high_watermark,
-    wait_for_backend_condition,
-    wait_for_condition,
-    wait_for_job_data,
-)
+from tests.integration.helpers import wait_for_backend_condition, wait_for_job_data
 
-#: Recommits issued back-to-back, with no backend update in between, so several
-#: generations are in flight at once while the producer keeps running.
+#: Recommits issued back-to-back, so later flips land while the backend is
+#: still working through the earlier ones.
 _BURST_RECOMMITS = 3
 
 #: Backend updates to keep watching after the final generation's data arrived,
-#: to catch a late-arriving stale message being admitted.
+#: to catch a late-arriving superseded result being admitted.
 _CONFIRM_POLLS = 25
 
 
@@ -57,16 +51,25 @@ def test_rapid_recommit_admits_only_latest_generation(
     """
     Recommitting repeatedly under a live producer admits only the last commit.
 
-    Each commit flips the dashboard's generation before its commands even reach
-    the backend, so results computed for the superseded generations keep
-    arriving afterwards. They must be dropped and counted, and the data that
-    does reach DataService must carry the final generation's job_number only.
+    Each commit flips the dashboard's generation and clears the workflow's
+    buffers before its commands reach the backend, so results computed for a
+    superseded generation can still arrive afterwards. None of them may reach
+    DataService: what is buffered must carry the final generation's job_number
+    alone.
+
+    Scope: this asserts the admission property, not the drop *count*
+    (``ActiveJobRegistry.stale_count``). Counting is not reliably observable at
+    this layer, because a superseded result usually does not exist to be
+    dropped. The dashboard's stop reaches the backend within about 100 ms while
+    a monitor workflow publishes roughly once a second, so a flip typically
+    finds nothing of the old generation in flight; and a generation superseded
+    before the backend ever starts it publishes nothing at all, which is what a
+    burst produces. Every flip also resets the counter, leaving only the final
+    commit's window assertable. ``tests/dashboard/message_pump_test.py`` covers
+    the counting deterministically instead, forwarding a superseded result
+    directly.
     """
     backend = integration_env.backend
-    registry = backend.job_orchestrator.active_job_registry
-    data_topic = get_stream_mapping(
-        instrument=integration_env.instrument, dev=True
-    ).topics.livedata_data
     workflow_id = WorkflowId(instrument='dummy', name='monitor_histogram', version=1)
     source_name = 'monitor1'
 
@@ -86,33 +89,13 @@ def test_rapid_recommit_admits_only_latest_generation(
     first_job = commit()
     wait_for_job_data(backend, workflow_id, [first_job], timeout=30.0)
 
-    # Burst of recommits, each superseding a generation the backend may not
-    # even have started yet. No backend.update() in between: the messages the
-    # producer emits meanwhile stay unforwarded, so they meet the generation
-    # filter only after the burst.
+    # Burst of recommits with nothing awaited in between, so the flips land
+    # while the backend is still producing for the generation established above
+    # and still working through the queued commands. This is the race: results
+    # of superseded generations are in flight exactly here.
     job_numbers = {first_job.job_number}
     for _ in range(_BURST_RECOMMITS):
         job_numbers.add(commit().job_number)
-
-    # Wait for the producer to publish at least once more, reading the broker's
-    # watermark rather than consuming. This makes the assertion on stale drops
-    # deterministic instead of a race: the observed message predates the flip
-    # below, so whichever generation stamped it is superseded by the time the
-    # dashboard forwards it.
-    #
-    # The helper choice is load-bearing. wait_for_condition only polls;
-    # wait_for_backend_condition calls backend.update() before every check and
-    # would forward the very message this waits for, letting it meet the filter
-    # while its generation is still current. The stale drop then depends on
-    # winning the race this construction exists to avoid — and the test would
-    # most often still pass, hiding the loss.
-    watermark = topic_high_watermark(data_topic)
-    wait_for_condition(
-        lambda: topic_high_watermark(data_topic) > watermark,
-        timeout=60.0,
-        poll_interval=1.0,
-    )
-
     final_job = commit()
     job_numbers.add(final_job.job_number)
     assert len(job_numbers) == _BURST_RECOMMITS + 2, "commits reused a job_number"
@@ -121,17 +104,6 @@ def test_rapid_recommit_admits_only_latest_generation(
     # backend runs the final generation.
     wait_for_backend_condition(
         backend, lambda: bool(stamps()), timeout=90.0, poll_interval=0.1
-    )
-
-    # The topic has a single partition and is therefore forwarded in offset
-    # order: the pre-flip message observed above met the generation filter
-    # before the final generation's first result did. Its count survives, the
-    # counter being reset only by a generation flip and none following — a
-    # superseded generation's heartbeat is recognized as such rather than
-    # adopted.
-    assert registry.stale_count(workflow_id) > 0, (
-        "no stale-generation drop was counted, although data published before "
-        "the final commit was still unforwarded when it happened"
     )
 
     polls: list[dict[DataKey, JobNumber]] = []
