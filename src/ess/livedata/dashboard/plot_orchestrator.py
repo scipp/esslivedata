@@ -40,7 +40,7 @@ from .data_roles import PRIMARY
 from .data_service import DataService
 from .frame_clock import FrameClock
 from .plot_data_service import LayerId, PlotDataService
-from .plot_params import TimeWindowMixin, TimeWindowMode
+from .plot_params import WindowModeMixin
 from .plotting_controller import PlottingController
 
 if TYPE_CHECKING:
@@ -129,7 +129,6 @@ class PlotConfig:
     data_sources: dict[str, DataSourceConfig]
     plot_name: str
     params: pydantic.BaseModel
-    supports_windowing: bool = True
 
     @property
     def workflow_id(self) -> WorkflowId:
@@ -201,11 +200,6 @@ class PlotGridConfig:
     enabled: bool = True
 
 
-def _windowing_for_mode(mode: TimeWindowMode) -> Windowing:
-    """Map a window mode to the windowing its data is subscribed from."""
-    return 'since_start' if mode is TimeWindowMode.since_start else 'per_update'
-
-
 def _windowing_for_role(role: str, params: pydantic.BaseModel) -> Windowing:
     """Return the windowing wanted by a data role.
 
@@ -214,8 +208,7 @@ def _windowing_for_role(role: str, params: pydantic.BaseModel) -> Windowing:
     """
     if role != PRIMARY:
         return 'per_update'
-    window = params.time_window if isinstance(params, TimeWindowMixin) else None
-    return _windowing_for_mode(window.mode) if window is not None else 'per_update'
+    return params.windowing() if isinstance(params, WindowModeMixin) else 'per_update'
 
 
 def _build_resolved_data_sources(
@@ -272,26 +265,6 @@ def _build_keys_by_role(
         ]
         for role, ds in data_sources.items()
     }
-
-
-def _resolve_supports_windowing(
-    data_sources: dict[str, DataSourceConfig],
-    registry: Mapping[WorkflowId, WorkflowSpec],
-) -> bool:
-    """Determine whether the primary view exposes window/latest modes.
-
-    Returns ``False`` for cumulative-only views (no ``per_update`` stream),
-    in which case only ``TimeWindowMode.since_start`` is meaningful.
-    """
-    if PRIMARY not in data_sources:
-        return True
-    from .plotting_controller import output_view_supports_windowing
-
-    primary = data_sources[PRIMARY]
-    spec = registry.get(primary.workflow_id)
-    if spec is None:
-        return True
-    return output_view_supports_windowing(spec, primary.view_name)
 
 
 @dataclass
@@ -1481,15 +1454,10 @@ class PlotOrchestrator:
             for role, ds in layer_data['data_sources'].items()
         }
 
-        supports_windowing = _resolve_supports_windowing(
-            data_sources, self._job_orchestrator.get_workflow_registry()
-        )
-
         config = PlotConfig(
             data_sources=data_sources,
             plot_name=plot_name,
             params=params,
-            supports_windowing=supports_windowing,
         )
 
         return Layer(layer_id=LayerId(uuid4()), config=config)

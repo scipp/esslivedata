@@ -20,6 +20,7 @@ from ess.livedata.dashboard.plot_orchestrator import (
     PlotConfig,
     PlotOrchestrator,
 )
+from ess.livedata.dashboard.plot_params import PlotParams1d, PlotParamsTimeseries
 from ess.livedata.dashboard.plots import PresenterBase
 
 
@@ -2196,6 +2197,58 @@ class TestTitleResolverOutputViews:
         assert resolver.output('unknown_field') == 'unknown_field'
 
 
+@pytest.fixture
+def mixed_temporality_spec(workflow_id):
+    """A spec whose ``histogram`` view backs both window modes, ``total`` one."""
+    import scipp as sc
+
+    from ess.livedata.config.workflow_spec import (
+        REDUCTION,
+        CumulativeOutput,
+        OutputView,
+        WindowOutput,
+        WorkflowOutputsBase,
+        WorkflowSpec,
+    )
+
+    class Params(pydantic.BaseModel):
+        threshold: float = 100.0
+
+    class MixedOutputs(WorkflowOutputsBase):
+        output_views = (
+            OutputView(
+                name='histogram',
+                title='Histogram',
+                fields=('cumulative', 'current'),
+            ),
+            OutputView(name='total', title='Total', fields=('total',)),
+        )
+
+        cumulative: CumulativeOutput = pydantic.Field(
+            default_factory=lambda: sc.DataArray(sc.scalar(0.0)),
+            title='Cumulative',
+        )
+        current: WindowOutput = pydantic.Field(
+            default_factory=lambda: sc.DataArray(sc.scalar(0.0)), title='Current'
+        )
+        total: CumulativeOutput = pydantic.Field(
+            default_factory=lambda: sc.DataArray(sc.scalar(0.0)), title='Total'
+        )
+
+    return WorkflowSpec(
+        instrument=workflow_id.instrument,
+        name=workflow_id.name,
+        version=workflow_id.version,
+        title='Test Workflow',
+        description='A test workflow',
+        source_names=['source1'],
+        params=Params,
+        aux_sources=None,
+        outputs=MixedOutputs,
+        group=REDUCTION,
+    )
+
+
 class TestTemporalityOfResolvedField:
     """The pipeline is told what the field a view resolved to means.
 
@@ -2204,54 +2257,10 @@ class TestTemporalityOfResolvedField:
     """
 
     @pytest.fixture
-    def workflow_spec(self, workflow_id):
-        import scipp as sc
-
-        from ess.livedata.config.workflow_spec import (
-            REDUCTION,
-            CumulativeOutput,
-            OutputView,
-            WindowOutput,
-            WorkflowOutputsBase,
-            WorkflowSpec,
-        )
-
-        class Params(pydantic.BaseModel):
-            threshold: float = 100.0
-
-        class MixedOutputs(WorkflowOutputsBase):
-            output_views = (
-                OutputView(
-                    name='histogram',
-                    title='Histogram',
-                    fields=('cumulative', 'current'),
-                ),
-                OutputView(name='total', title='Total', fields=('total',)),
-            )
-
-            cumulative: CumulativeOutput = pydantic.Field(
-                default_factory=lambda: sc.DataArray(sc.scalar(0.0)),
-                title='Cumulative',
-            )
-            current: WindowOutput = pydantic.Field(
-                default_factory=lambda: sc.DataArray(sc.scalar(0.0)), title='Current'
-            )
-            total: CumulativeOutput = pydantic.Field(
-                default_factory=lambda: sc.DataArray(sc.scalar(0.0)), title='Total'
-            )
-
-        return WorkflowSpec(
-            instrument=workflow_id.instrument,
-            name=workflow_id.name,
-            version=workflow_id.version,
-            title='Test Workflow',
-            description='A test workflow',
-            source_names=['source1'],
-            params=Params,
-            aux_sources=None,
-            outputs=MixedOutputs,
-            group=REDUCTION,
-        )
+    def workflow_spec(self, mixed_temporality_spec):
+        # Overrides the conftest fixture, which feeds the registry backing
+        # job_orchestrator.
+        return mixed_temporality_spec
 
     @pytest.mark.parametrize(
         ('view_name', 'expected'),
@@ -2280,6 +2289,66 @@ class TestTemporalityOfResolvedField:
 
         (setup,) = fake_plotting_controller.get_pipeline_setups()
         assert setup['temporality_by_role'][PRIMARY] is Temporality(expected)
+
+
+class TestWindowingSelectedByParams:
+    """Which backing field a view resolves to follows the params' window mode.
+
+    The general plots spell the choice as a mode selector, the timeseries
+    plotter as a cumulative checkbox; both must reach the same resolution.
+    """
+
+    @pytest.fixture
+    def workflow_spec(self, mixed_temporality_spec):
+        # Overrides the conftest fixture, which feeds the registry backing
+        # job_orchestrator.
+        return mixed_temporality_spec
+
+    @pytest.mark.parametrize(
+        ('params', 'expected_field'),
+        [
+            (PlotParamsTimeseries(), 'current'),
+            (
+                PlotParamsTimeseries.model_validate(
+                    {'accumulation': {'cumulative': True}}
+                ),
+                'cumulative',
+            ),
+            (PlotParams1d(), 'current'),
+            (
+                PlotParams1d.model_validate({'time_window': {'mode': 'since_start'}}),
+                'cumulative',
+            ),
+        ],
+        ids=[
+            'timeseries_per_update',
+            'timeseries_cumulative',
+            'plot_window',
+            'plot_since_start',
+        ],
+    )
+    def test_primary_subscribes_to_the_field_the_mode_selects(
+        self,
+        plot_orchestrator,
+        workflow_id,
+        workflow_spec,
+        job_orchestrator,
+        fake_plotting_controller,
+        params,
+        expected_field,
+    ):
+        commit_workflow_for_test(job_orchestrator, workflow_id, workflow_spec)
+        grid_id = plot_orchestrator.add_grid(title='Test Grid', nrows=1, ncols=1)
+        config = make_plot_config(
+            workflow_id,
+            source_names=['source1'],
+            output_name='histogram',
+            params=params,
+        )
+        add_cell_with_layer(plot_orchestrator, grid_id, DEFAULT_GEOMETRY, config)
+
+        (setup,) = fake_plotting_controller.get_pipeline_setups()
+        assert setup['output_name'] == expected_field
 
 
 class TestRenameGrid:

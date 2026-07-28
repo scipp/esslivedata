@@ -19,7 +19,7 @@ from .extractors import (
     UpdateExtractor,
     WindowAggregatingExtractor,
 )
-from .plot_params import TimeWindowMixin, TimeWindowParams
+from .plot_params import TimeWindowMixin, TimeWindowParams, WindowModeMixin
 from .plotter_registry import (
     OVERLAY_PATTERNS,
     PlotterSpec,
@@ -311,22 +311,23 @@ def _reject_cumulative_aggregation(
     )
 
 
-def output_view_supports_windowing(workflow_spec: WorkflowSpec, view_name: str) -> bool:
-    """Return whether the window controls (mode, duration, aggregation) apply.
+def hidden_window_fields(
+    params_class: type[pydantic.BaseModel], workflow_spec: WorkflowSpec, view_name: str
+) -> frozenset[str]:
+    """Return the params fields to hide because the view cannot back them.
 
-    Windowing applies when the view exposes a ``per_update`` field: the window
-    duration aggregates a span of that field, independent of whether a
-    ``since_start`` field also exists. Cumulative-only views (e.g. ``I(Q)``)
-    have no per-update field to window over, so the controls are hidden and the
-    view locks to ``since_start``.
+    Which fields those are is the params class's business -- see
+    :meth:`WindowModeMixin.hidden_fields`; this only supplies the windowing
+    options the named view has real backing fields for.
 
-    Offering ``since_start`` mode on a view that lacks a cumulative field is
-    rejected at config time (see :func:`since_start_available`), not by hiding
-    the controls -- that would also remove the still-meaningful duration control.
+    Permissive for unknown views and for params without a window mode.
     """
-    if workflow_spec.get_output_view(view_name) is None:
-        return True
-    return 'per_update' in workflow_spec.windowing_options(view_name)
+    if not issubclass(params_class, WindowModeMixin):
+        return frozenset()
+    options = workflow_spec.windowing_options(view_name)
+    if not options:
+        return frozenset()
+    return params_class.hidden_fields(options)
 
 
 def since_start_available(workflow_spec: WorkflowSpec, view_name: str) -> bool:
