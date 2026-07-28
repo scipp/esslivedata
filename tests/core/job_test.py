@@ -238,6 +238,57 @@ class TestJob:
         assert sample_job.start_time == Timestamp.from_ns(100)  # Should not change
         assert sample_job.end_time == Timestamp.from_ns(250)  # Should update
 
+    def test_start_time_relatches_when_data_ends_before_it(self, sample_job):
+        """A start time later than the newest data is contradicted by the data.
+
+        A batch built from a single far-future message anchors on that message,
+        so the job's first start time can land outside its stream's timeline.
+        Keeping it would leave every later result with start_time > end_time.
+        """
+        poisoned = JobData(
+            start_time=Timestamp.from_ns(10**18),
+            end_time=Timestamp.from_ns(10**18),
+            primary_data={"test_source": sc.scalar(10.0)},
+            aux_data={},
+        )
+        real = JobData(
+            start_time=Timestamp.from_ns(100),
+            end_time=Timestamp.from_ns(200),
+            primary_data={"test_source": sc.scalar(20.0)},
+            aux_data={},
+        )
+
+        sample_job.add(poisoned)
+        assert sample_job.start_time == Timestamp.from_ns(10**18)
+
+        sample_job.add(real)
+        assert sample_job.start_time == Timestamp.from_ns(100)
+        assert sample_job.end_time == Timestamp.from_ns(200)
+
+    def test_start_time_survives_end_time_moving_backwards_within_the_job(
+        self, sample_job
+    ):
+        """Only a contradiction re-latches: the batchers legitimately move
+        ``end_time`` backwards when recovering a misplaced window, and the job
+        start must survive that."""
+        first = JobData(
+            start_time=Timestamp.from_ns(100),
+            end_time=Timestamp.from_ns(500),
+            primary_data={"test_source": sc.scalar(10.0)},
+            aux_data={},
+        )
+        rewound = JobData(
+            start_time=Timestamp.from_ns(300),
+            end_time=Timestamp.from_ns(400),
+            primary_data={"test_source": sc.scalar(20.0)},
+            aux_data={},
+        )
+
+        sample_job.add(first)
+        sample_job.add(rewound)
+        assert sample_job.start_time == Timestamp.from_ns(100)
+        assert sample_job.end_time == Timestamp.from_ns(400)
+
     def test_add_data_processes_all_provided_data(self, sample_job, fake_processor):
         """Test that add() processes all provided data."""
         data = JobData(

@@ -4,23 +4,21 @@
 
 Two invariants, driven by the corpus in ``tests/helpers/hostile_wire``:
 
-1. **Containment** (holds today, guarded here against regression): a payload
-   that cannot be adapted is dropped by ``AdaptingMessageSource`` without the
-   exception escaping and without affecting subsequent messages.
-2. **Timestamp sanity** (does not hold today — strict xfail): data-derived
-   timestamps should be bounded against the wall clock before crossing the
-   adapter boundary, because the batcher uses them as its only clock and a
-   single far-future value wedges the whole service (#1038 finding 1). These
-   tests are the acceptance criterion for the boundary-validation layer
-   proposed in #1047: when it lands, the xfails flip to XPASS (strict, so
-   pytest will insist the markers are removed). Any resolution — dropping,
-   clamping, or falling back to the Kafka broker timestamp — satisfies the
-   assertion as written.
+1. **Containment**: a payload that cannot be adapted is dropped by
+   ``AdaptingMessageSource`` without the exception escaping and without
+   affecting subsequent messages.
+2. **Verbatim timestamps**: a data-derived timestamp crosses the boundary
+   unmodified, however insane it looks. It is the producer's claim about when
+   the data was taken, and the lag reporter judges the producer by subtracting
+   it from the broker's create time; clamping or dropping it here would erase
+   the only evidence that a device's clock is wrong (#1133). Consumers that
+   cannot use an insane time defend themselves instead: the batchers bound
+   window placement, and a job re-latches a start time its own data
+   contradicts.
 """
 
 from __future__ import annotations
 
-import time
 from collections.abc import Sequence
 
 import pytest
@@ -44,10 +42,6 @@ from tests.helpers import hostile_wire
 TOPIC = 'dummy_beam_monitor'
 SOURCE = 'monitor1'
 GOOD_TIME_NS = hostile_wire.REALISTIC_EPOCH_NS
-
-# Data-derived timestamps further than this ahead of the wall clock have no
-# legitimate producer; they must not cross the adapter boundary unmodified.
-FUTURE_TOLERANCE_NS = 24 * 3600 * 1_000_000_000
 
 
 class ListSource:
@@ -156,21 +150,21 @@ def _far_future_cases() -> list[tuple[str, KafkaAdapter, bytes]]:
     ('adapter', 'payload'),
     [pytest.param(a, p, id=name) for name, a, p in _far_future_cases()],
 )
-@pytest.mark.xfail(
-    strict=True,
-    reason='#1038 finding 1 / #1047: data-derived timestamps cross the '
-    'adapter boundary unvalidated; a single far-future value wedges the '
-    'batcher service-wide',
-)
-def test_far_future_data_timestamp_does_not_cross_adapter_boundary(
+def test_far_future_data_timestamp_crosses_adapter_boundary_verbatim(
     adapter: KafkaAdapter, payload: bytes
 ) -> None:
+    """A timestamp no producer can legitimately claim is still passed on as-is.
+
+    The lag reporter measures a producer by the distance between this value
+    and the broker's create time, so bounding it here would report a device
+    with a badly wrong clock as perfectly punctual (#1133).
+    """
     source = AdaptingMessageSource(
         source=ListSource([_kafka_message(payload)]), adapter=adapter
     )
-    bound = time.time_ns() + FUTURE_TOLERANCE_NS
-    for message in source.get_messages():
-        assert message.timestamp.to_ns() <= bound
+    assert [m.timestamp.to_ns() for m in source.get_messages()] == [
+        hostile_wire.FAR_FUTURE_NS
+    ]
 
 
 def test_da00_non_int64_reference_time_falls_back_to_timestamp_ns() -> None:
