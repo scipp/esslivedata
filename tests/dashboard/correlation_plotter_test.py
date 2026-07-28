@@ -20,10 +20,9 @@ from ess.livedata.dashboard.correlation_plotter import (
     CorrelationHistogram2dParams,
     CorrelationHistogram2dPlotter,
     CorrelationHistogramPlotter,
-    _make_lookup,
 )
-from ess.livedata.dashboard.plot_params import PlotScaleParams
-from ess.livedata.dashboard.plots import LinePlotter
+from ess.livedata.dashboard.plot_params import PlotScaleParams, PlotScaleParams2d
+from ess.livedata.dashboard.plots import ImagePlotter, LinePlotter
 
 hv.extension('bokeh')
 
@@ -65,79 +64,11 @@ def make_source_data(
     )
 
 
-class TestMakeLookup:
-    """Tests for the _make_lookup helper function."""
-
-    def test_uses_previous_mode_when_data_overlaps_axis(self):
-        """When data timestamps overlap with axis range, uses 'previous' mode."""
-        axis_data = make_axis_data(times=[100, 200, 300], values=[1.0, 2.0, 3.0])
-        data_max_time = sc.scalar(250, unit='ms')
-
-        lookup = _make_lookup(axis_data, data_max_time)
-
-        # 'previous' mode: for time=150, should get value at time=100 (1.0)
-        result = lookup[sc.scalar(150, unit='ms')]
-        assert result.value == 1.0
-
-    def test_uses_nearest_mode_when_data_before_axis(self):
-        """When all data timestamps are before the first axis timestamp,
-        falls back to 'nearest' mode to avoid NaN coordinates.
-        """
-        axis_data = make_axis_data(times=[100, 200, 300], values=[1.0, 2.0, 3.0])
-        data_max_time = sc.scalar(50, unit='ms')  # Before first axis timestamp
-
-        lookup = _make_lookup(axis_data, data_max_time)
-
-        # 'nearest' mode: for time=50, should get value at nearest time=100 (1.0)
-        result = lookup[sc.scalar(50, unit='ms')]
-        assert result.value == 1.0
-
-    def test_handles_axis_data_with_variances(self):
-        """Lookup should work when axis data has variances."""
-        axis_data = sc.DataArray(
-            data=sc.array(
-                dims=['time'],
-                values=[1.0, 2.0, 3.0],
-                variances=[0.1, 0.1, 0.1],
-                unit='m',
-            ),
-            coords={'time': sc.array(dims=['time'], values=[100, 200, 300], unit='ms')},
-        )
-        data_max_time = sc.scalar(250, unit='ms')
-
-        lookup = _make_lookup(axis_data, data_max_time)
-
-        result = lookup[sc.scalar(150, unit='ms')]
-        assert result.value == 1.0
-
-    def test_handles_datetime64_coord_in_nearest_mode(self):
-        """Lookup should work when axis dimension is datetime64 and nearest mode.
-
-        When data timestamps are before the axis range, 'nearest' mode is used.
-        If the axis dimension coordinate is datetime64, the astype('float64')
-        conversion should be skipped since datetime64 is not an int dtype.
-        """
-        # Create datetime64 timestamps using scipp's datetime function
-        base_ns = 1_000_000_000_000_000_000  # Some epoch nanoseconds
-        times = sc.datetimes(
-            dims=['time'],
-            values=[base_ns + i * 1_000_000_000 for i in range(3)],  # 1s apart
-            unit='ns',
-        )
-        axis_data = sc.DataArray(
-            data=sc.array(dims=['time'], values=[1.0, 2.0, 3.0], unit='m'),
-            coords={'time': times},
-        )
-        # Data max time is before the first axis timestamp
-        data_max_time = sc.datetime(base_ns - 1_000_000_000, unit='ns')  # 1s before
-
-        # Should not raise DTypeError about astype not supporting datetime64
-        lookup = _make_lookup(axis_data, data_max_time)
-
-        # 'nearest' mode: should get value at nearest time (the first one)
-        query_time = sc.datetime(base_ns - 500_000_000, unit='ns')  # 500ms before
-        result = lookup[query_time]
-        assert result.value == 1.0
+def histogram_of(plotter: CorrelationHistogramPlotter) -> dict[str, np.ndarray]:
+    """Return the raw data of the single histogram in the plotter's cached state."""
+    state = plotter.get_cached_state()
+    assert state is not None
+    return next(iter(state.values())).data
 
 
 class TestCorrelationHistogramPlotter:
@@ -243,29 +174,171 @@ class TestCorrelationHistogramPlotter:
         assert result is not None
         assert result.label == 'Detector/I(d)'
 
-    def test_handles_data_before_axis_range(self):
-        """When data timestamps are before the first axis timestamp,
-        the plotter falls back to 'nearest' mode to avoid NaN coordinates.
-        """
-        # Axis data starts at t=100
-        axis_data = make_axis_data(times=[100, 200, 300], values=[1.0, 2.0, 3.0])
-        # Source data is all BEFORE the first axis timestamp
-        source_data = make_source_data(times=[50, 60, 70], values=[10.0, 20.0, 30.0])
+    def test_handles_axis_data_with_variances(self):
+        """Axis values with variances are usable as correlation coordinates."""
+        axis_data = sc.DataArray(
+            data=sc.array(
+                dims=['time'],
+                values=[1.0, 2.0, 3.0],
+                variances=[0.1, 0.1, 0.1],
+                unit='m',
+            ),
+            coords={'time': sc.array(dims=['time'], values=[100, 200, 300], unit='ms')},
+        )
+        source_data = make_source_data(times=[150, 250], values=[10.0, 20.0])
 
-        axes = [AxisSpec(role=X_AXIS, name='position', bins=10)]
+        axes = [AxisSpec(role=X_AXIS, name='position', bins=2)]
         plotter = CorrelationHistogramPlotter(
             axes=axes, normalize=False, renderer=_make_line_renderer()
         )
 
-        data = {
-            PRIMARY: {_make_result_key('detector'): source_data},
-            X_AXIS: {_make_result_key('position'): axis_data},
-        }
+        plotter.compute(
+            {
+                PRIMARY: {_make_result_key('detector'): source_data},
+                X_AXIS: {_make_result_key('position'): axis_data},
+            }
+        )
 
-        # Should not raise
-        plotter.compute(data)
-        result = plotter.get_cached_state()
-        assert result is not None
+        assert histogram_of(plotter)['values'].sum() == 30.0
+
+    def test_handles_datetime64_time_coords(self):
+        """Correlation works when timestamps are datetime64 rather than integers."""
+        base_ns = 1_000_000_000_000_000_000
+        axis_data = sc.DataArray(
+            data=sc.array(dims=['time'], values=[1.0, 2.0, 3.0], unit='m'),
+            coords={
+                'time': sc.datetimes(
+                    dims=['time'],
+                    values=[base_ns + i * 1_000_000_000 for i in range(3)],
+                    unit='ns',
+                )
+            },
+        )
+        source_data = sc.DataArray(
+            data=sc.array(dims=['time'], values=[10.0, 20.0], unit='counts'),
+            coords={
+                'time': sc.datetimes(
+                    dims=['time'],
+                    values=[base_ns + 500_000_000, base_ns + 1_500_000_000],
+                    unit='ns',
+                )
+            },
+        )
+
+        axes = [AxisSpec(role=X_AXIS, name='position', bins=2)]
+        plotter = CorrelationHistogramPlotter(
+            axes=axes, normalize=False, renderer=_make_line_renderer()
+        )
+
+        plotter.compute(
+            {
+                PRIMARY: {_make_result_key('detector'): source_data},
+                X_AXIS: {_make_result_key('position'): axis_data},
+            }
+        )
+
+        assert histogram_of(plotter)['values'].sum() == 30.0
+
+
+class TestDataPrecedingAxisHistory:
+    """Points without a known axis value are excluded, consistently over time."""
+
+    axis_data = make_axis_data(times=[100, 200, 300], values=[1.0, 2.0, 3.0])
+
+    def _make_plotter(self) -> CorrelationHistogramPlotter:
+        return CorrelationHistogramPlotter(
+            axes=[AxisSpec(role=X_AXIS, name='position', bins=4)],
+            normalize=False,
+            renderer=_make_line_renderer(),
+        )
+
+    def _compute(
+        self, plotter: CorrelationHistogramPlotter, source_data: sc.DataArray
+    ) -> None:
+        plotter.compute(
+            {
+                PRIMARY: {_make_result_key('detector'): source_data},
+                X_AXIS: {_make_result_key('position'): self.axis_data},
+            }
+        )
+
+    def test_excludes_points_before_first_axis_reading(self):
+        """Points predating the axis history contribute nothing to the histogram."""
+        plotter = self._make_plotter()
+
+        # t=50 precedes the first axis reading at t=100.
+        self._compute(plotter, make_source_data([50, 150, 250], [10.0, 20.0, 30.0]))
+
+        assert histogram_of(plotter)['values'].sum() == 50.0
+
+    def test_renders_nothing_while_all_points_precede_axis(self):
+        """Fully preceding data yields no plot rather than an error or a guess."""
+        plotter = self._make_plotter()
+
+        self._compute(plotter, make_source_data([50, 60, 70], [10.0, 20.0, 30.0]))
+
+        assert not plotter.has_cached_state()
+
+    def test_preceding_points_never_appear_and_then_vanish(self):
+        """Growing history must not retroactively remove already-shown points.
+
+        Correlating pre-axis points against a later reading would make them
+        visible until the streams overlap, at which point they would silently
+        disappear again.
+        """
+        plotter = self._make_plotter()
+
+        self._compute(plotter, make_source_data([50, 60], [10.0, 20.0]))
+        assert not plotter.has_cached_state()
+
+        self._compute(
+            plotter, make_source_data([50, 60, 150, 250], [10.0, 20.0, 30.0, 40.0])
+        )
+
+        assert histogram_of(plotter)['values'].sum() == 70.0
+
+    def test_uses_latest_axis_reading_at_or_before_each_point(self):
+        """Each point is correlated with the axis value in effect at its time."""
+        plotter = self._make_plotter()
+
+        self._compute(plotter, make_source_data([150, 250], [10.0, 20.0]))
+
+        histogram = histogram_of(plotter)
+        # Values 1.0 and 2.0 are in effect at t=150 and t=250, so the histogram
+        # spans [1, 2] with the two counts landing in the outer bins.
+        edges = [1.0, 1.25, 1.5, 1.75, 2.0]
+        assert histogram['position'].tolist() == pytest.approx(edges)
+        assert histogram['values'].tolist() == [10.0, 0.0, 0.0, 20.0]
+
+    def test_excludes_points_preceding_any_axis_in_2d(self):
+        """With multiple axes the latest axis start determines the cutoff."""
+        plotter = CorrelationHistogramPlotter(
+            axes=[
+                AxisSpec(role=X_AXIS, name='position', bins=2),
+                AxisSpec(role=Y_AXIS, name='temperature', bins=2),
+            ],
+            normalize=False,
+            renderer=ImagePlotter(scale_opts=PlotScaleParams2d()),
+        )
+
+        plotter.compute(
+            {
+                PRIMARY: {
+                    _make_result_key('detector'): make_source_data(
+                        [150, 250, 350, 450], [10.0, 20.0, 30.0, 40.0]
+                    )
+                },
+                X_AXIS: {_make_result_key('position'): self.axis_data},
+                # Temperature only starts at t=300, so t=150 and t=250 are excluded.
+                Y_AXIS: {
+                    _make_result_key('temperature'): make_axis_data(
+                        times=[300, 400], values=[10.0, 20.0], value_unit='K'
+                    )
+                },
+            }
+        )
+
+        assert np.nansum(histogram_of(plotter)['values']) == 70.0
 
 
 class TestConstantAxisValues:
