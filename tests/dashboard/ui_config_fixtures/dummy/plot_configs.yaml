@@ -1,7 +1,7 @@
 plot_grids:
   grids:
   - title: Detectors
-    nrows: 2
+    nrows: 3
     ncols: 2
     cells:
     - geometry:
@@ -76,3 +76,27 @@ plot_grids:
             aggregation: auto
           rate:
             normalize_to_rate: false
+    # Two layers in one cell, so the titlebar gear is a layer-picker menu rather
+    # than a direct button. Omitted params take their model defaults.
+    - geometry:
+        row: 2
+        col: 0
+        row_span: 1
+        col_span: 2
+      layers:
+      - data_sources:
+          primary:
+            workflow_id: dummy/monitor_histogram/1
+            source_names:
+            - monitor1
+            view_name: histogram
+        plot_name: lines
+        params: {}
+      - data_sources:
+          primary:
+            workflow_id: dummy/monitor_histogram/1
+            source_names:
+            - monitor2
+            view_name: histogram
+        plot_name: lines
+        params: {}

@@ -60,10 +60,11 @@ no text, `title`, or `aria-label` — leaving nothing semantic for browser autom
 *name* identity to slug (`workflow_status_widget.py`'s `_tool_css_class`), but a grid has
 none, so `lt-grid-*` slugs the grid *title* instead (`plot_grid_manager.py`) — the same
 title that also drives the grid's download filename. Plot cells have neither a name nor
-a stable title, so their titlebar pencil carries the grid position as
-`lt-cell-r{row}c{col}` (`cell.py`) — unique per grid, and only the active tab's grid is
-rendered. Do not rely on DOM order for cells: a rebuilt cell (e.g. after a rename) moves
-to the end of the document.
+a stable title, so every button in their titlebar — gear (or layer menu), pencil, and
+layer-details toggle — carries the grid position as `lt-cell-r{row}c{col}` (`cell.py`),
+unique per grid, and only the active tab's grid is rendered. Address one with a compound
+selector: `.lt-cell-r0c1.lt-tool-settings`. Do not rely on DOM order for cells: a rebuilt
+cell (e.g. after a rename) moves to the end of the document.
 
 These classes have no associated style rules — adding/removing them is visually inert.
 Treat them as a stable contract: do not drop them in refactors (a test in
@@ -118,12 +119,15 @@ tabs are user/fixture plot-grid titles (the dummy fixture adds **Detectors**). W
 `dynamic=True` only the active tab's models exist, so a DOM/`lt-*` inventory reflects the
 *current* tab only — switch tabs before querying that tab's hooks.
 
-**Modals.** Settings (gear), edit (pencil), and grid/workflow config open a `pn.Modal`
+**Modals.** Settings (gear), cell edit (pencil), and workflow config open a `pn.Modal`
 rendered as `[role=dialog]` — use that as the open/visible signal (`Dashboard.open_modal`
 waits on it). Footer buttons are reachable by text (`Cancel`, `Update Plot`, `Back`). To
 dismiss, press **Escape** (a `ModalEscapeCloser` widget makes this work from initial
 focus) or click `.pnx-dialog-close`. Per-grid rows in **Manage Plots** carry
-`lt-grid-{title-slug}` (e.g. `.lt-grid-detectors.lt-tool-pencil`).
+`lt-grid-{title-slug}` (e.g. `.lt-grid-detectors.lt-tool-pencil`) — that pencil is the
+exception: it opens edit mode *inline* in the row, not a dialog, so `Dashboard.open_modal`
+times out on it. Wait on its fields instead (`input[placeholder="Enter grid title"]`) and
+commit with the `Save Changes` button.
 
 ### Driving workflow config flows
 
