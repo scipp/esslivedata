@@ -158,9 +158,12 @@ def _far_future_cases() -> list[tuple[str, KafkaAdapter, bytes]]:
 )
 @pytest.mark.xfail(
     strict=True,
-    reason='#1038 finding 1 / #1047: data-derived timestamps cross the '
-    'adapter boundary unvalidated; a single far-future value wedges the '
-    'batcher service-wide',
+    reason='#1038 finding 1: data-derived timestamps cross the adapter '
+    'boundary unvalidated, so the boundary sees no evidence of a producer '
+    'whose clock is wrong. It no longer wedges the batchers (#1122 bounds '
+    'window placement and adds a liveness backstop); what the boundary is '
+    'still wanted for is per-source clock-offset detection, tracked by '
+    '#1133.',
 )
 def test_far_future_data_timestamp_does_not_cross_adapter_boundary(
     adapter: KafkaAdapter, payload: bytes

@@ -295,3 +295,49 @@ def test_far_future_timestamp_in_first_batch_does_not_stall_service(
     harness.publish_good()
     harness.app.step()
     assert_service_live(harness, cycles=60)
+
+
+@pytest.mark.parametrize(
+    'harness',
+    [
+        pytest.param(
+            _simple_inner,
+            marks=pytest.mark.xfail(
+                strict=True,
+                reason='#1038 finding 1 / #1047: the simple batcher wedges on '
+                'this input (see the xfail above), so no later batch ever '
+                'reaches the job and nothing can contradict the poisoned start '
+                'time. Recovering the times requires recovering delivery first.',
+            ),
+        ),
+        pytest.param(_rate_aware_inner),
+    ],
+    indirect=True,
+    ids=['simple', 'rate_aware'],
+)
+def test_far_future_timestamp_does_not_permanently_poison_result_times(
+    harness: MonitorServiceHarness,
+) -> None:
+    """Liveness is not enough: the results must come back to the real timeline.
+
+    A batch built from a lone far-future message anchors on it, so the job's
+    first result legitimately carries that time. If the job kept it as its
+    start time, every later result would report ``start_time > end_time`` for
+    the life of the job -- silently disabling rate normalization in the
+    dashboard and outranking every newer job in adoption. Results are stamped
+    with the job's start time, so the published timestamps show whether it
+    recovered.
+    """
+    harness.publish_payload(
+        hostile_wire.ev44_events(SOURCE, reference_time_ns=hostile_wire.FAR_FUTURE_NS)
+    )
+    harness.app.step()
+    harness.run_good_cycles(40)
+
+    stamps = [
+        m.timestamp.to_ns()
+        for m in harness.app.sink.messages
+        if m.stream.kind == StreamKind.LIVEDATA_DATA
+    ]
+    assert stamps, 'no results published'
+    assert stamps[-1] < hostile_wire.FAR_FUTURE_NS
