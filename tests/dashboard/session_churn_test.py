@@ -16,20 +16,27 @@ teardown paths release it:
   teardown, which may never run (#955, #1095).
 
 Both had unit coverage but neither had ever run end to end through a real
-browser, which is what #1116 asks for: churn sessions and check that the count
-returns to baseline and the server stays usable.
+browser, which is what #1116 asks for: churn sessions, and check that the
+server neither leaks them nor stops working.
 
-**What is observable.** This app enables neither the Bokeh admin panel nor a
-metrics endpoint, so the session count is read from the UI: the *System Status*
-tab renders a "Dashboard Sessions" summary straight from ``SessionRegistry``.
-The observing session therefore stays on that tab -- ``dynamic=True`` means
-only the active tab's models exist, and the widget skips refreshes while
-hidden. What the count cannot show is whether the *deeper* teardown ran: a
-leaked viewer token keeps a hidden layer computing, which no amount of UI
-inspection reveals (that gap stays manual, #1097). What the closing check does
-buy is that the reaper's deferred, off-IOLoop teardown left shared state and
-the background update thread intact -- the failure mode that stalls every
-session at once.
+**What is observed.** ``SessionRegistry`` names every session it registers,
+unregisters and reaps, so this test follows session ids through the server log
+instead of counting sessions: every id registered while browsers churn must
+come back as *unregistered*, every id registered by a browser that then went
+offline must come back as *reaped*, and neither set may turn up under the
+other's teardown line. Naming the path is what keeps the two apart. A count can
+only tell them apart by *when* it drops, which pins the test to Bokeh's
+unused-session defaults (15 s lifetime, swept every 17 s) that this app does
+not set. Counting is also less literal than it looks: the harness's readiness
+probe renders the app over plain HTTP, which registers a browser-less session
+of its own.
+
+What the log cannot show is whether the *deeper* teardown ran: a leaked viewer
+token keeps a hidden layer computing, and nothing logs that. Closing that gap
+needs the app in-process (#1147); until then it stays manual (#1097). What the
+closing check does buy is that the reaper's deferred, off-IOLoop teardown left
+shared state and the background update thread intact -- the failure mode that
+stalls every session at once.
 
 **Why one test.** Both paths run against one server, with the clean closes
 draining *inside* the reaper's window, so the stale timeout is waited out once
@@ -41,8 +48,9 @@ Runs via ``pytest -m browser`` (excluded from the default run; CI runs them via
 
 from __future__ import annotations
 
+import re
 import time
-from collections.abc import Callable
+from pathlib import Path
 
 import pytest
 
@@ -54,6 +62,7 @@ from tests.helpers.browser import (
     assert_updating,
     fake_dashboard,
     fingerprint,
+    open_browser,
 )
 
 CHURN_CYCLES = 3
@@ -63,74 +72,52 @@ ABANDONED_SESSIONS = 3
 # A churn session only has to reach the server and take up per-layer state, not
 # to look right, so it settles far shorter than a session we assert on.
 CHURN_SETTLE_MS = 1500
-POLL_INTERVAL_MS = 250
-
-# The summary refreshes at most every 2 s, so a session takes a moment to show up.
-REGISTRATION_TIMEOUT_MS = 15_000
+POLL_INTERVAL_SECONDS = 0.5
 
 # Closing the websocket does not unregister the session immediately: Bokeh
-# discards it once it has been unused for 15 s, checked every 17 s (upstream
-# defaults, which this app does not pin). The ceiling matters as much as the
-# floor -- it has to stay below the point where the reaper would clean up a
-# cleanly closed session too, and so hide a broken close path.
-CLEAN_RECOVERY_TIMEOUT_MS = 40_000
+# discards it once it has been unused for 15 s, checked every 17 s. No upper
+# bound is needed to keep this honest -- a session the reaper got to first
+# shows up under the wrong teardown line, which is asserted separately.
+CLEAN_CLOSE_TIMEOUT_SECONDS = 60
 
-# Measured from the moment the browsers go offline: past the window above, so a
-# session still counted here cannot have been cleanly closed, yet short of the
-# reaper's own deadline (SessionRegistry's 60 s stale timeout, set in
-# dashboard_services.py). This is what keeps the reaper path distinguishable
-# from the clean-close path instead of the two silently collapsing into one.
-NO_CLEAN_CLOSE_CHECKPOINT_MS = 40_000
-REAPER_RECOVERY_TIMEOUT_MS = 45_000
+# SessionRegistry's stale timeout is 60 s (dashboard_services.py), and the
+# background update thread reaps between its other work.
+REAP_TIMEOUT_SECONDS = 90
 
-# The "Dashboard Sessions" summary as rendered by SessionStatusWidget:
-# "<b>3</b> sessions (including you)", "1 active session (just you)" or
-# "No active sessions". Walks shadow roots because dashboard widgets render into
-# them, and matches textContent so no node needs layout.
-SESSION_COUNT_JS = r"""() => {
-  const counts = [];
-  const walk = (root) => root.querySelectorAll('*').forEach((el) => {
-    const text = (el.textContent || '').trim();
-    if (/^No active sessions$/.test(text)) counts.push(0);
-    const match = text.match(/^(\d+) (?:active )?sessions?\b/);
-    if (match) counts.push(Number(match[1]));
-    if (el.shadowRoot) walk(el.shadowRoot);
-  });
-  walk(document);
-  return counts.length ? counts[0] : null;
-}"""
+# Session ids as SessionRegistry logs them. The console renderer wraps each
+# message in ANSI escapes, which terminate the id capture on their own.
+_REGISTERED = re.compile(r"Registered new session: ([\w-]+)")
+_UNREGISTERED = re.compile(r"Unregistered session: ([\w-]+)")
+_REAPED = re.compile(r"Cleaned up stale session: ([\w-]+)")
 
 
-def session_count(observer: Dashboard) -> int:
-    """Sessions the server reports, read from the observer's System Status tab."""
-    count = observer.page.evaluate(SESSION_COUNT_JS)
-    assert count is not None, (
-        "No 'Dashboard Sessions' summary in the DOM -- is the observer still on "
-        "the System Status tab?"
-    )
-    return count
+def _ids(pattern: re.Pattern[str], text: str) -> set[str]:
+    return set(pattern.findall(text))
 
 
-def wait_for_sessions(
-    observer: Dashboard,
-    condition: Callable[[int], bool],
+def _log_since(log: Path, offset: int) -> str:
+    """Server log written after ``offset``, so earlier sessions cannot leak in."""
+    return log.read_text()[offset:]
+
+
+def _wait_for_ids(
+    log: Path,
+    offset: int,
+    pattern: re.Pattern[str],
+    expected: set[str],
     *,
-    timeout_ms: int,
+    timeout_seconds: float,
     label: str,
 ) -> None:
-    """Poll the reported session count until ``condition`` holds.
-
-    Unlike ``wait_until``, the failure carries the count last seen, which is the
-    whole diagnostic when sessions leak.
-    """
-    waited = 0
-    while not condition(count := session_count(observer)):
-        if waited >= timeout_ms:
+    """Wait until ``pattern`` has reported every expected session id."""
+    deadline = time.monotonic() + timeout_seconds
+    while missing := expected - _ids(pattern, _log_since(log, offset)):
+        if time.monotonic() > deadline:
             raise AssertionError(
-                f"{label}: session count stuck at {count} after {timeout_ms // 1000} s"
+                f"{label}: {len(missing)} of {len(expected)} sessions unaccounted "
+                f"for after {timeout_seconds:.0f} s: {sorted(missing)}"
             )
-        observer.page.wait_for_timeout(POLL_INTERVAL_MS)
-        waited += POLL_INTERVAL_MS
+        time.sleep(POLL_INTERVAL_SECONDS)
 
 
 def open_churn_session(browser: Browser, url: str) -> BrowserContext:
@@ -166,62 +153,68 @@ def assert_server_still_serves(browser: Browser, url: str) -> None:
 
 @pytest.mark.browser
 def test_session_churn_returns_to_baseline_and_server_stays_usable() -> None:
-    with fake_dashboard("dummy", 5070) as url, Dashboard.connect(url) as observer:
-        observer.goto_tab("System Status")
-        browser = observer.page.context.browser
-        assert browser is not None
-
-        for cycle in range(CHURN_CYCLES):
+    with fake_dashboard("dummy", 5070) as fake, open_browser() as browser:
+        churned_at = fake.log.stat().st_size
+        for _ in range(CHURN_CYCLES):
             contexts = [
-                open_churn_session(browser, url) for _ in range(SESSIONS_PER_CYCLE)
+                open_churn_session(browser, fake.url) for _ in range(SESSIONS_PER_CYCLE)
             ]
-            wait_for_sessions(
-                observer,
-                lambda n: n >= 1 + SESSIONS_PER_CYCLE,
-                timeout_ms=REGISTRATION_TIMEOUT_MS,
-                label=f"cycle {cycle}: churn sessions never showed up",
-            )
             for context in contexts:
                 context.close()
+        churn_ids = _ids(_REGISTERED, _log_since(fake.log, churned_at))
+        expected = CHURN_CYCLES * SESSIONS_PER_CYCLE
+        assert len(churn_ids) == expected, (
+            f"{expected} browsers were churned but the server registered "
+            f"{len(churn_ids)} sessions"
+        )
 
         # Cutting the browsers off the network abandons these sessions without a
         # websocket close, leaving the server with an open connection and a
         # stalled heartbeat -- the only thing the reaper has to go on. Their
-        # deadline runs from here, and the clean closes above drain inside it.
-        abandoned = [
-            open_churn_session(browser, url) for _ in range(ABANDONED_SESSIONS)
-        ]
-        for context in abandoned:
-            context.set_offline(True)
-        offline_at = time.monotonic()
-        survivors = 1 + ABANDONED_SESSIONS
-
-        closed = CHURN_CYCLES * SESSIONS_PER_CYCLE
-        wait_for_sessions(
-            observer,
-            lambda n: n == survivors,
-            timeout_ms=CLEAN_RECOVERY_TIMEOUT_MS,
-            label=f"{closed} sessions closed cleanly, expected {survivors} left",
+        # stale timeout runs from here, and the clean closes above drain inside
+        # it.
+        abandoned_at = fake.log.stat().st_size
+        for _ in range(ABANDONED_SESSIONS):
+            # The context lives until the browser closes: closing it here would
+            # let Bokeh destroy the very session whose reaping is asserted.
+            open_churn_session(browser, fake.url).set_offline(True)
+        abandoned_ids = _ids(_REGISTERED, _log_since(fake.log, abandoned_at))
+        assert len(abandoned_ids) == ABANDONED_SESSIONS, (
+            f"{ABANDONED_SESSIONS} browsers were abandoned but the server "
+            f"registered {len(abandoned_ids)} sessions"
         )
 
-        elapsed_ms = (time.monotonic() - offline_at) * 1000
-        observer.page.wait_for_timeout(
-            max(0.0, NO_CLEAN_CLOSE_CHECKPOINT_MS - elapsed_ms)
+        _wait_for_ids(
+            fake.log,
+            churned_at,
+            _UNREGISTERED,
+            churn_ids,
+            timeout_seconds=CLEAN_CLOSE_TIMEOUT_SECONDS,
+            label="sessions closed cleanly but never unregistered",
         )
-        assert (count := session_count(observer)) == survivors, (
-            f"session count is {count} {NO_CLEAN_CLOSE_CHECKPOINT_MS // 1000} s "
-            f"after the browsers went offline, expected {survivors}: fewer means "
-            "the server saw a clean close and the reaper is not being exercised, "
-            "more means the cleanly closed sessions were never unregistered"
+        _wait_for_ids(
+            fake.log,
+            abandoned_at,
+            _REAPED,
+            abandoned_ids,
+            timeout_seconds=REAP_TIMEOUT_SECONDS,
+            label="sessions abandoned but never reaped",
         )
 
-        wait_for_sessions(
-            observer,
-            lambda n: n == 1,
-            timeout_ms=REAPER_RECOVERY_TIMEOUT_MS,
-            label=f"{ABANDONED_SESSIONS} abandoned sessions, expected 1 left",
+        churn_log = _log_since(fake.log, churned_at)
+        assert not churn_ids & _ids(_REAPED, churn_log), (
+            "cleanly closed sessions were reaped: the close path did not run "
+            "and the reaper silently covered for it"
         )
-        for context in abandoned:
-            context.close()
+        assert not abandoned_ids & _ids(_UNREGISTERED, churn_log), (
+            "abandoned sessions were unregistered: the server saw a clean close, "
+            "so the reaper was never exercised"
+        )
+        assert "Error cleaning up updater" not in churn_log, (
+            f"teardown raised while releasing a session:\n{churn_log}"
+        )
+        assert "Error in periodic update step" not in churn_log, (
+            f"a session kept updating after teardown:\n{churn_log}"
+        )
 
-        assert_server_still_serves(browser, url)
+        assert_server_still_serves(browser, fake.url)
