@@ -3,6 +3,7 @@
 """Tests for correlation histogram plotters."""
 
 import holoviews as hv
+import numpy as np
 import pytest
 import scipp as sc
 
@@ -265,6 +266,62 @@ class TestCorrelationHistogramPlotter:
         plotter.compute(data)
         result = plotter.get_cached_state()
         assert result is not None
+
+
+class TestConstantAxisValues:
+    """A correlation axis that does not vary must still produce a usable plot."""
+
+    def _histogram(self, axis_values: list[float]) -> dict[str, np.ndarray]:
+        """Correlate three data points against one axis reading per point."""
+        plotter = CorrelationHistogramPlotter(
+            axes=[AxisSpec(role=X_AXIS, name='position', bins=4)],
+            normalize=False,
+            renderer=_make_line_renderer(),
+        )
+        times = [100 * (i + 1) for i in range(len(axis_values))]
+        plotter.compute(
+            {
+                PRIMARY: {
+                    _make_result_key('detector'): make_source_data(
+                        [t + 50 for t in times], [10.0] * len(times)
+                    )
+                },
+                X_AXIS: {
+                    _make_result_key('position'): make_axis_data(times, axis_values)
+                },
+            }
+        )
+        state = plotter.get_cached_state()
+        assert state is not None
+        return next(iter(state.values())).data
+
+    def test_constant_axis_spans_a_visible_range(self):
+        """Identical values must not collapse the bins and the axis to a point.
+
+        ``hist`` derives edges from the value range and leaves a degenerate one
+        degenerate, giving zero-width bars on a zero-width axis.
+        """
+        edges = self._histogram([5.0, 5.0, 5.0])['position']
+
+        assert edges[0] < edges[-1]
+        assert np.all(np.diff(edges) > 0.0)
+
+    def test_constant_axis_keeps_all_counts(self):
+        """Widening the bins must not push data outside the histogram."""
+        assert self._histogram([5.0, 5.0, 5.0])['values'].sum() == 30.0
+
+    def test_constant_axis_at_zero_spans_a_visible_range(self):
+        """A value of zero has no magnitude to widen relative to."""
+        edges = self._histogram([0.0, 0.0, 0.0])['position']
+
+        assert edges[0] < 0.0 < edges[-1]
+
+    def test_varying_axis_bins_over_the_data_range(self):
+        """Edges follow the values whenever they actually span a range."""
+        edges = self._histogram([1.0, 2.0, 3.0])['position']
+
+        assert edges[0] == pytest.approx(1.0)
+        assert edges[-1] == pytest.approx(3.0)
 
 
 class TestCorrelationHistogramPlotterOwnership:
