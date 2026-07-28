@@ -29,7 +29,15 @@ from .plot_params import (
     PlotDisplayParams1d,
     PlotDisplayParams2d,
 )
-from .plots import ImagePlotter, LinePlotter, PresenterBase, TimeBounds, TitleResolver
+from .plots import (
+    ImagePlotter,
+    LinePlotter,
+    PresenterBase,
+    TimeBounds,
+    TitleResolver,
+    ensure_span,
+    is_degenerate_span,
+)
 from .range_hook import Axis, RangeTargets
 
 
@@ -169,32 +177,22 @@ class AxisSpec:
     """Number of bins for this axis."""
 
 
-_CONSTANT_AXIS_REL_TOL = 1e-9
-"""Relative span below which correlation axis values count as constant.
-
-The axis carries device readings such as a temperature or a motor position,
-never epoch timestamps, so a span this small next to the magnitude is jitter in
-the last bits rather than a range worth binning over.
-"""
-
-
 def _axis_bins(values: sc.Variable, axis: AxisSpec) -> sc.Variable | int:
-    """Binning for ``values``: a bin count, or explicit edges if constant.
+    """Binning for ``values``: a bin count, or explicit edges if degenerate.
 
     ``hist`` derives edges from the value range and does not guard a degenerate
     one. A stationary device, or a single axis reading correlated with every
     data point, yields bins of zero width: nothing is drawn, and the axis range
-    derived from the edges collapses to a point. Spread the edges over a visible
-    interval around the value instead, widening as ``plots._ensure_span`` does
-    for degenerate view ranges.
+    derived from those edges collapses to a point. Bin over the interval such a
+    range is widened to instead -- fixing the edges rather than the view,
+    because zero-width bars stay invisible however wide the axis around them.
     """
     lo = sc.nanmin(values).value
     hi = sc.nanmax(values).value
-    if abs(hi - lo) > _CONSTANT_AXIS_REL_TOL * max(abs(lo), abs(hi)):
+    if not is_degenerate_span(lo, hi):
         return axis.bins
-    offset = max(abs(lo) * 0.05, 0.5)
     return sc.linspace(
-        axis.name, lo - offset, hi + offset, axis.bins + 1, unit=values.unit
+        axis.name, *ensure_span(lo, hi, log=False), axis.bins + 1, unit=values.unit
     )
 
 
