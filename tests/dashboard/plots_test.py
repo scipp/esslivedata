@@ -1798,6 +1798,82 @@ class TestTablePlotter:
         assert isinstance(counts.formatter, ScientificFormatter)
         assert counts.formatter.text_align == 'right'
 
+    def _widths(self, plotter, sources, values, output='counts'):
+        from bokeh.models import DataTable
+
+        data = {
+            self._key(source, output): sc.DataArray(sc.scalar(value, unit='counts'))
+            for source, value in zip(sources, values, strict=True)
+        }
+        fig = present_figure(plotter, data)
+        table = next(m for m in fig.references() if isinstance(m, DataTable))
+        return {c.field: c.width for c in table.columns}
+
+    def test_columns_keep_their_width_instead_of_filling_the_widget(
+        self, table_plotter
+    ):
+        # Bokeh's default 'force_fit' stretches every column to an equal share of
+        # the widget, which is what made short values sit in half-empty cells.
+        from bokeh.models import DataTable
+
+        data = {self._key('bank0', 'counts'): sc.DataArray(sc.scalar(10.0))}
+        fig = present_figure(table_plotter, data)
+        table = next(m for m in fig.references() if isinstance(m, DataTable))
+        assert table.autosize_mode == 'none'
+
+    def test_source_column_width_follows_longest_source_name(self, table_plotter):
+        narrow = self._widths(table_plotter, ['b0', 'b1'], [1.0, 2.0])
+        wide = self._widths(table_plotter, ['bank_with_a_long_name', 'b1'], [1.0, 2.0])
+        assert wide['source'] > narrow['source']
+
+    def test_column_width_covers_the_header(self, table_plotter):
+        # Source names shorter than the 'Source' header leave the column at the
+        # width the header needs.
+        tiny = self._widths(table_plotter, ['a'], [1.0])
+        small = self._widths(table_plotter, ['abcde'], [1.0])
+        assert tiny['source'] == small['source']
+
+    def test_bounded_notation_width_is_independent_of_magnitude(self):
+        from ess.livedata.dashboard.plot_params import TableNotation
+
+        for notation in (
+            TableNotation.auto,
+            TableNotation.scientific,
+            TableNotation.compact,
+        ):
+            plotter = self._plotter(notation=notation, precision=2)
+            small = self._widths(plotter, ['b0'], [1.0])
+            large = self._widths(plotter, ['b0'], [1.2e12])
+            assert small['counts'] == large['counts']
+
+    def test_decimal_notation_width_grows_with_magnitude(self):
+        # Decimal notation spells out every digit, so the column has to follow
+        # the data -- it is the one notation without a bounded width.
+        from ess.livedata.dashboard.plot_params import TableNotation
+
+        plotter = self._plotter(notation=TableNotation.decimal, precision=2)
+        small = self._widths(plotter, ['b0'], [1.0])
+        large = self._widths(plotter, ['b0'], [1.2e12])
+        assert large['counts'] > small['counts']
+
+    def test_precision_widens_value_column(self):
+        from ess.livedata.dashboard.plot_params import TableNotation
+
+        # A short output name keeps the header from setting the column width.
+        coarse = self._widths(
+            self._plotter(notation=TableNotation.scientific, precision=1),
+            ['b0'],
+            [1.0],
+            output='c',
+        )
+        fine = self._widths(
+            self._plotter(notation=TableNotation.scientific, precision=6),
+            ['b0'],
+            [1.0],
+            output='c',
+        )
+        assert fine['c'] > coarse['c']
+
 
 class TestOverlay1DPlotter:
     """Tests for Overlay1DPlotter with 2D data."""
