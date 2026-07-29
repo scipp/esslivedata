@@ -49,7 +49,9 @@ ANNOUNCEMENTS_URL = (
     'https://public.esss.dk/groups/scipp/esslivedata/_static/announcements.md'
 )
 
-pn.extension('holoviews', 'modal', notifications=True, template='material')
+pn.extension(
+    'holoviews', 'modal', 'floatpanel', notifications=True, template='material'
+)
 hv.extension('bokeh')
 
 # Remove Bokeh logo from Layout toolbars by patching LayoutPlot.initialize_plot

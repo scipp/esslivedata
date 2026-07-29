@@ -12,7 +12,8 @@ through the stable ``lt-*`` automation hooks:
 - disabling or removing a grid keeps the remaining tabs resolving and
   updating;
 - two sessions racing to save edits on the same grid converge on one title,
-  without a server-side exception or a duplicated/lost tab.
+  without a server-side exception or a duplicated/lost tab;
+- a popped-out plot floats above other tabs and keeps updating there.
 
 Each test launches its own dashboard for isolation, since grid topology changes
 are process-global; ports are allocated per launch, so concurrent runs of this
@@ -303,3 +304,39 @@ def test_concurrent_grid_property_edits_resolve_to_one_title_without_crash():
 
         winner.goto_tab(winning_title)
         assert_updating(winner, "surviving grid after concurrent edit race")
+
+
+@pytest.mark.browser
+def test_popped_out_plot_floats_above_other_tabs_and_keeps_updating():
+    """A pop-out is a live second view, not a snapshot of the cell.
+
+    Switching tabs is the interesting case: ``dynamic=True`` tears down the
+    hidden grid's Bokeh models, so the window is then the *only* plot in the
+    document -- and the poll loop must still be feeding it.
+    """
+    popout = ".lt-cell-r0c0.lt-tool-arrows-maximize"
+    with fake_dashboard("dummy") as fake, Dashboard.connect(fake.url) as dash:
+        del fake
+        page = dash.page
+        dash.goto_tab("Detectors")
+
+        dash.click(popout)
+        wait_until(
+            dash,
+            lambda: page.locator(".lt-popout-r0c0").count() == 1,
+            label="the pop-out window to open",
+        )
+        # The cell is a detail *view*: the grid cell keeps its own plot and
+        # its whole titlebar, including the button that opened the window.
+        assert page.locator(popout).count() == 1
+
+        dash.goto_tab("Workflows")
+        assert page.locator(".jsPanel").first.is_visible()
+        assert_updating(dash, "popped-out plot while another tab is shown")
+
+        page.locator(".jsPanel-btn-close").first.click()
+        wait_until(
+            dash,
+            lambda: page.locator(".lt-popout-r0c0").count() == 0,
+            label="the pop-out window to close",
+        )

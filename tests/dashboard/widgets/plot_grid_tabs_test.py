@@ -991,7 +991,7 @@ class TestComposeTableLayer:
         cell_widget = plot_grid_tabs._build_cell(CellId(uuid4()), cell)
 
         assert cell_widget.has_plot
-        assert not isinstance(cell_widget._plot, hv.Layout)
+        assert not isinstance(cell_widget.compose_detached_view().plot, hv.Layout)
 
 
 class TestDisabledGridTabs:

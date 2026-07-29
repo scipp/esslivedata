@@ -60,11 +60,14 @@ no text, `title`, or `aria-label` — leaving nothing semantic for browser autom
 *name* identity to slug (`workflow_status_widget.py`'s `_tool_css_class`), but a grid has
 none, so `lt-grid-*` slugs the grid *title* instead (`plot_grid_manager.py`) — the same
 title that also drives the grid's download filename. Plot cells have neither a name nor
-a stable title, so every button in their titlebar — gear (or layer menu), pencil, and
-layer-details toggle — carries the grid position as `lt-cell-r{row}c{col}` (`cell.py`),
-unique per grid, and only the active tab's grid is rendered. Address one with a compound
-selector: `.lt-cell-r0c1.lt-tool-settings`. Do not rely on DOM order for cells: a rebuilt
-cell (e.g. after a rename) moves to the end of the document.
+a stable title, so every button in their titlebar — pop-out, gear (or layer menu),
+pencil, and layer-details toggle — carries the grid position as `lt-cell-r{row}c{col}`
+(`cell.py`), unique per grid, and only the active tab's grid is rendered. Address one
+with a compound selector: `.lt-cell-r0c1.lt-tool-settings`. Do not rely on DOM order for
+cells: a rebuilt cell (e.g. after a rename) moves to the end of the document.
+
+A cell's pop-out window (`plot_popout.py`) is slugged by the same grid position:
+`lt-popout` + `lt-popout-r{row}c{col}`, one per cell at most.
 
 These classes have no associated style rules — adding/removing them is visually inert.
 Treat them as a stable contract: do not drop them in refactors (a test in
@@ -123,6 +126,16 @@ titles are code constants: **Workflows**, **System Status**, **Manage Plots**; f
 tabs are user/fixture plot-grid titles (the dummy fixture adds **Detectors**). With
 `dynamic=True` only the active tab's models exist, so a DOM/`lt-*` inventory reflects the
 *current* tab only — switch tabs before querying that tab's hooks.
+
+**Pop-out windows.** The cell titlebar's pop-out tool
+(`.lt-cell-r0c0.lt-tool-arrows-maximize`) opens a jsPanel `FloatPanel`, *not* a dialog —
+`Dashboard.open_modal` times out on it. Wait on `.lt-popout-r0c0` instead, and close it
+with `.jsPanel-btn-close` (or by clicking the tool again, which replaces the window).
+Two windows opened back to back cascade by a few pixels; without that offset the second
+would cover the first's close button and intercept the click. A window keeps rendering
+while another tab is shown, so with `dynamic=True` tearing down the hidden grid's models
+it is then the only plot in the document — which is what makes `assert_updating` on
+another tab a pop-out liveness check.
 
 **Modals.** Settings (gear), cell edit (pencil), and workflow config open a `pn.Modal`
 rendered as `[role=dialog]` — use that as the open/visible signal (`Dashboard.open_modal`

@@ -40,6 +40,7 @@ from .modal_escape_closer import ModalEscapeCloser
 from .plot_config_modal import PlotConfigModal
 from .plot_grid import PlotGrid
 from .plot_grid_manager import PlotGridManager
+from .plot_popout import PlotPopoutManager
 from .styles import Colors
 
 logger = structlog.get_logger(__name__)
@@ -153,8 +154,9 @@ class PlotGridTabs:
 
         # Gate state for coalescing plot-data flushes (see _poll_for_plot_updates).
         # The data push runs only when a new data-burst frame is ready or the
-        # visible tab changed; -1 forces a flush on the first poll.
-        self._last_flushed_generation: int = -1
+        # visible tab changed. Keyed by grid: the visible one, plus any grid
+        # holding a popped-out cell. Empty forces a flush on the first poll.
+        self._last_generations: dict[GridId | None, int] = {}
         self._last_active_grid_id: GridId | None = None
         # Wall-clock (monotonic) of the last freshness-pill refresh, throttling
         # the stall-aging path between data frames.
@@ -170,7 +172,13 @@ class PlotGridTabs:
             session_layers=self._session_layers,
             on_edit_title=self._show_cell_properties_modal,
             on_reconfigure_layer=self._on_reconfigure_layer,
+            on_popout=self._show_popout,
         )
+
+        # Floating pop-out windows, one per cell at most. Kept out of
+        # ``_current_modal``: that field gates the poll loop's data flush, and
+        # a pop-out must keep updating.
+        self._popouts = PlotPopoutManager()
 
         # Determine number of static tabs for stylesheet
         static_tab_count = 3 if system_status_widget else 2
@@ -226,6 +234,7 @@ class PlotGridTabs:
         self._widget = pn.Column(
             self._tabs,
             self._modal_container,
+            self._popouts.container,
             ModalEscapeCloser(),
             sizing_mode='stretch_both',
         )
@@ -587,6 +596,12 @@ class PlotGridTabs:
         self._modal_container.append(modal.modal)
         modal.show()
 
+    def _show_popout(self, cell_id: CellId) -> None:
+        """Open the cell's plot in a floating window (see ``plot_popout``)."""
+        cell_widget = self._cells.get(cell_id)
+        if cell_widget is not None:
+            self._popouts.open(cell_id, cell_widget)
+
     @staticmethod
     def _cell_signature(cell: PlotCell) -> tuple:
         """Composition fingerprint of a cell: geometry, title, and layer ids.
@@ -612,12 +627,21 @@ class PlotGridTabs:
         """
         previous = self._cells.get(cell_id)
         toolbars_visible = previous.toolbars_shown if previous is not None else False
+        # A pop-out renders the old composition's DynamicMaps, which the rebuild
+        # replaces, so it has to be rebuilt too. Reopening rather than closing
+        # keeps the window following its cell: a rebuild is triggered by things
+        # the user did elsewhere (a rename, a job restart), and having the
+        # floating view vanish in response would look like a crash.
+        was_popped_out = cell_id in self._popouts.open_cells()
+        self._popouts.close(cell_id)
         cell_widget = CellWidget(
             cell_id, cell, self._cell_deps, toolbars_visible=toolbars_visible
         )
         self._cells[cell_id] = cell_widget
         if previous is not None:
             previous.dispose()
+        if was_popped_out:
+            self._popouts.open(cell_id, cell_widget)
         return cell_widget
 
     def _poll_for_plot_updates(self) -> None:
@@ -663,9 +687,22 @@ class PlotGridTabs:
         # data arriving for another session's tab does not wake this session.
         # The cheap per-tick work below -- version/lifecycle scan, layer
         # activation, freshness-pill aging -- always runs so it stays responsive.
-        generation = self._orchestrator.frame_generation(active_grid_id)
+        # A cell with an open pop-out window counts as live wherever it sits, so
+        # its grid joins the visible one in driving the flush gate. With no
+        # pop-outs open this reduces to the visible grid alone, leaving the gate
+        # exactly as it was.
+        popout_cells = self._popouts.open_cells()
+        live_grids = {active_grid_id} | {
+            grid_id
+            for cell_id in popout_cells
+            if (grid_id := self._cell_grid.get(cell_id)) is not None
+        }
+        generations = {
+            grid_id: self._orchestrator.frame_generation(grid_id)
+            for grid_id in live_grids
+        }
         flush_due = (
-            generation != self._last_flushed_generation
+            generations != self._last_generations
             or active_grid_id != self._last_active_grid_id
         )
 
@@ -674,7 +711,7 @@ class PlotGridTabs:
             if grid_config is None or not grid_config.enabled:
                 continue
 
-            is_active = grid_id == active_grid_id
+            grid_is_visible = grid_id == active_grid_id
 
             for cell_id, cell in grid_config.cells.items():
                 # A cell always has >=1 layer while it exists in topology (the
@@ -682,6 +719,10 @@ class PlotGridTabs:
                 # empty state defensively.
                 if not cell.layers:
                     continue
+
+                # A popped-out cell keeps computing and repainting while the
+                # user works in another tab; the window shows it either way.
+                is_active = grid_is_visible or cell_id in popout_cells
 
                 # Detect composition changes (layer add/remove/reconfigure,
                 # title). Plotter swaps keep the layer ids and are handled by
@@ -768,6 +809,7 @@ class PlotGridTabs:
             cell_widget = self._cells.pop(cell_id)
             self._cell_grid.pop(cell_id, None)
             self._cell_signatures.pop(cell_id, None)
+            self._popouts.close(cell_id)
             plot_grid = self._grid_widgets.get(grid_id) if grid_id is not None else None
             if plot_grid is not None:
                 plot_grid.remove_widget_at(cell_widget.geometry)
@@ -820,11 +862,11 @@ class PlotGridTabs:
                     cell_widget.update_layer_time(layer_id, bounds)
 
         # Record gate state for the next poll. Only advance the flushed
-        # generation when we actually flushed (flush_due), so a tab change that
-        # piggybacks on an unchanged generation does not suppress the flush for
+        # generations when we actually flushed (flush_due), so a tab change that
+        # piggybacks on unchanged generations does not suppress the flush for
         # the next genuine frame.
         if flush_due:
-            self._last_flushed_generation = generation
+            self._last_generations = generations
         self._last_active_grid_id = active_grid_id
 
     def sever(self) -> None:
@@ -847,10 +889,11 @@ class PlotGridTabs:
     def dispose_widgets(self) -> None:
         """Dispose session-bound widgets (tier 1).
 
-        Disposes cell widgets, breaking Bokeh-tool reference cycles. Mutates
-        Bokeh document state, so it must run on the session's IOLoop.
-        Idempotent.
+        Disposes cell widgets and any open pop-out windows, breaking Bokeh-tool
+        reference cycles. Mutates Bokeh document state, so it must run on the
+        session's IOLoop. Idempotent.
         """
+        self._popouts.close_all()
         for cell_widget in self._cells.values():
             cell_widget.dispose()
         self._cells.clear()
