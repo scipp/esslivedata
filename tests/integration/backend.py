@@ -134,14 +134,19 @@ class DashboardBackend:
         return self._services.job_service
 
     @property
+    def service_registry(self):
+        self._check_available()
+        return self._services.service_registry
+
+    @property
     def plotting_controller(self):
         self._check_available()
         return self._services.plotting_controller
 
     @property
-    def orchestrator(self):
+    def message_pump(self):
         self._check_available()
-        return self._services.orchestrator
+        return self._services.message_pump
 
     @property
     def correlation_controller(self):
@@ -162,6 +167,16 @@ class DashboardBackend:
     def job_orchestrator(self):
         self._check_available()
         return self._services.job_orchestrator
+
+    @property
+    def roi_publisher(self):
+        self._check_available()
+        return self._services.roi_publisher
+
+    @property
+    def notification_queue(self):
+        self._check_available()
+        return self._services.notification_queue
 
     @property
     def config_manager(self):
@@ -196,7 +211,7 @@ class DashboardBackend:
     def update(self) -> None:
         """Process one batch of messages from Kafka."""
         self._check_available()
-        self._services.orchestrator.update()
+        self._services.message_pump.update()
 
     def stop(self) -> None:
         """Stop the background message source and clean up resources."""

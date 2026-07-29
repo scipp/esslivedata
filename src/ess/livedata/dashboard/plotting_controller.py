@@ -3,16 +3,16 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Hashable
-from typing import Any, TypeVar
+from typing import TypeVar
 
 import pydantic
 
 from ess.livedata.config.workflow_spec import (
-    ResultKey,
+    DataKey,
     WorkflowSpec,
 )
 
-from .data_service import DataServiceSubscriber
+from .data_subscriber import DataSubscriber
 from .extractors import (
     LatestValueExtractor,
     UpdateExtractor,
@@ -174,11 +174,11 @@ class PlottingController:
 
     def setup_pipeline(
         self,
-        keys_by_role: dict[str, list[ResultKey]],
+        keys_by_role: dict[str, list[DataKey]],
         plot_name: str,
         params: dict | pydantic.BaseModel,
-        on_data: Callable[[dict[ResultKey, Any]], None],
-    ) -> DataServiceSubscriber[ResultKey]:
+        on_update: Callable[[], None],
+    ) -> DataSubscriber:
         """
         Set up data pipeline for any plot type.
 
@@ -189,16 +189,15 @@ class PlottingController:
         Parameters
         ----------
         keys_by_role
-            ResultKeys grouped by role (built by LayerSubscription).
+            DataKeys grouped by role, derived from the plot config.
             E.g., {"primary": [...], "x_axis": [...]}
         plot_name
             Name of the plotter to use.
         params
             Plotter parameters as a dict or validated Pydantic model.
-        on_data
-            Callback invoked on every data update with role-grouped data
-            (dict[role, dict[ResultKey, DataArray]]). Called when at least one
-            key from each role has data.
+        on_update
+            Callback invoked when any of the keys changed; see
+            :py:class:`DataSubscriber`.
 
         Returns
         -------
@@ -222,7 +221,7 @@ class PlottingController:
         extractors = create_extractors_from_params(all_keys, window, spec)
         return self._stream_manager.make_stream(
             keys_by_role=keys_by_role,
-            on_data=on_data,
+            on_update=on_update,
             extractors=extractors,
         )
 
@@ -275,40 +274,38 @@ class PlottingController:
 def output_view_supports_windowing(workflow_spec: WorkflowSpec, view_name: str) -> bool:
     """Return whether the window controls (mode, duration, aggregation) apply.
 
-    Windowing applies when the view exposes a ``per_update`` stream: the window
-    duration aggregates a span of that stream, independent of whether a
-    ``since_start`` stream also exists. Cumulative-only views (e.g. ``I(Q)``)
-    have no per-update stream to window over, so the controls are hidden and the
+    Windowing applies when the view exposes a ``per_update`` field: the window
+    duration aggregates a span of that field, independent of whether a
+    ``since_start`` field also exists. Cumulative-only views (e.g. ``I(Q)``)
+    have no per-update field to window over, so the controls are hidden and the
     view locks to ``since_start``.
 
-    Offering ``since_start`` mode on a view that lacks a cumulative stream is
+    Offering ``since_start`` mode on a view that lacks a cumulative field is
     rejected at config time (see :func:`since_start_available`), not by hiding
     the controls -- that would also remove the still-meaningful duration control.
     """
-    view = workflow_spec.get_output_view(view_name)
-    if view is None:
+    if workflow_spec.get_output_view(view_name) is None:
         return True
-    return 'per_update' in view.streams
+    return 'per_update' in workflow_spec.windowing_options(view_name)
 
 
 def since_start_available(workflow_spec: WorkflowSpec, view_name: str) -> bool:
-    """Return whether ``since_start`` mode resolves to a real cumulative stream.
+    """Return whether ``since_start`` mode resolves to a real cumulative field.
 
     ``False`` for per-update-only views, where selecting ``since_start`` would
-    silently fall back to the per-update stream (see ``OutputView.field_for``).
+    silently fall back to the per-update field (see ``WorkflowSpec.field_for``).
     Permissive for unknown views.
     """
-    view = workflow_spec.get_output_view(view_name)
-    if view is None:
+    if workflow_spec.get_output_view(view_name) is None:
         return True
-    return 'since_start' in view.streams
+    return 'since_start' in workflow_spec.windowing_options(view_name)
 
 
 def create_extractors_from_params(
-    keys: list[ResultKey],
+    keys: list[DataKey],
     window: TimeWindowParams | None,
     spec: PlotterSpec | None = None,
-) -> dict[ResultKey, UpdateExtractor]:
+) -> dict[DataKey, UpdateExtractor]:
     """
     Create extractors based on plotter spec and window configuration.
 
@@ -336,7 +333,7 @@ def create_extractors_from_params(
     # No fixed requirement - check if window params provided.
     # `since_start` and window mode with duration==0 both reduce to taking the
     # most recent value of the subscribed stream (stream choice is encoded in
-    # the ResultKey). Only window mode with duration>0 needs aggregation.
+    # the DataKey). Only window mode with duration>0 needs aggregation.
     if (
         window is not None
         and window.mode is TimeWindowMode.window

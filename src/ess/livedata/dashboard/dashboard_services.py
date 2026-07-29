@@ -15,7 +15,7 @@ from confluent_kafka import KafkaException
 from ess.livedata.config import instrument_registry
 from ess.livedata.config.grid_template import load_raw_grid_templates
 from ess.livedata.config.instruments import get_config
-from ess.livedata.config.workflow_spec import ResultKey
+from ess.livedata.config.workflow_spec import DataKey
 
 from .active_job_registry import ActiveJobRegistry
 from .command_service import CommandService
@@ -24,8 +24,8 @@ from .data_service import DataService
 from .frame_clock import FrameClock
 from .job_orchestrator import JobOrchestrator
 from .job_service import JobService
+from .message_pump import MessagePump
 from .notification_queue import NotificationQueue
-from .orchestrator import Orchestrator
 from .plot_data_service import PlotDataService
 from .plot_orchestrator import PlotOrchestrator
 from .plotting_controller import PlottingController
@@ -98,7 +98,7 @@ class DashboardServices:
         self._stop_event = threading.Event()
         self._update_interval = 0.05  # seconds
 
-        # Committed per grid by the orchestrator's flush as each grid's burst
+        # Committed per grid by PlotOrchestrator's flush as each grid's burst
         # frame finishes; read by per-session poll loops to coalesce
         # synchronized plot flushes scoped to the tab each session shows.
         self.frame_clock = FrameClock()
@@ -143,12 +143,31 @@ class DashboardServices:
         logger.info("orchestrator_update_thread_stopped")
 
     def _update_loop(self) -> None:
-        """Background loop that periodically updates the orchestrator."""
+        """Background loop that periodically pumps messages and polls run-state."""
         while not self._stop_event.is_set():
             start = time.monotonic()
             try:
-                self.orchestrator.update()
+                self.message_pump.update()
+                # Expire pending commands whose acknowledgement never arrived, so
+                # a silently dropped send surfaces as an error toast rather than a
+                # workflow stuck waiting for the backend. Cheap scan of a tiny dict.
+                self.job_orchestrator.expire_pending_commands()
+                # Compare desired run-state against observed heartbeats and
+                # re-issue stops while they contradict (ADR 0008). Also prunes
+                # observed statuses whose heartbeat aged out.
+                self.job_orchestrator.reconcile_observed_jobs()
                 self.session_registry.cleanup_stale_sessions()
+                # Run-state poll before the flush: a commit observed here
+                # resets the affected layers' presentation, so the same pass's
+                # flush cannot re-show a frame from the cleared generation.
+                self.plot_orchestrator.sync_job_states()
+                # The burst is drained once update() returns; now rebuild the
+                # dirty viewed layers and commit each grid's frame as it
+                # finishes. No-op unless a visible layer was recomputed, so
+                # empty/hidden-only passes do not trigger session flushes.
+                # Inside the try: an escaping exception would kill this thread
+                # and silently freeze ingestion for every session.
+                self.plot_orchestrator.flush_frames()
             except KafkaException:
                 # Auth/fatal Kafka errors are not self-healing. Crash so systemd
                 # restarts the process with a fresh consumer; the in-process
@@ -159,12 +178,6 @@ class DashboardServices:
                 return
             except Exception:
                 logger.exception("orchestrator_update_error")
-
-            # The burst is drained once update() returns; now run the deferred
-            # per-grid compute buckets and commit each grid's frame as it
-            # finishes. No-op unless a visible layer was recomputed, so
-            # empty/hidden-only passes do not trigger session flushes.
-            self.plot_orchestrator.flush_frames()
 
             # Only sleep if update was quick (no work to do), to avoid busy-wait.
             # If there was real work, loop immediately to check for more data.
@@ -183,28 +196,30 @@ class DashboardServices:
             os.kill(os.getpid(), signal.SIGINT)
 
     def _setup_data_infrastructure(self) -> None:
-        """Set up data services, forwarder, and orchestrator."""
+        """Set up data services, forwarder, and message pump."""
         # Set up transport and get resources
         transport_resources = self._exit_stack.enter_context(self._transport)
 
         self.command_service = CommandService(sink=transport_resources.command_sink)
 
         # da00 of backend services converted to scipp.DataArray
-        ScippDataService = DataService[ResultKey, sc.DataArray]
+        ScippDataService = DataService[DataKey, sc.DataArray]
         self.data_service = ScippDataService()
         self.stream_manager = StreamManager(data_service=self.data_service)
         self.job_service = JobService()
         self.service_registry = ServiceRegistry()
 
-        # Create ROI publisher for publishing ROI updates to Kafka
-        roi_publisher = ROIPublisher(sink=transport_resources.roi_sink)
+        # Create ROI publisher for publishing ROI updates to Kafka. Its
+        # job-number resolver is injected in _setup_workflow_management once
+        # the JobOrchestrator exists.
+        self.roi_publisher = ROIPublisher(sink=transport_resources.roi_sink)
 
         self.plotting_controller = PlottingController(
             stream_manager=self.stream_manager,
-            roi_publisher=roi_publisher,
+            roi_publisher=self.roi_publisher,
         )
 
-        # Orchestrator will be wired to job_orchestrator after workflow setup
+        # MessagePump will be wired to job_orchestrator after workflow setup
         self._transport_resources = transport_resources
         logger.info("Data infrastructure setup complete")
 
@@ -242,20 +257,22 @@ class DashboardServices:
             command_service=self.command_service,
             workflow_registry=self.processor_factory,
             active_job_registry=active_job_registry,
+            job_service=self.job_service,
             config_store=self.workflow_config_store,
             instrument_config=self.instrument_config,
             notification_queue=self.notification_queue,
         )
-        self.job_service.on_status_updated = self.job_orchestrator.on_job_status_updated
+        self.roi_publisher.set_job_number_resolver(
+            self.job_orchestrator.get_active_job_number
+        )
 
         self.workflow_controller = WorkflowController(
             job_orchestrator=self.job_orchestrator,
             workflow_registry=self.processor_factory,
-            data_service=self.data_service,
             instrument_config=self.instrument_config,
         )
 
-        self.orchestrator = Orchestrator(
+        self.message_pump = MessagePump(
             self._transport_resources.message_source,
             data_service=self.data_service,
             job_service=self.job_service,

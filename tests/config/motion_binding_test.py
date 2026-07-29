@@ -24,7 +24,7 @@ from ess.livedata.config.instrument import Instrument, instrument_registry
 from ess.livedata.config.instruments import available_instruments, get_config
 from ess.livedata.config.stream import ContextBinding
 from ess.livedata.config.value_log import ValueLog
-from ess.livedata.handlers.detector_data_handler import get_nexus_geometry_filename
+from ess.livedata.preprocessors.detector_data import get_nexus_geometry_filename
 
 
 def _is_chain_patch(ci: ContextBinding) -> bool:

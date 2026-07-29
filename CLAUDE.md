@@ -2,6 +2,8 @@
 
 ESSlivedata is a live data reduction visualization framework for the European Spallation Source (ESS). It processes real-time neutron detector data via Kafka streams and provides interactive dashboards for monitoring and data reduction workflows.
 
+Terminology: `src/ess/livedata/glossary.md` (cross-cutting + backend) and `src/ess/livedata/dashboard/glossary.md` are the authoritative glossaries; consult them before naming new concepts.
+
 ## Development Commands
 
 ### Environment Setup
@@ -19,6 +21,13 @@ python -m venv .venv && source .venv/bin/activate && pip install -e ".[test]"
 - Tests in `tests/` mirror `src/ess/livedata/` structure, files follow `*_test.py`
 - All unit tests run without Kafka -- use fakes from `fakes.py`
 - `pytest` uses `--import-mode=importlib`
+- Robustness harnesses: `tests/helpers/hostile_wire.py` is the corpus of
+  malformed/insane wire payloads consumed by the adapter- and service-level
+  robustness tests (add new corruption modes there). Known holes are strict
+  `xfail`s referencing their issue; fixing the issue flips them loudly.
+- `pytest -m browser` runs Playwright UI tests (fake backend, e.g. the
+  multi-session smoke test); excluded from the default run, CI runs them
+  via `tox -e browser`.
 
 ```sh
 python -m pytest                      # fast tests only (~25s)
@@ -86,10 +95,10 @@ Kafka Topics -> MessageSource -> OrchestratingProcessor -> Preprocessors -> JobM
 
 ### Key Components
 
-- **`core/`**: `service.py` (lifecycle), `orchestrating_processor.py` (job-based batching), `handler.py` (preprocessor factory/protocols), `message.py` (Message, StreamId, StreamKind), `job_manager.py` (scheduling)
+- **`core/`**: `service.py` (lifecycle), `orchestrating_processor.py` (job-based batching), `preprocessor.py` (preprocessor factory/protocols), `command_dispatcher.py` (dispatches commands to `JobManagerAdapter`), `message.py` (Message, StreamId, StreamKind), `job_manager.py` (scheduling)
 - **`kafka/`**: `source.py` (consumers), `sink.py` (producers), `message_adapter.py` (raw -> domain), `stream_mapping.py` (topic -> stream)
 - **`config/`**: YAML + Jinja2 configs. Defaults in `config/defaults/`, per-instrument in `config/instruments/`
-- **`handlers/`**: Preprocessor factories for detector, monitor, and reduction data; accumulators; workflow protocol
+- **`preprocessors/`**: Preprocessor factories for detector, monitor, and reduction data; accumulators; workflow protocol
 - **`dashboard/`**: Panel/HoloViews visualizations, MVC pattern, `DataService` for data stream subscriptions
 
 ## Code Style

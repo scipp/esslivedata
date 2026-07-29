@@ -4,7 +4,7 @@
 ROI stream naming and configuration.
 
 This module provides centralized naming conventions for ROI-related streams,
-ensuring consistency between backend handlers and frontend components.
+ensuring consistency between backend preprocessors and frontend components.
 """
 
 from dataclasses import dataclass
@@ -137,7 +137,7 @@ def get_roi_mapper(instrument: str | None = None) -> ROIStreamMapper:
     Get the ROI stream mapper configuration.
 
     This is the single source of truth for ROI configuration
-    shared between backend handlers and frontend factories.
+    shared between backend preprocessors and frontend factories.
 
     Parameters
     ----------

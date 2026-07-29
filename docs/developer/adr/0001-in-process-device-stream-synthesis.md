@@ -22,7 +22,7 @@ Merge per-device substreams **in-process via a `MessageSource` decorator** (`Dev
 
 1. Maintains per-device state (last-seen value + time per substream).
 2. Emits `LogData` messages (with optional `target` / `idle` fields populated per device configuration) on a new `StreamKind.DEVICE` once bootstrap is complete (every configured substream observed at least once).
-3. Suppresses configured substream messages from forwarding — for configured devices, raw VAL/DMOV/RBV no longer reach downstream handlers.
+3. Suppresses configured substream messages from forwarding — for configured devices, raw VAL/DMOV/RBV no longer reach downstream preprocessors.
 4. Emits on **every** input event for a configured substream (union-anchored).
 5. Stamps each emit with `max(rbv_time, val_time, dmov_time)` across the synthesizer's last-seen substream times.
 

@@ -28,7 +28,7 @@ from ess.livedata.config.workflow_spec import JobId, WorkflowConfig
 from ess.livedata.core.job import JobData
 from ess.livedata.core.job_manager import JobFactory
 from ess.livedata.core.timestamp import Timestamp
-from ess.livedata.handlers.wavelength_lut_workflow_specs import (
+from ess.livedata.workflows.wavelength_lut_workflow_specs import (
     CHOPPER_CASCADE_SOURCE,
     WAVELENGTH_BANDS_OUTPUT,
     WAVELENGTH_LUT_OUTPUT,

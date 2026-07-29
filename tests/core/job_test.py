@@ -10,7 +10,7 @@ import scipp as sc
 from ess.livedata.config.workflow_spec import JobSchedule, WorkflowId
 from ess.livedata.core.job import Job, JobData, JobId, JobResult
 from ess.livedata.core.timestamp import Timestamp
-from ess.livedata.handlers.workflow_factory import Workflow
+from ess.livedata.workflows.workflow_factory import Workflow
 
 
 class TestJobResult:
@@ -113,7 +113,7 @@ def sample_job(fake_processor: FakeProcessor, sample_workflow_id: WorkflowId):
     return Job(
         job_id=job_id,
         workflow_id=sample_workflow_id,
-        processor=fake_processor,
+        workflow=fake_processor,
         source_names=["test_source"],
         input_streams={"aux_source"},
         gating_streams=set(),
@@ -238,6 +238,57 @@ class TestJob:
         assert sample_job.start_time == Timestamp.from_ns(100)  # Should not change
         assert sample_job.end_time == Timestamp.from_ns(250)  # Should update
 
+    def test_start_time_relatches_when_data_ends_before_it(self, sample_job):
+        """A start time later than the newest data is contradicted by the data.
+
+        A batch built from a single far-future message anchors on that message,
+        so the job's first start time can land outside its stream's timeline.
+        Keeping it would leave every later result with start_time > end_time.
+        """
+        poisoned = JobData(
+            start_time=Timestamp.from_ns(10**18),
+            end_time=Timestamp.from_ns(10**18),
+            primary_data={"test_source": sc.scalar(10.0)},
+            aux_data={},
+        )
+        real = JobData(
+            start_time=Timestamp.from_ns(100),
+            end_time=Timestamp.from_ns(200),
+            primary_data={"test_source": sc.scalar(20.0)},
+            aux_data={},
+        )
+
+        sample_job.add(poisoned)
+        assert sample_job.start_time == Timestamp.from_ns(10**18)
+
+        sample_job.add(real)
+        assert sample_job.start_time == Timestamp.from_ns(100)
+        assert sample_job.end_time == Timestamp.from_ns(200)
+
+    def test_start_time_survives_end_time_moving_backwards_within_the_job(
+        self, sample_job
+    ):
+        """Only a contradiction re-latches: the batchers legitimately move
+        ``end_time`` backwards when recovering a misplaced window, and the job
+        start must survive that."""
+        first = JobData(
+            start_time=Timestamp.from_ns(100),
+            end_time=Timestamp.from_ns(500),
+            primary_data={"test_source": sc.scalar(10.0)},
+            aux_data={},
+        )
+        rewound = JobData(
+            start_time=Timestamp.from_ns(300),
+            end_time=Timestamp.from_ns(400),
+            primary_data={"test_source": sc.scalar(20.0)},
+            aux_data={},
+        )
+
+        sample_job.add(first)
+        sample_job.add(rewound)
+        assert sample_job.start_time == Timestamp.from_ns(100)
+        assert sample_job.end_time == Timestamp.from_ns(400)
+
     def test_add_data_processes_all_provided_data(self, sample_job, fake_processor):
         """Test that add() processes all provided data."""
         data = JobData(
@@ -280,7 +331,7 @@ class TestJob:
         job = Job(
             job_id=job_id,
             workflow_id=sample_workflow_id,
-            processor=fake_processor,
+            workflow=fake_processor,
             source_names=["test_source"],
             input_streams=set(),
             gating_streams=set(),
@@ -308,7 +359,7 @@ class TestJob:
         job = Job(
             job_id=job_id,
             workflow_id=sample_workflow_id,
-            processor=fake_processor,
+            workflow=fake_processor,
             source_names=["test_source"],
             input_streams=set(),
             gating_streams=set(),
@@ -359,7 +410,7 @@ class TestJob:
         job = Job(
             job_id=job_id,
             workflow_id=sample_workflow_id,
-            processor=fake_processor,
+            workflow=fake_processor,
             source_names=["test_source"],
             input_streams=set(),
             gating_streams=set(),
@@ -402,7 +453,7 @@ class TestJob:
         job = Job(
             job_id=job_id,
             workflow_id=sample_workflow_id,
-            processor=fake_processor,
+            workflow=fake_processor,
             source_names=["test_source"],
             input_streams=set(),
             gating_streams=set(),
@@ -453,7 +504,7 @@ class TestJob:
         job = Job(
             job_id=job_id,
             workflow_id=sample_workflow_id,
-            processor=fake_processor,
+            workflow=fake_processor,
             source_names=["test_source"],
             input_streams=set(),
             gating_streams=set(),
@@ -491,7 +542,7 @@ class TestJob:
         job = Job(
             job_id=job_id,
             workflow_id=sample_workflow_id,
-            processor=fake_processor,
+            workflow=fake_processor,
             source_names=["test_source"],
             input_streams=set(),
             gating_streams=set(),
@@ -526,7 +577,7 @@ class TestJob:
         job = Job(
             job_id=job_id,
             workflow_id=sample_workflow_id,
-            processor=fake_processor,
+            workflow=fake_processor,
             source_names=["test_source"],
             input_streams=set(),
             gating_streams=set(),
@@ -555,7 +606,7 @@ class TestJob:
         job = Job(
             job_id=job_id,
             workflow_id=sample_workflow_id,
-            processor=fake_processor,
+            workflow=fake_processor,
             source_names=["test_source"],
             input_streams=set(),
             gating_streams=set(),
@@ -592,7 +643,7 @@ class TestJob:
         job = Job(
             job_id=job_id,
             workflow_id=sample_workflow_id,
-            processor=fake_processor,
+            workflow=fake_processor,
             source_names=["test_source"],
             input_streams=set(),
             gating_streams=set(),
@@ -644,7 +695,7 @@ class TestJob:
         job = Job(
             job_id=job_id,
             workflow_id=sample_workflow_id,
-            processor=fake_processor,
+            workflow=fake_processor,
             source_names=["test_source"],
             input_streams=set(),
             gating_streams=set(),
@@ -681,7 +732,7 @@ class TestJobAuxSourceMapping:
         job = Job(
             job_id=job_id,
             workflow_id=sample_workflow_id,
-            processor=fake_processor,
+            workflow=fake_processor,
             source_names=["detector1"],
             input_streams={"monitor1", "monitor2"},
             gating_streams=set(),
@@ -715,7 +766,7 @@ class TestJobAuxSourceMapping:
         job = Job(
             job_id=job_id,
             workflow_id=sample_workflow_id,
-            processor=fake_processor,
+            workflow=fake_processor,
             source_names=["detector1"],
             input_streams={"monitor1", "monitor2"},
             gating_streams=set(),
@@ -731,7 +782,7 @@ class TestJobAuxSourceMapping:
         job = Job(
             job_id=job_id,
             workflow_id=sample_workflow_id,
-            processor=fake_processor,
+            workflow=fake_processor,
             source_names=["detector1"],
             input_streams=set(),
             gating_streams=set(),
@@ -758,7 +809,7 @@ class TestJobAuxSourceMapping:
         job = Job(
             job_id=job_id,
             workflow_id=sample_workflow_id,
-            processor=fake_processor,
+            workflow=fake_processor,
             source_names=["detector1"],
             input_streams={"monitor1", "monitor2"},
             gating_streams=set(),

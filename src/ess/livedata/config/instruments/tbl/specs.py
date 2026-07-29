@@ -12,8 +12,8 @@ from ess.livedata.config import (
     name_streams,
 )
 from ess.livedata.config.workflow_spec import DETECTORS
-from ess.livedata.handlers.detector_view_specs import DetectorViewOutputs
-from ess.livedata.handlers.monitor_workflow_specs import (
+from ess.livedata.workflows.detector_view_specs import DetectorViewOutputs
+from ess.livedata.workflows.monitor_workflow_specs import (
     TOAOnlyMonitorDataParams,
     register_monitor_workflow_specs,
 )
@@ -36,6 +36,9 @@ instrument = Instrument(
     name='tbl',
     detector_names=detector_names,
     monitors=monitor_names,
+    # Bandwidth choppers feeding the wavelength-LUT cascade, in beam order
+    # (source -> sample): bwc_2 sits at 14.5 m from the source, bwc_1 at 15.5 m.
+    choppers=['bwc_2', 'bwc_1'],
     streams=name_streams(filter_authorized_streams(PARSED_STREAMS)),
     source_metadata={
         'timepix3_detector': SourceMetadata(title='Timepix3'),

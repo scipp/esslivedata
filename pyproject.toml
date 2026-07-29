@@ -34,7 +34,7 @@ dependencies = [
   "confluent_kafka",
   "dask>=2026.3.0",
   "ess-streaming-data-types",
-  "essreduce>=26.6.1",
+  "essreduce>=26.6.3",  # Thread-safe wavelength-LUT polygon intersection (no warning suppression race)
   "jinja2",
   "pydantic>=2",
   "scipp>=25.02.0",  # Improved performance of scipp.group
@@ -56,6 +56,7 @@ test = [
     "param",
     "pytest",
     "pytest-benchmark",
+    "pytest-xdist",
     "scippneutron>=25.07.0",
 ]
 bifrost = [
@@ -103,7 +104,7 @@ addopts = """
 --strict-markers
 --import-mode=importlib
 --benchmark-skip
--m "not integration and not slow"
+-m "not integration and not slow and not browser"
 -ra
 """
 testpaths = "tests"
@@ -112,6 +113,7 @@ markers = [
   "instrument: Specify instrument name for parameterized tests",
   "services: Specify which services to use in integration_env fixture (monitor, detector, or reduction)",
   "slow: Slow tests (>2s) excluded by default, run in CI via tox",
+  "browser: Browser-driven (Playwright) UI tests; excluded from the default run, run in CI via tox -e browser",
 ]
 filterwarnings = [
   "error",

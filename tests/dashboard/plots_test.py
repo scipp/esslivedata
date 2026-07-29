@@ -1,7 +1,6 @@
 # SPDX-License-Identifier: BSD-3-Clause
 # Copyright (c) 2025 Scipp contributors (https://github.com/scipp)
 
-import uuid
 import warnings
 
 import holoviews as hv
@@ -11,7 +10,7 @@ import scipp as sc
 from bokeh.models import GlyphRenderer, Whisker
 from holoviews.plotting.bokeh import BokehRenderer
 
-from ess.livedata.config.workflow_spec import JobId, ResultKey, WorkflowId
+from ess.livedata.config.workflow_spec import DataKey, WorkflowId
 from ess.livedata.core.timestamp import Timestamp
 from ess.livedata.dashboard import plots
 from ess.livedata.dashboard.plot_params import (
@@ -58,14 +57,15 @@ def coordinates_2d():
 
 @pytest.fixture
 def data_key():
-    """Create a test ResultKey."""
+    """Create a test DataKey."""
     workflow_id = WorkflowId(
         instrument='test_instrument',
         name='test_workflow',
         version=1,
     )
-    job_id = JobId(source_name='test_source', job_number=uuid.uuid4())
-    return ResultKey(workflow_id=workflow_id, job_id=job_id, output_name='test_result')
+    return DataKey(
+        workflow_id=workflow_id, source_name='test_source', output_name='test_result'
+    )
 
 
 @pytest.fixture(params=['linear', 'log'])
@@ -714,9 +714,9 @@ class TestLinePlotter:
             ),
             coords={'x': sc.array(dims=['x'], values=[10.0, 20.0, 30.0], unit='m')},
         )
-        data_key2 = ResultKey(
+        data_key2 = DataKey(
             workflow_id=data_key.workflow_id,
-            job_id=JobId(source_name='other_source', job_number=uuid.uuid4()),
+            source_name='other_source',
             output_name=data_key.output_name,
         )
         plotter.compute({'primary': {data_key: data, data_key2: data}})
@@ -979,6 +979,28 @@ class TestSlicerPlotter:
         assert isinstance(result, hv.Image | hv.QuadMesh)
         assert result.data['values'].shape == (40, 10)
 
+    def test_flatten_outer_dims_keeps_genuine_2d_coordinate(self, slicer_presenter):
+        """Flattening should keep a real 2D coordinate spanning the flattened
+        dims, using it for the flattened axis instead of synthesized integer
+        indices.
+        """
+        z = sc.arange('z', 5, dtype='float64', unit='s')
+        x = sc.arange('x', 10, dtype='float64', unit='m')
+        y_2d = sc.array(
+            dims=['z', 'y'],
+            values=np.arange(40, dtype='float64').reshape(5, 8) * 2.5 + 100.0,
+            unit='m',
+        )
+        data = sc.DataArray(
+            sc.ones(dims=['z', 'y', 'x'], shape=[5, 8, 10], unit='counts'),
+            coords={'x': x, 'z': z, 'y': y_2d},
+        )
+
+        result = slicer_presenter._flatten_outer_dims(data, keep_dim='x')
+
+        assert 'y' in result.dims
+        np.testing.assert_allclose(result.coords['y'].values, y_2d.values.flatten())
+
     def test_compute_log_scale_masks_zeros(self, data_3d, data_key):
         """Test that log scale masks zeros in compute()."""
         params = PlotParams3d(plot_scale=PlotScaleParams2d())
@@ -1141,15 +1163,14 @@ class TestPlotterLabelChanges:
 
     @pytest.fixture
     def data_key_with_output_name(self):
-        """Create a test ResultKey with output_name."""
+        """Create a test DataKey with output_name."""
         workflow_id = WorkflowId(
             instrument='test_instrument',
             name='test_workflow',
             version=1,
         )
-        job_id = JobId(source_name='detector', job_number=uuid.uuid4())
-        return ResultKey(
-            workflow_id=workflow_id, job_id=job_id, output_name='roi_current_0'
+        return DataKey(
+            workflow_id=workflow_id, source_name='detector', output_name='roi_current_0'
         )
 
     def test_label_includes_output_name(self, simple_data, data_key_with_output_name):
@@ -1188,28 +1209,26 @@ class TestPlotterOverlayMode:
 
     @pytest.fixture
     def data_key_1(self):
-        """Create first test ResultKey."""
+        """Create first test DataKey."""
         workflow_id = WorkflowId(
             instrument='test_instrument',
             name='test_workflow',
             version=1,
         )
-        job_id = JobId(source_name='detector', job_number=uuid.uuid4())
-        return ResultKey(
-            workflow_id=workflow_id, job_id=job_id, output_name='roi_current_0'
+        return DataKey(
+            workflow_id=workflow_id, source_name='detector', output_name='roi_current_0'
         )
 
     @pytest.fixture
     def data_key_2(self):
-        """Create second test ResultKey."""
+        """Create second test DataKey."""
         workflow_id = WorkflowId(
             instrument='test_instrument',
             name='test_workflow',
             version=1,
         )
-        job_id = JobId(source_name='detector', job_number=uuid.uuid4())
-        return ResultKey(
-            workflow_id=workflow_id, job_id=job_id, output_name='roi_current_1'
+        return DataKey(
+            workflow_id=workflow_id, source_name='detector', output_name='roi_current_1'
         )
 
     def test_overlay_mode_with_single_item(self, simple_data_1, data_key_1):
@@ -1386,7 +1405,7 @@ class TestBarsPlotter:
         """Test that the bar is labeled with source_name when no title resolver."""
         result = bars_plotter.plot(scalar_data, data_key)
         bar_data = result.data
-        assert data_key.job_id.source_name in bar_data['source'].iloc[0]
+        assert data_key.source_name in bar_data['source'].iloc[0]
 
     def test_plot_uses_source_display_name_when_provided(
         self, bars_plotter, scalar_data, data_key
@@ -1405,9 +1424,8 @@ class TestBarsPlotter:
             name='test_workflow',
             version=1,
         )
-        job_id = JobId(source_name='detector', job_number=uuid.uuid4())
-        data_key = ResultKey(
-            workflow_id=workflow_id, job_id=job_id, output_name='roi_sum'
+        data_key = DataKey(
+            workflow_id=workflow_id, source_name='detector', output_name='roi_sum'
         )
 
         result = bars_plotter.plot(scalar_data, data_key)
@@ -1459,14 +1477,14 @@ class TestBarsPlotter:
             name='test',
             version=1,
         )
-        key1 = ResultKey(
+        key1 = DataKey(
             workflow_id=workflow_id,
-            job_id=JobId(source_name='source1', job_number=uuid.uuid4()),
+            source_name='source1',
             output_name='counts',
         )
-        key2 = ResultKey(
+        key2 = DataKey(
             workflow_id=workflow_id,
-            job_id=JobId(source_name='source2', job_number=uuid.uuid4()),
+            source_name='source2',
             output_name='counts',
         )
 
@@ -1498,11 +1516,11 @@ class TestTablePlotter:
         return TablePlotter.from_params(PlotParamsTable())
 
     @staticmethod
-    def _key(source: str, output: str) -> ResultKey:
+    def _key(source: str, output: str) -> DataKey:
         workflow_id = WorkflowId(instrument='test', name='test', version=1)
-        return ResultKey(
+        return DataKey(
             workflow_id=workflow_id,
-            job_id=JobId(source_name=source, job_number=uuid.uuid4()),
+            source_name=source,
             output_name=output,
         )
 
@@ -1779,6 +1797,82 @@ class TestTablePlotter:
         counts = next(c for c in table.columns if c.field == 'counts')
         assert isinstance(counts.formatter, ScientificFormatter)
         assert counts.formatter.text_align == 'right'
+
+    def _widths(self, plotter, sources, values, output='counts'):
+        from bokeh.models import DataTable
+
+        data = {
+            self._key(source, output): sc.DataArray(sc.scalar(value, unit='counts'))
+            for source, value in zip(sources, values, strict=True)
+        }
+        fig = present_figure(plotter, data)
+        table = next(m for m in fig.references() if isinstance(m, DataTable))
+        return {c.field: c.width for c in table.columns}
+
+    def test_columns_keep_their_width_instead_of_filling_the_widget(
+        self, table_plotter
+    ):
+        # Bokeh's default 'force_fit' stretches every column to an equal share of
+        # the widget, which is what made short values sit in half-empty cells.
+        from bokeh.models import DataTable
+
+        data = {self._key('bank0', 'counts'): sc.DataArray(sc.scalar(10.0))}
+        fig = present_figure(table_plotter, data)
+        table = next(m for m in fig.references() if isinstance(m, DataTable))
+        assert table.autosize_mode == 'none'
+
+    def test_source_column_width_follows_longest_source_name(self, table_plotter):
+        narrow = self._widths(table_plotter, ['b0', 'b1'], [1.0, 2.0])
+        wide = self._widths(table_plotter, ['bank_with_a_long_name', 'b1'], [1.0, 2.0])
+        assert wide['source'] > narrow['source']
+
+    def test_column_width_covers_the_header(self, table_plotter):
+        # Source names shorter than the 'Source' header leave the column at the
+        # width the header needs.
+        tiny = self._widths(table_plotter, ['a'], [1.0])
+        small = self._widths(table_plotter, ['abcde'], [1.0])
+        assert tiny['source'] == small['source']
+
+    def test_bounded_notation_width_is_independent_of_magnitude(self):
+        from ess.livedata.dashboard.plot_params import TableNotation
+
+        for notation in (
+            TableNotation.auto,
+            TableNotation.scientific,
+            TableNotation.compact,
+        ):
+            plotter = self._plotter(notation=notation, precision=2)
+            small = self._widths(plotter, ['b0'], [1.0])
+            large = self._widths(plotter, ['b0'], [1.2e12])
+            assert small['counts'] == large['counts']
+
+    def test_decimal_notation_width_grows_with_magnitude(self):
+        # Decimal notation spells out every digit, so the column has to follow
+        # the data -- it is the one notation without a bounded width.
+        from ess.livedata.dashboard.plot_params import TableNotation
+
+        plotter = self._plotter(notation=TableNotation.decimal, precision=2)
+        small = self._widths(plotter, ['b0'], [1.0])
+        large = self._widths(plotter, ['b0'], [1.2e12])
+        assert large['counts'] > small['counts']
+
+    def test_precision_widens_value_column(self):
+        from ess.livedata.dashboard.plot_params import TableNotation
+
+        # A short output name keeps the header from setting the column width.
+        coarse = self._widths(
+            self._plotter(notation=TableNotation.scientific, precision=1),
+            ['b0'],
+            [1.0],
+            output='c',
+        )
+        fine = self._widths(
+            self._plotter(notation=TableNotation.scientific, precision=6),
+            ['b0'],
+            [1.0],
+            output='c',
+        )
+        assert fine['c'] > coarse['c']
 
 
 class TestOverlay1DPlotter:
@@ -2149,15 +2243,16 @@ class TestLagIndicator:
 
     @pytest.fixture
     def data_key(self):
-        """Create a test ResultKey."""
+        """Create a test DataKey."""
         workflow_id = WorkflowId(
             instrument='test_instrument',
             name='test_workflow',
             version=1,
         )
-        job_id = JobId(source_name='test_source', job_number=uuid.uuid4())
-        return ResultKey(
-            workflow_id=workflow_id, job_id=job_id, output_name='test_result'
+        return DataKey(
+            workflow_id=workflow_id,
+            source_name='test_source',
+            output_name='test_result',
         )
 
     def test_time_info_shown_when_coords_present(self, data_key):
@@ -2211,9 +2306,9 @@ class TestLagIndicator:
 
         now_ns = time.time_ns()
         # Source 1: data from 2s to 1s ago
-        data_key1 = ResultKey(
+        data_key1 = DataKey(
             workflow_id=workflow_id,
-            job_id=JobId(source_name='source1', job_number=uuid.uuid4()),
+            source_name='source1',
             output_name='result',
         )
         data1 = sc.DataArray(
@@ -2226,9 +2321,9 @@ class TestLagIndicator:
         )
 
         # Source 2: data from 6s to 5s ago (older, should determine the lag)
-        data_key2 = ResultKey(
+        data_key2 = DataKey(
             workflow_id=workflow_id,
-            job_id=JobId(source_name='source2', job_number=uuid.uuid4()),
+            source_name='source2',
             output_name='result',
         )
         data2 = sc.DataArray(
@@ -2353,15 +2448,16 @@ class TestTwoStageArchitecture:
 
     @pytest.fixture
     def data_key(self):
-        """Create a test ResultKey."""
+        """Create a test DataKey."""
         workflow_id = WorkflowId(
             instrument='test_instrument',
             name='test_workflow',
             version=1,
         )
-        job_id = JobId(source_name='test_source', job_number=uuid.uuid4())
-        return ResultKey(
-            workflow_id=workflow_id, job_id=job_id, output_name='test_result'
+        return DataKey(
+            workflow_id=workflow_id,
+            source_name='test_source',
+            output_name='test_result',
         )
 
     def test_create_presenter_returns_presenter(self, simple_data, data_key):
@@ -2454,15 +2550,14 @@ class TestSaveFilenameHookOnDynamicMap:
     """
 
     @staticmethod
-    def _make_key(source_name: str) -> ResultKey:
+    def _make_key(source_name: str) -> DataKey:
         workflow_id = WorkflowId(
             instrument='test_instrument',
             name='test_workflow',
             version=1,
         )
-        job_id = JobId(source_name=source_name, job_number=uuid.uuid4())
-        return ResultKey(
-            workflow_id=workflow_id, job_id=job_id, output_name='test_result'
+        return DataKey(
+            workflow_id=workflow_id, source_name=source_name, output_name='test_result'
         )
 
     @staticmethod
@@ -2684,15 +2779,16 @@ class TestRateNormalizationIntegration:
 
     @pytest.fixture
     def data_key(self):
-        """Create a test ResultKey."""
+        """Create a test DataKey."""
         workflow_id = WorkflowId(
             instrument='test_instrument',
             name='test_workflow',
             version=1,
         )
-        job_id = JobId(source_name='test_source', job_number=uuid.uuid4())
-        return ResultKey(
-            workflow_id=workflow_id, job_id=job_id, output_name='test_result'
+        return DataKey(
+            workflow_id=workflow_id,
+            source_name='test_source',
+            output_name='test_result',
         )
 
     @pytest.fixture
@@ -2940,3 +3036,47 @@ class TestTimeseriesDownsamplingAndThrottle:
         plotter.compute({'primary': {data_key: data}})
         # No throttle path: recomputes unconditionally, fresh cached state object.
         assert plotter.get_cached_state() is not first_state
+
+
+class TestGetLogScaleClim:
+    @staticmethod
+    def _image(values: list[list[float]]) -> sc.DataArray:
+        arr = np.array(values, dtype='float64')
+        return sc.DataArray(
+            sc.array(dims=['y', 'x'], values=arr, unit='counts'),
+            coords={
+                'y': sc.arange('y', arr.shape[0], unit='m'),
+                'x': sc.arange('x', arr.shape[1], unit='m'),
+            },
+        )
+
+    def test_all_nan_returns_placeholder(self) -> None:
+        data = self._image([[np.nan, np.nan], [np.nan, np.nan]])
+        assert plots.Plotter._get_log_scale_clim(data) == (1.0, 10.0)
+
+    def test_uniform_positive_data_brackets_the_constant(self) -> None:
+        constant = 1e6
+        data = self._image([[constant, constant], [constant, constant]])
+        low, high = plots.Plotter._get_log_scale_clim(data)
+        assert low < constant < high
+        assert low == pytest.approx(constant * 0.9)
+        assert high == pytest.approx(constant * 1.1)
+
+    def test_uniform_small_constant_keeps_positive_bounds(self) -> None:
+        # HoloViews' own additive value+/-1 fallback would give a non-positive
+        # lower bound here (0.5 -> -0.5), invalid on a log scale.
+        data = self._image([[0.5, 0.5], [0.5, 0.5]])
+        low, high = plots.Plotter._get_log_scale_clim(data)
+        assert low > 0.0
+        assert low < 0.5 < high
+
+    def test_uniform_data_with_nan_brackets_the_constant(self) -> None:
+        constant = 1e6
+        data = self._image([[constant, np.nan], [np.nan, constant]])
+        low, high = plots.Plotter._get_log_scale_clim(data)
+        assert low == pytest.approx(constant * 0.9)
+        assert high == pytest.approx(constant * 1.1)
+
+    def test_varying_data_defers_to_holoviews(self) -> None:
+        data = self._image([[1.0, 2.0], [3.0, 4.0]])
+        assert plots.Plotter._get_log_scale_clim(data) is None

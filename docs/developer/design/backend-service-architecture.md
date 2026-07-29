@@ -103,7 +103,7 @@ Manages lifecycle, signal handling (SIGTERM/SIGINT), background threading, and r
 
 ### Preprocessor Layer
 
-**PreprocessorFactory** creates stream-specific accumulators on-demand. Common preprocessors in `handlers/`: `GroupByPixel`, `ToNXevent_data`, `ToNXlog`, `Cumulative`, `LatestValueHandler`. Implement `Accumulator` protocol with `add()`, `get()`, `clear()`.
+**PreprocessorFactory** creates stream-specific accumulators on-demand. Common preprocessors in `preprocessors/`: `GroupByPixel`, `ToNXevent_data`, `ToNXlog`, `Cumulative`, `LatestValueAccumulator`. Implement `Accumulator` protocol with `add()`, `get()`, `clear()`.
 
 ## Job-Based Processing Architecture
 
@@ -113,7 +113,7 @@ All backend services (monitor_data, detector_data, data_reduction, timeseries) u
 sequenceDiagram
     participant S as Service
     participant OP as OrchestratingProcessor
-    participant CP as ConfigProcessor
+    participant CP as CommandDispatcher
     participant MP as MessagePreprocessor
     participant JM as JobManager
     participant Sink as MessageSink
@@ -134,7 +134,7 @@ sequenceDiagram
     OP->>Sink: publish_messages(results + status)
 ```
 
-**ConfigProcessor** (see `handlers/config_handler.py`) handles `workflow_config` and `job_command` messages, delegating to **JobManagerAdapter** (see `core/job_manager_adapter.py`), which bridges ConfigProcessor and JobManager. Other key features: time-based batching, preprocessing accumulation, job lifecycle management, periodic status reporting.
+**CommandDispatcher** (see `core/command_dispatcher.py`) handles `workflow_config` and `job_command` messages, delegating to **JobManagerAdapter** (see `core/job_manager_adapter.py`), which bridges CommandDispatcher and JobManager. Other key features: time-based batching, preprocessing accumulation, job lifecycle management, periodic status reporting.
 
 ## Message Flow in Backend Services
 
@@ -207,5 +207,5 @@ Services use `ExitStack` for automatic resource cleanup on service exit or error
 
 ## Building Services with DataServiceBuilder
 
-`DataServiceBuilder` constructs services consistently with `OrchestratingProcessor` by default. For command-line services, `DataServiceRunner` (see `service_factory.py`) wraps a builder and adds standard CLI arguments (`--instrument`, `--dev`, `--log-level`, `--sync-scheduler`, `--job-threads`). Services can publish initialization messages on startup for workflow specifications or configuration values.
+`DataServiceBuilder` constructs services consistently with `OrchestratingProcessor` by default. For command-line services, `DataServiceRunner` (see `service_factory.py`) wraps a builder and adds standard CLI arguments (`--instrument`, `--dev`, `--log-level`, `--scheduler`, `--job-threads`). The `--scheduler` option selects the scheduler sciline uses for workflow execution (default `naive`, which avoids per-cycle dask overhead; see `ess.livedata.core.sciline_scheduler`). Services can publish initialization messages on startup for workflow specifications or configuration values.
 

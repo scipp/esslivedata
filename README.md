@@ -3,8 +3,8 @@
 
 # ![esslivedata]
 
-[esslivedata]: https://raw.githubusercontent.com/scipp/esslivedata/master/docs/_static/logo.svg
+[esslivedata]: https://raw.githubusercontent.com/scipp/esslivedata/main/docs/_static/logo.svg
 
 ## About
 
-Live data reduction visualisation framework for ESS.
+Live data reduction visualization framework for ESS.

@@ -15,6 +15,9 @@ Two ways to use it:
           dash.goto_tab("Detectors")
           dash.screenshot("plots.png")
 
+  For multi-session scenarios (state is process-global, widgets per-session),
+  :meth:`Dashboard.connect_many` opens n isolated sessions on one server.
+
 * As a **CLI** against a running server, or self-launching a Kafka-free fake
   backend seeded from the committed dummy fixture::
 
@@ -36,6 +39,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import shutil
 import socket
 import subprocess
@@ -44,10 +48,12 @@ import tempfile
 import time
 import urllib.request
 from contextlib import contextmanager
+from dataclasses import dataclass
 from pathlib import Path
 from urllib.error import URLError
 
 from playwright.sync_api import (
+    Browser,
     Page,
     sync_playwright,
 )
@@ -63,6 +69,23 @@ DEFAULT_URL = f"http://localhost:{DEFAULT_PORT}"
 # Time for Bokeh models to settle / the first refresh tick to rebuild rows after
 # load, before any click. See the "cold start" window in the rule file.
 SETTLE_MS = 5000
+# Override the Chromium binary when the installed playwright package does not
+# match the browsers available on disk (e.g. a preprovisioned container).
+_CHROMIUM_ENV = "PLAYWRIGHT_CHROMIUM_EXECUTABLE"
+
+
+def _launch_browser(playwright) -> Browser:
+    executable = os.environ.get(_CHROMIUM_ENV)
+    return playwright.chromium.launch(executable_path=executable or None)
+
+
+def _open_session(browser: Browser, url: str, settle_ms: int) -> Page:
+    """One dashboard session: an isolated context, loaded and settled."""
+    context = browser.new_context(viewport={"width": 1600, "height": 1000})
+    page = context.new_page()
+    page.goto(url, wait_until="networkidle")
+    page.wait_for_timeout(settle_ms)
+    return page
 
 
 class Dashboard:
@@ -76,12 +99,30 @@ class Dashboard:
     def connect(cls, url: str = DEFAULT_URL, *, settle_ms: int = SETTLE_MS):
         """Open a browser on a running dashboard, waiting for it to settle."""
         with sync_playwright() as p:
-            browser = p.chromium.launch()
-            page = browser.new_page(viewport={"width": 1600, "height": 1000})
-            page.goto(url, wait_until="networkidle")
-            page.wait_for_timeout(settle_ms)
+            browser = _launch_browser(p)
             try:
-                yield cls(page)
+                yield cls(_open_session(browser, url, settle_ms))
+            finally:
+                browser.close()
+
+    @classmethod
+    @contextmanager
+    def connect_many(
+        cls, n: int, url: str = DEFAULT_URL, *, settle_ms: int = SETTLE_MS
+    ):
+        """Open ``n`` independent sessions on the same running dashboard.
+
+        Each session gets its own isolated browser context -- own websocket,
+        own Bokeh session -- like ``n`` separate users. Sessions connect
+        sequentially, so the returned list is ordered oldest first; use this
+        to script late-joiner scenarios (dashboard state is process-global,
+        widgets are per-session, so "renders in one session but not another"
+        is the classic multi-session regression).
+        """
+        with sync_playwright() as p:
+            browser = _launch_browser(p)
+            try:
+                yield [cls(_open_session(browser, url, settle_ms)) for _ in range(n)]
             finally:
                 browser.close()
 
@@ -151,7 +192,38 @@ def _port_in_use(port: int) -> bool:
         return s.connect_ex(("127.0.0.1", port)) == 0
 
 
-def _wait_until_ready(url: str, log: Path, *, timeout_s: float = 60.0) -> None:
+def _free_port() -> int:
+    """Return a port the OS reports as free, for a server we are about to spawn.
+
+    Hand-picked port numbers collide: two checkouts running the browser suite at
+    once, or a suite running alongside an interactive dashboard, both bind the
+    same literal and one of them dies. Asking the OS for an ephemeral port scopes
+    the choice to the machine's actual usage instead of to a constant in this
+    repo.
+
+    The port is only reserved while the probe socket is open, so a racing process
+    can still take it in the gap before our server binds. That race is not closed
+    here; it surfaces as an immediate, readable startup failure in
+    :func:`_wait_until_ready` rather than as a silent hang.
+    """
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+        s.bind(("127.0.0.1", 0))
+        return s.getsockname()[1]
+
+
+def _log_tail(log: Path, lines: int = 15) -> str:
+    return "\n".join(log.read_text().splitlines()[-lines:])
+
+
+def _wait_until_ready(
+    url: str, log: Path, proc: subprocess.Popen, *, timeout_s: float = 60.0
+) -> None:
+    """Block until the dashboard serves 200, or fail with its log tail.
+
+    A server that exits before serving -- most often because its port was taken
+    between being chosen and being bound -- is reported as soon as it exits, so
+    the caller does not wait out the whole timeout on a process already gone.
+    """
     deadline = time.monotonic() + timeout_s
     while time.monotonic() < deadline:
         try:
@@ -159,22 +231,60 @@ def _wait_until_ready(url: str, log: Path, *, timeout_s: float = 60.0) -> None:
                 if resp.status == 200:
                     return
         except (URLError, ConnectionError, OSError):
+            if proc.poll() is not None:
+                raise RuntimeError(
+                    f"Dashboard at {url} exited with code {proc.returncode} before "
+                    f"serving.\n{_log_tail(log)}"
+                ) from None
             time.sleep(0.5)
-    tail = "\n".join(log.read_text().splitlines()[-15:])
-    raise TimeoutError(f"Dashboard at {url} not ready within {timeout_s}s.\n{tail}")
+    raise TimeoutError(
+        f"Dashboard at {url} not ready within {timeout_s}s.\n{_log_tail(log)}"
+    )
+
+
+@dataclass
+class FakeDashboard:
+    """A launched fake-backend dashboard: its URL plus its server log.
+
+    ``log`` is the path to the server's merged stdout/stderr (still being
+    appended to while the dashboard runs), for tests that need to assert on
+    server-side behavior a browser can't observe directly -- e.g. that an
+    action didn't raise an unhandled exception. Read only the tail written
+    after your action (``log.read_text()[offset:]``, with ``offset`` taken
+    from ``log.stat().st_size`` beforehand) so unrelated startup log lines
+    can't produce a false positive.
+    """
+
+    url: str
+    log: Path
 
 
 @contextmanager
-def _fake_dashboard(instrument: str, port: int):
+def _fake_dashboard(instrument: str, port: int | None = None):
     """Launch a Kafka-free fake-backend dashboard seeded from the fixture.
 
     Copies the committed fixture to a writable scratch dir (the dashboard writes
     to its config dir), waits for readiness, and tears the server down on exit.
+    The sidebar starts collapsed: it is static here (announcements are off), so
+    an open drawer would only narrow the plots under test and their screenshots.
+    Yields a :class:`FakeDashboard`.
+
+    Parameters
+    ----------
+    instrument:
+        Name of the committed UI config fixture to seed the dashboard from.
+    port:
+        Port to serve on. Omit to have one allocated (see :func:`_free_port`);
+        tests should, so that concurrent runs cannot collide. Pass an explicit
+        port only when the URL has to be known in advance, e.g. to open it by
+        hand.
     """
     fixture = REPO_ROOT / "tests/dashboard/ui_config_fixtures" / instrument
     if not fixture.is_dir():
         raise SystemExit(f"No UI config fixture for instrument {instrument!r}")
-    if _port_in_use(port):
+    if port is None:
+        port = _free_port()
+    elif _port_in_use(port):
         raise SystemExit(
             f"Port {port} is already in use (a prior dashboard?). Stop it or pass "
             f"--port with a free port."
@@ -198,6 +308,7 @@ def _fake_dashboard(instrument: str, port: int):
                     "--config-dir",
                     str(cfg),
                     "--auto-start",
+                    "--collapsed-sidebar",
                     "--no-fetch-announcements",
                 ],
                 cwd=REPO_ROOT,
@@ -205,8 +316,8 @@ def _fake_dashboard(instrument: str, port: int):
                 stderr=subprocess.STDOUT,
             )
             try:
-                _wait_until_ready(f"http://localhost:{port}", log)
-                yield f"http://localhost:{port}"
+                _wait_until_ready(f"http://localhost:{port}", log, proc)
+                yield FakeDashboard(url=f"http://localhost:{port}", log=log)
             finally:
                 proc.terminate()
                 try:
@@ -226,7 +337,11 @@ def main() -> None:
         help="Start a fake-backend dashboard from the fixture, then tear it down.",
     )
     parser.add_argument("--instrument", default="dummy", help="For --launch.")
-    parser.add_argument("--port", type=int, default=DEFAULT_PORT, help="For --launch.")
+    parser.add_argument(
+        "--port",
+        type=int,
+        help="For --launch. Defaults to a free port, so parallel runs do not collide.",
+    )
     parser.add_argument("--tab", help="Activate this tab before acting.")
     parser.add_argument("--screenshot", help="Write a full-page screenshot here.")
     parser.add_argument(
@@ -241,8 +356,8 @@ def main() -> None:
     @contextmanager
     def target_url():
         if args.launch:
-            with _fake_dashboard(args.instrument, args.port) as url:
-                yield url
+            with _fake_dashboard(args.instrument, args.port) as fake:
+                yield fake.url
         else:
             yield args.url
 

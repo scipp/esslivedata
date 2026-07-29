@@ -2,10 +2,11 @@
 # Copyright (c) 2025 Scipp contributors (https://github.com/scipp)
 """Integration tests for job state persistence in JobOrchestrator."""
 
-from ess.livedata.config.workflow_spec import JobNumber, WorkflowId
+from ess.livedata.config.workflow_spec import WorkflowId
+from ess.livedata.core.job import JobState, JobStatus
 from ess.livedata.dashboard.config_store import ConfigStoreManager
-from ess.livedata.handlers.monitor_workflow_specs import MonitorDataParams
 from ess.livedata.parameter_models import Scale, TimeUnit, TOAEdges
+from ess.livedata.workflows.monitor_workflow_specs import MonitorDataParams
 from tests.integration.backend import DashboardBackend
 
 
@@ -16,8 +17,9 @@ def test_active_job_persisted_and_restored(tmp_path) -> None:
     This test verifies:
     1. Starting a workflow creates an active job with a job_number
     2. The active job state (job_number, jobs) is persisted to config store
-    3. Creating a new backend with the same config store restores the active job
-    4. Subscribers are notified of the restored active job
+    3. Creating a new backend with the same config store restores the
+       desired state (job_number, configs) — but data admission awaits a
+       heartbeat observation, which adopts the running job (ADR 0008)
     """
     workflow_id = WorkflowId(
         instrument='dummy',
@@ -78,64 +80,22 @@ def test_active_job_persisted_and_restored(tmp_path) -> None:
         # Verify params were also restored correctly
         assert restored_active['monitor1'].params == custom_params.model_dump()
 
-
-def test_subscriber_notified_on_job_restoration(tmp_path) -> None:
-    """
-    Test that subscribers are notified when an active job is restored.
-
-    This verifies Option A behavior: passive restoration notifies subscribers
-    so they can display restored job state.
-    """
-    workflow_id = WorkflowId(
-        instrument='dummy',
-        name='monitor_histogram',
-        version=1,
-    )
-    source_names = ['monitor1']
-
-    # Start workflow and persist state
-    with DashboardBackend(
-        instrument='dummy', dev=True, transport='none', config_dir=tmp_path
-    ) as backend1:
-        job_ids = backend1.workflow_controller.start_workflow(
-            workflow_id=workflow_id,
-            source_names=source_names,
-            config=MonitorDataParams(),
+        # The record alone does not admit data; the first heartbeat for the
+        # recorded job adopts it as the current generation
+        registry = backend2.job_orchestrator.active_job_registry
+        assert not registry.is_current(workflow_id, original_job_number)
+        backend2.job_service.status_updated(
+            JobStatus(job_id=job_ids[0], workflow_id=workflow_id, state=JobState.active)
         )
-        original_job_number = job_ids[0].job_number
-
-    # Create second backend and subscribe before restoration
-    with DashboardBackend(
-        instrument='dummy', dev=True, transport='none', config_dir=tmp_path
-    ) as backend2:
-        from ess.livedata.dashboard.job_orchestrator import WorkflowCallbacks
-
-        # Track subscriber notifications
-        notified_job_numbers = []
-
-        def track_notification(job_number: JobNumber) -> None:
-            notified_job_numbers.append(job_number)
-
-        # Subscribe to workflow - should be immediately notified of restored job
-        backend2.job_orchestrator.subscribe_to_workflow(
-            workflow_id,
-            WorkflowCallbacks(on_started=track_notification),
-        )
-
-        # Subscriber should have been notified immediately with restored job_number
-        assert len(notified_job_numbers) == 1
-        assert notified_job_numbers[0] == original_job_number
+        assert registry.is_current(workflow_id, original_job_number)
 
 
-def test_job_transition_persists_previous_job(tmp_path) -> None:
+def test_recommit_persists_only_current_job(tmp_path) -> None:
     """
-    Test that stopping old jobs and starting new ones persists both states.
+    Committing over a running job replaces the persisted current job.
 
-    When committing a workflow that already has an active job:
-    1. Old job moves to 'previous'
-    2. New job becomes 'current'
-    3. Both current and previous are persisted
-    4. After restoration, both current and previous are restored
+    Only the current job survives a dashboard restart; the replaced job is
+    not persisted (its retained data does not survive a restart either).
     """
     workflow_id = WorkflowId(
         instrument='dummy',
@@ -148,12 +108,11 @@ def test_job_transition_persists_previous_job(tmp_path) -> None:
         instrument='dummy', dev=True, transport='none', config_dir=tmp_path
     ) as backend1:
         # Start first job
-        job_ids_1 = backend1.workflow_controller.start_workflow(
+        backend1.workflow_controller.start_workflow(
             workflow_id=workflow_id,
             source_names=source_names,
             config=MonitorDataParams(),
         )
-        first_job_number = job_ids_1[0].job_number
 
         # Start second job (stops first)
         job_ids_2 = backend1.workflow_controller.start_workflow(
@@ -167,31 +126,17 @@ def test_job_transition_persists_previous_job(tmp_path) -> None:
         )
         second_job_number = job_ids_2[0].job_number
 
-        # Verify state in first backend using public API
         current_job_number = backend1.job_orchestrator.get_active_job_number(
             workflow_id
         )
-        previous_job_number = backend1.job_orchestrator.get_previous_job_number(
-            workflow_id
-        )
         assert current_job_number == second_job_number
-        assert previous_job_number == first_job_number
 
     # Restore in second backend
     with DashboardBackend(
         instrument='dummy', dev=True, transport='none', config_dir=tmp_path
     ) as backend2:
-        # Both current and previous should be restored
         restored_current = backend2.job_orchestrator.get_active_job_number(workflow_id)
-        restored_previous = backend2.job_orchestrator.get_previous_job_number(
-            workflow_id
-        )
-
-        assert restored_current is not None
         assert restored_current == second_job_number
-
-        assert restored_previous is not None
-        assert restored_previous == first_job_number
 
 
 def test_corrupted_job_state_does_not_break_restoration(tmp_path) -> None:

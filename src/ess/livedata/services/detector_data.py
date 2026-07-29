@@ -8,10 +8,10 @@ from typing import NoReturn
 from ess.livedata.config import instrument_registry
 from ess.livedata.config.route_derivation import scope_stream_mapping
 from ess.livedata.config.streams import get_stream_mapping
-from ess.livedata.handlers.detector_data_handler import DetectorHandlerFactory
 from ess.livedata.kafka.device_synthesizer import DeviceSynthesizer
 from ess.livedata.kafka.routes import RoutingAdapterBuilder
 from ess.livedata.kafka.stream_counter import StreamCounter
+from ess.livedata.preprocessors.detector_data import DetectorPreprocessorFactory
 from ess.livedata.service_factory import DataServiceBuilder, DataServiceRunner
 
 
@@ -40,7 +40,7 @@ def make_detector_service_builder(
         .build()
     )
     service_name = 'detector_data'
-    preprocessor_factory = DetectorHandlerFactory(
+    preprocessor_factory = DetectorPreprocessorFactory(
         instrument=instrument_obj, group_by_pixel=group_by_pixel
     )
     devices = instrument_obj.devices

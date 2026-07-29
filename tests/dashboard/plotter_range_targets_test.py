@@ -11,15 +11,13 @@ matches the axes actually populated.
 
 from __future__ import annotations
 
-import uuid
-
 import holoviews as hv
 import numpy as np
 import pytest
 import scipp as sc
 from holoviews.core.util import range_pad
 
-from ess.livedata.config.workflow_spec import JobId, ResultKey, WorkflowId
+from ess.livedata.config.workflow_spec import DataKey, WorkflowId
 from ess.livedata.dashboard.correlation_plotter import (
     PRIMARY,
     X_AXIS,
@@ -51,10 +49,10 @@ from ess.livedata.dashboard.slicer_plotter import SlicerPlotter
 hv.extension('bokeh')
 
 
-def _key(source: str = 'src', output: str = 'out') -> ResultKey:
-    return ResultKey(
+def _key(source: str = 'src', output: str = 'out') -> DataKey:
+    return DataKey(
         workflow_id=WorkflowId(instrument='test', name='test', version=1),
-        job_id=JobId(source_name=source, job_number=uuid.uuid4()),
+        source_name=source,
         output_name=output,
     )
 
@@ -121,6 +119,48 @@ class TestLinePlotterRangeTargets:
 
         targets = plotter.get_range_targets(key)
         assert targets['y'][0] > 0.0
+
+    def test_constant_axis_is_widened(self):
+        plotter = LinePlotter.from_params(PlotParams1d())
+        key = _key()
+        data = sc.DataArray(
+            sc.array(dims=['x'], values=[2.0, 5.0], unit='counts'),
+            coords={'x': sc.array(dims=['x'], values=[3.0, 3.0], unit='m')},
+        )
+        plotter.compute({PRIMARY: {key: data}})
+
+        lo, hi = plotter.get_range_targets(key)['x']
+        assert lo < 3.0 < hi
+
+    def test_axis_spanning_a_single_ulp_is_widened(self):
+        """A range Bokeh cannot resolve is degenerate even if nominally non-empty."""
+        plotter = LinePlotter.from_params(PlotParams1d())
+        key = _key()
+        values = [3.0, np.nextafter(3.0, 4.0)]
+        data = sc.DataArray(
+            sc.array(dims=['x'], values=[2.0, 5.0], unit='counts'),
+            coords={'x': sc.array(dims=['x'], values=values, unit='m')},
+        )
+        plotter.compute({PRIMARY: {key: data}})
+
+        lo, hi = plotter.get_range_targets(key)['x']
+        assert hi - lo > 0.1
+
+    def test_single_sample_datetime_axis_is_widened_by_seconds(self):
+        """Widening a datetime axis relative to the epoch would span decades."""
+        plotter = LinePlotter.from_params(PlotParams1d())
+        key = _key()
+        sample = np.datetime64('2026-07-28T12:00:00', 'ns')
+        data = sc.DataArray(
+            sc.array(dims=['time'], values=[2.0], unit='counts'),
+            coords={'time': sc.array(dims=['time'], values=[sample], unit='ns')},
+        )
+        plotter.compute({PRIMARY: {key: data}})
+
+        lo, hi = plotter.get_range_targets(key)['x']
+        epoch_ns = float(sample.astype('int64'))
+        assert lo < epoch_ns < hi
+        assert (hi - lo) / 1e9 == pytest.approx(2.0)
 
     def test_y_extent_includes_error_whiskers(self):
         plotter = LinePlotter.from_params(PlotParams1d())  # errors='bars' default
@@ -358,14 +398,14 @@ class TestCorrelationHistogramRangeTargets:
     def test_1d_targets_delegated_to_renderer(self):
         params = CorrelationHistogram1dParams(bins=Bin1dParams(x_bins=4))
         plotter = CorrelationHistogram1dPlotter(params=params)
-        src_key = ResultKey(
+        src_key = DataKey(
             workflow_id=WorkflowId(instrument='test', name='test', version=1),
-            job_id=JobId(source_name='detector', job_number=uuid.uuid4()),
+            source_name='detector',
             output_name='result',
         )
-        axis_key = ResultKey(
+        axis_key = DataKey(
             workflow_id=WorkflowId(instrument='test', name='test', version=1),
-            job_id=JobId(source_name='position', job_number=uuid.uuid4()),
+            source_name='position',
             output_name='result',
         )
         data = {
@@ -392,19 +432,19 @@ class TestCorrelationHistogramRangeTargets:
             bins=Bin2dParams(x_bins=4, y_bins=4),
         )
         plotter = CorrelationHistogram2dPlotter(params=params)
-        src_key = ResultKey(
+        src_key = DataKey(
             workflow_id=WorkflowId(instrument='test', name='test', version=1),
-            job_id=JobId(source_name='detector', job_number=uuid.uuid4()),
+            source_name='detector',
             output_name='result',
         )
-        x_axis_key = ResultKey(
+        x_axis_key = DataKey(
             workflow_id=WorkflowId(instrument='test', name='test', version=1),
-            job_id=JobId(source_name='position', job_number=uuid.uuid4()),
+            source_name='position',
             output_name='result',
         )
-        y_axis_key = ResultKey(
+        y_axis_key = DataKey(
             workflow_id=WorkflowId(instrument='test', name='test', version=1),
-            job_id=JobId(source_name='temperature', job_number=uuid.uuid4()),
+            source_name='temperature',
             output_name='result',
         )
         data = {
@@ -434,14 +474,14 @@ class TestCorrelationHistogramRangeTargets:
     def test_1d_iter_range_targets_delegated_to_renderer(self):
         params = CorrelationHistogram1dParams(bins=Bin1dParams(x_bins=4))
         plotter = CorrelationHistogram1dPlotter(params=params)
-        src_key = ResultKey(
+        src_key = DataKey(
             workflow_id=WorkflowId(instrument='test', name='test', version=1),
-            job_id=JobId(source_name='detector', job_number=uuid.uuid4()),
+            source_name='detector',
             output_name='result',
         )
-        axis_key = ResultKey(
+        axis_key = DataKey(
             workflow_id=WorkflowId(instrument='test', name='test', version=1),
-            job_id=JobId(source_name='position', job_number=uuid.uuid4()),
+            source_name='position',
             output_name='result',
         )
         data = {
@@ -470,19 +510,19 @@ class TestCorrelationHistogramRangeTargets:
             bins=Bin2dParams(x_bins=4, y_bins=4),
         )
         plotter = CorrelationHistogram2dPlotter(params=params)
-        src_key = ResultKey(
+        src_key = DataKey(
             workflow_id=WorkflowId(instrument='test', name='test', version=1),
-            job_id=JobId(source_name='detector', job_number=uuid.uuid4()),
+            source_name='detector',
             output_name='result',
         )
-        x_axis_key = ResultKey(
+        x_axis_key = DataKey(
             workflow_id=WorkflowId(instrument='test', name='test', version=1),
-            job_id=JobId(source_name='position', job_number=uuid.uuid4()),
+            source_name='position',
             output_name='result',
         )
-        y_axis_key = ResultKey(
+        y_axis_key = DataKey(
             workflow_id=WorkflowId(instrument='test', name='test', version=1),
-            job_id=JobId(source_name='temperature', job_number=uuid.uuid4()),
+            source_name='temperature',
             output_name='result',
         )
         data = {

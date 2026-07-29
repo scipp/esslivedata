@@ -1,6 +1,6 @@
 # ADR 0005: Frame-gated per-session plot flush
 
-- Status: accepted
+- Status: accepted (amended 2026-07-02 and 2026-07-06, see bottom)
 - Deciders: Simon
 - Date: 2026-06-25
 
@@ -52,7 +52,7 @@ A `FrameClock` (one per `DashboardServices`, shared with `PlotOrchestrator`)
 carries a `generation` counter keyed by grid (tab). As a burst drains, the
 ingestion thread buckets each visible layer's due recompute by grid
 (`PlotOrchestrator._enqueue_compute`) rather than computing inline. Once the
-burst is drained (after each `Orchestrator.update()` in the loop),
+burst is drained (after each `MessagePump.update()` in the loop),
 `flush_frames` runs the buckets grid by grid and `commit(grid_id)`s each grid
 the moment its own layers finish -- so a session showing one tab sees its frame
 without waiting on any other tab's compute.
@@ -72,10 +72,12 @@ of the frame just shown) and otherwise on a slow stall cadence
 ## Alternatives considered
 
 - **Push from the ingestion thread** (event-driven `pipe.send`, or
-  `doc.add_next_tick_callback` onto each captured session document). Rejected: it
-  reintroduces the cross-thread session mutation the polling architecture exists
-  to avoid. `pn.state.execute` does not help -- it targets the *current* session
-  context, useless from the ingestion thread.
+  `doc.add_next_tick_callback` carrying the payload onto each captured session
+  document). Rejected: it reintroduces the cross-thread session mutation the
+  polling architecture exists to avoid. `pn.state.execute` does not help -- it
+  targets the *current* session context, useless from the ingestion thread.
+  This rejection covers *data-carrying* push; see the 2026-07-06 amendment for
+  the data-free wake-up case.
 - **Naively lower the fixed poll period.** Rejected: each pass stays batched, but
   computes finishing in different sub-windows flush on different ticks, so
   multi-plot updates stagger.
@@ -183,3 +185,60 @@ above, and this section should be revisited if intra-tab stagger proves visible.
   compute per batch (observed in practice) holding the loop. The result is a
   one-tick (~100 ms) stagger: acceptable and self-correcting. How often this
   happens in real traffic is unmeasured.
+
+## Amendment (2026-07-02): pull-on-frame input side
+
+The input side of the mechanism changed from push to pull (issue #1044). As a
+burst drains, `DataService` no longer extracts data and delivers it to each
+layer's subscriber; it notifies keys-only, and the orchestrator merely marks
+the affected layers dirty (per grid). `flush_frames` then pulls each dirty
+*viewed* layer's input through its extractors from the current buffer state
+(`DataService.snapshot`), rebuilds, and commits the grid as before. Dirty
+flags of unviewed layers are dropped; the 0→1 viewer transition rebuilds from
+current buffer state unconditionally.
+
+Consequences for the guarantees above:
+
+- The frame a grid's layers repaint from is now *the buffer state at flush
+  time* rather than *the drained burst's payload*. Layers of one grid are
+  pulled back-to-back on the ingestion thread with no writes in between, so
+  intra-grid coherence is unchanged. The `DataService` lock is
+  transaction-scoped, so a pull from any thread (including the 0→1
+  activation rebuild on the polling thread, and flushes racing a UI-thread
+  cleanup eviction) observes either none or all of a transaction's writes.
+- A logical frame that splits across bursts now heals at the next flush by
+  construction (the pull sees whatever has arrived), rather than by a
+  one-tick stagger of stashed payloads.
+- Deferring or coalescing flushes is lossless: a pull can never observe older
+  data than a delivery would have carried. This is what makes a future
+  min-frame-interval throttle in `flush_frames` a policy choice rather than a
+  correctness question.
+
+## Amendment (2026-07-06): scope of the `add_next_tick_callback` rejection
+
+The *Alternatives considered* rejection above reads as a blanket ban on
+`doc.add_next_tick_callback` from the ingestion thread. It is not. What that
+rejection encodes is **data-carrying push and direct cross-thread mutation of
+session-bound objects**, plus `pn.state.execute`, which genuinely cannot
+resolve a session context off the session IOLoop (Panel #5488).
+
+A **data-free wake-up** is permitted: the ingestion thread may, after
+`flush_frames` commits a grid, schedule a no-argument tick on a registered
+session document. The invariant this ADR exists to protect is untouched --
+every session-bound mutation still happens inside the tick, on that session's
+IOLoop, in document context. Only the *trigger* moves from clock to event.
+
+Verified on panel 1.9.3 / bokeh 3.9.1: a background-thread
+`doc.add_next_tick_callback(tick)` runs the tick in the correct session
+context (`pn.state.curdoc` resolves; `pn.io.hold()` + `doc.models.freeze()`
+behave normally) across concurrent sessions, and scheduling into a destroyed
+document raises catchably, so stale registrations unregister lazily.
+
+Because the tick body is the existing generation-gated pass -- idempotent, and
+a no-op when nothing advanced -- a lost or duplicated wake costs nothing. That
+makes the periodic callback a safety net rather than the detection clock, so
+it can drop to ~1--2 s for the things that genuinely need a clock (heartbeat,
+notifications, freshness-pill stall aging), retiring the 100 ms tick's
+per-tick `hold`+`freeze` recompute and layer scan. Sequencing and the
+`WakeupHub` design live in #1046; the delivery model this follows from is
+ADR 0007.

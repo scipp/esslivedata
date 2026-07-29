@@ -1,0 +1,184 @@
+# SPDX-License-Identifier: BSD-3-Clause
+# Copyright (c) 2025 Scipp contributors (https://github.com/scipp)
+import pytest
+import scipp as sc
+
+from ess.livedata import StreamKind
+from ess.livedata.config import instrument_registry
+from ess.livedata.config.instrument import Instrument
+from ess.livedata.config.instruments import available_instruments, get_config
+from ess.livedata.config.stream import F144Stream
+from ess.livedata.core.preprocessor import StreamId
+from ess.livedata.preprocessors.accumulators import LatestValueAccumulator
+from ess.livedata.preprocessors.detector_data import (
+    DetectorPreprocessorFactory,
+    get_nexus_geometry_filename,
+)
+from ess.livedata.preprocessors.group_by_pixel import GroupByPixel
+from ess.livedata.preprocessors.to_nxlog import ToNXlog
+
+
+def get_instrument(instrument_name: str) -> Instrument:
+    _ = get_config(instrument_name)  # Load the module to register the instrument
+    instrument = instrument_registry[instrument_name]
+    instrument.load_factories()
+    return instrument
+
+
+@pytest.mark.parametrize('instrument', ['dream', 'loki'])
+def test_get_nexus_filename_returns_file_for_given_date(instrument: str) -> None:
+    filename = get_nexus_geometry_filename(
+        instrument, date=sc.datetime('2025-01-02T00:00:00')
+    )
+    assert str(filename).endswith(f'geometry-{instrument}-2025-01-01.nxs')
+
+
+def test_get_nexus_filename_uses_current_date_by_default() -> None:
+    auto = get_nexus_geometry_filename('dream')
+    explicit = get_nexus_geometry_filename('dream', date=sc.datetime('now'))
+    assert auto == explicit
+
+
+def test_get_nexus_filename_raises_if_instrument_unknown() -> None:
+    with pytest.raises(ValueError, match='No geometry files found for instrument'):
+        get_nexus_geometry_filename('abcde', date=sc.datetime('2025-01-01T00:00:00'))
+
+
+def test_get_nexus_filename_raises_if_datetime_out_of_range() -> None:
+    with pytest.raises(ValueError, match='No geometry file found for given date'):
+        get_nexus_geometry_filename('dream', date=sc.datetime('2020-01-01T00:00:00'))
+
+
+def test_get_nexus_filename_reads_from_data_dir(monkeypatch, tmp_path) -> None:
+    geometry_file = tmp_path / 'geometry-loki-2025-01-01.nxs'
+    geometry_file.write_bytes(b'fake')
+    monkeypatch.setenv('LIVEDATA_DATA_DIR', str(tmp_path))
+    result = get_nexus_geometry_filename(
+        'loki', date=sc.datetime('2025-01-02T00:00:00')
+    )
+    assert result == geometry_file
+
+
+def test_get_nexus_filename_raises_if_file_missing_in_data_dir(
+    monkeypatch, tmp_path
+) -> None:
+    monkeypatch.setenv('LIVEDATA_DATA_DIR', str(tmp_path))
+    with pytest.raises(FileNotFoundError, match='LIVEDATA_DATA_DIR'):
+        get_nexus_geometry_filename('loki', date=sc.datetime('2025-01-02T00:00:00'))
+
+
+@pytest.mark.parametrize('instrument_name', available_instruments())
+def test_factory_can_create_preprocessor(instrument_name: str) -> None:
+    instrument = get_instrument(instrument_name)
+    factory = DetectorPreprocessorFactory(instrument=instrument)
+    for name in instrument.detector_names:
+        # Try to get detector_number to determine if this is an event detector
+        try:
+            _ = instrument.get_detector_number(name)
+            kind = StreamKind.DETECTOR_EVENTS
+        except KeyError:
+            # No detector_number means this is an area detector
+            kind = StreamKind.AREA_DETECTOR
+        _ = factory.make_preprocessor(StreamId(kind=kind, name=name))
+
+
+def test_factory_creates_group_by_pixel_for_detector_events() -> None:
+    """Test that DetectorPreprocessorFactory creates GroupByPixel for events."""
+    instrument = get_instrument('dummy')
+    factory = DetectorPreprocessorFactory(instrument=instrument)
+
+    # Create a stream ID for a detector event stream
+    detector_stream_id = StreamId(kind=StreamKind.DETECTOR_EVENTS, name='panel_0')
+
+    preprocessor = factory.make_preprocessor(detector_stream_id)
+
+    # Should return GroupByPixel preprocessor
+    assert preprocessor is not None
+    assert isinstance(preprocessor, GroupByPixel)
+
+
+def test_factory_creates_latest_value_accumulator_for_roi_messages() -> None:
+    """Test that DetectorPreprocessorFactory returns LatestValueAccumulator for ROI."""
+    instrument = get_instrument('dummy')
+    factory = DetectorPreprocessorFactory(instrument=instrument)
+
+    # Create a stream ID for an ROI message
+    roi_stream_id = StreamId(
+        kind=StreamKind.LIVEDATA_ROI, name='test-job-123/roi_rectangle'
+    )
+
+    preprocessor = factory.make_preprocessor(roi_stream_id)
+
+    # Should return a LatestValue accumulator
+    assert preprocessor is not None
+    assert isinstance(preprocessor, LatestValueAccumulator)
+
+
+def test_factory_returns_none_for_unknown_stream_kinds() -> None:
+    """Test that DetectorPreprocessorFactory returns None for unknown stream kinds."""
+    instrument = get_instrument('dummy')
+    factory = DetectorPreprocessorFactory(instrument=instrument)
+
+    config_stream_id = StreamId(kind=StreamKind.LIVEDATA_COMMANDS, name='config')
+    preprocessor = factory.make_preprocessor(config_stream_id)
+    assert preprocessor is None
+
+
+def test_factory_returns_none_for_unconfigured_detectors() -> None:
+    """Test that DetectorPreprocessorFactory returns None for unconfigured detectors.
+
+    This ensures that messages from detectors not in the instrument's detector_names
+    list are gracefully skipped instead of causing a KeyError.
+    """
+    instrument = get_instrument('dummy')
+    factory = DetectorPreprocessorFactory(instrument=instrument)
+
+    # dummy is configured with 'panel_0_detector' but not 'unknown_detector'
+    unconfigured_detector = StreamId(
+        kind=StreamKind.DETECTOR_EVENTS, name='unknown_detector'
+    )
+    preprocessor = factory.make_preprocessor(unconfigured_detector)
+
+    # Should return None to indicate this detector should be skipped
+    assert preprocessor is None
+
+
+class TestDetectorPreprocessorFactoryLogStreams:
+    """Tests for StreamKind.LOG handling in DetectorPreprocessorFactory."""
+
+    @pytest.fixture
+    def instrument_with_logs(self):
+        streams = {
+            'position_sensor': F144Stream(
+                source='position_sensor',
+                topic='topic',
+                units='mm',
+            ),
+        }
+        instrument = Instrument(
+            name='test_instrument', detector_names=['det1'], streams=streams
+        )
+        instrument.configure_detector(
+            'det1',
+            detector_number=sc.arange('detector_number', 0, 10, unit=None),
+        )
+        return instrument
+
+    def test_log_configured_returns_to_nxlog(self, instrument_with_logs):
+        factory = DetectorPreprocessorFactory(instrument=instrument_with_logs)
+        stream_id = StreamId(kind=StreamKind.LOG, name='position_sensor')
+        preprocessor = factory.make_preprocessor(stream_id)
+        assert isinstance(preprocessor, ToNXlog)
+
+    def test_log_unconfigured_returns_none(self, instrument_with_logs):
+        factory = DetectorPreprocessorFactory(instrument=instrument_with_logs)
+        stream_id = StreamId(kind=StreamKind.LOG, name='unknown_sensor')
+        preprocessor = factory.make_preprocessor(stream_id)
+        assert preprocessor is None
+
+    def test_log_returns_none_when_no_registry(self):
+        instrument = get_instrument('dummy')
+        factory = DetectorPreprocessorFactory(instrument=instrument)
+        stream_id = StreamId(kind=StreamKind.LOG, name='some_log')
+        preprocessor = factory.make_preprocessor(stream_id)
+        assert preprocessor is None

@@ -13,6 +13,10 @@ Result data is synthesized from each workflow's output templates (the
 the dashboard selects plotters from these same templates, generated data is
 guaranteed to match what the plotter expects, so plots render correctly.
 
+ROI requests the dashboard publishes are looped back in the same way: the
+backend stores the latest request per job and geometry, echoes it as the
+geometry readback, and synthesizes one spectrum per drawn ROI.
+
 The whole flow is driven by the normal UI: start a workflow and plots come to
 life. No fixtures, no external injection, no Kafka.
 """
@@ -31,6 +35,7 @@ import structlog
 
 from ..config.acknowledgement import AcknowledgementResponse, CommandAcknowledgement
 from ..config.instruments import get_config
+from ..config.roi_names import get_roi_mapper
 from ..config.workflow_spec import (
     JobId,
     ResultKey,
@@ -48,7 +53,7 @@ from ..core.message import (
     StreamKind,
 )
 from ..core.timestamp import Timestamp
-from .transport import DashboardResources, NullMessageSink, Transport
+from .transport import DashboardResources, Transport
 
 logger = structlog.get_logger(__name__)
 
@@ -56,6 +61,8 @@ logger = structlog.get_logger(__name__)
 _DEFAULT_DIM_SIZE = 64
 # Wall-clock interval between synthesized data updates per job.
 _UPDATE_PERIOD_SECONDS = 1.0
+# Output fields echoing ROI geometry; named after the ROI stream readback keys.
+_ROI_READBACK_KEYS = frozenset(get_roi_mapper().readback_keys)
 
 
 def _expand_coord(coord: sc.Variable, dim: str, size: int) -> sc.Variable:
@@ -151,6 +158,71 @@ def expand_template(
     return sc.DataArray(data=data, coords=coords)
 
 
+def roi_variants(rois: Mapping[str, sc.DataArray]) -> dict[int, float]:
+    """Map each drawn ROI's index to a stable phase in ``[0, 1)``.
+
+    The phase is derived from the ROI's own vertex coordinates, so moving or
+    resizing an ROI changes its synthesized spectrum while an untouched ROI
+    keeps its curve. Indices are unique across geometries (each geometry owns a
+    disjoint index range) and sorted, giving a stable row order.
+
+    Parameters
+    ----------
+    rois:
+        Concatenated ROI request per geometry readback key, as published by the
+        dashboard.
+    """
+    variants: dict[int, float] = {}
+    for geometry in rois.values():
+        indices = geometry.coords['roi_index'].values
+        for roi_index in np.unique(indices):
+            vertices = np.concatenate(
+                [
+                    geometry.coords[dim].values[indices == roi_index]
+                    for dim in ('x', 'y')
+                ]
+            )
+            variants[int(roi_index)] = (zlib.crc32(vertices.tobytes()) % 1000) / 1000.0
+    return dict(sorted(variants.items()))
+
+
+def expand_roi_spectra(
+    template: sc.DataArray,
+    variants: Mapping[int, float],
+    update: int,
+    timestamp_ns: int,
+) -> sc.DataArray:
+    """Build one synthetic spectrum per currently drawn ROI.
+
+    The length of the ``roi`` dimension follows the ROI set the dashboard
+    published, down to zero rows while no ROI is drawn. This mirrors the real
+    backend, which computes ROI spectra from the start and yields an empty
+    result until an ROI request arrives.
+
+    Parameters
+    ----------
+    template:
+        Empty ROI spectra template, with dims ``(roi, <spectral>)``.
+    variants:
+        Phase per ROI index, see :func:`roi_variants`.
+    update:
+        Monotonic update counter; varies the data so plots appear live.
+    timestamp_ns:
+        Wall-clock time of this update, used for the ``time`` coordinate.
+    """
+    spectral_size = template.sizes[template.dims[-1]] or _DEFAULT_DIM_SIZE
+    spectra = [
+        _synthesize_values([spectral_size], update, variant)
+        for variant in variants.values()
+    ]
+    values = np.stack(spectra) if spectra else np.zeros((0, spectral_size))
+    coords = {'roi': sc.array(dims=['roi'], values=list(variants), dtype='int32')}
+    if (time := template.coords.get('time')) is not None and time.ndim == 0:
+        coords['time'] = sc.scalar(timestamp_ns, unit=time.unit, dtype=time.dtype)
+    data = sc.array(dims=template.dims, values=values, unit=template.unit)
+    return sc.DataArray(data=data, coords=coords)
+
+
 class _Job:
     """A running fake job and its synthesized output state."""
 
@@ -161,6 +233,7 @@ class _Job:
         self.next_emit = 0.0  # monotonic deadline; 0 => emit immediately
         self.variant = source_variant(config.job_id.source_name)
         self.start_time = Timestamp.now()
+        self.rois: dict[str, sc.DataArray] = {}
 
     def output_templates(self) -> Mapping[str, sc.DataArray]:
         """Templates for every output field that declares one."""
@@ -200,6 +273,26 @@ class FakeBackend:
         self._jobs[config.job_id] = _Job(config=config, spec=spec)
         self._ack(config.message_id, config.job_id.source_name)
         logger.info("fake_backend_started", job_id=str(config.job_id))
+
+    def set_roi(self, stream_name: str, rois: sc.DataArray) -> None:
+        """Store an ROI request, replacing the previous one for its geometry.
+
+        Latest-value semantics match the backend, which accumulates ROI streams
+        with a ``LatestValueAccumulator``. Requests for jobs that are not
+        running are dropped, as they would be by a backend that has no such job.
+
+        Parameters
+        ----------
+        stream_name:
+            ROI stream name, ``f"{job_id}/{readback_key}"``.
+        rois:
+            Concatenated ROI geometries for that readback key.
+        """
+        job_key, _, readback_key = stream_name.rpartition('/')
+        with self._lock:
+            for job_id, job in self._jobs.items():
+                if str(job_id) == job_key:
+                    job.rois[readback_key] = rois
 
     def _control_job(self, command: JobCommand) -> None:
         if command.action is JobAction.stop and command.job_id is not None:
@@ -241,6 +334,7 @@ class FakeBackend:
 
     def _emit_data(self, job: _Job) -> list[Message]:
         timestamp_ns = time.time_ns()
+        variants = roi_variants(job.rois)
         messages = []
         for output_name, template in job.output_templates().items():
             key = ResultKey(
@@ -249,7 +343,14 @@ class FakeBackend:
                 output_name=output_name,
             )
             stream = StreamId(kind=StreamKind.LIVEDATA_DATA, name=key.model_dump_json())
-            value = expand_template(template, job.update, timestamp_ns, job.variant)
+            if output_name in _ROI_READBACK_KEYS:
+                # The backend echoes the request as readback; the template is
+                # its empty-request equivalent.
+                value = job.rois.get(output_name, template)
+            elif 'roi' in template.dims:
+                value = expand_roi_spectra(template, variants, job.update, timestamp_ns)
+            else:
+                value = expand_template(template, job.update, timestamp_ns, job.variant)
             messages.append(Message(stream=stream, value=value))
         job.update += 1
         return messages
@@ -276,6 +377,17 @@ class _FakeCommandSink:
             self._backend.submit(message.value)
 
 
+class _FakeROISink:
+    """Feeds dashboard ROI requests into the backend."""
+
+    def __init__(self, backend: FakeBackend) -> None:
+        self._backend = backend
+
+    def publish_messages(self, messages: list[Message[sc.DataArray]]) -> None:
+        for message in messages:
+            self._backend.set_roi(message.stream.name, message.value)
+
+
 class FakeBackendTransport(Transport[DashboardResources]):
     """Transport with an in-process fake backend instead of Kafka.
 
@@ -299,7 +411,7 @@ class FakeBackendTransport(Transport[DashboardResources]):
         return DashboardResources(
             message_source=_FakeMessageSource(self._backend),
             command_sink=_FakeCommandSink(self._backend),
-            roi_sink=NullMessageSink(),
+            roi_sink=_FakeROISink(self._backend),
         )
 
     def __exit__(

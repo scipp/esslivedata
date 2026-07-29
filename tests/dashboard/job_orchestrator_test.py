@@ -2,6 +2,8 @@
 # Copyright (c) 2025 Scipp contributors (https://github.com/scipp)
 """Tests for JobOrchestrator initialization and config management."""
 
+import time
+from collections.abc import Callable
 from enum import StrEnum
 
 import pydantic
@@ -23,8 +25,15 @@ from ess.livedata.dashboard.active_job_registry import ActiveJobRegistry
 from ess.livedata.dashboard.command_service import CommandService
 from ess.livedata.dashboard.config_store import FileBackedConfigStore
 from ess.livedata.dashboard.data_service import DataService
-from ess.livedata.dashboard.job_orchestrator import JobOrchestrator
+from ess.livedata.dashboard.job_orchestrator import (
+    PENDING_COMMAND_TIMEOUT_SECONDS,
+    JobOrchestrator,
+)
 from ess.livedata.dashboard.job_service import JobService
+from ess.livedata.dashboard.notification_queue import (
+    NotificationQueue,
+    NotificationType,
+)
 from ess.livedata.fakes import FakeMessageSink
 
 
@@ -200,6 +209,8 @@ def make_orchestrator(
     fake_sink: FakeMessageSink | None = None,
     data_service: DataService | None = None,
     job_service: JobService | None = None,
+    notification_queue: NotificationQueue | None = None,
+    clock: Callable[[], float] = time.time,
 ) -> JobOrchestrator:
     """Build a JobOrchestrator from one or more WorkflowSpecs for testing."""
     registry = {spec.get_id(): spec for spec in specs}
@@ -211,7 +222,10 @@ def make_orchestrator(
         ),
         workflow_registry=registry,
         active_job_registry=ActiveJobRegistry(data_service=ds, job_service=js),
+        job_service=js,
         config_store=config_store,
+        notification_queue=notification_queue,
+        clock=clock,
     )
 
 
@@ -1020,7 +1034,7 @@ class TestJobOrchestratorStop:
             params={"threshold": 50.0, "mode": "custom"},
             aux_source_names={},
         )
-        job_ids = orchestrator.commit_workflow(workflow_id)
+        orchestrator.commit_workflow(workflow_id)
 
         # Verify active job is in config store
         assert 'current_job' in config_store[str(workflow_id)]
@@ -1028,14 +1042,10 @@ class TestJobOrchestratorStop:
         # Stop the workflow
         orchestrator.stop_workflow(workflow_id)
 
-        # Verify current_job is removed from config store
+        # Verify current_job is removed from config store; the stopped job
+        # itself is not persisted (retention does not survive a restart)
         assert 'current_job' not in config_store[str(workflow_id)]
-
-        # Verify previous_job is in config store
-        assert 'previous_job' in config_store[str(workflow_id)]
-        assert config_store[str(workflow_id)]['previous_job']['job_number'] == str(
-            job_ids[0].job_number
-        )
+        assert 'previous_job' not in config_store[str(workflow_id)]
 
     def test_stop_workflow_allows_immediate_restart(
         self,
@@ -1388,258 +1398,6 @@ class TestWorkflowAdapterIndependentSourceConfiguration:
         assert staged["det_1"].params["mode"] == "updated"
 
 
-class TestWorkflowSubscriptions:
-    """Test subscribe_to_workflow with WorkflowCallbacks."""
-
-    def test_on_started_called_when_workflow_commits(
-        self,
-        workflow_with_params: WorkflowSpec,
-    ):
-        """on_started callback is called when workflow is committed."""
-        from ess.livedata.dashboard.job_orchestrator import WorkflowCallbacks
-
-        workflow_id = workflow_with_params.get_id()
-        orchestrator = make_orchestrator(workflow_with_params)
-
-        started_job_numbers = []
-        callbacks = WorkflowCallbacks(
-            on_started=lambda job_number: started_job_numbers.append(job_number)
-        )
-        orchestrator.subscribe_to_workflow(workflow_id, callbacks)
-
-        job_ids = orchestrator.commit_workflow(workflow_id)
-
-        assert len(started_job_numbers) == 1
-        assert started_job_numbers[0] == job_ids[0].job_number
-
-    def test_on_stopped_called_when_workflow_stops(
-        self,
-        workflow_with_params: WorkflowSpec,
-    ):
-        """on_stopped callback is called when workflow is stopped."""
-        from ess.livedata.dashboard.job_orchestrator import WorkflowCallbacks
-
-        workflow_id = workflow_with_params.get_id()
-        orchestrator = make_orchestrator(workflow_with_params)
-
-        started_job_numbers = []
-        stopped_job_numbers = []
-        callbacks = WorkflowCallbacks(
-            on_started=lambda job_number: started_job_numbers.append(job_number),
-            on_stopped=lambda job_number: stopped_job_numbers.append(job_number),
-        )
-        orchestrator.subscribe_to_workflow(workflow_id, callbacks)
-
-        job_ids = orchestrator.commit_workflow(workflow_id)
-        assert len(stopped_job_numbers) == 0
-
-        orchestrator.stop_workflow(workflow_id)
-
-        assert len(stopped_job_numbers) == 1
-        assert stopped_job_numbers[0] == job_ids[0].job_number
-
-    def test_on_stopped_not_called_when_no_callback_provided(
-        self,
-        workflow_with_params: WorkflowSpec,
-    ):
-        """on_stopped None does not cause error when workflow stops."""
-        from ess.livedata.dashboard.job_orchestrator import WorkflowCallbacks
-
-        workflow_id = workflow_with_params.get_id()
-        orchestrator = make_orchestrator(workflow_with_params)
-
-        started_job_numbers = []
-        callbacks = WorkflowCallbacks(
-            on_started=lambda job_number: started_job_numbers.append(job_number),
-            on_stopped=None,  # Explicitly None
-        )
-        orchestrator.subscribe_to_workflow(workflow_id, callbacks)
-
-        orchestrator.commit_workflow(workflow_id)
-        # Should not raise
-        orchestrator.stop_workflow(workflow_id)
-
-    def test_on_stopped_not_called_when_nothing_to_stop(
-        self,
-        workflow_with_params: WorkflowSpec,
-    ):
-        """on_stopped is not called when there's no active job to stop."""
-        from ess.livedata.dashboard.job_orchestrator import WorkflowCallbacks
-
-        workflow_id = workflow_with_params.get_id()
-        orchestrator = make_orchestrator(workflow_with_params)
-
-        stopped_job_numbers = []
-        callbacks = WorkflowCallbacks(
-            on_started=lambda _: None,
-            on_stopped=lambda job_number: stopped_job_numbers.append(job_number),
-        )
-        orchestrator.subscribe_to_workflow(workflow_id, callbacks)
-
-        # Try to stop without committing first
-        orchestrator.stop_workflow(workflow_id)
-
-        assert len(stopped_job_numbers) == 0
-
-    def test_on_started_called_immediately_if_workflow_already_running(
-        self,
-        workflow_with_params: WorkflowSpec,
-    ):
-        """on_started is called immediately if workflow is already running."""
-        from ess.livedata.dashboard.job_orchestrator import WorkflowCallbacks
-
-        workflow_id = workflow_with_params.get_id()
-        orchestrator = make_orchestrator(workflow_with_params)
-
-        # Commit workflow first
-        job_ids = orchestrator.commit_workflow(workflow_id)
-
-        # Then subscribe
-        started_job_numbers = []
-        callbacks = WorkflowCallbacks(
-            on_started=lambda job_number: started_job_numbers.append(job_number)
-        )
-        _, was_invoked = orchestrator.subscribe_to_workflow(workflow_id, callbacks)
-
-        assert was_invoked is True
-        assert len(started_job_numbers) == 1
-        assert started_job_numbers[0] == job_ids[0].job_number
-
-
-class TestStoppedJobDataRetention:
-    """Buffered data for a stopped job is retained as long as the job is
-    referenced as state.previous; it is cleaned up only when state.previous
-    is replaced."""
-
-    def test_recommit_retains_just_stopped_job_data(
-        self,
-        workflow_with_params: WorkflowSpec,
-    ):
-        """Re-commit keeps the now-stopped job's data: it becomes state.previous."""
-        from ess.livedata.config.workflow_spec import JobId, ResultKey
-
-        workflow_id = workflow_with_params.get_id()
-        data_service = DataService()
-        orchestrator = make_orchestrator(
-            workflow_with_params, data_service=data_service
-        )
-
-        job_ids = orchestrator.commit_workflow(workflow_id)
-        old_job_number = job_ids[0].job_number
-
-        for source_name in workflow_with_params.source_names:
-            key = ResultKey(
-                workflow_id=workflow_id,
-                job_id=JobId(source_name=source_name, job_number=old_job_number),
-            )
-            data_service[key] = sc.scalar(1.0)
-
-        assert len(data_service) == len(workflow_with_params.source_names)
-
-        orchestrator.commit_workflow(workflow_id)
-
-        assert len(data_service) == len(workflow_with_params.source_names)
-
-    def test_second_recommit_evicts_oldest_job_data(
-        self,
-        workflow_with_params: WorkflowSpec,
-    ):
-        """When state.previous is replaced, its data is cleaned up."""
-        from ess.livedata.config.workflow_spec import JobId, ResultKey
-
-        workflow_id = workflow_with_params.get_id()
-        data_service = DataService()
-        orchestrator = make_orchestrator(
-            workflow_with_params, data_service=data_service
-        )
-
-        job_ids_a = orchestrator.commit_workflow(workflow_id)
-        job_number_a = job_ids_a[0].job_number
-        for source_name in workflow_with_params.source_names:
-            data_service[
-                ResultKey(
-                    workflow_id=workflow_id,
-                    job_id=JobId(source_name=source_name, job_number=job_number_a),
-                )
-            ] = sc.scalar(1.0)
-
-        job_ids_b = orchestrator.commit_workflow(workflow_id)
-        job_number_b = job_ids_b[0].job_number
-        for source_name in workflow_with_params.source_names:
-            data_service[
-                ResultKey(
-                    workflow_id=workflow_id,
-                    job_id=JobId(source_name=source_name, job_number=job_number_b),
-                )
-            ] = sc.scalar(2.0)
-
-        orchestrator.commit_workflow(workflow_id)
-
-        # A is dropped (replaced as state.previous); B is retained.
-        keys = list(data_service)
-        assert all(k.job_id.job_number != job_number_a for k in keys)
-        assert any(k.job_id.job_number == job_number_b for k in keys)
-
-    def test_stop_retains_just_stopped_job_data(
-        self,
-        workflow_with_params: WorkflowSpec,
-    ):
-        """stop_workflow does not delete the stopped job's buffered data."""
-        from ess.livedata.config.workflow_spec import JobId, ResultKey
-
-        workflow_id = workflow_with_params.get_id()
-        data_service = DataService()
-        orchestrator = make_orchestrator(
-            workflow_with_params, data_service=data_service
-        )
-
-        job_ids = orchestrator.commit_workflow(workflow_id)
-        job_number = job_ids[0].job_number
-        for source_name in workflow_with_params.source_names:
-            data_service[
-                ResultKey(
-                    workflow_id=workflow_id,
-                    job_id=JobId(source_name=source_name, job_number=job_number),
-                )
-            ] = sc.scalar(1.0)
-
-        orchestrator.stop_workflow(workflow_id)
-
-        assert len(data_service) == len(workflow_with_params.source_names)
-
-    def test_commit_does_not_remove_data_from_other_workflows(
-        self,
-        workflow_with_params: WorkflowSpec,
-    ):
-        """Recommit-driven cleanup is scoped by job_number, not workflow."""
-        from ess.livedata.config.workflow_spec import JobId, ResultKey
-
-        workflow_id = workflow_with_params.get_id()
-        data_service = DataService()
-        orchestrator = make_orchestrator(
-            workflow_with_params, data_service=data_service
-        )
-
-        orchestrator.commit_workflow(workflow_id)
-
-        import uuid
-
-        unrelated_key = ResultKey(
-            workflow_id=workflow_id,
-            job_id=JobId(
-                source_name="other_source",
-                job_number=uuid.uuid4(),
-            ),
-        )
-        data_service[unrelated_key] = sc.scalar(2.0)
-
-        # Two more commits so the cleanup boundary moves past the first job.
-        orchestrator.commit_workflow(workflow_id)
-        orchestrator.commit_workflow(workflow_id)
-
-        assert unrelated_key in data_service
-
-
 class TestGetRunningWorkflowSources:
     """Tests for the running-sources accessor used by device derivation."""
 
@@ -1668,3 +1426,92 @@ class TestGetRunningWorkflowSources:
 
         orchestrator.stop_workflow(workflow_id)
         assert workflow_id not in orchestrator.get_running_workflow_sources()
+
+
+class MutableClock:
+    """Manually advanceable clock for deterministic expiry tests."""
+
+    def __init__(self, start: float = 0.0) -> None:
+        self.now = start
+
+    def __call__(self) -> float:
+        return self.now
+
+    def advance(self, seconds: float) -> None:
+        self.now += seconds
+
+
+class TestPendingCommandExpiry:
+    """Test expiry of pending commands whose acknowledgement never arrives."""
+
+    def test_unacknowledged_command_produces_error_notification_after_timeout(
+        self, workflow_with_params: WorkflowSpec
+    ):
+        workflow_id = workflow_with_params.get_id()
+        clock = MutableClock()
+        queue = NotificationQueue()
+        orchestrator = make_orchestrator(
+            workflow_with_params, notification_queue=queue, clock=clock
+        )
+
+        orchestrator.stage_config(
+            workflow_id, source_name="det_1", params={}, aux_source_names={}
+        )
+        orchestrator.commit_workflow(workflow_id)
+
+        clock.advance(PENDING_COMMAND_TIMEOUT_SECONDS + 1.0)
+        orchestrator.expire_pending_commands()
+
+        errors = [
+            event
+            for event in queue.get_all_events()
+            if event.notification_type is NotificationType.ERROR
+        ]
+        assert len(errors) == 1
+        assert workflow_with_params.title in errors[0].message
+
+    def test_command_not_expired_before_timeout(
+        self, workflow_with_params: WorkflowSpec
+    ):
+        workflow_id = workflow_with_params.get_id()
+        clock = MutableClock()
+        queue = NotificationQueue()
+        orchestrator = make_orchestrator(
+            workflow_with_params, notification_queue=queue, clock=clock
+        )
+
+        orchestrator.stage_config(
+            workflow_id, source_name="det_1", params={}, aux_source_names={}
+        )
+        orchestrator.commit_workflow(workflow_id)
+
+        clock.advance(PENDING_COMMAND_TIMEOUT_SECONDS - 1.0)
+        orchestrator.expire_pending_commands()
+
+        assert queue.get_all_events() == []
+
+    def test_expired_command_notified_only_once(
+        self, workflow_with_params: WorkflowSpec
+    ):
+        workflow_id = workflow_with_params.get_id()
+        clock = MutableClock()
+        queue = NotificationQueue()
+        orchestrator = make_orchestrator(
+            workflow_with_params, notification_queue=queue, clock=clock
+        )
+
+        orchestrator.stage_config(
+            workflow_id, source_name="det_1", params={}, aux_source_names={}
+        )
+        orchestrator.commit_workflow(workflow_id)
+
+        clock.advance(PENDING_COMMAND_TIMEOUT_SECONDS + 1.0)
+        orchestrator.expire_pending_commands()
+        orchestrator.expire_pending_commands()
+
+        errors = [
+            event
+            for event in queue.get_all_events()
+            if event.notification_type is NotificationType.ERROR
+        ]
+        assert len(errors) == 1

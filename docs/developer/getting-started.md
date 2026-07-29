@@ -4,21 +4,15 @@
 
 ### Dependencies
 
-Development dependencies are specified in `requirements/dev.txt` and can be installed using (see [Dependency Management](./dependency-management.md) for more information)
+Create a virtual environment and install the package in editable mode together with its development dependencies (see [Dependency Management](./dependency-management.md) for more information about how dependencies are managed):
 
 ```sh
-pip install -r requirements/dev.txt
+python -m venv .venv
+source .venv/bin/activate
+pip install -e ".[test]"
 ```
 
 Additionally, building the documentation requires [pandoc](https://pandoc.org/) which is not on PyPI and needs to be installed through other means, e.g. with your OS package manager.
-
-### Install the package
-
-Install the package in editable mode using
-
-```sh
-pip install -e .
-```
 
 ### Set up git hooks
 

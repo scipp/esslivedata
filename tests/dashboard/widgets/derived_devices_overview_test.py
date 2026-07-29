@@ -42,7 +42,7 @@ class MonitorOutputs(WorkflowOutputsBase):
         OutputView(
             name='total',
             title='Total',
-            streams={'since_start': 'counts_total_cumulative'},
+            fields=('counts_total_cumulative',),
         ),
     )
 
@@ -91,9 +91,9 @@ def orchestrator(registry) -> JobOrchestrator:
         active_job_registry=ActiveJobRegistry(
             data_service=DataService(), job_service=js
         ),
+        job_service=js,
         config_store=None,
     )
-    js.on_status_updated = orch.on_job_status_updated
     return orch
 
 

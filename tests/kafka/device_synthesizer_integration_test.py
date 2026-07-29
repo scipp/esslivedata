@@ -16,9 +16,9 @@ import scipp as sc
 from ess.livedata.config.stream import Device
 from ess.livedata.core.message import Message, MessageSource, StreamId, StreamKind
 from ess.livedata.core.timestamp import Timestamp
-from ess.livedata.handlers.accumulators import LogData
-from ess.livedata.handlers.to_nxlog import ToNXlog
 from ess.livedata.kafka.device_synthesizer import DeviceSynthesizer
+from ess.livedata.preprocessors.accumulators import LogData
+from ess.livedata.preprocessors.to_nxlog import ToNXlog
 
 
 class _Source(MessageSource[Message]):

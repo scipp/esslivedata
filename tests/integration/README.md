@@ -6,7 +6,7 @@ Integration tests verify end-to-end behavior of ESSlivedata by running actual se
 
 - **`@pytest.mark.integration`**: Marks a test as an integration test
 - **`@pytest.mark.instrument('name')`**: Runs test with specified instrument (default: 'dummy')
-- **`@pytest.mark.services('name')`**: **Required** when using `integration_env` fixture. Valid values: `'monitor'`, `'detector'`, or `'reduction'` (specifies which services to run)
+- **`@pytest.mark.services('name')`**: **Required** when using `integration_env` fixture. Selects the `<name>_services` fixture. `'monitor'`, `'detector'` and `'reduction'` come from `conftest.py`; a test module can define its own group via `create_service_group()`
 
 ## Available Fixtures
 
@@ -50,7 +50,7 @@ def test_my_workflow(integration_env):
 
     # Use helper to wait for data for the specific jobs we created
     # Returns dict[JobId, dict[ResultKey, data]]
-    job_data = wait_for_job_data(backend, job_ids, timeout=10.0)
+    job_data = wait_for_job_data(backend, workflow_id, job_ids, timeout=10.0)
 
     # Make assertions about the jobs we created
     assert job_ids[0] in job_data

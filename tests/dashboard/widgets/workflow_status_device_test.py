@@ -60,11 +60,9 @@ class MonitorOutputs(WorkflowOutputsBase):
         OutputView(
             name='total',
             title='Total',
-            streams={'since_start': 'counts_total_cumulative'},
+            fields=('counts_total_cumulative',),
         ),
-        OutputView(
-            name='histogram', title='Histogram', streams={'since_start': 'histogram'}
-        ),
+        OutputView(name='histogram', title='Histogram', fields=('histogram',)),
     )
 
 
@@ -120,9 +118,9 @@ def orchestrator(registry, job_service) -> JobOrchestrator:
         active_job_registry=ActiveJobRegistry(
             data_service=DataService(), job_service=job_service
         ),
+        job_service=job_service,
         config_store=None,
     )
-    job_service.on_status_updated = orch.on_job_status_updated
     return orch
 
 

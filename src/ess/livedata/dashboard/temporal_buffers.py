@@ -13,6 +13,15 @@ import scipp as sc
 T = TypeVar('T')
 
 
+def _variable_nbytes(var: sc.Variable) -> int:
+    """Return the byte size of a variable's values, plus variances if present.
+
+    Variances always match the values array's shape and dtype, so their size
+    is derived rather than read via a second scipp property access.
+    """
+    return var.values.nbytes * (2 if var.variances is not None else 1)
+
+
 class BufferProtocol(ABC, Generic[T]):
     """Common interface for all buffer types."""
 
@@ -41,6 +50,10 @@ class BufferProtocol(ABC, Generic[T]):
     @abstractmethod
     def clear(self) -> None:
         """Clear all data from the buffer."""
+
+    @abstractmethod
+    def is_empty(self) -> bool:
+        """Return whether the buffer holds no data. Cheap, unlike ``get``."""
 
     @abstractmethod
     def set_required_timespan(self, seconds: float) -> None:
@@ -100,6 +113,10 @@ class SingleValueBuffer(BufferProtocol[T]):
     def clear(self) -> None:
         """Clear the stored value."""
         self._data = None
+
+    def is_empty(self) -> bool:
+        """Return whether no value is stored."""
+        return self._data is None
 
     def set_required_timespan(self, seconds: float) -> None:
         """Set required timespan (unused for SingleValueBuffer)."""
@@ -377,6 +394,10 @@ class TemporalBuffer(BufferProtocol[sc.DataArray]):
         self._coord_buffers = {}
         self._reference = None
 
+    def is_empty(self) -> bool:
+        """Return whether no data has been buffered."""
+        return self._data_buffer is None
+
     def set_required_timespan(self, seconds: float) -> None:
         """Set the required timespan for the buffer."""
         self._required_timespan = seconds
@@ -399,9 +420,9 @@ class TemporalBuffer(BufferProtocol[sc.DataArray]):
 
         # Calculate max_capacity from memory limit, accounting for the data buffer
         # plus every accumulated coord buffer.
-        bytes_per_element = data.data.values.nbytes
+        bytes_per_element = _variable_nbytes(data.data)
         for name in accumulated:
-            bytes_per_element += data.coords[name].values.nbytes
+            bytes_per_element += _variable_nbytes(data.coords[name])
         if 'time' in data.dims:
             bytes_per_element /= data.sizes['time']
 
@@ -440,6 +461,9 @@ class TemporalBuffer(BufferProtocol[sc.DataArray]):
         timespan = sc.to_unit(
             sc.scalar(self._required_timespan, unit='s'), latest_time.unit
         )
+        # datetime64 arithmetic requires int64, not float64
+        if latest_time.dtype == sc.DType.datetime64:
+            timespan = timespan.astype('int64')
         cutoff = latest_time - timespan
 
         # Find first index to keep

@@ -13,36 +13,60 @@ import scipp as sc
 from bokeh.models import NumberFormatter, ScientificFormatter
 from holoviews.plotting.bokeh.tabular import TablePlot
 
-from ess.livedata.config.workflow_spec import ResultKey
+from ess.livedata.config.workflow_spec import DataKey
 
 from .plot_params import PlotParamsTable, TableNotation
 from .plots import Plotter, TitleResolver
 from .range_hook import Axis
 
+# Bokeh renders the table in 12px Helvetica/Arial. Seven pixels per character is
+# a deliberate overestimate of the average advance width there, so columns are
+# never so tight that Bokeh truncates a cell to an ellipsis.
+_CHAR_PX = 7
+_CELL_PADDING_PX = 12
+
 
 class _FormattedTablePlot(TablePlot):
-    """HoloViews bokeh ``Table`` plot whose value columns carry a custom formatter.
+    """HoloViews bokeh ``Table`` plot with custom column formatters and widths.
 
     HoloViews hardcodes the numeric column formatter and rebuilds every column on
     each streaming update (``update_frame``) without re-running ``hooks``, so a
     post-render hook is reverted on the first data update. Overriding column
-    construction makes the formatter persist across updates.
+    construction makes formatter and width persist across updates.
+
+    Widths are set here because Bokeh cannot derive them: its content-fitting
+    modes (``autosize_mode`` ``fit_columns``/``fit_viewport``) raise in the
+    bundled SlickGrid as soon as a column holds strings, and the default
+    ``force_fit`` ignores content entirely -- it stretches every column to the
+    same share of the widget, leaving short values stranded in half-empty cells.
     """
+
+    style_opts: ClassVar = [*TablePlot.style_opts, 'autosize_mode']
 
     value_formatter = param.Callable(
         default=None,
         doc="Factory returning a fresh Bokeh formatter for each value column.",
     )
 
+    value_chars = param.Callable(
+        default=None,
+        doc="Maps a value column's data to the character budget of its widest cell.",
+    )
+
     def _get_columns(self, element, data):
         columns = super()._get_columns(element, data)
         if self.value_formatter is None:
             return columns
-        # Only numeric value columns get the formatter; string columns (source
-        # index, per-row unit) keep HoloViews' default StringFormatter.
         for column in columns:
-            if np.asarray(data[column.field]).dtype.kind in 'iuf':
+            values = np.asarray(data[column.field])
+            # Only numeric value columns get the formatter; string columns (source
+            # index, per-row unit) keep HoloViews' default StringFormatter.
+            if values.dtype.kind in 'iuf':
                 column.formatter = self.value_formatter()
+                chars = self.value_chars(values)
+            else:
+                chars = max((len(str(value)) for value in values), default=0)
+            column.width = _CELL_PADDING_PX + _CHAR_PX * max(chars, len(column.title))
         return columns
 
 
@@ -88,7 +112,7 @@ class TablePlotter(Plotter):
 
     def _build_result(
         self,
-        data: dict[ResultKey, sc.DataArray],
+        data: dict[DataKey, sc.DataArray],
         resolver: TitleResolver,
         **kwargs,
     ) -> hv.Element:
@@ -116,7 +140,7 @@ class TablePlotter(Plotter):
                 raise ValueError(f"Expected 0D data, got {da.ndim}D")
             output_name = data_key.output_name or 'values'
             label = resolver.get_axis_label(data_key.output_name) or output_name
-            rows.append(resolver.source(data_key.job_id.source_name))
+            rows.append(resolver.source(data_key.source_name))
             units.append('' if da.unit is None else str(da.unit))
             value = float(da.value)
             if self._notation is TableNotation.decimal and self._precision < 0:
@@ -172,12 +196,44 @@ class TablePlotter(Plotter):
         # 1e-3..1e5 and switch to scientific for magnitudes outside that window.
         return ScientificFormatter(precision=decimals, text_align='right')
 
+    def _value_chars(self, values: np.ndarray) -> int:
+        """Character budget of the widest value the configured notation produces.
+
+        The Bokeh formatters run in the browser, so the rendered strings are not
+        available here; the budget mirrors :meth:`_value_formatter` instead.
+        Scientific and auto notation cap the mantissa at one digit plus a
+        four-character exponent (``e+05``), and compact notation abbreviates to
+        at most four digits, so only decimal notation depends on the data -- its
+        width steps when values cross an order of magnitude.
+        """
+        decimals = max(self._precision, 0)
+        # Decimals are preceded by the decimal point.
+        fraction = decimals + 1 if decimals else 0
+        sign = 1 if np.any(values < 0) else 0
+        if self._notation is TableNotation.decimal:
+            finite = values[np.isfinite(values)]
+            largest = float(np.abs(finite).max()) if finite.size else 0.0
+            digits = 1 + int(np.log10(largest)) if largest >= 1 else 1
+        elif self._notation is TableNotation.compact:
+            digits = 4
+        else:
+            digits = 5
+        return sign + digits + fraction
+
     def style_opts(self) -> list[hv.Options]:
         # HoloViews' Table plot exposes only fixed width/height (no responsive
         # sizing); container sizing is left to the enclosing Panel pane.
-        # ``value_formatter`` is a plot option of _FormattedTablePlot; it must
-        # persist across streaming updates, which a post-render hook cannot.
+        # ``autosize_mode='none'`` makes Bokeh honour the column widths computed
+        # in _FormattedTablePlot instead of stretching columns to fill the
+        # widget. The formatter and width callables are plot options of that
+        # class; they must persist across streaming updates, which a post-render
+        # hook cannot.
         return [
-            hv.opts.Table(index_position=None, value_formatter=self._value_formatter),
+            hv.opts.Table(
+                index_position=None,
+                autosize_mode='none',
+                value_formatter=self._value_formatter,
+                value_chars=self._value_chars,
+            ),
             *super().style_opts(),
         ]

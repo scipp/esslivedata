@@ -12,7 +12,7 @@ for full instrument details.
 """
 
 from enum import StrEnum
-from typing import Literal
+from typing import ClassVar, Literal
 
 import pydantic
 import scipp as sc
@@ -23,13 +23,18 @@ from ess.livedata.config import (
     instrument_registry,
     name_streams,
 )
-from ess.livedata.config.workflow_spec import WorkflowOutputsBase
-from ess.livedata.handlers.detector_view_specs import SpectrumViewSpec
-from ess.livedata.handlers.monitor_workflow_specs import (
+from ess.livedata.config.workflow_spec import (
+    CumulativeOutput,
+    OutputView,
+    WindowOutput,
+    WorkflowOutputsBase,
+)
+from ess.livedata.parameter_models import EnergyEdges, QEdges
+from ess.livedata.workflows.detector_view_specs import SpectrumViewSpec
+from ess.livedata.workflows.monitor_workflow_specs import (
     TOAOnlyMonitorDataParams,
     register_monitor_workflow_specs,
 )
-from ess.livedata.parameter_models import EnergyEdges, QEdges
 
 from .streams_parsed import PARSED_STREAMS
 
@@ -96,13 +101,39 @@ def _make_3d_template() -> sc.DataArray:
 class DetectorRatemeterOutputs(WorkflowOutputsBase):
     """Outputs for detector ratemeter workflow."""
 
-    detector_region_counts: sc.DataArray = pydantic.Field(
+    output_views: ClassVar[tuple[OutputView, ...]] = (
+        OutputView(
+            name='detector_region_counts',
+            title='Detector Region Counts',
+            fields=('detector_region_counts_cumulative', 'detector_region_counts'),
+            description=(
+                'Counts for the selected arc and pixel range. With "since run '
+                'start" shows the count accumulated since the start of the run; '
+                'with "latest update" or a window, shows recent counts. Display '
+                'as a rate (counts/s) via the plot Rate option.'
+            ),
+            params=('region',),
+        ),
+    )
+
+    detector_region_counts: WindowOutput = pydantic.Field(
         default_factory=lambda: sc.DataArray(
             sc.scalar(0, unit='counts'),
             coords={'time': sc.scalar(0, unit='ns')},
         ),
         title='Detector Region Counts',
-        description='Total counts for the selected arc and pixel range.',
+        description=(
+            'Counts for the selected arc and pixel range, for the latest update '
+            'interval only. Resets each update interval.'
+        ),
+    )
+    detector_region_counts_cumulative: CumulativeOutput = pydantic.Field(
+        default_factory=lambda: sc.DataArray(sc.scalar(0, unit='counts')),
+        title='Detector Region Counts',
+        description=(
+            'Counts for the selected arc and pixel range, accumulated since the '
+            'start of the run.'
+        ),
     )
 
 
@@ -322,7 +353,12 @@ detector_ratemeter_handle = instrument.register_spec(
     name='detector_ratemeter',
     version=1,
     title='Detector Ratemeter',
-    description='Counts for a selected arc and pixel range.',
+    description=(
+        'Counts for a selected arc and pixel range, as a current (per-update) '
+        'and a cumulative output. Both carry the time bounds needed to display '
+        'a rate (counts/s) via the plot Rate option. The cumulative count '
+        'resets only on a run transition.'
+    ),
     source_names=['unified_detector'],
     params=DetectorRatemeterParams,
     outputs=DetectorRatemeterOutputs,

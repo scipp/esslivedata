@@ -13,13 +13,12 @@ based on the actual data range, not stale coords from buffer references.
 """
 
 import time
-import uuid
 
 import holoviews as hv
 import pytest
 import scipp as sc
 
-from ess.livedata.config.workflow_spec import JobId, ResultKey, WorkflowId
+from ess.livedata.config.workflow_spec import DataKey, WorkflowId
 from ess.livedata.dashboard import plots
 from ess.livedata.dashboard.extractors import (
     FullHistoryExtractor,
@@ -41,8 +40,9 @@ def workflow_id():
 
 @pytest.fixture
 def data_key(workflow_id):
-    job_id = JobId(source_name='test_source', job_number=uuid.uuid4())
-    return ResultKey(workflow_id=workflow_id, job_id=job_id, output_name='test_result')
+    return DataKey(
+        workflow_id=workflow_id, source_name='test_source', output_name='test_result'
+    )
 
 
 def _time_info(plotter) -> str:

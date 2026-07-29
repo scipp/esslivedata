@@ -7,15 +7,17 @@ Coordinates plot creation and management across multiple plot grids:
 - Configuration staging and persistence
 - Plot grid lifecycle (create, remove)
 - Plot cell management (add, remove)
-- Event-driven plot creation via JobOrchestrator subscriptions
+- Static plot creation at add-layer time; run-state driven via polling
 - Grid template loading and parsing
 """
 
 from __future__ import annotations
 
 import copy
+import threading
 import traceback
-from collections.abc import Callable, Iterable, Mapping, Sequence
+from collections.abc import Iterable, Iterator, Mapping, Sequence
+from contextlib import contextmanager
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, NewType, Protocol
 from uuid import UUID, uuid4
@@ -25,9 +27,9 @@ import structlog
 
 from ess.livedata.config.grid_template import GridSpec
 from ess.livedata.config.workflow_spec import (
+    DataKey,
     JobNumber,
-    ResultKey,
-    StreamRole,
+    Windowing,
     WorkflowId,
     WorkflowSpec,
 )
@@ -36,8 +38,6 @@ from .config_store import ConfigStore
 from .data_roles import PRIMARY
 from .data_service import DataService
 from .frame_clock import FrameClock
-from .job_orchestrator import WorkflowCallbacks
-from .layer_subscription import LayerSubscription, SubscriptionReady
 from .plot_data_service import LayerId, PlotDataService
 from .plot_params import TimeWindowMixin, TimeWindowMode
 from .plotting_controller import PlottingController
@@ -45,7 +45,6 @@ from .plotting_controller import PlottingController
 if TYPE_CHECKING:
     from ess.livedata.config import Instrument
 
-SubscriptionId = NewType('SubscriptionId', UUID)
 GridId = NewType('GridId', UUID)
 CellId = NewType('CellId', UUID)
 
@@ -53,53 +52,12 @@ CellId = NewType('CellId', UUID)
 class JobOrchestratorProtocol(Protocol):
     """Protocol for JobOrchestrator interface needed by PlotOrchestrator."""
 
-    def subscribe_to_workflow(
-        self, workflow_id: WorkflowId, callbacks: WorkflowCallbacks
-    ) -> tuple[SubscriptionId, bool]:
-        """
-        Subscribe to workflow job lifecycle notifications.
-
-        The on_started callback will be called with the job_number when:
-        1. A workflow is committed (immediately after commit)
-        2. Immediately if subscribing and workflow already has an active job
-
-        The on_stopped callback (if provided) will be called when the workflow
-        is stopped, with the job_number of the stopped job.
-
-        Parameters
-        ----------
-        workflow_id
-            The workflow to subscribe to.
-        callbacks
-            Callbacks for job lifecycle events (on_started, on_stopped).
-
-        Returns
-        -------
-        :
-            Tuple of (subscription_id, callback_invoked_immediately).
-            subscription_id can be used to unsubscribe.
-            callback_invoked_immediately is True if the workflow was already
-            running and the callback was invoked synchronously during this call.
-        """
-        ...
-
-    def unsubscribe(self, subscription_id: SubscriptionId) -> None:
-        """
-        Unsubscribe from workflow lifecycle notifications.
-
-        Parameters
-        ----------
-        subscription_id
-            The subscription ID returned from subscribe_to_workflow.
-        """
-        ...
-
     def get_workflow_registry(self) -> Mapping[WorkflowId, WorkflowSpec]:
         """Get the workflow registry containing all managed workflows."""
         ...
 
-    def get_previous_job_number(self, workflow_id: WorkflowId) -> JobNumber | None:
-        """Get the job_number of the most recently stopped job, if any."""
+    def get_active_job_number(self, workflow_id: WorkflowId) -> JobNumber | None:
+        """Get the job_number of the currently active job, if any."""
         ...
 
 
@@ -146,7 +104,7 @@ class DataSourceConfig:
     """Configuration for a single data source in a plot layer.
 
     This defines how to connect a layer to a workflow's user-facing output
-    view. The backend pydantic field name (used in ``ResultKey``) is
+    view. The backend pydantic field name (used in ``DataKey``) is
     resolved at subscription time from the view name plus the current
     window mode.
     """
@@ -154,6 +112,21 @@ class DataSourceConfig:
     workflow_id: WorkflowId
     source_names: list[str]
     view_name: str = 'result'
+
+
+@dataclass(frozen=True)
+class ResolvedDataSource:
+    """A data source with its output view resolved to a backend field name.
+
+    Produced by :func:`_build_resolved_data_sources` from a
+    :class:`DataSourceConfig`: ``output_name`` carries the backend pydantic
+    field name selected for the current window mode, ready to key a
+    :class:`DataKey`. Runtime-only — never persisted.
+    """
+
+    workflow_id: WorkflowId
+    source_names: list[str]
+    output_name: str
 
 
 @dataclass
@@ -249,107 +222,68 @@ class PlotGridConfig:
     enabled: bool = True
 
 
-GridCreatedCallback = Callable[[GridId, PlotGridConfig], None]
-GridRemovedCallback = Callable[[GridId], None]
-GridUpdatedCallback = Callable[[GridId, PlotGridConfig], None]
-CellRemovedCallback = Callable[[GridId, CellGeometry], None]
-
-
-class CellUpdatedCallback(Protocol):
-    """Callback for cell configuration changes.
-
-    Called when a cell's configuration changes (layer added/removed/updated).
-    Subscribers should query PlotDataService for layer state (error, stopped, data).
-    """
-
-    def __call__(
-        self,
-        *,
-        grid_id: GridId,
-        cell_id: CellId,
-        cell: PlotCell,
-    ) -> None:
-        """
-        Handle cell configuration update.
-
-        Parameters
-        ----------
-        grid_id
-            ID of the grid containing the cell.
-        cell_id
-            ID of the cell being updated.
-        cell
-            Plot cell configuration with all layers.
-        """
-
-
-@dataclass
-class LifecycleSubscription:
-    """Subscription to plot grid lifecycle events."""
-
-    on_grid_created: GridCreatedCallback | None = None
-    on_grid_removed: GridRemovedCallback | None = None
-    on_grid_updated: GridUpdatedCallback | None = None
-    on_cell_updated: CellUpdatedCallback | None = None
-    on_cell_removed: CellRemovedCallback | None = None
-
-
-def _stream_role_for_mode(mode: TimeWindowMode) -> StreamRole:
-    """Map a window mode to the stream role its data is subscribed from."""
+def _windowing_for_mode(mode: TimeWindowMode) -> Windowing:
+    """Map a window mode to the windowing its data is subscribed from."""
     return 'since_start' if mode is TimeWindowMode.since_start else 'per_update'
 
 
-def resolve_field_name(
-    spec: WorkflowSpec,
-    view_name: str,
-    *,
-    role: StreamRole = 'since_start',
-) -> str:
-    """Resolve a (view, role) pair to the backend pydantic field name.
+def _windowing_for_role(role: str, params: pydantic.BaseModel) -> Windowing:
+    """Return the windowing wanted by a data role.
 
-    Falls back to ``view_name`` as a raw field name when no matching view
-    is declared (lets unannotated reduction outputs work unchanged).
-    """
-    view = spec.get_output_view(view_name)
-    return view.field_for(role) if view is not None else view_name
-
-
-def _role_for_slot(slot: str, params: pydantic.BaseModel) -> StreamRole:
-    """Return the stream role wanted by a data-source slot.
-
-    The primary slot follows the user-selected window mode; correlation
+    The primary role follows the user-selected window mode; correlation
     axes always want per-update data.
     """
-    if slot != PRIMARY:
+    if role != PRIMARY:
         return 'per_update'
     window = params.time_window if isinstance(params, TimeWindowMixin) else None
-    return _stream_role_for_mode(window.mode) if window is not None else 'per_update'
+    return _windowing_for_mode(window.mode) if window is not None else 'per_update'
 
 
 def _build_resolved_data_sources(
     config: PlotConfig,
     registry: Mapping[WorkflowId, WorkflowSpec],
-) -> dict[str, DataSourceConfig]:
-    """Build a copy of ``config.data_sources`` with view names resolved to fields.
+) -> dict[str, ResolvedDataSource]:
+    """Resolve ``config.data_sources`` view names to backend field names.
 
-    The returned mapping carries backend pydantic field names in
-    ``view_name`` (which is then used as ``ResultKey.output_name``).
+    Falls back to the view name verbatim when the data source's workflow is
+    not in the registry (lets a layer whose workflow has not been seen yet
+    still set up a pipeline, keyed by whatever name it was given).
     """
-    resolved: dict[str, DataSourceConfig] = {}
-    for slot, ds in config.data_sources.items():
+    resolved: dict[str, ResolvedDataSource] = {}
+    for role, ds in config.data_sources.items():
         spec = registry.get(ds.workflow_id)
-        if spec is None:
-            resolved[slot] = ds
-            continue
-        field_name = resolve_field_name(
-            spec, ds.view_name, role=_role_for_slot(slot, config.params)
+        output_name = (
+            spec.field_for(ds.view_name, _windowing_for_role(role, config.params))
+            if spec is not None
+            else ds.view_name
         )
-        resolved[slot] = DataSourceConfig(
+        resolved[role] = ResolvedDataSource(
             workflow_id=ds.workflow_id,
             source_names=ds.source_names,
-            view_name=field_name,
+            output_name=output_name,
         )
     return resolved
+
+
+def _build_keys_by_role(
+    data_sources: dict[str, ResolvedDataSource],
+) -> dict[str, list[DataKey]]:
+    """Build stable DataKeys grouped by role.
+
+    Keys carry no job identity — they are fully determined by the plot
+    config.
+    """
+    return {
+        role: [
+            DataKey(
+                workflow_id=ds.workflow_id,
+                source_name=sn,
+                output_name=ds.output_name,
+            )
+            for sn in ds.source_names
+        ]
+        for role, ds in data_sources.items()
+    }
 
 
 def _resolve_supports_windowing(
@@ -372,8 +306,49 @@ def _resolve_supports_windowing(
     return output_view_supports_windowing(spec, primary.view_name)
 
 
+@dataclass
+class _LayerJobTracker:
+    """Last-observed run-state of the workflows feeding a layer.
+
+    ``sync_job_states`` compares the polled job numbers against
+    ``job_numbers`` to detect generation changes (→ reset presentation) and
+    stops (→ STOPPED). ``workflow_ids`` is deduplicated: a workflow shared by
+    several roles contributes one entry.
+    """
+
+    workflow_ids: tuple[WorkflowId, ...]
+    job_numbers: tuple[JobNumber | None, ...]
+
+
 class PlotOrchestrator:
-    """Manages plot grid configurations and plot lifecycle."""
+    """Manages plot grid configurations and plot lifecycle.
+
+    Threading
+    ---------
+    The topology mappings (``_grids``, ``_cell_to_grid``, ``_layer_to_cell``)
+    are shared across all browser sessions. They are mutated only on the single
+    Tornado/Bokeh IOLoop thread (all UI callbacks and per-session polls run
+    there): the IOLoop thread is the sole topology *writer*. The only other
+    thread touching topology is the ``orchestrator-update`` thread, which
+    *reads* it during ingestion (``_grid_of_layer``, ``_pull_and_build``,
+    ``get_layer_config`` via ``_reset_layer_presentation``).
+
+    ``_topology_lock`` (an ``RLock``) makes those cross-thread reads see a
+    consistent multi-dict snapshot. Writers hold it only around the dict
+    mutations themselves -- never across file I/O (``_persist_to_store``),
+    pipeline setup, ``plotter.compute``, or ``DataService`` unregistration --
+    so ingestion latency never couples to those. Deletes are leaf-first
+    (``_layer_to_cell`` before ``_cell_to_grid`` before ``_grids``) and inserts
+    root-first, so a reader that races a mutation fails at the first hop with a
+    ``KeyError`` that all read paths tolerate. Lock order is
+    ``_topology_lock`` before ``_dirty_lock``, never the reverse.
+
+    Widgets do not receive pushed lifecycle notifications. Each mutator bumps
+    ``_topology_version``; each session's poll compares it against its last
+    seen value and reconciles on its own IOLoop tick and document lock (ADR
+    0007). ``topology_version()`` needs no lock: the bump and every poll read
+    happen on the same IOLoop thread, and an int read is atomic regardless.
+    """
 
     def __init__(
         self,
@@ -421,20 +396,32 @@ class PlotOrchestrator:
         self._instrument = instrument
         self._instrument_config = instrument_config
         self._config_store = config_store
+        # Suppresses per-mutation persistence during composite lifecycle
+        # operations (startup replay, shutdown). See ``_suppress_persist``.
+        # Read/written only on the IOLoop thread, the sole topology writer,
+        # so it needs no lock.
+        self._persist_suppressed = False
         self._plot_data_service = plot_data_service
         self._frame_clock = frame_clock or FrameClock()
         self._logger = structlog.get_logger()
 
         self._grids: dict[GridId, PlotGridConfig] = {}
         self._cell_to_grid: dict[CellId, GridId] = {}
-        self._layer_subscriptions: dict[LayerId, LayerSubscription] = {}
+        self._layer_jobs: dict[LayerId, _LayerJobTracker] = {}
         self._layer_to_cell: dict[LayerId, CellId] = {}
-        self._lifecycle_subscribers: dict[SubscriptionId, LifecycleSubscription] = {}
-        self._data_subscriptions: dict[LayerId, Any] = {}  # DataServiceSubscriber
+        # Bumped by every topology mutator on the IOLoop thread; polled by each
+        # session's widgets to detect grid/cell changes (see class docstring).
+        self._topology_version: int = 0
+        # Guards cross-thread multi-dict reads of the topology mappings; see the
+        # class "Threading" docstring for the discipline and lock order.
+        self._topology_lock = threading.RLock()
+        self._data_subscriptions: dict[LayerId, Any] = {}  # DataSubscriber
         self._layer_resolvers: dict[LayerId, Any] = {}  # LayerId -> TitleResolver
-        # Per-grid compute buckets filled during a burst by ``_enqueue_compute``
-        # and drained by ``flush_frames``. Touched only on the ingestion thread.
-        self._frame_buckets: dict[GridId, list[tuple[LayerId, Any]]] = {}
+        # Layers whose DataService keys changed since the last flush, bucketed
+        # per grid. Filled by ``_mark_layer_dirty`` (any thread ending a
+        # DataService transaction), drained by ``flush_frames``.
+        self._dirty_layers: dict[GridId, set[LayerId]] = {}
+        self._dirty_lock = threading.Lock()
 
         # Parse templates (requires plotter registry, so must be done here)
         self._templates = self._parse_grid_specs(list(raw_templates))
@@ -451,6 +438,20 @@ class PlotOrchestrator:
         if grid_id is None:
             return 0
         return self._frame_clock.generation(grid_id)
+
+    def topology_version(self) -> int:
+        """Monotonic counter bumped on every grid/cell/layer topology change.
+
+        Sessions poll this to detect creation, removal, reorder, rename,
+        enable/disable, and cell/layer composition changes, then reconcile
+        their widgets. It does *not* advance for pure data flow (frame
+        flushes). See the class "Threading" docstring.
+        """
+        return self._topology_version
+
+    def _bump_topology_version(self) -> None:
+        """Advance the topology version. IOLoop-thread only."""
+        self._topology_version += 1
 
     @property
     def instrument(self) -> str:
@@ -502,12 +503,13 @@ class PlotOrchestrator:
         """
         grid_id = GridId(uuid4())
         grid = PlotGridConfig(title=title, nrows=nrows, ncols=ncols)
-        self._grids[grid_id] = grid
+        with self._topology_lock:
+            self._grids[grid_id] = grid
+        self._bump_topology_version()
         self._persist_to_store()
         self._logger.info(
             'Added plot grid %s (%s) with size %dx%d', grid_id, title, nrows, ncols
         )
-        self._notify_grid_created(grid_id)
         return grid_id
 
     def remove_grid(self, grid_id: GridId) -> None:
@@ -527,10 +529,11 @@ class PlotOrchestrator:
             for cell_id, cell in list(grid.cells.items()):
                 self._remove_cell_and_cleanup(grid_id, cell_id, cell)
 
-            del self._grids[grid_id]
+            with self._topology_lock:
+                del self._grids[grid_id]
+            self._bump_topology_version()
             self._persist_to_store()
             self._logger.info('Removed plot grid %s (%s)', grid_id, title)
-            self._notify_grid_removed(grid_id)
 
     def rename_grid(self, grid_id: GridId, new_title: str) -> None:
         """
@@ -543,11 +546,13 @@ class PlotOrchestrator:
         new_title
             New display title for the grid.
         """
+        if grid_id not in self._grids:
+            return
         grid = self._grids[grid_id]
         grid.title = new_title
         self._persist_to_store()
         self._logger.info('Renamed grid %s to %s', grid_id, new_title)
-        self._notify_grid_updated(grid_id)
+        self._bump_topology_version()
 
     def move_grid(self, grid_id: GridId, delta: int) -> None:
         """
@@ -563,6 +568,8 @@ class PlotOrchestrator:
         delta
             Number of positions to move (negative=up, positive=down).
         """
+        if grid_id not in self._grids:
+            return
         keys = list(self._grids.keys())
         current_index = keys.index(grid_id)
         new_index = current_index + delta
@@ -571,10 +578,11 @@ class PlotOrchestrator:
 
         # Rebuild dict in new order
         keys.insert(new_index, keys.pop(current_index))
-        self._grids = {k: self._grids[k] for k in keys}
+        with self._topology_lock:
+            self._grids = {k: self._grids[k] for k in keys}
+        self._bump_topology_version()
         self._persist_to_store()
         self._logger.info('Moved grid %s by %d positions', grid_id, delta)
-        self._notify_grid_updated(grid_id)
 
     def set_grid_enabled(self, grid_id: GridId, *, enabled: bool) -> None:
         """
@@ -590,11 +598,13 @@ class PlotOrchestrator:
         enabled
             Whether the grid should be visible.
         """
+        if grid_id not in self._grids:
+            return
         grid = self._grids[grid_id]
         grid.enabled = enabled
         self._persist_to_store()
         self._logger.info('Set grid %s enabled=%s', grid_id, enabled)
-        self._notify_grid_updated(grid_id)
+        self._bump_topology_version()
 
     def replace_grid(
         self, grid_id: GridId, title: str, nrows: int, ncols: int
@@ -602,10 +612,10 @@ class PlotOrchestrator:
         """
         Replace a grid with a new empty grid at the same position.
 
-        Tears down all cells/layers of the old grid, fires ``on_grid_removed``,
-        then creates a new grid at the same position with the given dimensions
-        and fires ``on_grid_created``. The new grid inherits the old grid's
-        ``enabled`` state.
+        Tears down all cells/layers of the old grid, then creates a new grid at
+        the same position with the given dimensions. The new grid inherits the
+        old grid's ``enabled`` state. Bumps the topology version once; sessions
+        reconcile the position change on their next poll.
 
         Parameters
         ----------
@@ -639,19 +649,19 @@ class PlotOrchestrator:
         for cell_id, cell in list(old_grid.cells.items()):
             self._remove_cell_and_cleanup(grid_id, cell_id, cell)
 
-        del self._grids[grid_id]
-        self._notify_grid_removed(grid_id)
-
         # Create new grid and insert at the same position
         new_grid_id = GridId(uuid4())
         new_grid = PlotGridConfig(
             title=title, nrows=nrows, ncols=ncols, enabled=enabled
         )
 
-        # Rebuild dict with new grid at the original position
-        items = list(self._grids.items())
-        items.insert(position, (new_grid_id, new_grid))
-        self._grids = dict(items)
+        with self._topology_lock:
+            del self._grids[grid_id]
+            # Rebuild dict with new grid at the original position
+            items = list(self._grids.items())
+            items.insert(position, (new_grid_id, new_grid))
+            self._grids = dict(items)
+        self._bump_topology_version()
 
         self._persist_to_store()
         self._logger.info(
@@ -661,7 +671,6 @@ class PlotOrchestrator:
             title,
             position,
         )
-        self._notify_grid_created(new_grid_id)
         return new_grid_id
 
     def add_cell(
@@ -691,11 +700,15 @@ class PlotOrchestrator:
 
         Raises
         ------
+        KeyError
+            If the grid does not exist (e.g. removed by another session).
         ValueError
             If the geometry overlaps an existing cell in the grid. Grid cells
             must tile the grid without overlap; overlapping cells would claim
             the same slot for two plots.
         """
+        if grid_id not in self._grids:
+            raise KeyError(f'Grid {grid_id} no longer exists')
         grid = self._grids[grid_id]
         for existing in grid.cells.values():
             if existing.geometry.overlaps(geometry):
@@ -705,8 +718,10 @@ class PlotOrchestrator:
                 )
         cell_id = CellId(uuid4())
         cell = PlotCell(geometry=geometry, layers=[], user_title=user_title)
-        grid.cells[cell_id] = cell
-        self._cell_to_grid[cell_id] = grid_id
+        with self._topology_lock:
+            grid.cells[cell_id] = cell
+            self._cell_to_grid[cell_id] = grid_id
+        self._bump_topology_version()
         return cell_id
 
     def remove_cell(self, cell_id: CellId) -> None:
@@ -718,6 +733,8 @@ class PlotOrchestrator:
         cell_id
             ID of the cell to remove.
         """
+        if cell_id not in self._cell_to_grid:
+            return
         grid_id = self._cell_to_grid[cell_id]
         grid = self._grids[grid_id]
         cell = grid.cells[cell_id]
@@ -725,7 +742,7 @@ class PlotOrchestrator:
         self._remove_cell_and_cleanup(grid_id, cell_id, cell)
 
         self._persist_to_store()
-        self._notify_cell_removed(grid_id, cell_id, cell)
+        self._bump_topology_version()
 
     def set_cell_title(self, cell_id: CellId, title: str | None) -> None:
         """
@@ -739,12 +756,14 @@ class PlotOrchestrator:
             New user-defined title, or ``None``/empty to clear it and fall back
             to the derived title.
         """
+        if cell_id not in self._cell_to_grid:
+            return
         grid_id = self._cell_to_grid[cell_id]
         cell = self._grids[grid_id].cells[cell_id]
         cell.user_title = title or None
         self._persist_to_store()
         self._logger.info('Set cell %s title to %r', cell_id, cell.user_title)
-        self._notify_cell_updated(grid_id, cell_id, cell)
+        self._bump_topology_version()
 
     def get_layer_config(self, layer_id: LayerId) -> PlotConfig:
         """
@@ -760,12 +779,13 @@ class PlotOrchestrator:
         :
             The layer's plot configuration.
         """
-        cell_id = self._layer_to_cell[layer_id]
-        grid_id = self._cell_to_grid[cell_id]
-        cell = self._grids[grid_id].cells[cell_id]
-        for layer in cell.layers:
-            if layer.layer_id == layer_id:
-                return layer.config
+        with self._topology_lock:
+            cell_id = self._layer_to_cell[layer_id]
+            grid_id = self._cell_to_grid[cell_id]
+            cell = self._grids[grid_id].cells[cell_id]
+            for layer in cell.layers:
+                if layer.layer_id == layer_id:
+                    return layer.config
         raise KeyError(f'Layer {layer_id} not found in cell {cell_id}')
 
     def get_cell(self, cell_id: CellId) -> PlotCell:
@@ -803,10 +823,14 @@ class PlotOrchestrator:
 
         Raises
         ------
+        KeyError
+            If the cell does not exist (e.g. removed by another session).
         ValueError
             If the resulting cell would combine a non-overlayable layer (a table
             or a layout-mode plot) with any other layer.
         """
+        if cell_id not in self._cell_to_grid:
+            raise KeyError(f'Cell {cell_id} no longer exists')
         grid_id = self._cell_to_grid[cell_id]
         cell = self._grids[grid_id].cells[cell_id]
 
@@ -816,10 +840,10 @@ class PlotOrchestrator:
 
         layer_id = LayerId(uuid4())
         layer = Layer(layer_id=layer_id, config=config)
-        cell.layers.append(layer)
-
-        self._layer_to_cell[layer_id] = cell_id
-        self._subscribe_layer(grid_id, cell_id, layer)
+        with self._topology_lock:
+            cell.layers.append(layer)
+            self._layer_to_cell[layer_id] = cell_id
+        self._setup_layer(layer)
         self._refresh_resolvers_for_cell(cell_id)
 
         return layer_id
@@ -835,15 +859,18 @@ class PlotOrchestrator:
         layer_id
             ID of the layer to remove.
         """
+        if layer_id not in self._layer_to_cell:
+            return
         cell_id = self._layer_to_cell[layer_id]
         grid_id = self._cell_to_grid[cell_id]
         cell = self._grids[grid_id].cells[cell_id]
 
         # Find and remove the layer
-        cell.layers = [layer for layer in cell.layers if layer.layer_id != layer_id]
+        with self._topology_lock:
+            cell.layers = [layer for layer in cell.layers if layer.layer_id != layer_id]
 
         # Unsubscribe and clean up layer state
-        self._unsubscribe_and_cleanup_layer(layer_id)
+        self._cleanup_layer(layer_id)
 
         # If no layers left, remove the entire cell
         if not cell.layers:
@@ -852,9 +879,7 @@ class PlotOrchestrator:
 
         self._refresh_resolvers_for_cell(cell_id)
         self._persist_to_store()
-
-        # Notify with updated cell config
-        self._notify_cell_updated(grid_id, cell_id, cell)
+        self._bump_topology_version()
 
     def update_layer_config(self, layer_id: LayerId, new_config: PlotConfig) -> None:
         """
@@ -871,7 +896,14 @@ class PlotOrchestrator:
             ID of the layer to update.
         new_config
             New plot configuration.
+
+        Raises
+        ------
+        KeyError
+            If the layer does not exist (e.g. removed by another session).
         """
+        if layer_id not in self._layer_to_cell:
+            raise KeyError(f'Layer {layer_id} no longer exists')
         cell_id = self._layer_to_cell[layer_id]
         grid_id = self._cell_to_grid[cell_id]
         cell = self._grids[grid_id].cells[cell_id]
@@ -897,17 +929,16 @@ class PlotOrchestrator:
         )
 
         # Fully clean up old layer (including cell mapping)
-        self._unsubscribe_and_cleanup_layer(layer_id, remove_from_cell_mapping=True)
+        self._cleanup_layer(layer_id, remove_from_cell_mapping=True)
 
         # Create new layer with new identity
         new_layer = Layer(layer_id=new_layer_id, config=new_config)
-        cell.layers[layer_index] = new_layer
-
-        # Set up mapping for new layer
-        self._layer_to_cell[new_layer_id] = cell_id
+        with self._topology_lock:
+            cell.layers[layer_index] = new_layer
+            self._layer_to_cell[new_layer_id] = cell_id
 
         # Subscribe new layer to workflow
-        self._subscribe_layer(grid_id, cell_id, new_layer)
+        self._setup_layer(new_layer)
         self._refresh_resolvers_for_cell(cell_id)
 
     def _remove_cell_and_cleanup(
@@ -927,31 +958,34 @@ class PlotOrchestrator:
         """
         # Unsubscribe all layers in the cell
         for layer in cell.layers:
-            self._unsubscribe_and_cleanup_layer(layer.layer_id)
+            self._cleanup_layer(layer.layer_id)
 
         # Remove cell from grid and mapping
         grid = self._grids[grid_id]
-        del grid.cells[cell_id]
-        del self._cell_to_grid[cell_id]
+        with self._topology_lock:
+            del grid.cells[cell_id]
+            del self._cell_to_grid[cell_id]
 
-    def _unsubscribe_and_cleanup_layer(
+    def _cleanup_layer(
         self, layer_id: LayerId, *, remove_from_cell_mapping: bool = True
     ) -> None:
         """
-        Unsubscribe a layer from workflow notifications and clean up state.
+        Tear down a layer's pipeline and clean up state.
+
+        Layer removal is the sole owner of extractor cleanup: unregistering
+        the data subscriber recomputes the buffers' retention requirements
+        from the surviving subscribers.
 
         Parameters
         ----------
         layer_id
-            ID of the layer to unsubscribe and clean up.
+            ID of the layer to clean up.
         remove_from_cell_mapping
             If True, remove the layer from _layer_to_cell mapping.
             Set to False when the layer is being updated (still in the cell),
             True when removing the layer completely.
         """
-        if layer_id in self._layer_subscriptions:
-            self._layer_subscriptions[layer_id].unsubscribe()
-            del self._layer_subscriptions[layer_id]
+        self._layer_jobs.pop(layer_id, None)
         # Clean up data subscription
         if layer_id in self._data_subscriptions:
             self._data_service.unregister_subscriber(self._data_subscriptions[layer_id])
@@ -960,7 +994,8 @@ class PlotOrchestrator:
         self._plot_data_service.remove(layer_id)
         self._layer_resolvers.pop(layer_id, None)
         if remove_from_cell_mapping:
-            self._layer_to_cell.pop(layer_id, None)
+            with self._topology_lock:
+                self._layer_to_cell.pop(layer_id, None)
 
     def _check_overlayable_composition(self, configs: list[PlotConfig]) -> None:
         """Reject a multi-layer cell that contains a non-overlayable layer.
@@ -1014,7 +1049,7 @@ class PlotOrchestrator:
         When all non-static layers in the same cell share the same primary view,
         the view title is already shown on the Y-axis and is stripped from the
         legend label to reduce redundancy. The resolver maps backend pydantic
-        field names (which appear in ``ResultKey.output_name``) back to their
+        field names (which appear in ``DataKey.output_name``) back to their
         owning view's title so legends and axes show user-facing titles.
         """
         from .plots import TitleResolver, _identity
@@ -1035,7 +1070,7 @@ class PlotOrchestrator:
             if spec is None:
                 return field_name
             for view in spec.get_output_views():
-                if field_name in view.streams.values():
+                if field_name in view.fields:
                     return view.title
             return field_name
 
@@ -1062,260 +1097,297 @@ class PlotOrchestrator:
                     layer.layer_id
                 )
 
-    def _stash_pending(
-        self,
-        layer_id: LayerId,
-        data: dict[str, dict[ResultKey, Any]],
-    ) -> Any:
-        """Submit input through the layer compute gate, returning a due task.
+    def _mark_layer_dirty(self, layer_id: LayerId) -> None:
+        """Record that a layer's input changed; ``flush_frames`` rebuilds it.
 
-        Stashes input on the layer state machine. A build is due (a task is
-        returned) only if at least one viewer holds an interest token;
-        otherwise the latest input is retained and rebuilt on the next 0→1
-        token transition (see ``activate_layer``).
+        The data-subscriber callback: runs once per update batch on the
+        ingestion thread and does no extraction or compute. Dirty flags
+        coalesce, so any number of updates between flushes costs one rebuild.
+
+        ``DataService`` notifies from a snapshot of its subscriber list taken
+        before the callbacks run, so the UI thread may remove this layer while
+        the notification is in flight. The grid lookup therefore tolerates the
+        mappings changing underneath it; dropping the mark is correct, since a
+        removed layer has no state left for ``flush_frames`` to rebuild.
         """
-        if layer_id not in self._layer_to_cell:
-            return None
-        state = self._plot_data_service.get(layer_id)
-        if state is None:
-            return None
-        title_resolver = self._layer_resolvers.get(layer_id)
-        return state.stash_pending(data, title_resolver=title_resolver)
+        try:
+            grid_id = self._grid_of_layer(layer_id)
+        except KeyError:
+            return
+        with self._dirty_lock:
+            self._dirty_layers.setdefault(grid_id, set()).add(layer_id)
 
     def _grid_of_layer(self, layer_id: LayerId) -> GridId:
-        return self._cell_to_grid[self._layer_to_cell[layer_id]]
-
-    def _run_compute(
-        self,
-        layer_id: LayerId,
-        data: dict[str, dict[ResultKey, Any]],
-    ) -> None:
-        """Stash input and run a due build synchronously, committing its grid.
-
-        The synchronous path for setup-time builds (e.g. static overlays added
-        on the UI thread): compute and commit the grid inline so the layer is
-        displayed without waiting for the next ingestion flush.
-        """
-        task = self._stash_pending(layer_id, data)
-        if task is not None:
-            self._dispatch_compute_task(layer_id, task)
-            self._frame_clock.commit(self._grid_of_layer(layer_id))
-
-    def _enqueue_compute(
-        self,
-        layer_id: LayerId,
-        data: dict[str, dict[ResultKey, Any]],
-    ) -> None:
-        """Stash input and bucket a due build per grid for ``flush_frames``.
-
-        The ingestion-thread path for Kafka-delta builds. Deferring dispatch
-        out of the inline ``DataService._notify`` lets ``flush_frames`` run a
-        burst grid-by-grid and commit each grid the moment its layers finish,
-        so a session waits only on its own tab's compute.
-        """
-        task = self._stash_pending(layer_id, data)
-        if task is not None:
-            grid_id = self._grid_of_layer(layer_id)
-            self._frame_buckets.setdefault(grid_id, []).append((layer_id, task))
+        with self._topology_lock:
+            return self._cell_to_grid[self._layer_to_cell[layer_id]]
 
     def flush_frames(self) -> None:
-        """Run each grid's bucketed builds, committing that grid as it finishes.
+        """Rebuild each grid's dirty viewed layers, committing per grid.
 
-        Called on the ingestion thread once a burst has drained. Running
+        Called on the ingestion thread once a burst has drained. Each dirty
+        layer with a viewer is rebuilt from a fresh DataService pull; running
         grid-by-grid and committing per grid means a session showing one tab
         sees its frame the moment that grid's layers finish, rather than after
         every other visible tab's compute.
+
+        Dirty flags of layers without viewers are dropped: the 0→1 viewer
+        transition rebuilds unconditionally from current DataService content
+        (see ``activate_layer``), so nothing is lost.
         """
-        buckets = self._frame_buckets
-        self._frame_buckets = {}
-        for grid_id, tasks in buckets.items():
-            for layer_id, task in tasks:
-                self._dispatch_compute_task(layer_id, task)
-            self._frame_clock.commit(grid_id)
+        with self._dirty_lock:
+            buckets = self._dirty_layers
+            self._dirty_layers = {}
+        for grid_id, layer_ids in buckets.items():
+            computed = False
+            for layer_id in layer_ids:
+                state = self._plot_data_service.get(layer_id)
+                if state is None or not state.has_viewers:
+                    continue
+                computed |= self._pull_and_build(layer_id)
+            if computed:
+                self._frame_clock.commit(grid_id)
 
     def activate_layer(self, layer_id: LayerId, token: object, active: bool) -> None:
         """Acquire or release a viewer interest token on a layer.
 
-        On the 0→1 transition with pending input, the stashed build is run
+        While no viewer holds a token, frame flushes skip the layer (no
+        extraction or compute for hidden layers); buffering continues. On the
+        0→1 transition the layer is rebuilt from a DataService pull,
         synchronously on the caller's thread (the polling thread). This keeps
-        the same poll pass's component rebuild seeing fresh ``has_cached_state``.
+        the same poll pass's component rebuild seeing fresh
+        ``has_cached_state``.
         """
         state = self._plot_data_service.get(layer_id)
         if state is None:
             return
-        task = state.set_active(token, active)
-        if task is not None:
-            self._dispatch_compute_task(layer_id, task)
+        if state.set_active(token, active):
+            self._refresh_layer(layer_id)
 
-    def _dispatch_compute_task(self, layer_id: LayerId, task: Any) -> None:
-        """Run a flush task and transition the layer to READY or ERROR.
+    def _refresh_layer(self, layer_id: LayerId) -> None:
+        """Rebuild a layer from current DataService content, committing its grid."""
+        if not self._pull_and_build(layer_id):
+            return
+        try:
+            grid_id = self._grid_of_layer(layer_id)
+        except KeyError:
+            # The UI thread removed the layer while we were building; a layer
+            # without a cell has nothing to commit.
+            return
+        self._frame_clock.commit(grid_id)
+
+    def _pull_and_build(self, layer_id: LayerId) -> bool:
+        """Pull a layer's data through its extractors and rebuild its plot.
+
+        Returns True if a build ran (also on a failed pull or build, which
+        transitions the layer to ERROR and thus still warrants a frame
+        commit), False if the layer is gone or its data is not ready.
+        """
+        with self._topology_lock:
+            if layer_id not in self._layer_to_cell:
+                return False
+            subscriber = self._data_subscriptions.get(layer_id)
+        if subscriber is None:
+            return False
+        state = self._plot_data_service.get(layer_id)
+        if state is None or state.plotter is None:
+            return False
+        # ``state`` is the live state machine, so these two reads are not
+        # atomic against a concurrent ``job_started`` on the UI thread.
+        # Capturing version first rules out the harmful pairing (stale version
+        # with new plotter): ``job_started`` bumps the version before swapping
+        # the plotter, so an old version implies the swap had not yet run.
+        # The converse pairing (new version, old plotter) is possible and
+        # tolerated: the check in ``_compute_layer`` then passes and flips the
+        # layer READY on the old plotter's result. The swap also replaced this
+        # layer's subscription and re-marked it dirty, so the next flush
+        # overwrites that frame. See #1060.
+        version = state.version
+        plotter = state.plotter
+        try:
+            assembled = subscriber.assemble(self._data_service.snapshot(subscriber))
+        except Exception:
+            error_msg = traceback.format_exc()
+            self._logger.exception('Failed to extract data for layer_id=%s', layer_id)
+            if self._layer_version(layer_id) == version:
+                self._plot_data_service.error_occurred(layer_id, error_msg)
+            return True
+        if assembled is None:
+            return False
+        self._compute_layer(layer_id, plotter, version, assembled)
+        return True
+
+    def _compute_layer(
+        self,
+        layer_id: LayerId,
+        plotter: Any,
+        version: int,
+        data: dict[str, dict[DataKey, Any]],
+    ) -> None:
+        """Run ``plotter.compute`` and transition the layer to READY or ERROR.
+
+        ``plotter`` and ``version`` are the caller's pre-pull capture. If the
+        layer's version moved on by compute end, the plotter was swapped (job
+        restart on the UI thread) and both transitions are skipped: the stale
+        result must neither flip the new plotter READY nor mark it ERROR. The
+        replacement subscription re-marked the layer dirty, so the next flush
+        rebuilds it consistently.
 
         Thread-agnostic: runs on whatever thread the caller is on — the bg
         ingestion thread when entered via ``flush_frames``, the polling thread
-        when entered via ``activate_layer`` or the synchronous ``_run_compute``
-        setup path. See ``LayerStateMachine`` for the gate's threading contract.
+        when entered via ``activate_layer``, the UI thread for setup-time
+        static-overlay builds.
         """
         try:
-            task.run()
-            self._plot_data_service.data_arrived(layer_id)
+            plotter.compute(data, title_resolver=self._layer_resolvers.get(layer_id))
+            if self._layer_version(layer_id) == version:
+                self._plot_data_service.data_arrived(layer_id)
         except Exception:
             error_msg = traceback.format_exc()
             self._logger.exception('Failed to compute state for layer_id=%s', layer_id)
-            self._plot_data_service.error_occurred(layer_id, error_msg)
+            if self._layer_version(layer_id) == version:
+                self._plot_data_service.error_occurred(layer_id, error_msg)
 
-    def _subscribe_layer(self, grid_id: GridId, cell_id: CellId, layer: Layer) -> None:
+    def _layer_version(self, layer_id: LayerId) -> int | None:
+        state = self._plot_data_service.get(layer_id)
+        return None if state is None else state.version
+
+    def _setup_layer(self, layer: Layer) -> None:
         """
-        Subscribe a layer to workflow lifecycle and set up initial notification.
+        Create a layer's plotter and data pipeline.
 
-        Uses LayerSubscription to handle both single and multi-source layers uniformly.
-        LayerSubscription manages:
-        - Subscribing to all required workflows
-        - Tracking which workflows have started
-        - Notifying when ALL workflows are ready (for multi-source layers)
-        - Propagating stop notifications
+        Keys are computable from the plot config alone (stable DataKeys carry
+        no job identity), so the pipeline is set up unconditionally at
+        add-layer time — no waiting for a workflow job. The initial dirty
+        mark pulls whatever the DataService retains under those keys, so a
+        layer bound to a stopped workflow renders its last results.
 
         Branches based on layer type (determined by data sources):
 
-        - **Static overlay** (single data source with empty source_names): Create plot
-          immediately without workflow subscription.
-        - **Dynamic layers** (single or multiple data sources): Use LayerSubscription.
+        - **Static overlay** (single data source with empty source_names):
+          computed once from params alone, no data pipeline.
+        - **Dynamic layers** (single or multiple data sources): pipeline plus
+          a run-state tracker consumed by ``sync_job_states``.
 
         Parameters
         ----------
-        grid_id
-            ID of the grid containing the cell.
-        cell_id
-            ID of the cell containing the layer.
         layer
-            The layer to subscribe.
+            The layer to set up.
         """
         layer_id = layer.layer_id
         config = layer.config
 
         if config.is_static():
-            # Static overlay: create plot immediately without subscription.
+            # Static overlay: built unconditionally (no viewer gate): there is
+            # no data subscription to pull from later, and the build is a
+            # one-off.
             plotter = self._create_and_register_plotter(layer_id, config)
-            if plotter is not None:
-                self._run_compute(layer_id, {})
-            cell = self._grids[grid_id].cells[cell_id]
-            self._notify_cell_updated(grid_id, cell_id, cell)
+            state = self._plot_data_service.get(layer_id)
+            if plotter is not None and state is not None:
+                # Empty input: a static overlay computes from its params alone.
+                self._compute_layer(layer_id, plotter, state.version, {})
+                self._frame_clock.commit(self._grid_of_layer(layer_id))
+            self._bump_topology_version()
             self._persist_to_store()
             return
-
-        # Unified path for all non-static layers (single or multi-source)
-        def on_all_jobs_ready(ready: SubscriptionReady) -> None:
-            self._on_all_jobs_ready(layer_id, ready)
-
-        def on_any_job_stopped(job_number: JobNumber) -> None:
-            self._on_layer_job_stopped(layer_id, job_number)
 
         resolved_data_sources = _build_resolved_data_sources(
             config, self._job_orchestrator.get_workflow_registry()
         )
-        subscription = LayerSubscription(
-            data_sources=resolved_data_sources,
-            job_orchestrator=self._job_orchestrator,
-            on_ready=on_all_jobs_ready,
-            on_stopped=on_any_job_stopped,
+        workflow_ids = tuple(
+            dict.fromkeys(ds.workflow_id for ds in resolved_data_sources.values())
         )
-        self._layer_subscriptions[layer_id] = subscription
-
-        # Register layer in WAITING_FOR_JOB state before starting subscription
-        # This ensures PlotDataService has state for the layer when widgets are notified
-        self._plot_data_service.layer_added(layer_id)
-
-        subscription.start()  # May fire on_ready synchronously if workflows running
-
-        # Always notify current config - sessions will poll PlotDataService for state
-        cell = self._grids[grid_id].cells[cell_id]
-        self._notify_cell_updated(grid_id, cell_id, cell)
-        self._persist_to_store()
-
-    def _on_all_jobs_ready(
-        self,
-        layer_id: LayerId,
-        ready: SubscriptionReady,
-    ) -> None:
-        """
-        Handle notification when all workflows for a layer are ready.
-
-        Called by LayerSubscription when all data sources have running jobs.
-        Sets up the data pipeline that computes plot state and stores it in
-        PlotDataService. Sessions poll PlotDataService for updates.
-
-        Parameters
-        ----------
-        layer_id
-            ID of the layer to create plot for.
-        ready
-            SubscriptionReady containing keys_by_role for structured data access.
-        """
-        # Defensive check: layer may have been removed before callback fires
-        if layer_id not in self._layer_to_cell:
-            self._logger.warning(
-                'Ignoring all-jobs-ready for removed layer_id=%s', layer_id
-            )
-            return
-
-        config = self.get_layer_config(layer_id)
-
-        # Cleanup old data subscription if this layer had one (e.g., workflow restart)
-        if layer_id in self._data_subscriptions:
-            self._data_service.unregister_subscriber(self._data_subscriptions[layer_id])
-            del self._data_subscriptions[layer_id]
+        self._layer_jobs[layer_id] = _LayerJobTracker(
+            workflow_ids=workflow_ids,
+            job_numbers=self._current_job_numbers(workflow_ids),
+        )
 
         plotter = self._create_and_register_plotter(layer_id, config)
-        if plotter is None:
-            return
+        if plotter is not None:
+            self._layer_resolvers[layer_id] = self._build_title_resolver(layer_id)
+            # Set up data pipeline - updates mark the layer dirty; flush_frames
+            # pulls and rebuilds. The immediate mark covers retained data
+            # already present, so the plot shows without waiting for a delta.
+            try:
+                subscriber = self._plotting_controller.setup_pipeline(
+                    keys_by_role=_build_keys_by_role(resolved_data_sources),
+                    plot_name=config.plot_name,
+                    params=config.params,
+                    on_update=lambda: self._mark_layer_dirty(layer_id),
+                )
+                self._data_subscriptions[layer_id] = subscriber
+                self._mark_layer_dirty(layer_id)
+            except Exception:
+                error_msg = traceback.format_exc()
+                self._logger.exception(
+                    'Failed to set up data pipeline for layer_id=%s', layer_id
+                )
+                self._plot_data_service.error_occurred(layer_id, error_msg)
+            else:
+                if any(n is None for n in self._layer_jobs[layer_id].job_numbers):
+                    self._plot_data_service.job_stopped(layer_id)
 
-        self._layer_resolvers[layer_id] = self._build_title_resolver(layer_id)
+        # Sessions poll PlotDataService for state; the version bump makes them
+        # reconcile the new cell/layer composition.
+        self._bump_topology_version()
+        self._persist_to_store()
 
-        # Set up data pipeline - _enqueue_compute buckets builds as data arrives
-        try:
-            subscriber = self._plotting_controller.setup_pipeline(
-                keys_by_role=ready.keys_by_role,
-                plot_name=config.plot_name,
-                params=config.params,
-                on_data=lambda data: self._enqueue_compute(layer_id, data),
-            )
-            self._data_subscriptions[layer_id] = subscriber
-        except Exception:
-            error_msg = traceback.format_exc()
-            self._logger.exception(
-                'Failed to set up data pipeline for layer_id=%s', layer_id
-            )
-            self._plot_data_service.error_occurred(layer_id, error_msg)
-
-    def _on_layer_job_stopped(self, layer_id: LayerId, job_number: JobNumber) -> None:
-        """
-        Handle workflow stopped notification for a layer.
-
-        Called when a workflow job is stopped. Marks the layer as stopped
-        and notifies the UI. The plot (if any) is preserved but marked as
-        no longer receiving updates.
-
-        Parameters
-        ----------
-        layer_id
-            ID of the layer whose workflow was stopped.
-        job_number
-            Job number that was stopped.
-        """
-        # Defensive check: layer may have been removed before callback fires
-        if layer_id not in self._layer_to_cell:
-            self._logger.warning(
-                'Ignoring workflow stopped for removed layer_id=%s', layer_id
-            )
-            return
-
-        self._logger.info(
-            'Workflow stopped for layer_id=%s, job_number=%s',
-            layer_id,
-            job_number,
+    def _current_job_numbers(
+        self, workflow_ids: tuple[WorkflowId, ...]
+    ) -> tuple[JobNumber | None, ...]:
+        return tuple(
+            self._job_orchestrator.get_active_job_number(w) for w in workflow_ids
         )
 
-        # Transition to STOPPED state - UI will detect via polling
-        self._plot_data_service.job_stopped(layer_id)
+    def sync_job_states(self) -> None:
+        """Drive layer lifecycle state from polled workflow run-state.
+
+        Called from the orchestrator update loop (before ``flush_frames``),
+        replacing per-commit callbacks. For each layer, the active job
+        numbers of its workflows are compared against the last observed:
+
+        - changed and all running → a new generation was committed (its
+          buffers were cleared at commit): reset the layer presentation so
+          the stale frame is not shown.
+        - changed and not all running → the workflow stopped: freeze the
+          layer (retained data stays displayed).
+
+        A commit immediately followed by a stop within one poll interval is
+        observed as a stop, retaining the pre-commit frame instead of the
+        cleared buffers' blank; accepted as unreachable in practice.
+        """
+        for layer_id, tracker in list(self._layer_jobs.items()):
+            job_numbers = self._current_job_numbers(tracker.workflow_ids)
+            if job_numbers == tracker.job_numbers:
+                continue
+            was_running = all(n is not None for n in tracker.job_numbers)
+            tracker.job_numbers = job_numbers
+            if all(n is not None for n in job_numbers):
+                self._reset_layer_presentation(layer_id)
+            elif was_running:
+                self._plot_data_service.job_stopped(layer_id)
+
+    def _reset_layer_presentation(self, layer_id: LayerId) -> None:
+        """Give a layer a fresh plotter on generation change.
+
+        The commit that started the new generation cleared the workflow's
+        buffers; without a reset the layer would keep showing the previous
+        generation's last frame. Replacing the plotter drives the layer to
+        WAITING_FOR_DATA (blank until new data arrives) and deliberately
+        resets plotter-internal accumulation such as autoscale ranges. The
+        data pipeline is untouched: extractors and keys are
+        generation-independent.
+        """
+        if layer_id not in self._data_subscriptions:
+            # Setup failed for this layer: without a data subscription no data
+            # can ever arrive, so a fresh plotter would drive the layer to a
+            # permanently blank WAITING_FOR_DATA and hide the ERROR state.
+            return
+        try:
+            config = self.get_layer_config(layer_id)
+        except KeyError:
+            # Layer removed on the UI thread while this poll pass was running.
+            return
+        self._create_and_register_plotter(layer_id, config)
 
     def _validate_params(
         self, plot_name: str, params: dict[str, Any]
@@ -1616,25 +1688,56 @@ class PlotOrchestrator:
             raw_grids = data.get('grids', [])
             specs = self._parse_grid_specs(raw_grids)
 
-            # Apply each spec through the normal API
-            for spec in specs:
-                grid_id = self.add_grid(spec.title, spec.nrows, spec.ncols)
-                for cell in spec.cells:
-                    cell_id = self.add_cell(
-                        grid_id, cell.geometry, user_title=cell.user_title
-                    )
-                    for layer in cell.layers:
-                        self.add_layer(cell_id, layer.config)
-                if not spec.enabled:
-                    self.set_grid_enabled(grid_id, enabled=False)
+            # Apply each spec through the normal API. Persistence is suppressed:
+            # the mutators would otherwise write partial state after every step,
+            # so an exception partway through replay would truncate the store to
+            # whatever was applied before the crash, losing the remaining tabs
+            # even on a clean restart.
+            with self._suppress_persist():
+                for spec in specs:
+                    grid_id = self.add_grid(spec.title, spec.nrows, spec.ncols)
+                    for cell in spec.cells:
+                        cell_id = self.add_cell(
+                            grid_id, cell.geometry, user_title=cell.user_title
+                        )
+                        for layer in cell.layers:
+                            self.add_layer(cell_id, layer.config)
+                    if not spec.enabled:
+                        self.set_grid_enabled(grid_id, enabled=False)
 
             self._logger.info('Loaded %d plot grids from store', len(specs))
         except Exception:
             self._logger.exception('Failed to load plot grids from store')
 
+    @contextmanager
+    def _suppress_persist(self) -> Iterator[None]:
+        """
+        Suppress per-mutation persistence within the block.
+
+        Composite lifecycle operations (startup replay, shutdown) drive the
+        normal single-step mutators, each of which persists the *whole*
+        in-memory state. Persisting those intermediate states is what lets a
+        partially-applied replay truncate the saved layout, or a shutdown
+        overwrite it with ``{'grids': []}``. Inside this block every
+        ``_persist_to_store`` call is a no-op, so the store is never written
+        while the in-memory model is mid-transition.
+
+        Persistence is suppressed, not deferred: nothing is written on exit.
+        The model was just built from the store (replay) or is being torn down
+        (shutdown), so the last committed layout is exactly what should
+        survive. If the block raises, the store is likewise left untouched,
+        preserving the full saved layout for the next attempt.
+        """
+        was_suppressed = self._persist_suppressed
+        self._persist_suppressed = True
+        try:
+            yield
+        finally:
+            self._persist_suppressed = was_suppressed
+
     def _persist_to_store(self) -> None:
         """Persist plot grid configurations to config store."""
-        if self._config_store is None:
+        if self._config_store is None or self._persist_suppressed:
             return
 
         try:
@@ -1693,142 +1796,6 @@ class PlotOrchestrator:
         """
         return copy.deepcopy(self._grids)
 
-    def subscribe_to_lifecycle(
-        self,
-        *,
-        on_grid_created: GridCreatedCallback | None = None,
-        on_grid_removed: GridRemovedCallback | None = None,
-        on_grid_updated: GridUpdatedCallback | None = None,
-        on_cell_updated: CellUpdatedCallback | None = None,
-        on_cell_removed: CellRemovedCallback | None = None,
-    ) -> SubscriptionId:
-        """
-        Subscribe to plot grid lifecycle events.
-
-        Subscribers will be notified when grids or cells are created, updated,
-        or removed. At least one callback must be provided.
-
-        Callbacks are fired in the order grids are created. Late subscribers
-        (subscribing after grids already exist) should call `get_all_grids()`
-        to get existing grids in their creation order before relying on callbacks
-        for new grids.
-
-        Parameters
-        ----------
-        on_grid_created
-            Called when a new grid is created with (grid_id, grid_config).
-        on_grid_removed
-            Called when a grid is removed.
-        on_grid_updated
-            Called when a grid is renamed, reordered, or enabled/disabled.
-        on_cell_updated
-            Called when a cell is added or updated.
-        on_cell_removed
-            Called when a cell is removed.
-
-        Returns
-        -------
-        :
-            Subscription ID that can be used to unsubscribe.
-        """
-        subscription_id = SubscriptionId(uuid4())
-        self._lifecycle_subscribers[subscription_id] = LifecycleSubscription(
-            on_grid_created=on_grid_created,
-            on_grid_removed=on_grid_removed,
-            on_grid_updated=on_grid_updated,
-            on_cell_updated=on_cell_updated,
-            on_cell_removed=on_cell_removed,
-        )
-        return subscription_id
-
-    def unsubscribe_from_lifecycle(self, subscription_id: SubscriptionId) -> None:
-        """
-        Unsubscribe from plot grid lifecycle events.
-
-        Parameters
-        ----------
-        subscription_id
-            The subscription ID returned from subscribe_to_lifecycle.
-        """
-        if subscription_id in self._lifecycle_subscribers:
-            del self._lifecycle_subscribers[subscription_id]
-
-    def _notify_grid_created(self, grid_id: GridId) -> None:
-        """Notify subscribers that a grid was created."""
-        grid = self._grids[grid_id]
-        for subscription in self._lifecycle_subscribers.values():
-            if subscription.on_grid_created:
-                try:
-                    subscription.on_grid_created(grid_id, grid)
-                except Exception:
-                    self._logger.exception(
-                        'Error in grid created callback for grid %s', grid_id
-                    )
-
-    def _notify_grid_removed(self, grid_id: GridId) -> None:
-        """Notify subscribers that a grid was removed."""
-        for subscription in self._lifecycle_subscribers.values():
-            if subscription.on_grid_removed:
-                try:
-                    subscription.on_grid_removed(grid_id)
-                except Exception:
-                    self._logger.exception(
-                        'Error in grid removed callback for grid %s', grid_id
-                    )
-
-    def _notify_grid_updated(self, grid_id: GridId) -> None:
-        """Notify subscribers that a grid was renamed, reordered, or toggled."""
-        grid = self._grids[grid_id]
-        for subscription in self._lifecycle_subscribers.values():
-            if subscription.on_grid_updated:
-                try:
-                    subscription.on_grid_updated(grid_id, grid)
-                except Exception:
-                    self._logger.exception(
-                        'Error in grid updated callback for grid %s', grid_id
-                    )
-
-    def _notify_cell_updated(
-        self,
-        grid_id: GridId,
-        cell_id: CellId,
-        cell: PlotCell,
-    ) -> None:
-        """Notify subscribers that a cell config was added or updated."""
-        for subscription in self._lifecycle_subscribers.values():
-            if subscription.on_cell_updated:
-                try:
-                    subscription.on_cell_updated(
-                        grid_id=grid_id,
-                        cell_id=cell_id,
-                        cell=cell,
-                    )
-                except Exception:
-                    self._logger.exception(
-                        'Error in cell updated callback for grid %s cell %s at (%d,%d)',
-                        grid_id,
-                        cell_id,
-                        cell.geometry.row,
-                        cell.geometry.col,
-                    )
-
-    def _notify_cell_removed(
-        self, grid_id: GridId, cell_id: CellId, cell: PlotCell
-    ) -> None:
-        """Notify subscribers that a cell was removed."""
-        for subscription in self._lifecycle_subscribers.values():
-            if subscription.on_cell_removed:
-                try:
-                    subscription.on_cell_removed(grid_id, cell.geometry)
-                except Exception:
-                    self._logger.exception(
-                        'Error in cell removed callback for grid %s cell %s at (%d,%d)',
-                        grid_id,
-                        cell_id,
-                        cell.geometry.row,
-                        cell.geometry.col,
-                    )
-
     def shutdown(self) -> None:
         """
         Shutdown the orchestrator and unsubscribe from all workflows.
@@ -1837,9 +1804,13 @@ class PlotOrchestrator:
         Call this method when the orchestrator is no longer needed to prevent
         memory leaks.
         """
-        # Remove all grids (which unsubscribes all plots)
+        # Remove all grids (which unsubscribes all plots). Persistence is
+        # suppressed so tearing down the in-memory model does not overwrite the
+        # saved layout with an empty one; the last committed layout must
+        # survive to the next session.
         grid_ids = list(self._grids.keys())
-        for grid_id in grid_ids:
-            self.remove_grid(grid_id)
+        with self._suppress_persist():
+            for grid_id in grid_ids:
+                self.remove_grid(grid_id)
 
         self._logger.info('PlotOrchestrator shutdown complete')

@@ -16,11 +16,11 @@ from bokeh.models import TeeHead
 from holoviews.core.util import range_pad
 from holoviews.plotting.util import get_axis_padding
 
-from ess.livedata.config.workflow_spec import ResultKey
+from ess.livedata.config.workflow_spec import DataKey
 from ess.livedata.core.timestamp import Timestamp
 
 from .data_roles import PRIMARY
-from .frame_aspect import make_frame_aspect_hook_from_config
+from .frame_aspect import make_frame_aspect_opts
 from .plot_params import (
     CombineMode,
     LayoutParams,
@@ -43,7 +43,7 @@ from .time_utils import format_time_ns_local
 from .timeseries_downsample import downsample_timeseries
 
 
-def _latest_time_ns(primary: dict[ResultKey, sc.DataArray]) -> int | None:
+def _latest_time_ns(primary: dict[DataKey, sc.DataArray]) -> int | None:
     """Latest time-coord value across the primary dict, as int64 nanoseconds.
 
     Caller is the timeseries plotter, so each DataArray has a non-empty
@@ -57,11 +57,13 @@ def _latest_time_ns(primary: dict[ResultKey, sc.DataArray]) -> int | None:
     )
 
 
-# Used only to widen a zero-width range (see _ensure_span); the per-axis
+# Used only to widen a degenerate range (see ensure_span); the per-axis
 # padding fraction itself comes from HoloViews (see _hv_axis_padding).
 _DEGENERATE_PAD = 0.05
 _DEGENERATE_PAD_MIN = 0.5
 _DEGENERATE_LOG_FACTOR = 1.1
+_DEGENERATE_PAD_NS = 1e9  # one second, for epoch-nanosecond axes
+_DEGENERATE_ULPS = 4
 
 
 def _hv_axis_padding(element_type: type) -> tuple[float, float, float]:
@@ -76,31 +78,56 @@ def _hv_axis_padding(element_type: type) -> tuple[float, float, float]:
     return get_axis_padding(plot_cls.param.padding.default)
 
 
-def _ensure_span(lo: float, hi: float, *, log: bool) -> tuple[float, float]:
-    """Widen a zero-width range so Bokeh has something to render.
+def is_degenerate_span(lo: float, hi: float) -> bool:
+    """Whether ``(lo, hi)`` is too narrow for float64 to resolve.
+
+    Measured in units of the float64 spacing at the range's own magnitude, so
+    one test serves data axes and epoch-nanosecond datetime axes alike: a
+    float64 step is ~1e-16 next to a temperature in kelvin but a few hundred
+    nanoseconds next to a 2020s epoch, which is precisely the resolution below
+    which each range stops carrying information. A few ULP of slack admits
+    ranges that are nominally non-empty yet still unrenderable, such as the
+    one-ULP upper bound ``scipp.hist`` derives from a constant coord.
+    """
+    return hi - lo <= _DEGENERATE_ULPS * np.spacing(max(abs(lo), abs(hi)))
+
+
+def ensure_span(
+    lo: float, hi: float, *, log: bool, datetime: bool = False
+) -> tuple[float, float]:
+    """Widen a degenerate range so Bokeh has something to render.
 
     ``range_pad`` derives padding from the span, so it leaves a single-valued
     range (constant image, single point or bin) untouched; HoloViews handles
     this separately via ``default_span``. Bump multiplicatively on log axes to
     keep the lower bound positive, additively on linear axes.
+
+    The additive offset is a fraction of the magnitude, which presumes the axis
+    is measured from its zero. A datetime axis is measured from the epoch, where
+    5% of the magnitude is decades, so widen it by a fixed interval instead.
     """
-    if hi != lo:
+    if not is_degenerate_span(lo, hi):
         return lo, hi
     if log:
         return lo / _DEGENERATE_LOG_FACTOR, hi * _DEGENERATE_LOG_FACTOR
-    offset = max(abs(lo) * _DEGENERATE_PAD, _DEGENERATE_PAD_MIN)
+    if datetime:
+        offset = _DEGENERATE_PAD_NS
+    else:
+        offset = max(abs(lo) * _DEGENERATE_PAD, _DEGENERATE_PAD_MIN)
     return lo - offset, hi + offset
 
 
-def _pad_range(lo: float, hi: float, *, pad: float, log: bool) -> tuple[float, float]:
+def _pad_range(
+    lo: float, hi: float, *, pad: float, log: bool, datetime: bool = False
+) -> tuple[float, float]:
     """Pad ``(lo, hi)`` by fraction ``pad`` using HoloViews' range padding.
 
     ``pad`` is the per-axis fraction HoloViews assigns to the element type (see
     :func:`_hv_axis_padding`); :func:`range_pad` applies it in data space, or in
     log space when ``log=True``. ``pad=0`` (e.g. every image axis) is a no-op
-    beyond the zero-width guard.
+    beyond the degenerate-range guard.
     """
-    lo, hi = _ensure_span(lo, hi, log=log)
+    lo, hi = ensure_span(lo, hi, log=log, datetime=datetime)
     return range_pad(lo, hi, pad, log)
 
 
@@ -486,24 +513,22 @@ class Plotter:
         self._normalize_to_rate = normalize_to_rate
         self._cached_state: Any | None = None
         self._time_bounds: TimeBounds | None = None
-        self._range_targets: dict[ResultKey, RangeTargets] = {}
+        self._range_targets: dict[DataKey, RangeTargets] = {}
         self._presenters: weakref.WeakSet[PresenterBase] = weakref.WeakSet()
         self.layout_params = layout_params or LayoutParams()
         aspect_params = aspect_params or PlotAspect()
 
-        # All non-free aspect types are enforced by a JS hook
+        # All non-free aspect types are enforced by sizing opts plus a JS hook
         # (see frame_aspect.py) that adjusts the Bokeh figure dimensions.
         # HoloViews' own aspect/data_aspect opts are not set — they conflict
-        # with responsive mode in Panel containers (upstream bug). The hook is
-        # declared per leaf element type alongside ``responsive`` so it lands on
-        # every figure the plotter produces, whether the datasets are overlaid
-        # (one shared figure) or laid out (one figure per sub-plot). Each layer
-        # carries its own aspect, so an overlay of layers with differing aspects
-        # applies each hook to the shared figure (free aspect contributes none).
-        self._sizing_opts: dict[str, Any] = {'responsive': True}
-        aspect_hook = make_frame_aspect_hook_from_config(aspect_params)
-        if aspect_hook is not None:
-            self._sizing_opts['hooks'] = [aspect_hook]
+        # with responsive mode in Panel containers (upstream bug). The opts are
+        # declared per leaf element type so they land on every figure the
+        # plotter produces, whether the datasets are overlaid (one shared
+        # figure, leaf sizing opts propagate to the OverlayPlot) or laid out
+        # (one figure per sub-plot). Each layer carries its own aspect; on a
+        # shared figure the first layer's hook attaches its callback (the
+        # figure is tagged), later ones are no-ops.
+        self._sizing_opts: dict[str, Any] = make_frame_aspect_opts(aspect_params)
 
     @staticmethod
     def _make_tick_opts(tick_params: TickParams | None) -> dict[str, Any]:
@@ -627,13 +652,20 @@ class Plotter:
     @staticmethod
     def _get_log_scale_clim(data: sc.DataArray) -> tuple[float, float] | None:
         """
-        Return fallback clim for log scale if data is all NaN.
+        Return fallback clim for log scale when HoloViews cannot pick bounds.
 
         HoloViews' LogColorMapper fails when color_mapper.low is None (which
         happens when all data is NaN). This provides explicit bounds to avoid
         the "TypeError: '>' not supported between instances of 'NoneType' and 'int'"
-        error in _draw_colorbar. Limits are not returned if data is not 'None' as in
-        this case we let Holoviews handle the bounds.
+        error in _draw_colorbar. Scipp's nanmin/nanmax return +inf/-inf rather
+        than NaN for all-NaN input, so the all-NaN case surfaces as vmax < vmin.
+
+        Uniform data (``vmax == vmin``) is a second degenerate case. HoloViews
+        does handle it, but via an *additive* fallback (value +/- 1) that yields
+        a non-positive lower bound for small constants (e.g. 0.5 -> -0.5), which
+        is invalid on a log scale. A multiplicative bracket around the constant
+        stays positive. Log-scale masking has already replaced non-positive
+        values with NaN, so a non-NaN constant is guaranteed positive.
 
         Parameters
         ----------
@@ -643,19 +675,22 @@ class Plotter:
         Returns
         -------
         :
-            Tuple of (low, high) bounds, or None if data has valid positive values.
+            Tuple of (low, high) bounds, or None if HoloViews can pick sensible
+            bounds itself (data has a range of valid positive values).
         """
         vmin = float(data.data.nanmin().value)
         vmax = float(data.data.nanmax().value)
-        # If all NaN, nanmin/nanmax return nan
-        if np.isnan(vmin) or np.isnan(vmax) or vmax <= vmin:
-            # Return placeholder bounds for empty/invalid data
+        if vmax < vmin:
+            # All NaN: LogColorMapper cannot handle None bounds.
             return (1.0, 10.0)
+        if vmax == vmin:
+            # Uniform positive data: bracket the constant value.
+            return (vmin * 0.9, vmax * 1.1)
         return None
 
     def compute(
         self,
-        data: dict[str, dict[ResultKey, sc.DataArray]],
+        data: dict[str, dict[DataKey, sc.DataArray]],
         *,
         title_resolver: TitleResolver | None = None,
         **kwargs,
@@ -698,7 +733,7 @@ class Plotter:
 
     def _build_result(
         self,
-        data: dict[ResultKey, sc.DataArray],
+        data: dict[DataKey, sc.DataArray],
         resolver: TitleResolver,
         **kwargs,
     ) -> hv.Element:
@@ -724,10 +759,10 @@ class Plotter:
         plots: list[hv.Element] = []
         for plot_index, (data_key, da) in enumerate(data.items()):
             label = resolver.get_legend_label(
-                data_key.job_id.source_name, data_key.output_name
+                data_key.source_name, data_key.output_name
             )
             output_display_name = resolver.get_axis_label(data_key.output_name)
-            source_display_name = resolver.source(data_key.job_id.source_name)
+            source_display_name = resolver.source(data_key.source_name)
             plot_element = self.plot(
                 da,
                 data_key,
@@ -807,7 +842,7 @@ class Plotter:
         """Check if state has been computed."""
         return self._cached_state is not None
 
-    def get_range_targets(self, data_key: ResultKey) -> RangeTargets | None:
+    def get_range_targets(self, data_key: DataKey) -> RangeTargets | None:
         """Per-axis ``(lo, hi)`` targets computed at the last ``compute()``.
 
         Returns ``None`` when no targets have been computed for ``data_key``
@@ -816,7 +851,7 @@ class Plotter:
         """
         return self._range_targets.get(data_key)
 
-    def iter_range_targets(self) -> Iterator[tuple[ResultKey, RangeTargets]]:
+    def iter_range_targets(self) -> Iterator[tuple[DataKey, RangeTargets]]:
         """Iterate ``(data_key, targets)`` pairs computed at the last ``compute()``.
 
         Empty when no ``compute()`` has happened yet or when the plotter's
@@ -841,7 +876,7 @@ class Plotter:
         ]
 
     def plot(
-        self, data: sc.DataArray, data_key: ResultKey, *, label: str = '', **kwargs
+        self, data: sc.DataArray, data_key: DataKey, *, label: str = '', **kwargs
     ) -> Any:
         """Create a plot from the given data.
 
@@ -1017,7 +1052,7 @@ class LinePlotter(Plotter):
 
     def compute(
         self,
-        data: dict[str, dict[ResultKey, sc.DataArray]],
+        data: dict[str, dict[DataKey, sc.DataArray]],
         *,
         title_resolver: TitleResolver | None = None,
         **kwargs,
@@ -1075,10 +1110,15 @@ class LinePlotter(Plotter):
         targets: RangeTargets = {}
         dim = data.dim
         if dim in data.coords:
-            coord_values = data.coords[dim].values
-            coord_extent = _finite_min_max(coord_values, log=self._logx)
+            coord = data.coords[dim]
+            coord_extent = _finite_min_max(coord.values, log=self._logx)
             if coord_extent is not None:
-                targets['x'] = _pad_range(*coord_extent, pad=xpad, log=self._logx)
+                targets['x'] = _pad_range(
+                    *coord_extent,
+                    pad=xpad,
+                    log=self._logx,
+                    datetime=coord.dtype == sc.DType.datetime64,
+                )
         value_extent = _value_extent_with_errors(
             data, show_errors=self._errors != 'none', log=self._logy
         )
@@ -1089,7 +1129,7 @@ class LinePlotter(Plotter):
     def plot(
         self,
         data: sc.DataArray,
-        data_key: ResultKey,
+        data_key: DataKey,
         *,
         label: str = '',
         output_display_name: str = '',
@@ -1210,7 +1250,7 @@ class ImagePlotter(Plotter):
     def plot(
         self,
         data: sc.DataArray,
-        data_key: ResultKey,
+        data_key: DataKey,
         *,
         label: str = '',
         output_display_name: str = '',
@@ -1300,7 +1340,7 @@ class BarsPlotter(Plotter):
     def plot(
         self,
         data: sc.DataArray,
-        data_key: ResultKey,
+        data_key: DataKey,
         *,
         label: str = '',
         source_display_name: str = '',
@@ -1311,7 +1351,7 @@ class BarsPlotter(Plotter):
         if data.ndim != 0:
             raise ValueError(f"Expected 0D data, got {data.ndim}D")
 
-        bar_label = source_display_name or data_key.job_id.source_name
+        bar_label = source_display_name or data_key.source_name
         value = float(data.value)
         unit = str(data.unit) if data.unit is not None else None
         vdim_label = output_display_name or data_key.output_name or 'values'
@@ -1408,10 +1448,15 @@ class Overlay1DPlotter(Plotter):
         targets: RangeTargets = {}
         plot_dim = data.dims[1]
         if plot_dim in data.coords:
-            coord_values = data.coords[plot_dim].values
-            coord_extent = _finite_min_max(coord_values, log=self._logx)
+            coord = data.coords[plot_dim]
+            coord_extent = _finite_min_max(coord.values, log=self._logx)
             if coord_extent is not None:
-                targets['x'] = _pad_range(*coord_extent, pad=xpad, log=self._logx)
+                targets['x'] = _pad_range(
+                    *coord_extent,
+                    pad=xpad,
+                    log=self._logx,
+                    datetime=coord.dtype == sc.DType.datetime64,
+                )
         value_extent = _value_extent_with_errors(
             data, show_errors=self._errors != 'none', log=self._logy
         )
@@ -1422,7 +1467,7 @@ class Overlay1DPlotter(Plotter):
     def plot(
         self,
         data: sc.DataArray,
-        data_key: ResultKey,
+        data_key: DataKey,
         *,
         label: str = '',
         output_display_name: str = '',

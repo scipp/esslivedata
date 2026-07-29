@@ -24,7 +24,7 @@
 # {transparent}`ESSlivedata`
 
 <div style="font-size:1.2em;font-style:italic;color:var(--pst-color-text-muted);text-align:center;">
-  Live data reduction visualisation framework for ESS.
+  Live data reduction visualization framework for ESS.
   </br></br>
 </div>
 

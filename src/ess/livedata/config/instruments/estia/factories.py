@@ -43,7 +43,9 @@ def setup_factories(instrument: Instrument) -> None:
     )
     from scippnexus import NXdetector
 
-    from ess.livedata.handlers.stream_processor_workflow import StreamProcessorWorkflow
+    from ess.livedata.workflows.stream_processor_workflow import (
+        StreamProcessorWorkflow,
+    )
 
     @specs.reflectometry_reduction_handle.attach_factory()
     def _reflectometry_reduction_workflow_factory(

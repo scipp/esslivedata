@@ -12,8 +12,12 @@ from ess.livedata.config.workflow_spec import (
     TIMESERIES,
     AuxInput,
     AuxSources,
+    CumulativeOutput,
     JobId,
     OutputView,
+    SeriesOutput,
+    Temporality,
+    WindowOutput,
     WorkflowConfig,
     WorkflowId,
     WorkflowOutputsBase,
@@ -285,18 +289,18 @@ class _CouplingOutputs(WorkflowOutputsBase):
         OutputView(
             name='histogram',
             title='Histogram',
-            streams={'since_start': 'histogram'},
+            fields=('histogram',),
             params=('coordinate_mode', 'toa_edges'),
         ),
         OutputView(
             name='total',
             title='Total',
-            streams={'since_start': 'total'},
+            fields=('total',),
         ),
         OutputView(
             name='total_in_range',
             title='Total in range',
-            streams={'since_start': 'total_in_range'},
+            fields=('total_in_range',),
             params=('coordinate_mode', 'toa_range'),
         ),
     )
@@ -323,7 +327,7 @@ class TestParamOutputCoupling:
     """Tests for OutputView.params and the WorkflowSpec coupling resolvers."""
 
     def test_output_view_params_default_empty(self) -> None:
-        view = OutputView(name='x', title='X', streams={'since_start': 'x'})
+        view = OutputView(name='x', title='X', fields=('x',))
         assert view.params == ()
 
     def test_get_output_param_titles_resolves_in_model_order(self) -> None:
@@ -711,19 +715,63 @@ class TestJobId:
         assert str(job_id_2) == f'detector_2/{job_number}'
 
 
+class TestTemporality:
+    """Tests for the per-field Temporality declaration."""
+
+    class Outputs(WorkflowOutputsBase):
+        current: WindowOutput = Field(title='Current')
+        total: CumulativeOutput = Field(title='Total')
+        readings: SeriesOutput = Field(title='Readings')
+        readback: sc.DataArray = Field(title='Readback')
+
+    @pytest.mark.parametrize(
+        ('field_name', 'expected'),
+        [
+            ('current', Temporality.window),
+            ('total', Temporality.cumulative),
+            ('readings', Temporality.series),
+        ],
+    )
+    def test_returns_declared_temporality(
+        self, field_name: str, expected: Temporality
+    ) -> None:
+        assert self.Outputs.temporality(field_name) is expected
+
+    def test_undeclared_field_defaults_to_cumulative(self) -> None:
+        assert self.Outputs.temporality('readback') is Temporality.cumulative
+
+    def test_fields_with_selects_by_temporality(self) -> None:
+        assert self.Outputs.fields_with(Temporality.window) == ('current',)
+        assert self.Outputs.fields_with(Temporality.series) == ('readings',)
+        assert self.Outputs.fields_with(Temporality.cumulative) == ('total', 'readback')
+
+    def test_declaration_is_inherited_and_overridable(self) -> None:
+        class Derived(self.Outputs):
+            readback: WindowOutput = Field(title='Readback')
+            extra: WindowOutput = Field(title='Extra')
+
+        assert Derived.temporality('current') is Temporality.window
+        assert Derived.fields_with(Temporality.window) == (
+            'current',
+            'readback',
+            'extra',
+        )
+
+    def test_unknown_field_raises(self) -> None:
+        with pytest.raises(KeyError):
+            self.Outputs.temporality('nonexistent')
+
+
 class TestFindTimeseriesOutputs:
     """Tests for find_timeseries_outputs() helper function."""
 
-    def test_finds_timeseries_output_with_time_coord(self) -> None:
-        """Test that outputs with 0-D data and time coord are found."""
+    def test_finds_0d_series_output(self) -> None:
+        """Test that 0-D outputs declaring Temporality.series are found."""
         from ess.livedata.config.workflow_spec import find_timeseries_outputs
 
         class TimeseriesOutputs(WorkflowOutputsBase):
-            delta: sc.DataArray = Field(
-                default_factory=lambda: sc.DataArray(
-                    sc.scalar(0.0),
-                    coords={'time': sc.scalar(0, unit='ns')},
-                ),
+            delta: SeriesOutput = Field(
+                default_factory=lambda: sc.DataArray(sc.scalar(0.0)),
             )
 
         workflow_id = WorkflowId(instrument='test', name='test', version=1)
@@ -751,11 +799,8 @@ class TestFindTimeseriesOutputs:
         from ess.livedata.config.workflow_spec import find_timeseries_outputs
 
         class NonTimeseriesOutputs(WorkflowOutputsBase):
-            histogram: sc.DataArray = Field(
-                default_factory=lambda: sc.DataArray(
-                    sc.zeros(dims=['x'], shape=[10]),
-                    coords={'time': sc.scalar(0, unit='ns')},
-                ),
+            histogram: WindowOutput = Field(
+                default_factory=lambda: sc.DataArray(sc.zeros(dims=['x'], shape=[10])),
             )
 
         workflow_id = WorkflowId(instrument='test', name='test', version=1)
@@ -775,8 +820,8 @@ class TestFindTimeseriesOutputs:
 
         assert len(results) == 0
 
-    def test_ignores_outputs_without_time_coord(self) -> None:
-        """Test that 0-D outputs without time coord are not identified as timeseries."""
+    def test_ignores_cumulative_outputs(self) -> None:
+        """Test that 0-D cumulative outputs are not identified as timeseries."""
         from ess.livedata.config.workflow_spec import find_timeseries_outputs
 
         class NoTimeCoordOutputs(WorkflowOutputsBase):
@@ -838,11 +883,8 @@ class TestFindTimeseriesOutputs:
         from ess.livedata.config.workflow_spec import find_timeseries_outputs
 
         class TimeseriesOutputs(WorkflowOutputsBase):
-            delta: sc.DataArray = Field(
-                default_factory=lambda: sc.DataArray(
-                    sc.scalar(0.0),
-                    coords={'time': sc.scalar(0, unit='ns')},
-                ),
+            delta: SeriesOutput = Field(
+                default_factory=lambda: sc.DataArray(sc.scalar(0.0)),
             )
 
         class NonTimeseriesOutputs(WorkflowOutputsBase):
@@ -908,8 +950,9 @@ class TestOutputViews:
         views = spec.get_output_views()
         assert [v.name for v in views] == ['result', 'transmission']
         assert [v.title for v in views] == ['I(Q)', 'Transmission']
-        # Default fallback maps the field via `since_start`.
-        assert views[0].streams == {'since_start': 'result'}
+        # Default fallback creates views with field names as tuple; windowing is
+        # derived from field Temporality annotations (defaulting to cumulative).
+        assert views[0].fields == ('result',)
 
     def test_declared_views_take_precedence(self) -> None:
         """When ``output_views`` is declared, it overrides the fallback."""
@@ -919,11 +962,11 @@ class TestOutputViews:
                 OutputView(
                     name='histogram',
                     title='Histogram',
-                    streams={'since_start': 'cumulative', 'per_update': 'current'},
+                    fields=('cumulative', 'current'),
                 ),
             )
-            cumulative: sc.DataArray = Field(title='cumulative-field')
-            current: sc.DataArray = Field(title='current-field')
+            cumulative: CumulativeOutput = Field(title='cumulative-field')
+            current: WindowOutput = Field(title='current-field')
 
         spec = WorkflowSpec(
             instrument='test',
@@ -963,15 +1006,15 @@ class TestOutputViews:
                 OutputView(
                     name='histogram',
                     title='Histogram',
-                    streams={'since_start': 'cumulative', 'per_update': 'current'},
+                    fields=('cumulative', 'current'),
                 ),
             )
-            cumulative: sc.DataArray = Field(
+            cumulative: CumulativeOutput = Field(
                 default_factory=lambda: sc.DataArray(
                     sc.zeros(dims=['x'], shape=[3], unit='counts')
                 )
             )
-            current: sc.DataArray = Field(
+            current: WindowOutput = Field(
                 default_factory=lambda: sc.DataArray(
                     sc.zeros(dims=['x'], shape=[3], unit='counts')
                 )
@@ -996,8 +1039,8 @@ class TestOutputViews:
 
         class Outputs(WorkflowOutputsBase):
             output_views: ClassVar[tuple[OutputView, ...]] = (
-                OutputView(name='a', title='Same', streams={'since_start': 'field_a'}),
-                OutputView(name='b', title='Same', streams={'since_start': 'field_b'}),
+                OutputView(name='a', title='Same', fields=('field_a',)),
+                OutputView(name='b', title='Same', fields=('field_b',)),
             )
             field_a: sc.DataArray = Field()
             field_b: sc.DataArray = Field()
@@ -1019,8 +1062,8 @@ class TestOutputViews:
 
         class Outputs(WorkflowOutputsBase):
             output_views: ClassVar[tuple[OutputView, ...]] = (
-                OutputView(name='a', title='A', streams={'since_start': 'field_a'}),
-                OutputView(name='b', title='B', streams={'since_start': 'field_b'}),
+                OutputView(name='a', title='A', fields=('field_a',)),
+                OutputView(name='b', title='B', fields=('field_b',)),
             )
             field_a: sc.DataArray = Field()
             field_b: sc.DataArray = Field()
@@ -1036,3 +1079,65 @@ class TestOutputViews:
             group=REDUCTION,
         )
         assert [v.title for v in spec.get_output_views()] == ['A', 'B']
+
+
+class TestUnambiguousWindowing:
+    """Tests for the view-level windowing ambiguity check."""
+
+    def _spec(self, outputs: type[WorkflowOutputsBase]) -> WorkflowSpec:
+        return WorkflowSpec(
+            instrument='test',
+            name='wf',
+            version=1,
+            title='T',
+            description='D',
+            params=None,
+            outputs=outputs,
+            group=REDUCTION,
+        )
+
+    def test_rejects_two_fields_backing_the_same_windowing(self) -> None:
+        class Outputs(WorkflowOutputsBase):
+            output_views: ClassVar[tuple[OutputView, ...]] = (
+                OutputView(name='v', title='V', fields=('a', 'b')),
+            )
+            a: WindowOutput = Field(title='A')
+            b: WindowOutput = Field(title='B')
+
+        with pytest.raises(ValueError, match="multiple fields backing 'per_update'"):
+            self._spec(Outputs)
+
+    def test_rejects_missing_annotation_colliding_on_cumulative(self) -> None:
+        class Outputs(WorkflowOutputsBase):
+            output_views: ClassVar[tuple[OutputView, ...]] = (
+                OutputView(name='v', title='V', fields=('a', 'b')),
+            )
+            a: sc.DataArray = Field(title='A')
+            b: sc.DataArray = Field(title='B')
+
+        with pytest.raises(ValueError, match="multiple fields backing 'since_start'"):
+            self._spec(Outputs)
+
+    def test_accepts_distinct_windowings(self) -> None:
+        class Outputs(WorkflowOutputsBase):
+            output_views: ClassVar[tuple[OutputView, ...]] = (
+                OutputView(name='v', title='V', fields=('a', 'b')),
+            )
+            a: CumulativeOutput = Field(title='A')
+            b: WindowOutput = Field(title='B')
+
+        spec = self._spec(Outputs)
+        assert spec.field_for('v', 'since_start') == 'a'
+        assert spec.field_for('v', 'per_update') == 'b'
+        assert spec.windowing_options('v') == frozenset({'since_start', 'per_update'})
+
+    def test_series_field_backs_per_update_only(self) -> None:
+        class Outputs(WorkflowOutputsBase):
+            output_views: ClassVar[tuple[OutputView, ...]] = (
+                OutputView(name='v', title='V', fields=('delta',)),
+            )
+            delta: SeriesOutput = Field(title='Delta')
+
+        spec = self._spec(Outputs)
+        assert spec.windowing_options('v') == frozenset({'per_update'})
+        assert spec.field_for('v', 'since_start') == 'delta'

@@ -22,7 +22,7 @@ class _FakePlotOrchestrator:
         self.flush_calls += 1
 
 
-class _FakeOrchestrator:
+class _FakeMessagePump:
     def __init__(self, exception: BaseException | None = None) -> None:
         self._exception = exception
         self.update_calls = 0
@@ -33,10 +33,10 @@ class _FakeOrchestrator:
             raise self._exception
 
 
-def _make_loop_target(orchestrator: _FakeOrchestrator) -> DashboardServices:
+def _make_loop_target(message_pump: _FakeMessagePump) -> DashboardServices:
     """Build a minimal stand-in with the attributes ``_update_loop`` needs."""
     target = DashboardServices.__new__(DashboardServices)
-    target.orchestrator = orchestrator
+    target.message_pump = message_pump
     target.session_registry = _FakeRegistry()
     target._stop_event = threading.Event()
     target._update_interval = 0.01
@@ -51,7 +51,7 @@ def _make_loop_target(orchestrator: _FakeOrchestrator) -> DashboardServices:
 
 
 def test_update_loop_exits_and_signals_failure_on_kafka_exception() -> None:
-    target = _make_loop_target(_FakeOrchestrator(KafkaException("auth denied")))
+    target = _make_loop_target(_FakeMessagePump(KafkaException("auth denied")))
 
     thread = threading.Thread(target=DashboardServices._update_loop, args=(target,))
     thread.start()
@@ -59,14 +59,14 @@ def test_update_loop_exits_and_signals_failure_on_kafka_exception() -> None:
 
     assert not thread.is_alive()
     assert target.transport_failure_calls == 1
-    assert target.orchestrator.update_calls == 1
+    assert target.message_pump.update_calls == 1
 
 
 def test_update_loop_continues_on_generic_exception() -> None:
     """Non-Kafka exceptions stay log-and-continue, not fail-fast."""
     raised = threading.Event()
 
-    class FlakyOrchestrator:
+    class FlakyMessagePump:
         def __init__(self) -> None:
             self.update_calls = 0
 
@@ -76,9 +76,9 @@ def test_update_loop_continues_on_generic_exception() -> None:
                 raised.set()
                 raise RuntimeError("transient widget bug")
 
-    orchestrator = FlakyOrchestrator()
+    message_pump = FlakyMessagePump()
     target = DashboardServices.__new__(DashboardServices)
-    target.orchestrator = orchestrator
+    target.message_pump = message_pump
     target.session_registry = _FakeRegistry()
     target._stop_event = threading.Event()
     target._update_interval = 0.01
@@ -94,14 +94,14 @@ def test_update_loop_continues_on_generic_exception() -> None:
     thread.start()
     assert raised.wait(timeout=2.0)
     # Let the loop iterate at least once more after the exception.
-    while orchestrator.update_calls < 2 and thread.is_alive():
+    while message_pump.update_calls < 2 and thread.is_alive():
         target._stop_event.wait(0.01)
     target._stop_event.set()
     thread.join(timeout=2.0)
 
     assert not thread.is_alive()
     assert target.transport_failure_calls == 0
-    assert orchestrator.update_calls >= 2
+    assert message_pump.update_calls >= 2
 
 
 def test_on_transport_failure_is_noop_on_main_thread() -> None:

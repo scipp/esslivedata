@@ -134,7 +134,7 @@ the workflow visibly never runs rather than producing wrong output.
 ### Chain patching
 
 `ValueLog` lives in `config/value_log.py`, next to `ContextBinding`, so `config` does
-not import `handlers`. Each chain-patch binding declares its own `ValueLog` subclass,
+not import `preprocessors`. Each chain-patch binding declares its own `ValueLog` subclass,
 giving it a distinct Sciline parameter so multiple dynamic transforms can coexist on
 one workflow without colliding.
 
@@ -147,7 +147,7 @@ declaration type, carrying `transform_path` alongside the `ValueLog` key and
 function over those records: it reads each input's component type off the workflow's own
 `dynamic_keys`, groups the matching bindings by component type, and builds one fused
 per-component provider (`build_patched_chain_provider` / `synthesise_provider` in
-`handlers/dynamic_transforms.py`) that replaces essreduce's
+`preprocessors/dynamic_transforms.py`) that replaces essreduce's
 `NeXusTransformationChain[T, SampleRun]` provider and writes the latest sample of each
 `ValueLog` parameter into the chain. Resolving the path up front keeps the wiring step
 free of any reference to the instrument's stream topology. The same seam works for the

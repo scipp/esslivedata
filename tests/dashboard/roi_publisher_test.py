@@ -2,11 +2,13 @@
 # Copyright (c) 2025 Scipp contributors (https://github.com/scipp)
 import uuid
 
+import numpy as np
+import pytest
 import scipp as sc
 
 from ess.livedata.config.models import Interval, RectangleROI
 from ess.livedata.config.roi_names import ROIGeometry
-from ess.livedata.config.workflow_spec import JobId
+from ess.livedata.config.workflow_spec import WorkflowId
 from ess.livedata.core.message import StreamKind
 from ess.livedata.dashboard.roi_publisher import FakeROIPublisher, ROIPublisher
 from ess.livedata.fakes import FakeMessageSink
@@ -14,22 +16,36 @@ from ess.livedata.fakes import FakeMessageSink
 # Geometry fixtures for tests
 RECT_GEOMETRY = ROIGeometry(geometry_type="rectangle", num_rois=4, index_offset=0)
 
+WORKFLOW_ID = WorkflowId(instrument='test', name='workflow', version=1)
+
+
+def make_publisher(sink: FakeMessageSink, job_number: uuid.UUID | None) -> ROIPublisher:
+    """Create a publisher whose resolver returns the given job_number."""
+    publisher = ROIPublisher(sink=sink)
+    publisher.set_job_number_resolver(lambda workflow_id: job_number)
+    return publisher
+
+
+def make_roi(offset: float = 0.0, unit: str | None = None) -> RectangleROI:
+    return RectangleROI(
+        x=Interval(min=1.0 + offset, max=5.0 + offset, unit=unit),
+        y=Interval(min=2.0 + offset, max=6.0 + offset, unit=unit),
+    )
+
 
 def test_roi_publisher_publishes_single_roi():
     sink = FakeMessageSink()
-    publisher = ROIPublisher(sink=sink)
-    job_id = JobId(source_name='detector1', job_number=uuid.uuid4())
-    roi = RectangleROI(
-        x=Interval(min=1.0, max=5.0, unit=None),
-        y=Interval(min=2.0, max=6.0, unit=None),
-    )
+    job_number = uuid.uuid4()
+    publisher = make_publisher(sink, job_number)
 
-    publisher.publish(job_id, rois={0: roi}, geometry=RECT_GEOMETRY)
+    publisher.publish(
+        WORKFLOW_ID, 'detector1', rois={0: make_roi()}, geometry=RECT_GEOMETRY
+    )
 
     assert len(sink.messages) == 1
     msg = sink.messages[0]
     assert msg.stream.kind == StreamKind.LIVEDATA_ROI
-    assert msg.stream.name == f"detector1/{job_id.job_number}/roi_rectangle"
+    assert msg.stream.name == f"detector1/{job_number}/roi_rectangle"
     assert isinstance(msg.value, sc.DataArray)
     assert 'roi_index' in msg.value.coords
 
@@ -41,115 +57,94 @@ def test_roi_publisher_stamps_request_with_epoch_zero():
     window instead of holding it until the data watermark reaches wall-clock-now.
     """
     sink = FakeMessageSink()
-    publisher = ROIPublisher(sink=sink)
-    job_id = JobId(source_name='detector1', job_number=uuid.uuid4())
-    roi = RectangleROI(
-        x=Interval(min=1.0, max=5.0, unit=None),
-        y=Interval(min=2.0, max=6.0, unit=None),
-    )
+    publisher = make_publisher(sink, uuid.uuid4())
 
-    publisher.publish(job_id, rois={0: roi}, geometry=RECT_GEOMETRY)
+    publisher.publish(
+        WORKFLOW_ID, 'detector1', rois={0: make_roi()}, geometry=RECT_GEOMETRY
+    )
 
     assert sink.messages[0].timestamp.to_ns() == 0
 
 
 def test_roi_publisher_publishes_multiple_rois():
     sink = FakeMessageSink()
-    publisher = ROIPublisher(sink=sink)
-    job_id = JobId(source_name='detector1', job_number=uuid.uuid4())
-    rois = {
-        0: RectangleROI(
-            x=Interval(min=1.0, max=5.0, unit=None),
-            y=Interval(min=2.0, max=6.0, unit=None),
-        ),
-        1: RectangleROI(
-            x=Interval(min=10.0, max=15.0, unit=None),
-            y=Interval(min=12.0, max=16.0, unit=None),
-        ),
-        2: RectangleROI(
-            x=Interval(min=20.0, max=25.0, unit=None),
-            y=Interval(min=22.0, max=26.0, unit=None),
-        ),
-    }
+    job_number = uuid.uuid4()
+    publisher = make_publisher(sink, job_number)
+    rois = {i: make_roi(offset=10.0 * i) for i in range(3)}
 
-    publisher.publish(job_id, rois=rois, geometry=RECT_GEOMETRY)
+    publisher.publish(WORKFLOW_ID, 'detector1', rois=rois, geometry=RECT_GEOMETRY)
 
     assert len(sink.messages) == 1
     msg = sink.messages[0]
     assert msg.stream.kind == StreamKind.LIVEDATA_ROI
-    assert msg.stream.name == f"detector1/{job_id.job_number}/roi_rectangle"
+    assert msg.stream.name == f"detector1/{job_number}/roi_rectangle"
 
     # Verify all 3 ROIs are in concatenated DataArray
-    da = msg.value
-    import numpy as np
-
-    np.testing.assert_array_equal(da.coords['roi_index'].values, [0, 0, 1, 1, 2, 2])
+    np.testing.assert_array_equal(
+        msg.value.coords['roi_index'].values, [0, 0, 1, 1, 2, 2]
+    )
 
 
 def test_roi_publisher_publishes_empty_to_clear():
     """Empty dict should publish empty DataArray to clear all ROIs."""
     sink = FakeMessageSink()
-    publisher = ROIPublisher(sink=sink)
-    job_id = JobId(source_name='detector1', job_number=uuid.uuid4())
+    publisher = make_publisher(sink, uuid.uuid4())
 
-    publisher.publish(job_id, rois={}, geometry=RECT_GEOMETRY)
+    publisher.publish(WORKFLOW_ID, 'detector1', rois={}, geometry=RECT_GEOMETRY)
 
     assert len(sink.messages) == 1
-    msg = sink.messages[0]
-    assert len(msg.value) == 0  # Empty DataArray
+    assert len(sink.messages[0].value) == 0  # Empty DataArray
 
 
 def test_roi_publisher_serializes_to_dataarray():
     sink = FakeMessageSink()
-    publisher = ROIPublisher(sink=sink)
-    job_id = JobId(source_name='detector1', job_number=uuid.uuid4())
-    rois = {
-        0: RectangleROI(
-            x=Interval(min=1.5, max=5.5, unit='mm'),
-            y=Interval(min=2.5, max=6.5, unit='mm'),
-        ),
-        1: RectangleROI(
-            x=Interval(min=10.5, max=15.5, unit='mm'),
-            y=Interval(min=12.5, max=16.5, unit='mm'),
-        ),
-    }
+    publisher = make_publisher(sink, uuid.uuid4())
+    rois = {0: make_roi(offset=0.5, unit='mm'), 1: make_roi(offset=10.5, unit='mm')}
 
-    publisher.publish(job_id, rois=rois, geometry=RECT_GEOMETRY)
+    publisher.publish(WORKFLOW_ID, 'detector1', rois=rois, geometry=RECT_GEOMETRY)
 
-    msg = sink.messages[0]
-    da = msg.value
+    da = sink.messages[0].value
     # Check that DataArray can be converted back to dict of ROIs
     recovered_rois = RectangleROI.from_concatenated_data_array(da)
     assert recovered_rois == rois
 
 
+def test_roi_publisher_skips_when_no_active_job():
+    """No current job means there is no backend job the selection could reach."""
+    sink = FakeMessageSink()
+    publisher = make_publisher(sink, None)
+
+    publisher.publish(
+        WORKFLOW_ID, 'detector1', rois={0: make_roi()}, geometry=RECT_GEOMETRY
+    )
+
+    assert sink.messages == []
+
+
+def test_roi_publisher_raises_without_resolver():
+    publisher = ROIPublisher(sink=FakeMessageSink())
+
+    with pytest.raises(RuntimeError, match="resolver"):
+        publisher.publish(
+            WORKFLOW_ID, 'detector1', rois={0: make_roi()}, geometry=RECT_GEOMETRY
+        )
+
+
 def test_fake_roi_publisher_records_publishes():
     publisher = FakeROIPublisher()
-    job_id = JobId(source_name='detector1', job_number=uuid.uuid4())
-    rois = {
-        0: RectangleROI(
-            x=Interval(min=1.0, max=5.0, unit=None),
-            y=Interval(min=2.0, max=6.0, unit=None),
-        ),
-    }
+    rois = {0: make_roi()}
 
-    publisher.publish(job_id, rois=rois, geometry=RECT_GEOMETRY)
+    publisher.publish(WORKFLOW_ID, 'detector1', rois=rois, geometry=RECT_GEOMETRY)
 
-    assert len(publisher.published) == 1
-    assert publisher.published[0] == (job_id, rois, RECT_GEOMETRY)
+    assert publisher.published == [(WORKFLOW_ID, 'detector1', rois, RECT_GEOMETRY)]
 
 
 def test_fake_roi_publisher_reset():
     publisher = FakeROIPublisher()
-    job_id = JobId(source_name='detector1', job_number=uuid.uuid4())
-    rois = {
-        0: RectangleROI(
-            x=Interval(min=1.0, max=5.0, unit=None),
-            y=Interval(min=2.0, max=6.0, unit=None),
-        ),
-    }
 
-    publisher.publish(job_id, rois=rois, geometry=RECT_GEOMETRY)
+    publisher.publish(
+        WORKFLOW_ID, 'detector1', rois={0: make_roi()}, geometry=RECT_GEOMETRY
+    )
     publisher.reset()
 
     assert len(publisher.published) == 0
@@ -163,29 +158,16 @@ def test_roi_publisher_isolates_streams_per_detector_in_multi_detector_workflow(
     each detector must get its own unique ROI stream to prevent cross-talk.
     """
     sink = FakeMessageSink()
-    publisher = ROIPublisher(sink=sink)
-
-    # Same job_number, different source_names (real multi-detector scenario)
     shared_job_number = uuid.uuid4()
-    job_id_mantle = JobId(source_name='mantle', job_number=shared_job_number)
-    job_id_high_res = JobId(source_name='high_resolution', job_number=shared_job_number)
+    publisher = make_publisher(sink, shared_job_number)
 
-    rois_mantle = {
-        0: RectangleROI(
-            x=Interval(min=1.0, max=5.0, unit=None),
-            y=Interval(min=2.0, max=6.0, unit=None),
-        ),
-    }
-    rois_high_res = {
-        0: RectangleROI(
-            x=Interval(min=10.0, max=20.0, unit=None),
-            y=Interval(min=15.0, max=25.0, unit=None),
-        ),
-    }
+    rois_mantle = {0: make_roi()}
+    rois_high_res = {0: make_roi(offset=9.0)}
 
-    # Publish ROIs for both detectors
-    publisher.publish(job_id_mantle, rois=rois_mantle, geometry=RECT_GEOMETRY)
-    publisher.publish(job_id_high_res, rois=rois_high_res, geometry=RECT_GEOMETRY)
+    publisher.publish(WORKFLOW_ID, 'mantle', rois=rois_mantle, geometry=RECT_GEOMETRY)
+    publisher.publish(
+        WORKFLOW_ID, 'high_resolution', rois=rois_high_res, geometry=RECT_GEOMETRY
+    )
 
     assert len(sink.messages) == 2
 

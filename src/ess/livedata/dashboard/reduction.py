@@ -80,6 +80,7 @@ class ReductionApp(DashboardBase):
         transport: str = 'kafka',
         config_dir: str | None = None,
         auto_start: bool = False,
+        collapsed_sidebar: bool = False,
         fetch_announcements: bool = True,
         basic_auth_password: str | None = None,
         basic_auth_cookie_secret: str | None = None,
@@ -93,6 +94,7 @@ class ReductionApp(DashboardBase):
             transport=transport,
             config_dir=config_dir,
             auto_start=auto_start,
+            collapsed_sidebar=collapsed_sidebar,
             basic_auth_password=basic_auth_password,
             basic_auth_cookie_secret=basic_auth_cookie_secret,
         )
@@ -181,10 +183,10 @@ class ReductionApp(DashboardBase):
             session_updater=session_updater,
         )
 
-        # Release this session's interest tokens when the browser session ends,
-        # so hidden layers stop computing promptly rather than waiting for the
-        # SessionLayer weakref finalizer to run at some later GC.
-        pn.state.on_session_destroyed(lambda _ctx: plot_grid_tabs.shutdown())
+        # PlotGridTabs registers its own two-tier teardown on the session
+        # updater (see PlotGridTabs.__init__), so it runs on both the clean
+        # disconnect and the stale-session reaper paths, releasing this
+        # session's interest tokens when the browser session ends.
 
         # Register refresh with visibility gate: skip updates when the
         # Workflows tab (index 0) is not the active tab.
@@ -230,6 +232,14 @@ def get_arg_parser() -> argparse.ArgumentParser:
         help='Commit every workflow that has staged config on startup. Requires '
         '--transport fake; combine with --config-dir to launch a fully live '
         'dashboard with no UI interaction (e.g. for screenshots).',
+    )
+    parser.add_argument(
+        '--collapsed-sidebar',
+        action='store_true',
+        default=False,
+        help='Start with the sidebar collapsed. The sidebar holds announcements '
+        'and the version label, so collapsing it gives plots the full window '
+        'width -- useful on small screens and for automation/screenshots.',
     )
     parser.add_argument(
         '--no-fetch-announcements',

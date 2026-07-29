@@ -20,7 +20,7 @@ from ess.livedata.config.workflow_spec import (
     WorkflowId,
     WorkflowOutputsBase,
 )
-from ess.livedata.handlers.workflow_factory import (
+from ess.livedata.workflows.workflow_factory import (
     Workflow,
     WorkflowFactory,
 )
@@ -691,7 +691,7 @@ class TestInstrumentRegisterSpec:
 
     def test_register_spec_returns_handle(self):
         """Test that register_spec() returns a SpecHandle."""
-        from ess.livedata.handlers.workflow_factory import SpecHandle
+        from ess.livedata.workflows.workflow_factory import SpecHandle
 
         instrument = Instrument(name="test_instrument")
 
@@ -708,15 +708,15 @@ class TestInstrumentRegisterSpec:
         """Test register_spec() with all parameters."""
         import pydantic
 
-        from ess.livedata.config.workflow_spec import AuxSources
-        from ess.livedata.handlers.workflow_factory import SpecHandle
+        from ess.livedata.config.workflow_spec import AuxSources, WorkflowOutputsBase
+        from ess.livedata.workflows.workflow_factory import SpecHandle
 
         class MyParams(pydantic.BaseModel):
             value: int
 
         my_aux_sources = AuxSources({'monitor': 'monitor1'})
 
-        class MyOutputs(pydantic.BaseModel):
+        class MyOutputs(WorkflowOutputsBase):
             result: int
 
         instrument = Instrument(name="test_instrument")

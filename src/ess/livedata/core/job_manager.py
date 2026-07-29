@@ -191,11 +191,12 @@ class JobFactory:
         return Job(
             job_id=job_id,
             workflow_id=workflow_id,
-            processor=stream_processor,
+            workflow=stream_processor,
             source_names=[job_id.source_name],
             input_streams=set(aux_streams.values()),
             gating_streams=context_streams,
             reset_on_run_transition=workflow_spec.reset_on_run_transition,
+            supports_reset=workflow_spec.supports_reset,
         )
 
 
@@ -293,7 +294,6 @@ class JobManager:
         job_threads:
             Number of worker threads for job processing (1 = sequential).
         """
-        self.service_name = 'data_reduction'
         self._last_update: int = 0
         self._job_factory = job_factory
         self._context_reader = context_reader
@@ -448,10 +448,17 @@ class JobManager:
         """
         Reset a job with the given ID.
         This will clear the processor and reset the start and end times.
+
+        Raises for jobs whose spec declares ``supports_reset=False``: the
+        dashboard does not offer reset for them, so any command reaching this
+        point is a programming error (see the spec sites for why resetting
+        such jobs would corrupt downstream data).
         """
         record = self._jobs.get(job_id)
         if record is None:
             raise KeyError(f"Job {job_id} not found.")
+        if not record.job.supports_reset:
+            raise ValueError(f"Job {job_id} does not support reset.")
         record.job.reset()
 
         # Drop retry state: a finalize error keeps has_primary_data set so the
