@@ -89,7 +89,10 @@ def reject_overlapping_cells(geometries: Iterable[CellGeometry]) -> None:
 
     Grid cells must tile without overlap; overlapping cells claim the same
     slot for two plots. This guards the collection-level entry points (config
-    load, file upload) that build a full cell set at once.
+    load, file upload), which build a full cell set at once and so have to
+    decide before applying any of it: relying on ``add_cell`` alone would raise
+    partway through, leaving a half-built grid behind and reporting the fault
+    only once the user had committed to the import.
     """
     seen: list[CellGeometry] = []
     for geometry in geometries:

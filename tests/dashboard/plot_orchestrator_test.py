@@ -3327,7 +3327,11 @@ class TestOverlapValidation:
         plot_data_service,
         workflow_id,
     ):
-        """A persisted grid with overlapping cells is dropped on load."""
+        """One corrupt persisted grid is dropped; the rest still load.
+
+        Rejecting the whole file would cost the user every other tab over one
+        hand-edited grid, so the bad grid alone is skipped.
+        """
         from ess.livedata.dashboard.config_store import InMemoryConfigStore
 
         store = InMemoryConfigStore()
@@ -3342,9 +3346,8 @@ class TestOverlapValidation:
                 plot_data_service=PlotDataService(),
             )
 
-        # Build and persist a valid single-cell grid.
+        # Build and persist two valid single-cell grids.
         orch = make_orchestrator()
-        grid_id = orch.add_grid(title='G', nrows=2, ncols=2)
         config = make_plot_config(
             workflow_id,
             source_names=['s'],
@@ -3352,16 +3355,21 @@ class TestOverlapValidation:
             plot_name='p',
             params=FakePlotParams(),
         )
-        add_cell_with_layer(
-            orch, grid_id, CellGeometry(row=0, col=0, row_span=1, col_span=1), config
-        )
+        for title in ('Corrupted', 'Intact'):
+            grid_id = orch.add_grid(title=title, nrows=2, ncols=2)
+            add_cell_with_layer(
+                orch,
+                grid_id,
+                CellGeometry(row=0, col=0, row_span=1, col_span=1),
+                config,
+            )
 
-        # Corrupt the persisted config with a duplicate (overlapping) cell.
+        # Corrupt the first grid with a duplicate (overlapping) cell.
         data = copy.deepcopy(store['plot_grids'])
         cells = data['grids'][0]['cells']
         cells.append(copy.deepcopy(cells[0]))
         store['plot_grids'] = data
 
-        # A fresh orchestrator loading the corrupted config drops the grid.
         reloaded = make_orchestrator()
-        assert len(reloaded.get_all_grids()) == 0
+        titles = [reloaded.get_grid(gid).title for gid in reloaded.get_all_grids()]
+        assert titles == ['Intact']
