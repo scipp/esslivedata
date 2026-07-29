@@ -19,6 +19,7 @@ from ess.livedata.dashboard.plot_orchestrator import (
     GridId,
     PlotConfig,
     PlotOrchestrator,
+    reject_overlapping_cells,
 )
 from ess.livedata.dashboard.plots import PresenterBase
 
@@ -488,6 +489,32 @@ class TestCellManagement:
         assert cell.geometry == plot_cell[0]
         assert len(cell.layers) == 1
         assert cell.layers[0].config == plot_cell[1]
+
+    def test_add_cell_rejects_overlapping_geometry(self, plot_orchestrator):
+        """Adding a cell that overlaps an existing cell raises ValueError."""
+        grid_id = plot_orchestrator.add_grid(title='Test Grid', nrows=3, ncols=3)
+        plot_orchestrator.add_cell(
+            grid_id, CellGeometry(row=0, col=0, row_span=1, col_span=1)
+        )
+
+        with pytest.raises(ValueError, match='overlaps'):
+            plot_orchestrator.add_cell(
+                grid_id, CellGeometry(row=0, col=0, row_span=1, col_span=2)
+            )
+
+    def test_add_cell_allows_adjacent_geometry(self, plot_orchestrator):
+        """Cells that touch without overlapping are allowed."""
+        grid_id = plot_orchestrator.add_grid(title='Test Grid', nrows=3, ncols=3)
+        plot_orchestrator.add_cell(
+            grid_id, CellGeometry(row=0, col=0, row_span=1, col_span=1)
+        )
+
+        # Directly adjacent cell (shares an edge, no slot) must succeed.
+        plot_orchestrator.add_cell(
+            grid_id, CellGeometry(row=0, col=1, row_span=1, col_span=1)
+        )
+
+        assert len(plot_orchestrator.get_grid(grid_id).cells) == 2
 
     def test_remove_cell_from_grid_removes_it_from_grid_config(
         self, plot_orchestrator, plot_cell
@@ -3268,3 +3295,81 @@ class TestSyncJobStatesMultiWorkflow:
         state = plot_data_service.get(layer_id)
         assert state.state == LayerState.WAITING_FOR_DATA
         assert len(fake_plotting_controller.created_plotters) == plotter_count + 1
+
+
+class TestOverlapValidation:
+    """Tests for the no-overlap invariant on grid cells."""
+
+    def test_reject_overlapping_cells_raises_on_overlap(self):
+        with pytest.raises(ValueError, match='overlaps'):
+            reject_overlapping_cells(
+                [
+                    CellGeometry(row=0, col=0, row_span=1, col_span=1),
+                    CellGeometry(row=0, col=0, row_span=1, col_span=2),
+                ]
+            )
+
+    def test_reject_overlapping_cells_accepts_disjoint(self):
+        # Must not raise.
+        reject_overlapping_cells(
+            [
+                CellGeometry(row=0, col=0, row_span=1, col_span=1),
+                CellGeometry(row=0, col=1, row_span=2, col_span=1),
+                CellGeometry(row=1, col=0, row_span=1, col_span=1),
+            ]
+        )
+
+    def test_load_skips_grid_with_overlapping_cells(
+        self,
+        job_orchestrator,
+        fake_plotting_controller,
+        fake_data_service,
+        plot_data_service,
+        workflow_id,
+    ):
+        """One corrupt persisted grid is dropped; the rest still load.
+
+        Rejecting the whole file would cost the user every other tab over one
+        hand-edited grid, so the bad grid alone is skipped.
+        """
+        from ess.livedata.dashboard.config_store import InMemoryConfigStore
+
+        store = InMemoryConfigStore()
+
+        def make_orchestrator():
+            return PlotOrchestrator(
+                plotting_controller=fake_plotting_controller,
+                job_orchestrator=job_orchestrator,
+                data_service=fake_data_service,
+                instrument='dummy',
+                config_store=store,
+                plot_data_service=PlotDataService(),
+            )
+
+        # Build and persist two valid single-cell grids.
+        orch = make_orchestrator()
+        config = make_plot_config(
+            workflow_id,
+            source_names=['s'],
+            output_name='o',
+            plot_name='p',
+            params=FakePlotParams(),
+        )
+        for title in ('Corrupted', 'Intact'):
+            grid_id = orch.add_grid(title=title, nrows=2, ncols=2)
+            add_cell_with_layer(
+                orch,
+                grid_id,
+                CellGeometry(row=0, col=0, row_span=1, col_span=1),
+                config,
+            )
+
+        # Corrupt the first grid with a duplicate (overlapping) cell.
+        data = copy.deepcopy(store['plot_grids'])
+        cells = data['grids'][0]['cells']
+        cells.append(copy.deepcopy(cells[0]))
+        store['plot_grids'] = data
+
+        reloaded = make_orchestrator()
+        titles = [reloaded.get_grid(gid).title for gid in reloaded.get_all_grids()]
+        assert titles == ['Intact']
