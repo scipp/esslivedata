@@ -457,8 +457,8 @@ class TestIdempotentInstallation:
         """Missing toolbar on first call must not lock the controller out.
 
         Real Bokeh plots always have a toolbar; this guards against a
-        regression where _tools_installed is set prematurely and a
-        subsequent render with a live toolbar misses tool installation.
+        regression where the figure is recorded as installed prematurely and
+        a subsequent render with a live toolbar misses tool installation.
         """
         k = _key()
         plotter = _FakePlotter(frozenset({'x'}), {k: {'x': (0.0, 1.0)}})
@@ -468,11 +468,9 @@ class TestIdempotentInstallation:
         plot_no_toolbar.state = None  # type: ignore[assignment]
         hook = controller.make_hook()
         hook(plot_no_toolbar, None)
-        assert controller._tools_installed is False
 
         plot, _x, _y, _c = _make_plot_all_handles()
         hook(plot, None)
-        assert controller._tools_installed is True
         assert len(plot.state.toolbar.tools) == 2  # x toggle + Fit
 
 
@@ -553,7 +551,6 @@ class TestDispose:
         assert fit_tool._callbacks == []
         assert controller._fit_tool is None
         assert controller._toggles == {}
-        assert controller._tools_installed is False
 
     def test_controller_collectable_after_dispose(self) -> None:
         """The on_change cycle (controller -> tool -> bound method ->

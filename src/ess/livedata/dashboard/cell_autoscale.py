@@ -5,12 +5,19 @@
 A :class:`CellAutoscaleController` owns the Bokeh ``CustomAction`` tools that
 appear on a plot cell's toolbar (one per autoscalable axis, plus one for Fit)
 and on each HoloViews render writes per-axis ranges based on the toggle state.
+
+One cell can be rendered into several figures at once -- its grid cell and a
+pop-out window (``widgets/plot_popout.py``). They share one controller and one
+set of tool models, so the toolbars show a single toggle state: turning
+autoscale off in the pop-out turns it off in the cell too. Anything the
+controller tracks per render is therefore keyed by figure.
 """
 
 from __future__ import annotations
 
 from collections.abc import Callable
 from typing import Any
+from weakref import WeakSet
 
 import structlog
 
@@ -85,8 +92,8 @@ class CellAutoscaleController:
 
     Owns one Bokeh ``CustomAction`` per autoscalable axis (toggle) plus one
     for Fit. Exposes a single HoloViews-compatible hook that installs the
-    tools on the figure toolbar and on each render writes per-axis ranges
-    based on each toggle's ``.active``.
+    tools on every figure the cell renders into and on each render writes
+    that figure's per-axis ranges based on each toggle's ``.active``.
 
     Toggles default to ``True`` so the very first render with real data snaps
     the range away from the pipe's dummy bounds (strategy §4.5).
@@ -104,17 +111,22 @@ class CellAutoscaleController:
             *(plotter.autoscale_axes for plotter in self._plotters)
         )
         # Lazy-created on first render so each session's tools live in the
-        # session's own Bokeh document (see dashboard-widgets rules).
+        # session's own Bokeh document (see dashboard-widgets rules). The
+        # models are shared by every figure this cell renders into, which is
+        # what keeps their toggle states in step.
         self._toggles: dict[Axis, Any] = {}
         self._fit_tool: Any | None = None
-        self._tools_installed = False
+        self._figures: WeakSet = WeakSet()
         # Last target written per axis. Read back on subsequent off-state
         # renders so the c-axis freeze has a stable value to apply.
         self._last_targets: dict[Axis, tuple[float, float]] = {}
-        # One-shot Fit signal: set by the Fit on_change handler, honoured on
-        # the next render regardless of toggle state, then cleared. Avoids
-        # writing to potentially-stale handles cached at click time.
-        self._fit_pending: bool = False
+        # Figures that still owe a Fit: filled by the Fit on_change handler,
+        # honoured on each figure's next render regardless of toggle state,
+        # then dropped. Per figure rather than a single flag because sibling
+        # figures render from one pipe push, so whichever ran first would
+        # consume a shared flag and leave the other unfitted. Deferring to the
+        # render also avoids writing to handles cached at click time.
+        self._fit_pending: WeakSet = WeakSet()
 
     @property
     def axes(self) -> frozenset[Axis]:
@@ -143,14 +155,14 @@ class CellAutoscaleController:
 
         On every render the hook:
 
-        1. Installs the ``CustomAction`` tools on the figure toolbar (once
-           per session, idempotent).
+        1. Installs the ``CustomAction`` tools on the figure's toolbar (once
+           per figure, idempotent).
         2. For each axis whose toggle is active, writes ``(lo, hi)`` to the
            current Bokeh handle. Handles are read from ``plot.handles`` per
            render -- HoloViews swaps the figure on kdim/Layout transitions,
            so a cached handle would soon point at a detached model.
-        3. If a Fit click is pending, writes all axes regardless of toggle
-           state, then clears the flag.
+        3. If a Fit click is pending for this figure, writes all axes
+           regardless of toggle state, then drops the figure's claim.
 
         When :attr:`axes` is empty the hook is a no-op.
         """
@@ -180,15 +192,43 @@ class CellAutoscaleController:
                 pass
         self._toggles = {}
         self._fit_tool = None
-        self._tools_installed = False
+        self._figures.clear()
+        self._fit_pending.clear()
 
     def _install_tools(self, plot: Any) -> None:
-        """Install ``CustomAction`` tools on the figure toolbar once.
+        """Install this cell's ``CustomAction`` tools on a figure's toolbar.
 
-        Idempotent: subsequent calls are no-ops, mirroring the pattern in
-        ``flatten_plotter._make_hover_hook``.
+        Idempotent per *figure*, mirroring the pattern in
+        ``flatten_plotter._make_hover_hook``: a cell rendered into both its
+        grid cell and a pop-out window needs buttons on both toolbars. The
+        tool models themselves are created once and shared, so the two
+        toolbars drive -- and display -- one toggle state.
         """
-        if self._tools_installed:
+        figure = getattr(plot, 'state', None)
+        if figure is None or figure in self._figures:
+            return
+        toolbar = getattr(figure, 'toolbar', None)
+        if toolbar is None:
+            # Don't record the figure -- a subsequent render with a real
+            # toolbar should retry rather than silently lose the toggles.
+            logger.warning(
+                "No Bokeh toolbar found for cell autoscale controller; "
+                "toggles will be unavailable until the next render."
+            )
+            return
+        self._create_tools()
+        # Tools are added via assignment to keep Bokeh's property setter
+        # notified; in-place append would not trigger change events.
+        toolbar.tools = [
+            *toolbar.tools,
+            *self._toggles.values(),
+            self._fit_tool,
+        ]
+        self._figures.add(figure)
+
+    def _create_tools(self) -> None:
+        """Create the shared toggle and Fit tool models, once per controller."""
+        if self._toggles:
             return
         from .widgets.icons import get_icon_data_uri
 
@@ -199,7 +239,6 @@ class CellAutoscaleController:
             )
             for axis in self._axes
         }
-        fit_icon = get_icon_data_uri('arrows-minimize')
 
         for axis in sorted(self._axes):
             on_icon, off_icon = axis_icons[axis]
@@ -211,40 +250,24 @@ class CellAutoscaleController:
             )
         self._fit_tool = _make_fit_action(
             description='Fit ranges to current data',
-            icon=fit_icon,
+            icon=get_icon_data_uri('arrows-minimize'),
         )
         self._fit_tool.on_change('active', self._on_fit_active_change)
-
-        toolbar = getattr(getattr(plot, 'state', None), 'toolbar', None)
-        if toolbar is None:
-            # Don't mark installed -- a subsequent render with a real toolbar
-            # should retry rather than silently lose the toggles forever.
-            logger.warning(
-                "No Bokeh toolbar found for cell autoscale controller; "
-                "toggles will be unavailable until the next render."
-            )
-            return
-        # Tools are added via assignment to keep Bokeh's property setter
-        # notified; in-place append would not trigger change events.
-        toolbar.tools = [
-            *toolbar.tools,
-            *self._toggles.values(),
-            self._fit_tool,
-        ]
-        self._tools_installed = True
 
     def _apply_targets(self, plot: Any) -> None:
         """Write current targets to handles based on toggle / Fit state.
 
-        For x/y the hook writes only when the toggle is active or Fit is
-        pending; HoloViews honours ``framewise=False`` for ``Range1d`` so the
-        previous range (and any manual pan/zoom) is preserved when we skip.
+        For x/y the hook writes only when the toggle is active or a Fit is
+        pending for this figure; HoloViews honours ``framewise=False`` for
+        ``Range1d`` so the previous range (and any manual pan/zoom) is
+        preserved when we skip.
         For ``c`` the hook also re-applies the last target when the toggle is
         off -- a belt-and-suspenders safety net alongside the ``clim`` write
         in ``_apply_clim_freeze`` (which is what actually freezes the
         colorbar by making HV's next ``_get_colormapper`` use our value).
         """
-        fit = self._fit_pending
+        figure = getattr(plot, 'state', None)
+        fit = figure in self._fit_pending
         for axis in self._axes:
             toggle = self._toggles.get(axis)
             active = fit or (toggle is not None and toggle.active)
@@ -271,7 +294,7 @@ class CellAutoscaleController:
             elif axis == 'c' and (frozen := self._last_targets.get(axis)) is not None:
                 RangeHandles.write(plot, axis, *frozen)
         if fit:
-            self._fit_pending = False
+            self._fit_pending.discard(figure)
 
     def _apply_clim_freeze(self, plot: Any) -> None:
         """Pin ``cm_plot.clim`` so HV's next render keeps our color range.
@@ -301,15 +324,17 @@ class CellAutoscaleController:
     def _on_fit_active_change(self, attr: str, old: bool, new: bool) -> None:
         """Bokeh server-side handler for the Fit tool's ``active`` property.
 
-        When the user clicks Fit, ``active`` flips to ``True``; we set a
-        one-shot pending flag that the next hook invocation honours
-        regardless of toggle state. Robust to figure swaps between the click
-        and the next render: the hook writes through the live handles.
+        When the user clicks Fit, ``active`` flips to ``True``; every figure
+        this cell renders into is marked as owing a fit, which its next hook
+        invocation honours regardless of toggle state. One click therefore
+        fits the grid cell and the pop-out alike -- they share the tool, so
+        there is only one click to observe. Robust to figure swaps between the
+        click and the next render: the hook writes through the live handles.
         """
         del attr, old
         if not new:
             return
-        self._fit_pending = True
+        self._fit_pending.update(self._figures)
         if self._fit_tool is not None:
             self._fit_tool.active = False
 

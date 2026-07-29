@@ -44,6 +44,8 @@ hv.extension('bokeh')
 
 _WORKFLOW = WorkflowId(instrument='test', name='wf', version=1)
 _GEOMETRY = CellGeometry(row=0, col=0, row_span=1, col_span=1)
+# Tooltip of the controller's one-shot Fit tool, its handle in a Bokeh toolbar.
+_FIT = 'Fit ranges to current data'
 
 
 @pytest.fixture
@@ -130,20 +132,27 @@ def _static_config() -> PlotConfig:
 
 
 @pytest.fixture
-def line_cell(plot_orchestrator, plot_grid_tabs, plot_data_service):
-    """A built cell showing a live 1-D line plot, plus its plotter and pipe.
+def line_plotter():
+    """A real ``LinePlotter`` holding one computed curve.
 
-    Uses a real ``LinePlotter``: the pop-out's defining properties (a private
-    autoscale controller, a shared data pipe) only exist for a plot that
-    actually autoscales and actually updates.
+    Real rather than a stub: the properties under test — a shared autoscale
+    controller, a shared data pipe — only exist for a plot that actually
+    autoscales and actually updates.
     """
+    plotter = LinePlotter.from_params(PlotParams1d())
+    key = DataKey(workflow_id=_WORKFLOW, source_name='s1', output_name='out')
+    plotter.compute({PRIMARY: {key: _curve([1.0, 2.0, 3.0])}})
+    return plotter
+
+
+@pytest.fixture
+def line_cell(plot_orchestrator, plot_grid_tabs, plot_data_service, line_plotter):
+    """A built cell showing a live 1-D line plot."""
     grid_id = plot_orchestrator.add_grid(title='G', nrows=1, ncols=1)
     cell_id = plot_orchestrator.add_cell(grid_id, _GEOMETRY)
     layer_id = plot_orchestrator.add_layer(cell_id, _line_config())
 
-    plotter = LinePlotter.from_params(PlotParams1d())
-    key = DataKey(workflow_id=_WORKFLOW, source_name='s1', output_name='out')
-    plotter.compute({PRIMARY: {key: _curve([1.0, 2.0, 3.0])}})
+    plotter = line_plotter
     plot_data_service.job_started(layer_id, plotter)
     plot_data_service.data_arrived(layer_id)
 
@@ -160,7 +169,7 @@ def _open_windows(plot_grid_tabs) -> list:
     return list(plot_grid_tabs._popouts.container.objects)
 
 
-class TestPopoutOpensAnIndependentView:
+class TestPopoutRendersTheCellsPlotAgain:
     def test_popout_opens_one_floating_window(self, plot_grid_tabs, line_cell):
         assert _open_windows(plot_grid_tabs) == []
 
@@ -193,50 +202,115 @@ class TestPopoutOpensAnIndependentView:
         assert plot_grid_tabs._cells[line_cell] is cell_widget
         assert cell_widget.autoscale_controller is cell_controller
 
-    def test_each_view_gets_its_own_autoscale_controller(
-        self, plot_grid_tabs, line_cell
-    ):
-        cell_widget = plot_grid_tabs._cells[line_cell]
+    def test_both_views_show_the_same_composed_plot(self, plot_grid_tabs, line_cell):
+        """One composition, rendered twice — not two compositions.
 
-        detached = cell_widget.compose_detached_view()
-
-        # A controller binds its Bokeh tools to the first figure it renders
-        # into, so a shared one would leave the pop-out without toggles.
-        assert detached.autoscale is not None
-        assert detached.autoscale is not cell_widget.autoscale_controller
-
-    def test_both_views_render_their_own_autoscale_tools(
-        self, plot_grid_tabs, line_cell
-    ):
-        """Rendering one view must not strip the hooks off the other.
-
-        HoloViews ``.opts()`` mutates in place unless cloned, so composing a
-        second view of the same single-layer cell can silently replace the
-        first view's hooks -- the cell would lose its autoscale toggles the
-        moment it was popped out.
+        Sharing is what links the two views: one ``Pipe`` feeds both figures,
+        and one autoscale controller drives both toolbars.
         """
         cell_widget = plot_grid_tabs._cells[line_cell]
-        detached = cell_widget.compose_detached_view()
-        renderer = hv.renderer('bokeh')
 
-        cell_figure = renderer.get_plot(cell_widget.compose_detached_view().plot)
-        popout_figure = renderer.get_plot(detached.plot)
+        plot_grid_tabs._show_popout(line_cell)
 
-        for figure in (cell_figure, popout_figure):
-            descriptions = {tool.description for tool in figure.state.toolbar.tools}
-            assert 'Fit ranges to current data' in descriptions
+        window = _open_windows(plot_grid_tabs)[0]
+        assert _rendered_plot(window) is cell_widget.composed.plot
+
+    def test_both_toolbars_get_the_same_autoscale_tools(
+        self, plot_grid_tabs, line_cell
+    ):
+        """Tools install per figure, so neither toolbar goes bare.
+
+        Both toolbars get the *same* tool models: that identity is what makes
+        a toggle flipped in the window show as flipped in the cell.
+        """
+        composed = plot_grid_tabs._cells[line_cell].composed
+
+        cell_tools = _autoscale_tools(_render(composed.plot))
+        popout_tools = _autoscale_tools(_render(composed.plot))
+
+        assert _FIT in cell_tools
+        assert cell_tools.keys() > {_FIT}  # at least one axis toggle too
+        assert cell_tools == popout_tools
+
+    def test_toggling_autoscale_in_one_view_shows_in_the_other(
+        self, plot_grid_tabs, line_cell
+    ):
+        composed = plot_grid_tabs._cells[line_cell].composed
+        cell_tools = _autoscale_tools(_render(composed.plot))
+        popout_tools = _autoscale_tools(_render(composed.plot))
+        toggle = next(name for name in cell_tools if name != _FIT)
+        assert popout_tools[toggle].active
+
+        cell_tools[toggle].active = False
+
+        assert not popout_tools[toggle].active
+
+    def test_fit_reaches_every_rendered_figure(
+        self, plot_grid_tabs, line_cell, line_plotter
+    ):
+        """A Fit click must fit both views, not whichever renders first.
+
+        Both figures repaint from one pipe push, so tracking the pending fit
+        as a single flag would let the first figure consume it and leave the
+        second showing a stale range.
+        """
+        composed = plot_grid_tabs._cells[line_cell].composed
+        figures = [_render(composed.plot).state for _ in range(2)]
+        tools = _autoscale_tools_of(figures[0])
+        for name, tool in tools.items():
+            if name != _FIT:
+                tool.active = False  # ranges now only move on an explicit Fit
+        for figure in figures:
+            figure.x_range.start, figure.x_range.end = -999.0, 999.0
+
+        tools[_FIT].active = True  # the user clicks Fit
+        _repaint(plot_grid_tabs, line_plotter)
+
+        for figure in figures:
+            assert (figure.x_range.start, figure.x_range.end) != (-999.0, 999.0)
 
     def test_both_views_repaint_from_the_same_pipe(self, plot_grid_tabs, line_cell):
         """The pop-out is live, not a snapshot: one pipe drives both figures."""
         cell_widget = plot_grid_tabs._cells[line_cell]
-        detached = cell_widget.compose_detached_view()
-
         session_layer = next(iter(plot_grid_tabs._session_layers.values()))
-        pipe = session_layer.components.pipe
-        cell_plot = cell_widget.compose_detached_view().plot
 
-        assert pipe in cell_plot.streams
-        assert pipe in detached.plot.streams
+        plot_grid_tabs._show_popout(line_cell)
+
+        pipe = session_layer.components.pipe
+        assert pipe in cell_widget.composed.plot.streams
+        assert pipe in _rendered_plot(_open_windows(plot_grid_tabs)[0]).streams
+
+
+def _render(plot):
+    """Render a composed plot into a fresh Bokeh figure, as a view would."""
+    return hv.renderer('bokeh').get_plot(plot)
+
+
+def _autoscale_tools(rendered) -> dict[str, object]:
+    """The controller's toolbar tools on a rendered plot, keyed by tooltip."""
+    return _autoscale_tools_of(rendered.state)
+
+
+def _autoscale_tools_of(figure) -> dict[str, object]:
+    from bokeh.models import CustomAction
+
+    return {
+        tool.description: tool
+        for tool in figure.toolbar.tools
+        if isinstance(tool, CustomAction)
+    }
+
+
+def _repaint(plot_grid_tabs, plotter) -> None:
+    """Push a frame through the layer's pipe, repainting every rendered view."""
+    session_layer = next(iter(plot_grid_tabs._session_layers.values()))
+    session_layer.components.pipe.send(plotter.get_cached_state())
+
+
+def _rendered_plot(window):
+    """The HoloViews object a pop-out window renders."""
+    column = window[0]
+    return column[0][0].object
 
 
 class TestPopoutLifecycle:

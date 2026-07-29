@@ -223,11 +223,11 @@ class CellDeps:
 class ComposedPlot:
     """A cell's composed plot together with the autoscale controller driving it.
 
-    Composition is per *view*, not per cell: the autoscale controller installs
-    its Bokeh toolbar tools on the first figure it renders into and ignores
-    later ones, so a second view of the same cell (a pop-out window) needs its
-    own controller. The underlying layer ``DynamicMap``s are shared, so every
-    view of a cell repaints from the same ``Pipe``.
+    One composition per cell, however many times it is rendered: a pop-out
+    window calls :meth:`build_pane` a second time on the same instance. Sharing
+    it is deliberate — the controller then installs one set of tool models on
+    both toolbars, so the views' autoscale toggles move together, and both
+    figures repaint from the layers' single ``Pipe``.
     """
 
     plot: hv.DynamicMap | hv.Element
@@ -242,6 +242,9 @@ class ComposedPlot:
     def build_pane(self) -> pn.viewable.Viewable:
         """
         Wrap the plot in a HoloViews pane ready for placement in a layout.
+
+        Call once per view: a Panel component has a single parent, so a second
+        view of this plot needs its own pane over the same HoloViews object.
 
         Returns
         -------
@@ -371,14 +374,8 @@ def compose_cell_plot(cell: PlotCell, deps: CellDeps) -> ComposedPlot | None:
     controller = build_controller_from_layers(cell_plotters)
     if controller is not None:
         hooks.append(controller.make_hook())
-    # clone=True: ``opts`` otherwise mutates the layer's DynamicMap in place, so
-    # composing a second view of the same cell (a pop-out) would overwrite the
-    # first view's hooks and leave it driven by the wrong controller. The clone
-    # keeps the same stream objects, so both views stay live off one pipe.
     return ComposedPlot(
-        plot=result.opts(hooks=hooks, clone=True),
-        autoscale=controller,
-        sizing_mode=sizing_mode,
+        plot=result.opts(hooks=hooks), autoscale=controller, sizing_mode=sizing_mode
     )
 
 
@@ -443,14 +440,16 @@ class CellWidget:
         """The cell's displayed title (user-defined or derived)."""
         return self._title
 
-    def compose_detached_view(self) -> ComposedPlot | None:
-        """Compose an independent view of this cell's plot for a pop-out window.
+    @property
+    def composed(self) -> ComposedPlot | None:
+        """The cell's composed plot, or None while it shows a placeholder.
 
-        Shares the layer ``DynamicMap``s with the in-grid view — both repaint
-        from the same ``Pipe`` — but gets its own autoscale controller, which
-        the caller must dispose.
+        Rendered a second time by a pop-out window, which shares it rather
+        than composing its own: sharing is what links the two views' autoscale
+        toggles and keeps them both fed by one ``Pipe``. The cell widget owns
+        it and disposes it.
         """
-        return compose_cell_plot(self._cell, self._deps)
+        return self._composed
 
     @property
     def geometry(self) -> CellGeometry:
