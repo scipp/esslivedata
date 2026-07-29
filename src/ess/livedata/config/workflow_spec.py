@@ -55,22 +55,30 @@ class Temporality(enum.Enum):
     operations over successive messages are valid. The two are not
     interchangeable — ``since_start`` is the default binding for fields that are
     not accumulations at all (ROI readbacks, static views).
+
+    Every emitted DataArray carries a ``time`` coord: the instant its value
+    refers to. What differs per temporality is what that instant means and what
+    accompanies it, and this is the one place that says so. Code holding data
+    but not the declaration sniffs for those coords; it is answering this
+    question.
     """
 
     window = 'window'
-    """Covers ``[start_time, end_time)``; successive windows are disjoint and
-    advance. Summing or averaging over consecutive messages is meaningful, as is
-    normalizing counts by the window duration."""
+    """Covers ``[start_time, time]``, where ``time`` is when the window closed.
+    Successive windows are disjoint and advance. Summing or averaging over
+    consecutive messages is meaningful, as is normalizing counts by the window
+    duration."""
 
     cumulative = 'cumulative'
-    """Value as of ``end_time``, accumulated since ``start_time``, which stays
-    pinned for the lifetime of a job generation. Plotting the growth curve is
-    meaningful; aggregating over successive messages double-counts."""
+    """Value as observed at ``time``, accumulated since ``start_time``, which
+    stays pinned for the lifetime of a job generation. Plotting the growth curve
+    against ``time`` is meaningful; aggregating over successive messages
+    double-counts."""
 
     series = 'series'
-    """Carries its own per-point ``time`` axis. Messages are disjoint chunks of
-    samples concatenated along that axis, so there is no single window duration
-    to normalize by."""
+    """``time`` is the per-sample axis rather than a bound, and there is no
+    ``start_time``. Messages are disjoint chunks of samples concatenated along
+    that axis, so there is no single window duration to normalize by."""
 
 
 WindowOutput = Annotated[sc.DataArray, Temporality.window]

@@ -69,10 +69,12 @@ The naming stack, from the Kafka wire inwards (see ADR 0004 and
   NICOS derived devices (ADR 0006) key by DataKey, not ResultKey.
 - **OutputView** — user-facing presentation of a workflow output, bundling the
   backend output fields that carry one quantity (`config/workflow_spec.py`).
-- **Temporality** — how one output field's values relate to time:
-  `window` (covers `[start_time, end_time)`, successive windows disjoint),
-  `cumulative` (value as of `end_time`, `start_time` pinned for the
-  generation), or `series` (carries its own per-point `time` axis). Declared
+- **Temporality** — how one output field's values relate to time. Every output
+  carries a `time` coord — the instant its value refers to — but what that
+  instant means differs: `window` (covers `[start_time, time]`, `time` is when
+  the window closed, successive windows disjoint), `cumulative` (value as
+  observed at `time`, `start_time` pinned for the generation), or `series`
+  (`time` is the per-point axis, no `start_time`). Declared
   per field via `Annotated` on the outputs model. It decides which aggregations
   over successive messages are valid, and which `Windowing` the field backs —
   a view states its member fields, and the binding follows

@@ -26,7 +26,7 @@ class TestIntegrationWithStreamProcessor:
     """Integration tests using the full StreamProcessorWorkflow via factory."""
 
     def test_window_outputs_have_time_coords(self):
-        """Test that window outputs have time, start_time, end_time coords.
+        """Test that window outputs have start_time and time coords.
 
         The factory configures current, counts_total, counts_in_toa_range, and
         roi_spectra_current as window outputs. These should have time coords;
@@ -59,29 +59,29 @@ class TestIntegrationWithStreamProcessor:
         result = workflow.finalize()
 
         # Window outputs should have time coords
-        for key in ('current', 'counts_total', 'counts_in_toa_range'):
-            assert 'time' in result[key].coords, f"{key} missing 'time' coord"
-            assert 'start_time' in result[key].coords, f"{key} missing 'start_time'"
-            assert 'end_time' in result[key].coords, f"{key} missing 'end_time'"
-            assert result[key].coords['time'].value == 1000
-            assert result[key].coords['start_time'].value == 1000
-            assert result[key].coords['end_time'].value == 2000
-            assert result[key].coords['time'].unit == 'ns'
-
-        # ROI spectra current should also have time coords
-        assert 'time' in result['roi_spectra_current'].coords
-        assert result['roi_spectra_current'].coords['time'].value == 1000
+        for key in (
+            'current',
+            'counts_total',
+            'counts_in_toa_range',
+            'roi_spectra_current',
+        ):
+            coords = result[key].coords
+            assert coords['start_time'].value == 1000, key
+            assert coords['time'].value == 2000, key
+            assert coords['time'].unit == 'ns', key
 
         # Cumulative outputs should NOT have time coords at this level.
-        # The Job layer (not tested here) adds start_time/end_time spanning
+        # The Job layer (not tested here) adds start_time/time spanning
         # the full job duration to any output that doesn't already have them.
-        assert 'time' not in result['cumulative'].coords
-        assert 'start_time' not in result['cumulative'].coords
-        assert 'time' not in result['roi_spectra_cumulative'].coords
-        assert 'time' not in result['counts_total_cumulative'].coords
-        assert 'start_time' not in result['counts_total_cumulative'].coords
-        assert 'time' not in result['counts_in_toa_range_cumulative'].coords
-        assert 'start_time' not in result['counts_in_toa_range_cumulative'].coords
+        for key in (
+            'cumulative',
+            'roi_spectra_cumulative',
+            'counts_total_cumulative',
+            'counts_in_toa_range_cumulative',
+        ):
+            coords = result[key].coords
+            assert 'start_time' not in coords, key
+            assert 'time' not in coords, key
 
     def test_full_workflow_accumulate_and_finalize(self):
         """Test the full workflow with accumulate and finalize."""

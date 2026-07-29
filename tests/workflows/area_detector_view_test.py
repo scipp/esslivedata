@@ -167,14 +167,14 @@ class TestAreaDetectorView:
 
 
 def _bounds(da: sc.DataArray) -> tuple[int, int]:
-    return da.coords['start_time'].value, da.coords['end_time'].value
+    return da.coords['start_time'].value, da.coords['time'].value
 
 
 class TestAreaDetectorViewWindowBounds:
     """The 'current' output must carry the bounds of the window it covers.
 
     The dashboard derives freshness/lag and counts-per-second normalization from
-    start_time/end_time, and Job._add_time_coords deliberately leaves outputs that
+    start_time/time, and Job._add_time_coords deliberately leaves outputs that
     set their own time coords alone.
     """
 
@@ -198,8 +198,6 @@ class TestAreaDetectorViewWindowBounds:
         current = workflow.finalize()['current']
 
         assert _bounds(current) == (1000, 2000)
-        # 'time' duplicates start_time until issue #1058 drops it everywhere.
-        assert sc.identical(current.coords['time'], current.coords['start_time'])
 
     def test_bounds_span_all_accumulates_of_the_window(self, workflow, frame):
         workflow.accumulate(
@@ -286,6 +284,5 @@ class TestAreaDetectorViewWindowBounds:
 
         cumulative = workflow.finalize()['cumulative']
 
-        assert 'time' not in cumulative.coords
         assert 'start_time' not in cumulative.coords
-        assert 'end_time' not in cumulative.coords
+        assert 'time' not in cumulative.coords

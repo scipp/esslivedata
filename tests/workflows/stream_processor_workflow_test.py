@@ -430,16 +430,16 @@ class TestWindowOutputs:
         result = workflow.finalize()
 
         # Window output should have time coords with correct values
-        assert result['current'].coords['time'].value == 1000
         assert result['current'].coords['start_time'].value == 1000
-        assert result['current'].coords['end_time'].value == 2000
+        assert result['current'].coords['time'].value == 2000
         assert result['current'].coords['time'].unit == 'ns'
 
         # Non-window output should not have time coords
+        assert 'start_time' not in result['cumulative'].coords
         assert 'time' not in result['cumulative'].coords
 
     def test_time_coord_tracks_first_accumulate(self, dataarray_workflow):
-        """Test that start_time uses first accumulate, end_time uses last."""
+        """Test that start_time uses first accumulate, time uses last."""
         from ess.reduce.streaming import EternalAccumulator
 
         workflow = StreamProcessorWorkflow(
@@ -465,9 +465,9 @@ class TestWindowOutputs:
         )
         result = workflow.finalize()
 
-        # start_time from first accumulate, end_time from last
+        # start_time from first accumulate, time from last
         assert result['current'].coords['start_time'].value == 1000
-        assert result['current'].coords['end_time'].value == 4000
+        assert result['current'].coords['time'].value == 4000
 
     def test_time_tracking_resets_after_finalize_and_clear(self, dataarray_workflow):
         """Test that time tracking resets after finalize() and clear()."""

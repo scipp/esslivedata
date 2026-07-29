@@ -242,10 +242,7 @@ class MonitorHistogramOutputs(WorkflowOutputsBase):
     current: WindowOutput = pydantic.Field(
         default_factory=lambda: sc.DataArray(
             sc.zeros(dims=['time_of_arrival'], shape=[0], unit='counts'),
-            coords={
-                'time_of_arrival': sc.arange('time_of_arrival', 0, unit='ms'),
-                'time': sc.scalar(0, unit='ns'),
-            },
+            coords={'time_of_arrival': sc.arange('time_of_arrival', 0, unit='ms')},
         ),
         title='Histogram update',
         description=(
@@ -254,10 +251,7 @@ class MonitorHistogramOutputs(WorkflowOutputsBase):
         ),
     )
     counts_total: WindowOutput = pydantic.Field(
-        default_factory=lambda: sc.DataArray(
-            sc.scalar(0, unit='counts'),
-            coords={'time': sc.scalar(0, unit='ns')},
-        ),
+        default_factory=lambda: sc.DataArray(sc.scalar(0, unit='counts')),
         title='Total',
         description=(
             'Total number of monitor events for the latest update interval only. '
@@ -265,10 +259,7 @@ class MonitorHistogramOutputs(WorkflowOutputsBase):
         ),
     )
     counts_in_toa_range: WindowOutput = pydantic.Field(
-        default_factory=lambda: sc.DataArray(
-            sc.scalar(0, unit='counts'),
-            coords={'time': sc.scalar(0, unit='ns')},
-        ),
+        default_factory=lambda: sc.DataArray(sc.scalar(0, unit='counts')),
         title='Total in range',
         description=(
             'Number of monitor events within the configured range filter '

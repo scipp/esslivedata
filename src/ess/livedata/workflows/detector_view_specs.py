@@ -178,35 +178,30 @@ class SpectrumViewSpec:
         return base
 
 
-def _make_nd_template(ndim: int, *, with_time_coord: bool = False) -> sc.DataArray:
+def _make_nd_template(ndim: int) -> sc.DataArray:
     """Create an empty template with the specified number of dimensions."""
-    coords = {'time': sc.scalar(0, unit='ns')} if with_time_coord else {}
     if ndim == 0:
-        return sc.DataArray(sc.scalar(0, unit='counts'), coords=coords)
+        return sc.DataArray(sc.scalar(0, unit='counts'))
     dims = [f'dim_{i}' for i in range(ndim)]
-    return sc.DataArray(
-        sc.zeros(dims=dims, shape=[0] * ndim, unit='counts'), coords=coords
-    )
+    return sc.DataArray(sc.zeros(dims=dims, shape=[0] * ndim, unit='counts'))
 
 
 def _make_2d_template() -> sc.DataArray:
-    """Create an empty 2D template for cumulative outputs (no time coord)."""
+    """Create an empty 2D template."""
     return _make_nd_template(2)
 
 
-def _make_2d_template_with_time() -> sc.DataArray:
-    """Create an empty 2D template with time coord for current outputs."""
-    return _make_nd_template(2, with_time_coord=True)
-
-
 def _make_0d_template() -> sc.DataArray:
-    """Create an empty 0D template for cumulative scalar outputs (no time coord)."""
+    """Create an empty 0D template for scalar outputs."""
     return _make_nd_template(0)
 
 
-def _make_0d_template_with_time() -> sc.DataArray:
-    """Create an empty 0D template with time coord for scalar outputs."""
-    return _make_nd_template(0, with_time_coord=True)
+def _make_roi_spectra_template() -> sc.DataArray:
+    """Create an empty template for stacked per-ROI spectra."""
+    return sc.DataArray(
+        sc.zeros(dims=['roi', 'time_of_arrival'], shape=[0, 0], unit='counts'),
+        coords={'roi': sc.array(dims=['roi'], values=[], unit=None)},
+    )
 
 
 _BASE_DETECTOR_VIEWS: tuple[OutputView, ...] = (
@@ -260,7 +255,7 @@ class DetectorViewOutputsBase(WorkflowOutputsBase):
             'Detector image for the latest update interval only. '
             'Resets each update interval.'
         ),
-        default_factory=_make_2d_template_with_time,
+        default_factory=_make_2d_template,
     )
     counts_total_cumulative: CumulativeOutput = pydantic.Field(
         title='Total',
@@ -275,7 +270,7 @@ class DetectorViewOutputsBase(WorkflowOutputsBase):
             'Total number of detector events for the latest update interval only. '
             'Resets each update interval.'
         ),
-        default_factory=_make_0d_template_with_time,
+        default_factory=_make_0d_template,
     )
     counts_in_toa_range_cumulative: CumulativeOutput = pydantic.Field(
         title='Total in range',
@@ -291,7 +286,7 @@ class DetectorViewOutputsBase(WorkflowOutputsBase):
             'Number of detector events within the configured range filter '
             'for the latest update interval only. Resets each update interval.'
         ),
-        default_factory=_make_0d_template_with_time,
+        default_factory=_make_0d_template,
     )
 
 
@@ -328,10 +323,7 @@ class DetectorViewOutputs(DetectorViewOutputsBase):
             'Histogram for each active ROI region '
             'accumulated since the start of the run.'
         ),
-        default_factory=lambda: sc.DataArray(
-            sc.zeros(dims=['roi', 'time_of_arrival'], shape=[0, 0], unit='counts'),
-            coords={'roi': sc.array(dims=['roi'], values=[], unit=None)},
-        ),
+        default_factory=_make_roi_spectra_template,
     )
     roi_spectra_current: WindowOutput = pydantic.Field(
         title='ROI spectra update',
@@ -339,13 +331,7 @@ class DetectorViewOutputs(DetectorViewOutputsBase):
             'Histogram for each active ROI region '
             'for the latest update interval only. Resets each update interval.'
         ),
-        default_factory=lambda: sc.DataArray(
-            sc.zeros(dims=['roi', 'time_of_arrival'], shape=[0, 0], unit='counts'),
-            coords={
-                'roi': sc.array(dims=['roi'], values=[], unit=None),
-                'time': sc.scalar(0, unit='ns'),
-            },
-        ),
+        default_factory=_make_roi_spectra_template,
     )
 
     # ROI geometry readbacks
@@ -381,8 +367,7 @@ def make_detector_view_outputs(
     ----------
     output_ndim:
         Number of dimensions for spatial outputs (cumulative, current).
-        The counts outputs remain 0D scalars with time coord.
-        If None, uses 2D default.
+        The counts outputs remain 0D scalars. If None, uses 2D default.
     roi_support:
         Whether to include ROI-related outputs. If False, the returned class
         will not include roi_spectra_current, roi_spectra_cumulative,
@@ -406,17 +391,14 @@ def make_detector_view_outputs(
 
     if output_ndim is not None:
 
-        def make_cumulative_template() -> sc.DataArray:
+        def make_template() -> sc.DataArray:
             return _make_nd_template(output_ndim)
-
-        def make_current_template() -> sc.DataArray:
-            return _make_nd_template(output_ndim, with_time_coord=True)
 
         class _WithNdim(base_class):  # type: ignore[valid-type,misc]
             cumulative: CumulativeOutput = pydantic.Field(
                 title='Image (cumulative)',
                 description=('Detector image accumulated since the start of the run.'),
-                default_factory=make_cumulative_template,
+                default_factory=make_template,
             )
             current: WindowOutput = pydantic.Field(
                 title='Image (current)',
@@ -424,7 +406,7 @@ def make_detector_view_outputs(
                     'Detector image for the latest update interval only. '
                     'Resets each update interval.'
                 ),
-                default_factory=make_current_template,
+                default_factory=make_template,
             )
 
         base_class = _WithNdim

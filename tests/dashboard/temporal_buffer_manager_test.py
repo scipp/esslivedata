@@ -83,6 +83,36 @@ class TestTemporalBufferManager:
         result = manager.get_buffered_data('test')
         assert sc.identical(result, data)
 
+    def test_history_of_cumulative_output_yields_growth_curve(self):
+        """The whole point of #1058: a cumulative total plots as history.
+
+        Its `time` is the instant it was observed rather than a window's close,
+        but the buffer and extractor need not know the difference.
+        """
+        manager = TemporalBufferManager()
+        manager.create_buffer('test', [FullHistoryExtractor()])
+
+        for i in range(3):
+            manager.update_buffer(
+                'test',
+                sc.DataArray(
+                    sc.scalar(10.0 * i, unit='counts'),
+                    coords={
+                        'start_time': sc.scalar(0, unit='ns'),
+                        'time': sc.scalar(i, unit='ns'),
+                    },
+                ),
+            )
+
+        result = FullHistoryExtractor().extract(manager.get_buffered_data('test'))
+        assert sc.identical(
+            result.data,
+            sc.array(dims=['time'], values=[0.0, 10.0, 20.0], unit='counts'),
+        )
+        # Pinned since the generation started, observed at the latest update.
+        assert sc.identical(result.coords['start_time'], sc.scalar(0, unit='ns'))
+        assert sc.identical(result.coords['end_time'], sc.scalar(2, unit='ns'))
+
     def test_update_buffer_raises_error_for_missing_key(self):
         """Test that updating non-existent buffer raises KeyError."""
         manager = TemporalBufferManager()

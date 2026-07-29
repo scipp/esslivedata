@@ -21,8 +21,10 @@ from ess.livedata.dashboard.correlation_plotter import (
     CorrelationHistogram2dPlotter,
     CorrelationHistogramPlotter,
 )
+from ess.livedata.dashboard.extractors import FullHistoryExtractor
 from ess.livedata.dashboard.plot_params import PlotScaleParams, PlotScaleParams2d
 from ess.livedata.dashboard.plots import ImagePlotter, LinePlotter
+from ess.livedata.dashboard.temporal_buffers import TemporalBuffer
 
 hv.extension('bokeh')
 
@@ -69,6 +71,58 @@ def histogram_of(plotter: CorrelationHistogramPlotter) -> dict[str, np.ndarray]:
     state = plotter.get_cached_state()
     assert state is not None
     return next(iter(state.values())).data
+
+
+class TestWallClockJoinConvention:
+    """Which instant of a window output the correlation join uses for x."""
+
+    def test_window_output_joins_at_its_time_not_its_start_time(self):
+        """A window is correlated against the axis as of when it closed.
+
+        ``time`` is the interval's right edge, so a window straddling a step in
+        the axis picks up the value after the step. Driven through the real
+        buffer and extractor, since it is the buffered ``time`` coord — not the
+        raw message — that the join reads.
+        """
+        axis_buffer = TemporalBuffer()
+        for sample_time, value in [(100, 1.0), (250, 5.0)]:
+            axis_buffer.add(
+                sc.DataArray(
+                    sc.scalar(value, unit='m'),
+                    coords={'time': sc.scalar(sample_time, unit='ms')},
+                )
+            )
+
+        source_buffer = TemporalBuffer()
+        # The second window opens before the axis steps to 5.0 and closes after.
+        for start_time, close_time, counts in [(100, 150, 10.0), (150, 300, 20.0)]:
+            source_buffer.add(
+                sc.DataArray(
+                    sc.scalar(counts, unit='counts'),
+                    coords={
+                        'start_time': sc.scalar(start_time, unit='ms'),
+                        'time': sc.scalar(close_time, unit='ms'),
+                    },
+                )
+            )
+
+        key = _make_result_key('detector')
+        plotter = CorrelationHistogramPlotter(
+            axes=[AxisSpec(role=X_AXIS, name='position', bins=2)],
+            normalize=False,
+            renderer=_make_line_renderer(),
+        )
+        plotter.compute(
+            {
+                PRIMARY: {key: FullHistoryExtractor().extract(source_buffer.get())},
+                X_AXIS: {key: FullHistoryExtractor().extract(axis_buffer.get())},
+            }
+        )
+
+        (histogram,) = plotter.get_cached_state()
+        # Positions 1.0 and 5.0 over two bins: one window on each side. Joining
+        # on start_time would put both at 1.0 and collapse this to a single bin.
+        assert list(histogram.dimension_values('result')) == [10.0, 20.0]
 
 
 class TestCorrelationHistogramPlotter:

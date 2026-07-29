@@ -347,8 +347,8 @@ def _create_base_reduction_workflow():
         """Sum detector counts in the selected arc and pixel range for one update.
 
         Emits bare per-update counts with no time coords: ``StreamProcessorWorkflow``
-        stamps ``start_time``/``end_time`` (needed for the dashboard's rate
-        normalization) on the accumulated outputs, per the window/cumulative
+        stamps ``start_time``/``time`` (the bounds the dashboard's rate
+        normalization needs) on the accumulated outputs, per the window/cumulative
         convention. Stamping here instead would suppress that (see
         ``_add_time_coords``) and break coord matching across the accumulator sum.
         """

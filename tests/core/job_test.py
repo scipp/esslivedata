@@ -405,7 +405,7 @@ class TestJob:
     def test_get_adds_time_coords_to_data_arrays(
         self, fake_processor, sample_workflow_id
     ):
-        """Test that get() adds start_time and end_time coords to DataArrays."""
+        """Test that get() adds start_time and time coords to DataArrays."""
         job_id = JobId(source_name="test_source", job_number=1)
         job = Job(
             job_id=job_id,
@@ -433,12 +433,10 @@ class TestJob:
         result = job.get()
         output = result.data["output"]
 
-        assert "start_time" in output.coords
-        assert "end_time" in output.coords
         assert output.coords["start_time"].value == 1000
-        assert output.coords["end_time"].value == 2000
+        assert output.coords["time"].value == 2000
         assert output.coords["start_time"].unit == "ns"
-        assert output.coords["end_time"].unit == "ns"
+        assert output.coords["time"].unit == "ns"
 
     def test_get_preserves_existing_time_coords_on_data_arrays(
         self, fake_processor, sample_workflow_id
@@ -466,7 +464,7 @@ class TestJob:
         fake_processor.data = {
             "delta_output": sc.DataArray(
                 data=sc.scalar(1.0),
-                coords={'start_time': workflow_start, 'end_time': workflow_end},
+                coords={'start_time': workflow_start, 'time': workflow_end},
             ),
             "cumulative_output": sc.DataArray(data=sc.scalar(2.0)),
         }
@@ -485,20 +483,20 @@ class TestJob:
         # Delta output should preserve workflow-set times
         delta = result.data["delta_output"]
         assert delta.coords["start_time"].value == 500
-        assert delta.coords["end_time"].value == 1500
+        assert delta.coords["time"].value == 1500
 
         # Cumulative output should get job-level times
         cumulative = result.data["cumulative_output"]
         assert cumulative.coords["start_time"].value == 1000
-        assert cumulative.coords["end_time"].value == 2000
+        assert cumulative.coords["time"].value == 2000
 
     def test_get_does_not_add_time_coords_to_data_with_time_coordinate(
         self, fake_processor, sample_workflow_id
     ):
-        """Data with a 'time' coordinate already carries its own timestamps.
+        """A series output's 'time' is per-sample data, not a bound to overwrite.
 
-        Adding start_time/end_time would be redundant and causes structural
-        issues in TemporalBuffer (scalar coord vs multi-element time dim).
+        Stamping the job's own scalars would also cause structural issues in
+        TemporalBuffer (scalar coord vs multi-element time dim).
         """
         job_id = JobId(source_name="test_source", job_number=1)
         job = Job(
@@ -532,12 +530,15 @@ class TestJob:
         output = result.data["delta"]
 
         assert "start_time" not in output.coords
-        assert "end_time" not in output.coords
+        assert sc.identical(
+            output.coords["time"],
+            sc.array(dims=["time"], values=[100, 200, 300], unit="ns"),
+        )
 
     def test_get_does_not_add_time_coords_to_data_with_scalar_time_coordinate(
         self, fake_processor, sample_workflow_id
     ):
-        """Even a scalar 'time' coordinate signals timestamped data."""
+        """A workflow that stamped its own 'time' keeps it, bounds and all."""
         job_id = JobId(source_name="test_source", job_number=1)
         job = Job(
             job_id=job_id,
@@ -567,12 +568,18 @@ class TestJob:
         output = result.data["delta"]
 
         assert "start_time" not in output.coords
-        assert "end_time" not in output.coords
+        assert output.coords["time"].value == 100
 
-    def test_get_does_not_add_time_coords_when_no_data_added(
+    def test_get_without_accumulated_data_reports_the_missing_bounds(
         self, fake_processor, sample_workflow_id
     ):
-        """Test that get() does not add time coords when job has no timing info."""
+        """Finalizing before any primary data arrived is a fault, not an empty result.
+
+        The JobManager only finalizes jobs that accumulated primary data, so
+        this is unreachable in production. Emitting untimestamped outputs
+        instead would push the failure to the dashboard, where TemporalBuffer
+        rejects them far from the cause.
+        """
         job_id = JobId(source_name="test_source", job_number=1)
         job = Job(
             job_id=job_id,
@@ -582,18 +589,14 @@ class TestJob:
             input_streams=set(),
             gating_streams=set(),
         )
-
-        # Set up processor to return a DataArray
         fake_processor.data = {
             "output": sc.DataArray(data=sc.array(dims=["x"], values=[1, 2, 3]))
         }
 
-        # Don't add any data, so start_time and end_time remain None
         result = job.get()
-        output = result.data["output"]
 
-        assert "start_time" not in output.coords
-        assert "end_time" not in output.coords
+        assert result.data is None
+        assert "no time bounds" in result.error_message
 
     def test_get_calls_processor_finalize(self, sample_job, fake_processor):
         """Test that get() calls processor.finalize()."""
@@ -700,15 +703,17 @@ class TestJob:
             input_streams=set(),
             gating_streams=set(),
         )
-
-        # Cause an error
-        fake_processor.should_fail_accumulate = True
         data = JobData(
             start_time=Timestamp.from_ns(100),
             end_time=Timestamp.from_ns(200),
             primary_data={"test_source": sc.scalar(42.0)},
             aux_data={},
         )
+        job.add(data)
+
+        # Cause an error on a later batch, as the JobManager's retry path does:
+        # it finalizes a job whose latest push failed but which holds earlier data.
+        fake_processor.should_fail_accumulate = True
         job.add(data)
 
         result = job.get()

@@ -14,18 +14,34 @@ from .time_utils import get_local_timezone_offset_ns
 
 def _extract_time_bounds_as_scalars(data: sc.DataArray) -> dict[str, sc.Variable]:
     """
-    Extract start_time/end_time as scalar values from 1-D coords.
+    Capture the covered time range as the scalar ``(start_time, end_time)`` pair.
 
-    When data comes from a TemporalBuffer, start_time and end_time are 1-D
-    coordinates (one value per time slice) in chronological order. This function
-    extracts the overall time range for use in plot titles.
+    This is the naming boundary between wire and dashboard. On the wire an
+    output's upper bound is its ``time``: the instant the value refers to,
+    whether that is when a window closed, when a cumulative total was observed,
+    or when a series sample was taken. Downstream of here the pair is spelled
+    ``(start_time, end_time)``, which is what :mod:`ess.livedata.dashboard.plots`
+    reads for the freshness/lag readout and for rate normalization.
 
-    Returns an empty dict if coords don't exist or are already scalar.
+    Every extractor applies this, so the pair reaches the plotters with the same
+    meaning whichever buffer and extractor the data came through. Callers must
+    apply it to *pristine* data: ``FullHistoryExtractor`` shifts ``time`` into
+    the local timezone for Bokeh's benefit, and bounds taken after that shift
+    would misreport wall-clock provenance by the UTC offset.
+
+    Coords already scalar (a single message, or a slice out of a buffer) are
+    taken as they are; 1-D coords from a ``TemporalBuffer`` are reduced to their
+    chronological ends. Bounds the data does not carry are omitted, so a series
+    output yields ``end_time`` only.
     """
     bounds: dict[str, sc.Variable] = {}
-    for name, index in [('start_time', 0), ('end_time', -1)]:
-        if name in data.coords and data.coords[name].ndim == 1:
-            bounds[name] = data.coords[name][index]
+    for name, source, end in [
+        ('start_time', 'start_time', 0),
+        ('end_time', 'time', -1),
+    ]:
+        coord = data.coords.get(source)
+        if coord is not None:
+            bounds[name] = coord[end] if coord.ndim == 1 else coord
     return bounds
 
 
@@ -79,12 +95,17 @@ class LatestValueExtractor(UpdateExtractor):
         """Latest value requires zero history."""
         return 0.0
 
-    def extract(self, data: sc.DataArray) -> Any:
+    def extract(self, data: Any) -> Any:
         """Extract the latest value from the data, unwrapped."""
-        if self._concat_dim not in data.dims:
+        if not isinstance(data, sc.DataArray):
+            # This extractor's buffer is a SingleValueBuffer, which holds
+            # whatever was published — bare Variables included. Nothing to
+            # slice, and no coords to translate.
             return data
-        # Extract last slice - this also gets the last value from any 1-D coords
-        return data[self._concat_dim, -1]
+        if self._concat_dim in data.dims:
+            # Extract last slice - this also gets the last value from any 1-D coords
+            data = data[self._concat_dim, -1]
+        return data.assign_coords(**_extract_time_bounds_as_scalars(data))
 
 
 class FullHistoryExtractor(UpdateExtractor):
@@ -108,8 +129,9 @@ class FullHistoryExtractor(UpdateExtractor):
 
     def extract(self, data: sc.DataArray) -> Any:
         """Extract all data from the buffer, converting time to datetime64."""
-        result = self._to_local_datetime(data)
-        return result.assign_coords(**_extract_time_bounds_as_scalars(result))
+        # Capture bounds before the timezone shift, which rewrites `time`.
+        bounds = _extract_time_bounds_as_scalars(data)
+        return self._to_local_datetime(data).assign_coords(**bounds)
 
     def _to_local_datetime(self, data: sc.DataArray) -> sc.DataArray:
         """Convert int64 time coordinate to datetime64 in local time.
