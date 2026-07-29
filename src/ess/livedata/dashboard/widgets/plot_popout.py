@@ -39,7 +39,10 @@ topology, so closing the browser tab discards them.
 
 from __future__ import annotations
 
+from typing import ClassVar
+
 import panel as pn
+from panel.reactive import ReactiveHTML
 
 from ..plot_orchestrator import CellId
 from .cell import CellWidget, ComposedPlot
@@ -73,6 +76,72 @@ _CASCADE_WRAP = 6
 _TOP_MARGIN = 24
 _CONTENT_HEIGHT = '78vh'
 
+
+class PopoutWindowFitter(ReactiveHTML):
+    """Invisible widget that makes a pop-out's plot follow its window.
+
+    Closes two gaps in Panel's ``FloatPanel``, both of which leave the plot at a
+    size the window no longer has:
+
+    - **The height chain is broken.** jsPanel sizes its own content element, but
+      the wrappers Panel puts between that element and ours have no height, so
+      nothing propagates the window's size inward. A stretching child then has
+      nothing to stretch into and collapses to a sliver; a child with its own
+      fixed height survives but can never follow the window, leaving whitespace
+      once the window grows past it.
+    - **Only drag-resize triggers a re-layout.** Panel listens for
+      ``jspanelresizestop``, which a drag fires but maximize, normalize and
+      smallify do not, so those change the window without resizing the plot in
+      it. Re-dispatching that event on any status change hands the work to
+      Panel's own handler rather than reimplementing it -- the ``panel``
+      property is what its handler matches on.
+
+    One instance per session, covering every pop-out however many are open.
+    Mirrors the ``_scripts['render']`` pattern of
+    :class:`~ess.livedata.dashboard.widgets.modal_escape_closer.ModalEscapeCloser`.
+    """
+
+    _template = """<div id="popout_fit" style="display:none;"></div>"""
+
+    _scripts: ClassVar = {
+        'render': """
+            if (window.__esslivedataPopoutFit) { return; }
+            window.__esslivedataPopoutFit = true;
+            const style = document.createElement('style');
+            style.id = 'esslivedata-popout-fit';
+            style.textContent = `
+                .jsPanel-content > .bk-root {
+                    height: 100%;
+                    box-sizing: border-box;
+                }
+                .jsPanel-content > .bk-root > div { height: 100%; }
+            `;
+            document.head.appendChild(style);
+            state.handler = (event) => {
+                const relayout = new Event('jspanelresizestop');
+                relayout.panel = event.panel;
+                document.dispatchEvent(relayout);
+            };
+            document.addEventListener('jspanelstatuschange', state.handler);
+        """,
+        'remove': """
+            if (state.handler) {
+                document.removeEventListener('jspanelstatuschange', state.handler);
+                const style = document.getElementById('esslivedata-popout-fit');
+                if (style) { style.remove(); }
+                window.__esslivedataPopoutFit = false;
+            }
+        """,
+    }
+
+    def __init__(self, **params):
+        params.setdefault('width', 0)
+        params.setdefault('height', 0)
+        params.setdefault('sizing_mode', 'fixed')
+        params.setdefault('visible', False)
+        super().__init__(**params)
+
+
 # jsPanel statuses in which the window actually renders its content. The others
 # ('minimized', and the two 'smallified' variants, which collapse the window to
 # its title bar) show no plot, so the cell behind them may sleep.
@@ -100,21 +169,14 @@ def _build_window(
     return pn.layout.FloatPanel(
         pn.Column(
             composed.build_pane(),
-            sizing_mode='stretch_width',
-            styles={
-                # An explicit height, not ``stretch_both``: jsPanel moves the
-                # window's DOM out of the Bokeh tree, leaving nothing for a
-                # stretching child to measure itself against, and a free-aspect
-                # plot then collapses to a sliver. Viewport units are explicit
-                # in exactly that sense -- they need no parent to measure
-                # against -- so they cap the height without reintroducing it.
-                # The wrapper is also what gives the relocated content a layout
-                # root of its own: a bare pane does not render once detached.
-                'height': _CONTENT_HEIGHT,
-                # A plot whose locked aspect makes it taller than the window
-                # must stay reachable rather than be clipped.
-                'overflow': 'auto',
-            },
+            # Stretches into the height ``_FILL_WINDOW`` gives the wrappers, so
+            # the plot tracks the window at every size. The wrapper is also what
+            # gives the relocated content a layout root of its own: a bare pane
+            # does not render once jsPanel has moved it out of the Bokeh tree.
+            sizing_mode='stretch_both',
+            # A plot whose locked aspect makes it taller than the window must
+            # stay reachable rather than be clipped.
+            styles={'overflow': 'auto'},
         ),
         name=title,
         # Free-floating rather than contained: the pop-out must be draggable
@@ -147,8 +209,12 @@ class PlotPopoutManager:
 
     def __init__(self) -> None:
         # Zero-height so the container does not compete for vertical space;
-        # the windows themselves render as free-floating overlays.
-        self._container = pn.Column(height=0, sizing_mode='stretch_width')
+        # the windows themselves render as free-floating overlays. The fitter
+        # is invisible and only installs document-level handlers, so it costs
+        # nothing until a window exists.
+        self._container = pn.Column(
+            PopoutWindowFitter(), height=0, sizing_mode='stretch_width'
+        )
         self._open: dict[CellId, pn.layout.FloatPanel] = {}
 
     @property

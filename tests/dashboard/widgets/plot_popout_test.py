@@ -12,6 +12,7 @@ rules that keep a window from outliving the cell it shows.
 from __future__ import annotations
 
 import holoviews as hv
+import panel as pn
 import pytest
 import scipp as sc
 
@@ -166,7 +167,16 @@ def line_cell(plot_orchestrator, plot_grid_tabs, plot_data_service, line_plotter
 
 
 def _open_windows(plot_grid_tabs) -> list:
-    return list(plot_grid_tabs._popouts.container.objects)
+    """The floating windows in the manager's container.
+
+    The container also holds the invisible fitter that installs the pop-out's
+    document-level handlers; only the windows are of interest here.
+    """
+    return [
+        obj
+        for obj in plot_grid_tabs._popouts.container.objects
+        if isinstance(obj, pn.layout.FloatPanel)
+    ]
 
 
 class TestPopoutRendersTheCellsPlotAgain:

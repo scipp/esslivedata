@@ -154,6 +154,24 @@ interactive resizing only, not to the size the panel opens at; override `content
 via `config` instead, which takes precedence over the size Panel derives from
 `width`/`height`.
 
+**Getting a plot to fill a FloatPanel** takes two things, both handled once per session
+by `PopoutWindowFitter` (`plot_popout.py`) — expect neither to work by default:
+
+- The height chain `.jsPanel-content` → `#float` (Panel's template root) → `#flex-item`
+  is broken: those wrappers have no height, so nothing carries the window's size inward.
+  A `stretch_both` child then collapses to a ~66 px sliver, and a child with a fixed
+  height survives but can never follow the window. `stylesheets=` on the `FloatPanel`
+  does **not** reach these wrappers — they are light DOM, so it takes a document-level
+  rule (`.jsPanel-content > .bk-root`).
+- Panel re-lays out only on `jspanelresizestop`, which a drag fires but maximize,
+  normalize and smallify do not. Re-dispatch that event on `jspanelstatuschange` with
+  `event.panel` copied across (Panel's handler matches on it) rather than reimplementing
+  the layout call. A synthetic `window` resize does *not* work.
+
+Any invisible `ReactiveHTML` helper needs a **public** class name: a leading underscore
+yields `could not resolve type '_Foo1'` in the browser and the whole session fails to
+render.
+
 **Clicks that silently do nothing.** A rebuild racing a click detaches the target
 between locating and pressing it; Playwright reports success and nothing happens. The
 cold-start tick after load triggers this often enough to make a single click on a

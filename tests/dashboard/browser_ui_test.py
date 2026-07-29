@@ -309,6 +309,74 @@ def test_concurrent_grid_property_edits_resolve_to_one_title_without_crash():
         assert_updating(winner, "surviving grid after concurrent edit race")
 
 
+# Tallest canvas inside the pop-out window. The plot renders into per-widget
+# shadow roots, which descendant CSS selectors do not cross, so walk them.
+_POPOUT_PLOT_HEIGHT = """
+() => {
+  const deep = (root, out) => {
+    root.querySelectorAll('*').forEach(e => {
+      if (e.tagName === 'CANVAS') out.push(e);
+      if (e.shadowRoot) deep(e.shadowRoot, out);
+    });
+    return out;
+  };
+  const panel = document.querySelector('.jsPanel');
+  if (!panel) return 0;
+  const heights = deep(panel, []).map(c => c.getBoundingClientRect().height);
+  return heights.length ? Math.round(Math.max(...heights)) : 0;
+}
+"""
+
+
+def _window_height(dash: Dashboard) -> float:
+    box = dash.page.locator(".jsPanel").first.bounding_box()
+    assert box is not None
+    return box["height"]
+
+
+@pytest.mark.browser
+def test_popped_out_plot_resizes_with_its_window():
+    """The plot must track the window, maximize included.
+
+    jsPanel resizes its own content element, but the wrappers Panel puts below
+    it carry no height, and Panel re-lays out only on a drag-resize. Without
+    both gaps closed the plot keeps whatever size it had when it opened, and
+    the window grows around it into whitespace.
+
+    Uses the free-aspect cell: an aspect-locked plot derives its height from
+    the window's *width*, so it legitimately overflows a wider window.
+    """
+    with fake_dashboard("dummy") as fake, Dashboard.connect(fake.url) as dash:
+        del fake
+        page = dash.page
+        page.set_viewport_size({"width": 1280, "height": 900})
+        dash.goto_tab("Detectors")
+
+        click_until(
+            dash,
+            ".lt-cell-r2c0.lt-tool-arrows-maximize",
+            lambda: page.locator(".lt-popout-r2c0").count() == 1,
+            label="the pop-out window to open",
+        )
+        wait_until(
+            dash,
+            lambda: page.evaluate(_POPOUT_PLOT_HEIGHT) > 0,
+            label="the popped-out plot to render",
+        )
+        opened = page.evaluate(_POPOUT_PLOT_HEIGHT)
+        assert opened > _window_height(dash) * 0.8, (
+            f"plot {opened} does not fill the window it opened in"
+        )
+
+        page.locator(".jsPanel-btn-maximize").first.click()
+        wait_until(
+            dash,
+            lambda: page.evaluate(_POPOUT_PLOT_HEIGHT) > opened,
+            label="the plot to grow with the maximized window",
+        )
+        assert page.evaluate(_POPOUT_PLOT_HEIGHT) > _window_height(dash) * 0.8
+
+
 @pytest.mark.browser
 @pytest.mark.parametrize("viewport_height", [700, 1000])
 def test_popped_out_window_fits_the_viewport_it_opens_on(viewport_height):
