@@ -167,7 +167,7 @@ class TestRestartCleanup:
         job_ids = job_orchestrator.commit_workflow(workflow_id)
         for source_name in workflow_spec.source_names:
             key = _make_result_key(workflow_id, source_name, job_ids[0].job_number)
-            message_pump.forward(_data_stream_id(key), sc.scalar(1.0))
+            message_pump.forward(_data_stream_id(key), sc.DataArray(sc.scalar(1.0)))
 
         subscriber = _KeysSubscriber(_data_keys(workflow_spec))
         data_service.register_subscriber(subscriber)
@@ -188,7 +188,7 @@ class TestRestartCleanup:
         key = _make_result_key(
             workflow_id, workflow_spec.source_names[0], job_ids[0].job_number
         )
-        message_pump.forward(_data_stream_id(key), sc.scalar(1.0))
+        message_pump.forward(_data_stream_id(key), sc.DataArray(sc.scalar(1.0)))
         assert key.data_key in data_service
 
         # No staging between commits: byte-identical config.
@@ -277,7 +277,7 @@ class TestRestartCleanup:
         job_ids = job_orchestrator.commit_workflow(workflow_id)
         for sn in workflow_spec.source_names:
             key = _make_result_key(workflow_id, sn, job_ids[0].job_number)
-            message_pump.forward(_data_stream_id(key), sc.scalar(1.0))
+            message_pump.forward(_data_stream_id(key), sc.DataArray(sc.scalar(1.0)))
 
         job_orchestrator.stop_workflow(workflow_id)
 
@@ -297,7 +297,7 @@ class TestRestartCleanup:
         job_orchestrator.commit_workflow(workflow_id)
 
         key = _make_result_key(workflow_id, workflow_spec.source_names[0], old_number)
-        message_pump.forward(_data_stream_id(key), sc.scalar(42.0))
+        message_pump.forward(_data_stream_id(key), sc.DataArray(sc.scalar(42.0)))
 
         assert len(data_service) == 0
 
@@ -309,14 +309,14 @@ class TestRestartCleanup:
         job_ids_1 = job_orchestrator.commit_workflow(workflow_id)
         for sn in workflow_spec.source_names:
             key = _make_result_key(workflow_id, sn, job_ids_1[0].job_number)
-            message_pump.forward(_data_stream_id(key), sc.scalar(1.0))
+            message_pump.forward(_data_stream_id(key), sc.DataArray(sc.scalar(1.0)))
 
         job_ids_2 = job_orchestrator.commit_workflow(workflow_id)
         new_number = job_ids_2[0].job_number
 
         for sn in workflow_spec.source_names:
             key = _make_result_key(workflow_id, sn, new_number)
-            message_pump.forward(_data_stream_id(key), sc.scalar(99.0))
+            message_pump.forward(_data_stream_id(key), sc.DataArray(sc.scalar(99.0)))
 
         for data_key in _data_keys(workflow_spec):
             assert data_key in data_service
@@ -408,8 +408,8 @@ class TestRestartCleanup:
         key_2 = _make_result_key(
             wf_id_2, workflow_spec_2.source_names[0], jobs_2[0].job_number
         )
-        message_pump.forward(_data_stream_id(key_1), sc.scalar(1.0))
-        message_pump.forward(_data_stream_id(key_2), sc.scalar(2.0))
+        message_pump.forward(_data_stream_id(key_1), sc.DataArray(sc.scalar(1.0)))
+        message_pump.forward(_data_stream_id(key_2), sc.DataArray(sc.scalar(2.0)))
 
         job_orchestrator.commit_workflow(wf_id_1)
         job_orchestrator.commit_workflow(wf_id_1)
@@ -451,7 +451,7 @@ class TestConcurrentForwardAndCommit:
                     try:
                         with registry.ingestion_guard():
                             message_pump.forward(
-                                _data_stream_id(key), sc.scalar(float(i))
+                                _data_stream_id(key), sc.DataArray(sc.scalar(float(i)))
                             )
                     except Exception as exc:
                         errors.append(exc)
@@ -509,7 +509,9 @@ class TestConcurrentForwardAndCommit:
             with registry.ingestion_guard():
                 for sn in workflow_spec.source_names:
                     key = _make_result_key(workflow_id, sn, job_ids[0].job_number)
-                    message_pump.forward(_data_stream_id(key), sc.scalar(value))
+                    message_pump.forward(
+                        _data_stream_id(key), sc.DataArray(sc.scalar(value))
+                    )
 
         def ingest_loop():
             try:

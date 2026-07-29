@@ -785,7 +785,7 @@ class TestAggregationOfCumulativeIsRejected:
             plot_name='lines',
             params=params,
             on_update=lambda: None,
-            temporality_by_role={PRIMARY: temporality},
+            temporality=dict.fromkeys(keys, temporality),
         )
 
     def test_aggregating_a_cumulative_field_raises(self, plotting_controller):

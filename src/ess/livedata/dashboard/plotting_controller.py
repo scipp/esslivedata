@@ -179,7 +179,7 @@ class PlottingController:
         plot_name: str,
         params: dict | pydantic.BaseModel,
         on_update: Callable[[], None],
-        temporality_by_role: Mapping[str, Temporality | None],
+        temporality: Mapping[DataKey, Temporality | None],
     ) -> DataSubscriber:
         """
         Set up data pipeline for any plot type.
@@ -200,8 +200,8 @@ class PlottingController:
         on_update
             Callback invoked when any of the keys changed; see
             :py:class:`DataSubscriber`.
-        temporality_by_role
-            Declared :class:`Temporality` of the field each role resolved to,
+        temporality
+            Declared :class:`Temporality` of the field each key resolved to,
             ``None`` where the workflow is not in the registry. Aggregation is
             rejected for the keys it must not be applied to.
 
@@ -220,14 +220,8 @@ class PlottingController:
         spec = plotter_registry.get_spec(plot_name)
         window = params.time_window if isinstance(params, TimeWindowMixin) else None
 
-        # Flatten keys for extractor creation; each carries the temporality of
-        # the field its role resolved to.
+        # Flatten keys for extractor creation
         all_keys = [key for keys in keys_by_role.values() for key in keys]
-        temporality = {
-            key: temporality_by_role[role]
-            for role, keys in keys_by_role.items()
-            for key in keys
-        }
 
         # Standard path: single subscription with role-aware assembly
         extractors = create_extractors_from_params(all_keys, window, temporality, spec)

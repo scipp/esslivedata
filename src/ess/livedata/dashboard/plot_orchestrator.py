@@ -246,16 +246,19 @@ def _build_resolved_data_sources(
     return resolved
 
 
-def _build_keys_by_role(
+def _build_subscription_keys(
     data_sources: dict[str, ResolvedDataSource],
-) -> dict[str, list[DataKey]]:
-    """Build stable DataKeys grouped by role.
+) -> tuple[dict[str, list[DataKey]], dict[DataKey, Temporality | None]]:
+    """Build stable DataKeys grouped by role, plus what each key's data means.
 
     Keys carry no job identity — they are fully determined by the plot
-    config.
+    config. The temporality map is minted in the same pass, so the two cannot
+    disagree about which keys exist.
     """
-    return {
-        role: [
+    keys_by_role: dict[str, list[DataKey]] = {}
+    temporality: dict[DataKey, Temporality | None] = {}
+    for role, ds in data_sources.items():
+        keys = [
             DataKey(
                 workflow_id=ds.workflow_id,
                 source_name=sn,
@@ -263,8 +266,9 @@ def _build_keys_by_role(
             )
             for sn in ds.source_names
         ]
-        for role, ds in data_sources.items()
-    }
+        keys_by_role[role] = keys
+        temporality.update(dict.fromkeys(keys, ds.temporality))
+    return keys_by_role, temporality
 
 
 @dataclass
@@ -1258,16 +1262,14 @@ class PlotOrchestrator:
             # Set up data pipeline - updates mark the layer dirty; flush_frames
             # pulls and rebuilds. The immediate mark covers retained data
             # already present, so the plot shows without waiting for a delta.
+            keys_by_role, temporality = _build_subscription_keys(resolved_data_sources)
             try:
                 subscriber = self._plotting_controller.setup_pipeline(
-                    keys_by_role=_build_keys_by_role(resolved_data_sources),
+                    keys_by_role=keys_by_role,
                     plot_name=config.plot_name,
                     params=config.params,
                     on_update=lambda: self._mark_layer_dirty(layer_id),
-                    temporality_by_role={
-                        role: ds.temporality
-                        for role, ds in resolved_data_sources.items()
-                    },
+                    temporality=temporality,
                 )
                 self._data_subscriptions[layer_id] = subscriber
                 self._mark_layer_dirty(layer_id)

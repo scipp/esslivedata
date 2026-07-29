@@ -8,11 +8,13 @@ Extractors are the naming boundary: on the wire a value's upper bound is its
 ``(start_time, end_time)`` pair the plotters read. The pair must reflect the
 actual range of the extracted data, not stale coordinates from the buffer
 reference, and must be pristine wall-clock time even where ``time`` itself is
-shifted for display.
+shifted for display. A series output has no such range: its ``time`` is the
+per-sample axis, so it is left alone.
 """
 
 import time
 
+import pytest
 import scipp as sc
 
 from ess.livedata.dashboard.extractors import (
@@ -263,3 +265,37 @@ class TestLatestValueExtractor:
 
         assert sc.identical(result.coords['start_time'], sc.scalar(1000, unit='ns'))
         assert sc.identical(result.coords['end_time'], sc.scalar(3000, unit='ns'))
+
+
+class TestSeriesOutputsCarryNoBounds:
+    """A series output's ``time`` is its x axis, not a bound to translate.
+
+    Its age is already legible on the plot, so minting ``end_time`` from the
+    last sample would drive the freshness pill and the lag readout off the
+    device's sampling rate rather than the pipeline's latency. ``start_time``
+    is what separates a bounded output from a series one, so the pair is
+    minted whole or not at all.
+    """
+
+    @pytest.fixture
+    def samples(self) -> sc.DataArray:
+        return sc.DataArray(
+            sc.array(dims=['time'], values=[1.0, 2.0, 3.0], unit='K'),
+            coords={
+                'time': sc.array(
+                    dims=['time'], values=[100, 200, 300], unit='ns', dtype='int64'
+                )
+            },
+        )
+
+    def test_full_history_mints_no_bounds(self, samples: sc.DataArray) -> None:
+        result = FullHistoryExtractor().extract(samples)
+
+        assert 'end_time' not in result.coords
+        assert 'start_time' not in result.coords
+
+    def test_latest_value_mints_no_bounds(self, samples: sc.DataArray) -> None:
+        result = LatestValueExtractor().extract(samples)
+
+        assert 'end_time' not in result.coords
+        assert 'start_time' not in result.coords

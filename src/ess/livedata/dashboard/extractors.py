@@ -16,12 +16,12 @@ def _extract_time_bounds_as_scalars(data: sc.DataArray) -> dict[str, sc.Variable
     """
     Capture the covered time range as the scalar ``(start_time, end_time)`` pair.
 
-    This is the naming boundary between wire and dashboard. On the wire an
-    output's upper bound is its ``time``: the instant the value refers to,
-    whether that is when a window closed, when a cumulative total was observed,
-    or when a series sample was taken. Downstream of here the pair is spelled
-    ``(start_time, end_time)``, which is what :mod:`ess.livedata.dashboard.plots`
-    reads for the freshness/lag readout and for rate normalization.
+    This is the naming boundary between wire and dashboard. On the wire a
+    bounded output's upper bound is its ``time``: the instant the value refers
+    to, whether that is when a window closed or when a cumulative total was
+    observed. Downstream of here the pair is spelled ``(start_time, end_time)``,
+    which is what :mod:`ess.livedata.dashboard.plots` reads for the
+    freshness/lag readout and for rate normalization.
 
     Every extractor applies this, so the pair reaches the plotters with the same
     meaning whichever buffer and extractor the data came through. Callers must
@@ -29,20 +29,24 @@ def _extract_time_bounds_as_scalars(data: sc.DataArray) -> dict[str, sc.Variable
     the local timezone for Bokeh's benefit, and bounds taken after that shift
     would misreport wall-clock provenance by the UTC offset.
 
+    The pair is minted whole or not at all, and ``start_time`` is what tells a
+    bounded output from a series one. A series output has no bounds to capture:
+    its ``time`` is the per-sample axis, so its age is already on the plot, and
+    an ``end_time`` minted from it would drive the freshness pill and the lag
+    readout off the device's sampling rate rather than the pipeline's latency.
+
     Coords already scalar (a single message, or a slice out of a buffer) are
     taken as they are; 1-D coords from a ``TemporalBuffer`` are reduced to their
-    chronological ends. Bounds the data does not carry are omitted, so a series
-    output yields ``end_time`` only.
+    chronological ends.
     """
-    bounds: dict[str, sc.Variable] = {}
-    for name, source, end in [
-        ('start_time', 'start_time', 0),
-        ('end_time', 'time', -1),
-    ]:
-        coord = data.coords.get(source)
-        if coord is not None:
-            bounds[name] = coord[end] if coord.ndim == 1 else coord
-    return bounds
+    start_time = data.coords.get('start_time')
+    time = data.coords.get('time')
+    if start_time is None or time is None:
+        return {}
+    return {
+        'start_time': start_time[0] if start_time.ndim == 1 else start_time,
+        'end_time': time[-1] if time.ndim == 1 else time,
+    }
 
 
 class UpdateExtractor(ABC):
@@ -95,13 +99,8 @@ class LatestValueExtractor(UpdateExtractor):
         """Latest value requires zero history."""
         return 0.0
 
-    def extract(self, data: Any) -> Any:
+    def extract(self, data: sc.DataArray) -> Any:
         """Extract the latest value from the data, unwrapped."""
-        if not isinstance(data, sc.DataArray):
-            # This extractor's buffer is a SingleValueBuffer, which holds
-            # whatever was published — bare Variables included. Nothing to
-            # slice, and no coords to translate.
-            return data
         if self._concat_dim in data.dims:
             # Extract last slice - this also gets the last value from any 1-D coords
             data = data[self._concat_dim, -1]

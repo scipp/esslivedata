@@ -63,7 +63,7 @@ class TestBeginGeneration:
     def test_clears_workflow_buffers(self):
         registry, ds, _js = _make_registry()
         key = _make_data_key()
-        ds[key] = sc.scalar(1.0)
+        ds[key] = sc.DataArray(sc.scalar(1.0))
 
         registry.begin_generation(_workflow_id, uuid.uuid4(), config={})
 
@@ -73,8 +73,8 @@ class TestBeginGeneration:
         registry, ds, _js = _make_registry()
         key = _make_data_key()
         other_key = _make_data_key(workflow_id=_other_workflow_id)
-        ds[key] = sc.scalar(1.0)
-        ds[other_key] = sc.scalar(2.0)
+        ds[key] = sc.DataArray(sc.scalar(1.0))
+        ds[other_key] = sc.DataArray(sc.scalar(2.0))
 
         registry.begin_generation(_workflow_id, uuid.uuid4(), config={})
 
@@ -107,8 +107,8 @@ class TestBeginGeneration:
         registry, ds, _ = _make_registry()
         key_a = _make_data_key(source_name="det1")
         key_b = _make_data_key(source_name="det2")
-        ds[key_a] = sc.scalar(1.0)
-        ds[key_b] = sc.scalar(2.0)
+        ds[key_a] = sc.DataArray(sc.scalar(1.0))
+        ds[key_b] = sc.DataArray(sc.scalar(2.0))
 
         snapshots: list[dict] = []
 
@@ -146,7 +146,7 @@ class TestDeactivate:
         job_number = uuid.uuid4()
         key = _make_data_key()
         registry.begin_generation(_workflow_id, job_number, config={})
-        ds[key] = sc.scalar(1.0)
+        ds[key] = sc.DataArray(sc.scalar(1.0))
 
         registry.deactivate(_workflow_id)
 
@@ -224,7 +224,7 @@ class TestRecordStale:
         key = _make_data_key()
         current = uuid.uuid4()
         registry.begin_generation(_workflow_id, current, config={})
-        ds[key] = sc.scalar(1.0)
+        ds[key] = sc.DataArray(sc.scalar(1.0))
 
         for _ in range(3):
             registry.record_stale(_workflow_id, uuid.uuid4())

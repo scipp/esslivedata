@@ -41,7 +41,7 @@ class TestLatestValueExtractor:
 
         # Should extract only the last time slice
         assert 'time' not in result.dims
-        assert sc.identical(result.drop_coords(['end_time']), data['time', -1])
+        assert sc.identical(result, data['time', -1])
 
     def test_extract_from_data_without_concat_dimension(self):
         """Extract from data that doesn't have concat dimension (single frame)."""
@@ -75,7 +75,7 @@ class TestLatestValueExtractor:
     def test_extract_scalar_data(self):
         """Extract from scalar data."""
         extractor = LatestValueExtractor()
-        data = sc.scalar(42.0, unit='counts')
+        data = sc.DataArray(sc.scalar(42.0, unit='counts'))
 
         result = extractor.extract(data)
 
@@ -106,9 +106,8 @@ class TestFullHistoryExtractor:
 
         result = extractor.extract(data)
 
-        # All data, plus the scalar upper bound every extractor mints from 'time'.
-        assert sc.identical(result.drop_coords(['end_time']), data)
-        assert sc.identical(result.coords['end_time'], data.coords['time'][-1])
+        # Should return all data unchanged
+        assert sc.identical(result, data)
 
     def test_extract_with_multidimensional_data(self):
         """Extract with complex multidimensional data."""
@@ -129,7 +128,7 @@ class TestFullHistoryExtractor:
 
         result = extractor.extract(data)
 
-        assert sc.identical(result.drop_coords(['end_time']), data)
+        assert sc.identical(result, data)
 
     def test_extract_converts_int64_nanoseconds_to_datetime64(self):
         """Int64 nanosecond timestamps are converted to datetime64 for plotting."""
@@ -205,7 +204,7 @@ class TestFullHistoryExtractor:
 
         result = extractor.extract(data)
 
-        assert sc.identical(result.drop_coords(['end_time']), data)
+        assert sc.identical(result, data)
 
     def test_extract_with_custom_concat_dim(self):
         """Test extraction with custom concat dimension name."""
