@@ -20,9 +20,18 @@ flush.
 
 A pop-out floats above the whole dashboard, so its cell must stay live even
 when its grid is not the visible tab -- ``PlotGridTabs`` asks
-:meth:`PlotPopoutManager.open_cells` which cells to keep computing and
-flushing. That is the cost of a pop-out: one extra rendered copy of the plot,
-plus a hidden grid that no longer sleeps.
+:meth:`PlotPopoutManager.live_cells` which cells to keep computing and
+flushing. Liveness is per cell, not per grid: the rest of a hidden grid still
+sleeps. That is the cost of a pop-out: one extra rendered copy of the plot,
+and one cell that goes on computing while its tab is away.
+
+Liveness follows what the window *shows*, not that it exists, which is the
+same rule a hidden tab already obeys. Minimizing (or smallifying) a pop-out
+puts its cell back to sleep, so a user cannot accumulate cost by popping out
+many cells and minimizing the windows: what is not rendered is not computed.
+This is why there is no cap on the number of pop-outs -- comparing several
+detectors side by side is the point, and the cost of that is bounded by the
+screen it has to fit on.
 
 Pop-outs are per session and non-persistent: they are not part of the plot
 topology, so closing the browser tab discards them.
@@ -51,6 +60,11 @@ _CONTENT_INSET = 16
 # exactly on the first, hiding it and its close button.
 _CASCADE_STEP = 28
 _CASCADE_WRAP = 6
+
+# jsPanel statuses in which the window actually renders its content. The others
+# ('minimized', and the two 'smallified' variants, which collapse the window to
+# its title bar) show no plot, so the cell behind them may sleep.
+_VISIBLE_STATUSES = frozenset({'normalized', 'maximized'})
 
 
 def _build_window(
@@ -121,14 +135,29 @@ class PlotPopoutManager:
         return self._container
 
     def open_cells(self) -> frozenset[CellId]:
-        """Cells that currently have a pop-out window open.
+        """Cells that have a pop-out window, whether or not it is showing.
+
+        Existence, not visibility -- a minimized window is still the user's
+        window and must survive a rebuild of the cell behind it. Use
+        :meth:`live_cells` to decide what to keep computing.
+        """
+        return frozenset(self._open)
+
+    def live_cells(self) -> frozenset[CellId]:
+        """Cells whose pop-out is actually rendering, and must stay computed.
 
         The poll loop treats these as live even when their grid is not the
         visible tab: watching a plot while working elsewhere in the dashboard
         is the point of popping it out, and a silently frozen window would
-        misrepresent the data as current.
+        misrepresent the data as current. A minimized window renders nothing,
+        so it earns no such treatment and its cell sleeps like any other cell
+        on a hidden tab.
         """
-        return frozenset(self._open)
+        return frozenset(
+            cell_id
+            for cell_id, window in self._open.items()
+            if window.status in _VISIBLE_STATUSES
+        )
 
     def open(self, cell_id: CellId, cell_widget: CellWidget) -> None:
         """Open (or re-open) the pop-out for a cell.
@@ -179,7 +208,9 @@ class PlotPopoutManager:
         """Drop the pop-out once the user closes its window.
 
         ``FloatPanel.status`` round-trips from jsPanel, so the window's own
-        close button lands here; minimize/maximize are left alone.
+        close button lands here. Minimize and restore need no handling: they
+        change what :meth:`live_cells` reports, which the next poll pass reads
+        for itself.
         """
         if status == 'closed':
             self.close(cell_id)

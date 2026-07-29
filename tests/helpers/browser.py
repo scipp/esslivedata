@@ -92,6 +92,25 @@ def assert_updating(dash: Dashboard, label: str) -> None:
     assert after != before, f"{label} stopped receiving data updates: {before}"
 
 
+def assert_stops_updating(dash: Dashboard, label: str) -> None:
+    """Assert the session's rendered data goes quiet and stays quiet.
+
+    Retried rather than sampled once: a frame already in flight when the
+    session went to sleep may still land, and that is not a failure. Data
+    genuinely still flowing never yields two matching samples.
+    """
+    waited = 0
+    while True:
+        before = fingerprint(dash)
+        dash.page.wait_for_timeout(UPDATE_WINDOW_MS)
+        after = fingerprint(dash)
+        if after == before:
+            return
+        waited += UPDATE_WINDOW_MS
+        if waited >= PROPAGATION_TIMEOUT_MS:
+            raise AssertionError(f"{label} kept receiving data updates")
+
+
 def wait_until(
     dash: Dashboard,
     condition: Callable[[], bool],

@@ -137,6 +137,13 @@ while another tab is shown, so with `dynamic=True` tearing down the hidden grid'
 it is then the only plot in the document — which is what makes `assert_updating` on
 another tab a pop-out liveness check.
 
+Minimizing parks the panel *off-screen* (x ≈ −9000) and leaves a replacement strip of
+small buttons at the bottom of the viewport. So after a minimize, `.jsPanel-btn-close`
+still matches the parked panel and any click on it times out as "outside of the
+viewport" — drive the strip instead (`.jsPanel-btn-sm.jsPanel-btn-normalize`, or the
+matching `-close`). A minimized pop-out is deliberately *not* live, so
+`assert_stops_updating` is the check there.
+
 **Modals.** Settings (gear), cell edit (pencil), and workflow config open a `pn.Modal`
 rendered as `[role=dialog]` — use that as the open/visible signal (`Dashboard.open_modal`
 waits on it). Footer buttons are reachable by text (`Cancel`, `Update Plot`, `Back`). To

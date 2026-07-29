@@ -29,6 +29,7 @@ import pytest
 pytest.importorskip("playwright.sync_api")
 from tests.helpers.browser import (
     Dashboard,
+    assert_stops_updating,
     assert_updating,
     fake_dashboard,
     fingerprint,
@@ -307,12 +308,14 @@ def test_concurrent_grid_property_edits_resolve_to_one_title_without_crash():
 
 
 @pytest.mark.browser
-def test_popped_out_plot_floats_above_other_tabs_and_keeps_updating():
-    """A pop-out is a live second view, not a snapshot of the cell.
+def test_popped_out_plot_stays_live_across_tabs_and_sleeps_when_minimized():
+    """A pop-out is a live second view, and costs nothing while it shows none.
 
     Switching tabs is the interesting case: ``dynamic=True`` tears down the
     hidden grid's Bokeh models, so the window is then the *only* plot in the
-    document -- and the poll loop must still be feeding it.
+    document -- and the poll loop must still be feeding it. Minimizing it must
+    stop that feed, or popping out many cells and minimizing the windows would
+    pin every one of those cells live for nothing on screen.
     """
     popout = ".lt-cell-r0c0.lt-tool-arrows-maximize"
     with fake_dashboard("dummy") as fake, Dashboard.connect(fake.url) as dash:
@@ -333,6 +336,17 @@ def test_popped_out_plot_floats_above_other_tabs_and_keeps_updating():
         dash.goto_tab("Workflows")
         assert page.locator(".jsPanel").first.is_visible()
         assert_updating(dash, "popped-out plot while another tab is shown")
+
+        # Minimizing must put the cell back to sleep, and restoring must wake
+        # it. Proving both end to end matters because the guard rests on
+        # jsPanel round-tripping the user's click as a ``status`` change.
+        page.locator(".jsPanel-btn-minimize").first.click()
+        assert_stops_updating(dash, "minimized pop-out on a hidden tab")
+
+        # A minimized window is parked off-screen and replaced by a strip of
+        # small buttons; normalize from there rather than from the panel.
+        page.locator(".jsPanel-btn-sm.jsPanel-btn-normalize").click()
+        assert_updating(dash, "restored pop-out on a hidden tab")
 
         page.locator(".jsPanel-btn-close").first.click()
         wait_until(

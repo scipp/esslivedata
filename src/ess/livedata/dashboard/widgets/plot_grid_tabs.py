@@ -687,11 +687,12 @@ class PlotGridTabs:
         # data arriving for another session's tab does not wake this session.
         # The cheap per-tick work below -- version/lifecycle scan, layer
         # activation, freshness-pill aging -- always runs so it stays responsive.
-        # A cell with an open pop-out window counts as live wherever it sits, so
+        # A cell whose pop-out is on screen counts as live wherever it sits, so
         # its grid joins the visible one in driving the flush gate. With no
-        # pop-outs open this reduces to the visible grid alone, leaving the gate
-        # exactly as it was.
-        popout_cells = self._popouts.open_cells()
+        # pop-outs showing this reduces to the visible grid alone, leaving the
+        # gate exactly as it was -- which is also what a minimized pop-out gets,
+        # since ``live_cells`` reports what renders, not what exists.
+        popout_cells = self._popouts.live_cells()
         live_grids = {active_grid_id} | {
             grid_id
             for cell_id in popout_cells
@@ -722,6 +723,7 @@ class PlotGridTabs:
 
                 # A popped-out cell keeps computing and repainting while the
                 # user works in another tab; the window shows it either way.
+                # Minimized, it shows nothing and sleeps with its grid.
                 is_active = grid_is_visible or cell_id in popout_cells
 
                 # Detect composition changes (layer add/remove/reconfigure,

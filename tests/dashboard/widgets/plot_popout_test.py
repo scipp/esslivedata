@@ -428,6 +428,53 @@ class TestPopoutKeepsItsCellLive:
             plot_grid_tabs, plot_orchestrator, plot_data_service, line_cell
         )
 
+    @pytest.mark.parametrize('status', ['minimized', 'smallified', 'smallifiedmax'])
+    def test_window_showing_no_plot_lets_the_cell_sleep(
+        self, plot_grid_tabs, plot_orchestrator, plot_data_service, line_cell, status
+    ):
+        """Liveness follows what a window renders, not that it exists.
+
+        Otherwise popping out many cells and minimizing the windows would pin
+        every one of those cells live, on every grid, for nothing on screen.
+        """
+        plot_grid_tabs._show_popout(line_cell)
+        plot_grid_tabs.tabs.active = 0
+
+        _open_windows(plot_grid_tabs)[0].status = status
+        plot_grid_tabs._poll_for_plot_updates()
+
+        assert not _layer_is_active(
+            plot_grid_tabs, plot_orchestrator, plot_data_service, line_cell
+        )
+
+    def test_restoring_the_window_wakes_its_cell(
+        self, plot_grid_tabs, plot_orchestrator, plot_data_service, line_cell
+    ):
+        plot_grid_tabs._show_popout(line_cell)
+        plot_grid_tabs.tabs.active = 0
+        window = _open_windows(plot_grid_tabs)[0]
+        window.status = 'minimized'
+        plot_grid_tabs._poll_for_plot_updates()
+
+        window.status = 'normalized'
+        plot_grid_tabs._poll_for_plot_updates()
+
+        assert _layer_is_active(
+            plot_grid_tabs, plot_orchestrator, plot_data_service, line_cell
+        )
+
+    def test_minimized_window_still_survives_a_cell_rebuild(
+        self, plot_grid_tabs, plot_orchestrator, line_cell
+    ):
+        """Sleeping is not closing: the user's window must still be there."""
+        plot_grid_tabs._show_popout(line_cell)
+        _open_windows(plot_grid_tabs)[0].status = 'minimized'
+
+        plot_orchestrator.set_cell_title(line_cell, 'Renamed')
+        plot_grid_tabs._poll_for_plot_updates()
+
+        assert len(_open_windows(plot_grid_tabs)) == 1
+
 
 def _layer_is_active(plot_grid_tabs, plot_orchestrator, plot_data_service, cell_id):
     """Whether a viewer still holds interest in the cell's layer.
