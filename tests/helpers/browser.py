@@ -9,8 +9,11 @@ Importing this module requires Playwright; test modules must call
 from __future__ import annotations
 
 import sys
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
+from contextlib import contextmanager
 from pathlib import Path
+
+from playwright.sync_api import Browser, sync_playwright
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(REPO_ROOT / "scripts"))
@@ -18,7 +21,11 @@ sys.path.insert(0, str(REPO_ROOT / "scripts"))
 # Re-exported so tests reach the driving kit through this module, which owns the
 # scripts/ sys.path seam above, rather than each repeating it.
 import drive_dashboard  # noqa: E402,F401
-from drive_dashboard import Dashboard, _fake_dashboard  # noqa: E402
+from drive_dashboard import (  # noqa: E402
+    Dashboard,
+    _fake_dashboard,
+    _launch_browser,
+)
 
 fake_dashboard = _fake_dashboard
 
@@ -55,6 +62,22 @@ DATA_FINGERPRINT_JS = """() => {
   }
   return {sources, length, checksum};
 }"""
+
+
+@contextmanager
+def open_browser() -> Iterator[Browser]:
+    """A running browser with no dashboard session open on it.
+
+    ``Dashboard.connect`` opens a session as it hands the browser over; tests
+    that assert on which sessions the server holds need to control that
+    themselves.
+    """
+    with sync_playwright() as playwright:
+        browser = _launch_browser(playwright)
+        try:
+            yield browser
+        finally:
+            browser.close()
 
 
 def fingerprint(dash: Dashboard) -> dict:
