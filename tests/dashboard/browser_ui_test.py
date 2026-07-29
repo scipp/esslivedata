@@ -13,7 +13,8 @@ through the stable ``lt-*`` automation hooks:
   updating;
 - two sessions racing to save edits on the same grid converge on one title,
   without a server-side exception or a duplicated/lost tab;
-- a popped-out plot floats above other tabs and keeps updating there.
+- a popped-out plot opens within the viewport, floats above other tabs and
+  keeps updating there, and stops costing anything once minimized.
 
 Each test launches its own dashboard for isolation, since grid topology changes
 are process-global; ports are allocated per launch, so concurrent runs of this
@@ -31,6 +32,7 @@ from tests.helpers.browser import (
     Dashboard,
     assert_stops_updating,
     assert_updating,
+    click_until,
     fake_dashboard,
     fingerprint,
     wait_until,
@@ -308,6 +310,41 @@ def test_concurrent_grid_property_edits_resolve_to_one_title_without_crash():
 
 
 @pytest.mark.browser
+@pytest.mark.parametrize("viewport_height", [700, 1000])
+def test_popped_out_window_fits_the_viewport_it_opens_on(viewport_height):
+    """The window must never open with its title bar off the top of the screen.
+
+    That title bar carries the only controls for closing, minimizing and
+    maximizing, so a window opening above the fold cannot be dismissed at all.
+    A fixed pixel height centred vertically does exactly that on any screen
+    shorter than the window, which is most laptops.
+    """
+    with fake_dashboard("dummy") as fake, Dashboard.connect(fake.url) as dash:
+        del fake
+        page = dash.page
+        page.set_viewport_size({"width": 1280, "height": viewport_height})
+        dash.goto_tab("Detectors")
+
+        click_until(
+            dash,
+            ".lt-cell-r0c0.lt-tool-arrows-maximize",
+            lambda: page.locator(".lt-popout-r0c0").count() == 1,
+            label="the pop-out window to open",
+        )
+
+        box = page.locator(".jsPanel").first.bounding_box()
+        assert box is not None
+        assert box["y"] >= 0, f"window opened above the viewport: {box}"
+        assert box["y"] + box["height"] <= viewport_height, (
+            f"window opened taller than the viewport: {box}"
+        )
+        # The controls specifically, not just the window's box.
+        close_button = page.locator(".jsPanel-btn-close").first.bounding_box()
+        assert close_button is not None
+        assert close_button["y"] >= 0
+
+
+@pytest.mark.browser
 def test_popped_out_plot_stays_live_across_tabs_and_sleeps_when_minimized():
     """A pop-out is a live second view, and costs nothing while it shows none.
 
@@ -323,9 +360,9 @@ def test_popped_out_plot_stays_live_across_tabs_and_sleeps_when_minimized():
         page = dash.page
         dash.goto_tab("Detectors")
 
-        dash.click(popout)
-        wait_until(
+        click_until(
             dash,
+            popout,
             lambda: page.locator(".lt-popout-r0c0").count() == 1,
             label="the pop-out window to open",
         )

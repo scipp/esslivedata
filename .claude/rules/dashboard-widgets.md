@@ -144,6 +144,23 @@ viewport" — drive the strip instead (`.jsPanel-btn-sm.jsPanel-btn-normalize`, 
 matching `-close`). A minimized pop-out is deliberately *not* live, so
 `assert_stops_updating` is the check there.
 
+The window hangs from the top of the viewport and is sized in `vh`, because its title
+bar holds the only close/minimize controls: centring a fixed pixel height puts them
+above `y=0` on any viewport shorter than the window, and the window then cannot be
+dismissed at all. Test viewports are 1000 px tall by default, which is *above* the
+threshold — regressions here only show at laptop heights, so the geometry test
+parametrizes over 700 px as well. Note `maxSize` is not a fix: jsPanel applies it to
+interactive resizing only, not to the size the panel opens at; override `contentSize`
+via `config` instead, which takes precedence over the size Panel derives from
+`width`/`height`.
+
+**Clicks that silently do nothing.** A rebuild racing a click detaches the target
+between locating and pressing it; Playwright reports success and nothing happens. The
+cold-start tick after load triggers this often enough to make a single click on a
+freshly loaded tab roughly a 3-in-4 proposition. `click_until(dash, selector, condition,
+label=...)` retries until the effect is observable — use it for the first click of a
+session rather than `dash.click` plus a `wait_until`, which cannot recover.
+
 **Modals.** Settings (gear), cell edit (pencil), and workflow config open a `pn.Modal`
 rendered as `[role=dialog]` — use that as the open/visible signal (`Dashboard.open_modal`
 waits on it). Footer buttons are reachable by text (`Cancel`, `Update Plot`, `Back`). To

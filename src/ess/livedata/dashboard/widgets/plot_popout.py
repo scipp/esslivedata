@@ -45,21 +45,33 @@ from ..plot_orchestrator import CellId
 from .cell import CellWidget, ComposedPlot
 from .styles import Colors
 
-# Initial window size in pixels. Generous, but small enough that the grid stays
-# partly visible behind it — the pop-out is a detail view of a cell, not a
-# replacement for the dashboard. The user can resize and maximize from there.
-# Near-square on purpose: an aspect-locked plot derives its cross dimension from
-# the stretched one (see ``frame_aspect``), so a wide window would push a square
-# frame taller than the window. The content scrolls when it still does not fit.
+# Initial window size. Generous, but small enough that the grid stays partly
+# visible behind it — the pop-out is a detail view of a cell, not a replacement
+# for the dashboard. The user can resize and maximize from there.
+#
+# The height is a fraction of the viewport rather than a pixel count, so the
+# window fits the screen it opens on. An aspect-locked plot still derives its
+# height from the window's width (see ``frame_aspect``) and can exceed that; it
+# scrolls rather than being clipped.
 _POPOUT_WIDTH = 860
+# Fallback for Panel's own model box; jsPanel opens at ``_CONTENT_HEIGHT``,
+# which ``config`` below overrides it with.
 _POPOUT_HEIGHT = 820
-# Vertical padding the FloatPanel template puts around its content.
-_CONTENT_INSET = 16
 
 # Each further window is offset by this much so a second pop-out does not land
 # exactly on the first, hiding it and its close button.
 _CASCADE_STEP = 28
 _CASCADE_WRAP = 6
+
+# The window hangs from the top of the viewport rather than being centred in it,
+# and is capped in viewport units so it can never grow past the bottom. Centring
+# a fixed pixel height puts the title bar above y=0 on any screen shorter than
+# the window -- and with it the close, minimize and maximize buttons, leaving no
+# way to get rid of the window at all. Anchoring the top means the title bar is
+# always on screen whatever the viewport, and the cap keeps the bottom edge (the
+# resize handle) reachable too.
+_TOP_MARGIN = 24
+_CONTENT_HEIGHT = '78vh'
 
 # jsPanel statuses in which the window actually renders its content. The others
 # ('minimized', and the two 'smallified' variants, which collapse the window to
@@ -88,28 +100,38 @@ def _build_window(
     return pn.layout.FloatPanel(
         pn.Column(
             composed.build_pane(),
-            # An explicit height, not ``stretch_both``: jsPanel moves the
-            # window's DOM out of the Bokeh tree, leaving nothing for a
-            # stretching child to measure itself against, and a free-aspect
-            # plot then collapses to a sliver. The wrapper is also what gives
-            # the relocated content a layout root of its own — a bare pane does
-            # not render once detached.
-            height=_POPOUT_HEIGHT - _CONTENT_INSET,
             sizing_mode='stretch_width',
-            # A plot whose locked aspect makes it taller than the window must
-            # stay reachable rather than be clipped.
-            styles={'overflow': 'auto'},
+            styles={
+                # An explicit height, not ``stretch_both``: jsPanel moves the
+                # window's DOM out of the Bokeh tree, leaving nothing for a
+                # stretching child to measure itself against, and a free-aspect
+                # plot then collapses to a sliver. Viewport units are explicit
+                # in exactly that sense -- they need no parent to measure
+                # against -- so they cap the height without reintroducing it.
+                # The wrapper is also what gives the relocated content a layout
+                # root of its own: a bare pane does not render once detached.
+                'height': _CONTENT_HEIGHT,
+                # A plot whose locked aspect makes it taller than the window
+                # must stay reachable rather than be clipped.
+                'overflow': 'auto',
+            },
         ),
         name=title,
         # Free-floating rather than contained: the pop-out must be draggable
         # across the whole page, not clipped by the zero-height container that
         # roots it in the component tree.
         contained=False,
-        position='center',
+        position='center-top',
         offsetx=offset,
-        offsety=offset,
+        offsety=_TOP_MARGIN + offset,
         width=_POPOUT_WIDTH,
         height=_POPOUT_HEIGHT,
+        # ``config`` overrides the options Panel derives from the parameters
+        # above, which is the only way to reach jsPanel's viewport-relative
+        # sizing -- ``height`` is an int and cannot express it. (``maxSize``
+        # looks like the natural fit but jsPanel applies it only to interactive
+        # resizing, not to the size it opens at.)
+        config={'contentSize': f'{_POPOUT_WIDTH} {_CONTENT_HEIGHT}'},
         theme=Colors.TAB_BORDER,
         css_classes=css_classes,
     )
