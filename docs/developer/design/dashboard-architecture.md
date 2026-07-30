@@ -207,7 +207,7 @@ flowchart LR
     end
 
     subgraph "Per-Session Periodic Callback<br>(Tornado IOLoop)"
-        SU["SessionUpdater.periodic_update()"]
+        SU["SessionUpdater.housekeeping_tick()"]
         SU --> HB["Browser heartbeat check"]
         SU --> NQ["Poll NotificationQueue"]
         SU --> CH["Custom handlers<br>(plot pipe updates,<br>status widget refresh)"]

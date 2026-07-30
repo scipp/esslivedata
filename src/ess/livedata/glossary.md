@@ -225,3 +225,9 @@ The naming stack, from the Kafka wire inwards (see ADR 0004 and
   heartbeat payloads carrying them.
 - **layout** — `hv.Layout` combine-mode subplots; the per-session page layout
   (`create_layout`); a grid's cell arrangement; Bokeh's layout pass. Qualify.
+- **stale** — reserved for *age*: a job or worker status with no recent heartbeat
+  (`is_status_stale`), or a browser session the reaper may collect. For "shared
+  state moved on since this session last rendered it" say *pending work*
+  (`has_pending_work`, the `has_work` tick predicates). The two are independent:
+  staleness sets in by the clock with no version bump behind it, which is why it
+  is rendered by the periodic full pass rather than by a wake.

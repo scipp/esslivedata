@@ -82,15 +82,30 @@ From coarse to fine: **grid → cell → layer → plotter → presenter → fig
 
 - **Session** — one browser connection (one Bokeh document). Tracked by
   **SessionRegistry** with heartbeat-based stale cleanup.
-- **SessionUpdater** — per-session ~1 Hz driver on the session's IOLoop:
-  polls its notification queue and runs update handlers inside a batched
-  (`pn.io.hold` + `doc.models.freeze`) session context
-  (`dashboard/session_updater.py`).
+- **SessionUpdater** — per-session driver on the session's IOLoop: runs update
+  handlers inside a batched (`pn.io.hold` + `doc.models.freeze`) session context
+  (`dashboard/session_updater.py`). Ticks come from a **WakeupHub** wake, or from
+  its own 1 s housekeeping callback, which every 5 s runs a *full* pass (all
+  handlers, no gate) for wall-clock-driven displays.
+- **WakeupHub** — process-wide, data-free wake-up of registered sessions
+  (`dashboard/wakeup_hub.py`): any thread calls `wake_all` after shared state
+  changes, and each session's tick is scheduled onto its own IOLoop. Wakes are
+  coalesced per session; a lost or duplicate wake is harmless because ticks are
+  idempotent and version-gated.
+- **has_work / pending work** — the cheap per-handler predicate deciding whether
+  a wake tick runs a handler at all; when none fires, the tick skips the
+  hold+freeze batch entirely. Not the same as heartbeat *staleness* — see
+  *stale* in `src/ess/livedata/glossary.md`.
 - **SessionLayer** — per-session render state for one layer: presenter, pipe,
   and DynamicMap (`dashboard/session_layer.py`).
 - **Single-writer versioned pull** — the dashboard concurrency model: one writer
   mutates shared state and bumps a version; sessions poll the version and pull
   snapshots on their own IOLoop (ADR 0007).
+- **Version counter** — a plain `int` on shared state, incremented by its writer
+  and only ever compared for *equality* against a session's last-seen value.
+  Never a timestamp, and never ordered or subtracted: a session asks "did this
+  move since I rendered it?", not "by how much" or "when". Python ints are
+  unbounded, so there is no wrap-around to handle.
 - **Frame** (dashboard) / **FrameClock** — the frame-gated flush cycle batching
   plot updates per session (`dashboard/frame_clock.py`, ADR 0005). Unrelated to
   the neutron pulse-frame sense.
