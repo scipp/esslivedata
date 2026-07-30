@@ -294,13 +294,24 @@ class PlotDataService:
         layer_id: LayerId,
         transition: Callable[[LayerStateMachine], None],
         *,
-        create: bool = False,
+        create: bool,
     ) -> None:
         """Run a state transition, advancing ``version`` if it took effect.
 
         Transitions that the state machine rejects or treats as a no-op leave
         the layer's version untouched and must not advance the aggregate, or
         every data message would arm every session's poll gate.
+
+        Parameters
+        ----------
+        layer_id:
+            Layer to transition.
+        transition:
+            State-machine call to run under the lock.
+        create:
+            Whether an unknown ``layer_id`` starts a fresh state machine or the
+            transition is dropped. Required, since which of the two is correct
+            depends on whether the caller can legitimately arrive first.
         """
         with self._lock:
             if create:
@@ -355,7 +366,7 @@ class PlotDataService:
         layer_id:
             Layer ID to update.
         """
-        self._apply(layer_id, lambda state: state.data_arrived())
+        self._apply(layer_id, lambda state: state.data_arrived(), create=False)
 
     def job_stopped(self, layer_id: LayerId) -> None:
         """
@@ -366,7 +377,7 @@ class PlotDataService:
         layer_id:
             Layer ID to update.
         """
-        self._apply(layer_id, lambda state: state.job_stopped())
+        self._apply(layer_id, lambda state: state.job_stopped(), create=False)
 
     def error_occurred(self, layer_id: LayerId, error_msg: str) -> None:
         """
