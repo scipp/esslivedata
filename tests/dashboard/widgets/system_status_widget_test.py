@@ -15,9 +15,11 @@ class FakeSessionUpdater:
 
     def __init__(self):
         self.registered_handlers = []
+        self.registered_predicates = []
 
-    def register_custom_handler(self, handler):
+    def register_custom_handler(self, handler, *, has_work=None):
         self.registered_handlers.append(handler)
+        self.registered_predicates.append(has_work)
 
 
 def _make_widget() -> SystemStatusWidget:

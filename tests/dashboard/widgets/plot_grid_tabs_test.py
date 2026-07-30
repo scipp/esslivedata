@@ -108,14 +108,19 @@ def plot_grid_tabs(
 
 
 def _tick(*widgets: PlotGridTabs) -> None:
-    """Drive one poll cycle for each widget.
+    """Drive one gated poll cycle for each widget.
 
-    Under polling, tab/cell reconciliation happens on the session's periodic
-    callback rather than on a push from the orchestrator, so tests must poll
-    explicitly after mutating shared state.
+    Runs the poll pass only when the widget's ``_has_pending_work`` predicate
+    fires, mirroring SessionUpdater's wake/housekeeping ticks. This makes every
+    test asserting a visible effect after ``_tick`` also guard the predicate:
+    a change source the pass handles but the predicate misses fails here
+    instead of silently lagging until the periodic full pass in production.
+    Tests that rely on that full pass (documented predicate holes, e.g.
+    plotter swaps) call ``_poll_for_plot_updates`` directly.
     """
     for widget in widgets:
-        widget._poll_for_plot_updates()
+        if widget._has_pending_work():
+            widget._poll_for_plot_updates()
 
 
 class TestPlotGridTabsInitialization:
@@ -1326,3 +1331,117 @@ class TestCellReconcile:
 
         # Reconfigure mints a fresh LayerId -> signature changed -> rebuilt.
         assert plot_grid_tabs._cells[cell_id] is not widget_before
+
+
+class TestWakeGateContract:
+    """Contract of ``_has_pending_work``, the gate registered with SessionUpdater.
+
+    The gate must go quiet once a pass ran (a stuck-True gate makes every
+    housekeeping tick pay the full hold+freeze pass in every session) and
+    re-arm for each change source the pass renders (a missed source lags
+    until the periodic full pass). The mutate->tick->assert tests above cover
+    the re-arm direction implicitly via the gated ``_tick``; this test pins
+    the quiescence direction explicitly.
+    """
+
+    def test_gate_quiet_after_pass_and_rearms_per_source(
+        self, plot_orchestrator, plot_grid_tabs
+    ):
+        from ess.livedata.dashboard.plot_orchestrator import CellGeometry
+        from ess.livedata.dashboard.widgets.plot_grid_tabs import (
+            _FRESHNESS_STALL_INTERVAL_S,
+        )
+
+        _tick(plot_grid_tabs)
+        assert not plot_grid_tabs._has_pending_work()
+
+        # Topology change arms the gate; the pass clears it.
+        grid_id = plot_orchestrator.add_grid(title='G', nrows=2, ncols=2)
+        geometry = CellGeometry(row=0, col=0, row_span=1, col_span=1)
+        _add_static_cell(plot_orchestrator, grid_id, geometry)
+        assert plot_grid_tabs._has_pending_work()
+        _tick(plot_grid_tabs)
+        assert not plot_grid_tabs._has_pending_work()
+
+        # A tab switch wakes synchronously (no document in tests), so the
+        # flush must have passed through the gate; quiet again afterwards.
+        plot_grid_tabs.tabs.active = 2
+        assert plot_grid_tabs._last_active_grid_id == grid_id
+        assert not plot_grid_tabs._has_pending_work()
+
+        # Stall aging: with cells on the active grid and no data events, the
+        # timer alone re-arms the gate; the pass resets it.
+        plot_grid_tabs._last_freshness_update -= _FRESHNESS_STALL_INTERVAL_S
+        assert plot_grid_tabs._has_pending_work()
+        _tick(plot_grid_tabs)
+        assert not plot_grid_tabs._has_pending_work()
+
+    def _quiescent_active_layer(self, plot_orchestrator, plot_grid_tabs):
+        """Put a static layer on the active grid and drive the gate quiet."""
+        from ess.livedata.dashboard.plot_orchestrator import CellGeometry
+
+        grid_id = plot_orchestrator.add_grid(title='G', nrows=2, ncols=2)
+        geometry = CellGeometry(row=0, col=0, row_span=1, col_span=1)
+        cell_id = _add_static_cell(plot_orchestrator, grid_id, geometry)
+        _tick(plot_grid_tabs)
+        plot_grid_tabs.tabs.active = 2
+        assert plot_grid_tabs._last_active_grid_id == grid_id
+        assert not plot_grid_tabs._has_pending_work()
+        return plot_orchestrator.get_cell(cell_id).layers[0].layer_id
+
+    @staticmethod
+    def _assert_only_layer_version_term_armed(plot_orchestrator, plot_grid_tabs):
+        """Pin that the gate fired on the layer-version term, not by accident.
+
+        Topology and frame generation are the other event-driven terms; if
+        either moved too, the assertion on ``_has_pending_work`` would pass
+        even with the layer-version term removed.
+        """
+        assert plot_orchestrator.topology_version() == (
+            plot_grid_tabs._last_topology_version
+        )
+        assert plot_orchestrator.frame_generation(
+            plot_grid_tabs._last_active_grid_id
+        ) == (plot_grid_tabs._last_flushed_generation)
+
+    def test_job_stopped_rearms_gate(
+        self, plot_orchestrator, plot_grid_tabs, plot_data_service
+    ):
+        """Stopping a workflow must arm the gate through the layer-version term.
+
+        Unlike a restart, a stop produces no further frame, so the gate's
+        frame-generation term can never cover it: without the layer-version
+        term the plots keep their live rendering until the next unconditional
+        full pass, i.e. up to _FULL_PASS_INTERVAL_S after the workflow stopped.
+        """
+        layer_id = self._quiescent_active_layer(plot_orchestrator, plot_grid_tabs)
+
+        plot_data_service.job_stopped(layer_id)
+
+        self._assert_only_layer_version_term_armed(plot_orchestrator, plot_grid_tabs)
+        assert plot_grid_tabs._has_pending_work()
+        _tick(plot_grid_tabs)
+        assert not plot_grid_tabs._has_pending_work()
+
+    def test_plotter_swap_rearms_gate(
+        self,
+        plot_orchestrator,
+        plot_grid_tabs,
+        plot_data_service,
+        plotting_controller,
+    ):
+        """A plotter swap keeps the LayerId, so the cell signature is unchanged
+        and only the layer-version term can arm the gate."""
+        from ess.livedata.dashboard.static_plots import LinesCoordinates, VLinesParams
+
+        layer_id = self._quiescent_active_layer(plot_orchestrator, plot_grid_tabs)
+        plotter = plotting_controller.create_plotter(
+            'vlines', params=VLinesParams(geometry=LinesCoordinates(positions='30'))
+        )
+
+        plot_data_service.job_started(layer_id, plotter)
+
+        self._assert_only_layer_version_term_armed(plot_orchestrator, plot_grid_tabs)
+        assert plot_grid_tabs._has_pending_work()
+        _tick(plot_grid_tabs)
+        assert not plot_grid_tabs._has_pending_work()

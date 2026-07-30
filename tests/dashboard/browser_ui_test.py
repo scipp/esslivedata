@@ -12,7 +12,8 @@ through the stable ``lt-*`` automation hooks:
 - disabling or removing a grid keeps the remaining tabs resolving and
   updating;
 - two sessions racing to save edits on the same grid converge on one title,
-  without a server-side exception or a duplicated/lost tab.
+  without a server-side exception or a duplicated/lost tab;
+- uploading a grid config whose cells claim the same slot is rejected.
 
 Each test launches its own dashboard for isolation, since grid topology changes
 are process-global; ports are allocated per launch, so concurrent runs of this
@@ -23,10 +24,15 @@ cleanly where Playwright is absent).
 
 from __future__ import annotations
 
+import copy
+from pathlib import Path
+
 import pytest
+import yaml
 
 pytest.importorskip("playwright.sync_api")
 from tests.helpers.browser import (
+    REPO_ROOT,
     Dashboard,
     assert_updating,
     fake_dashboard,
@@ -36,10 +42,36 @@ from tests.helpers.browser import (
 
 _CELL_TITLE_INPUT = 'input[placeholder="Leave empty to use the derived title"]'
 _GRID_TITLE_INPUT = 'input[placeholder="Enter grid title"]'
+_FIXTURE = REPO_ROOT / "tests/dashboard/ui_config_fixtures/dummy/plot_configs.yaml"
 
 
 def _active_tab(dash: Dashboard) -> str:
     return dash.page.locator(".bk-tab.bk-active").first.inner_text().strip()
+
+
+def _write_grid_config(path: Path, title: str, *, overlapping: bool) -> Path:
+    """Write an uploadable grid config derived from the dummy fixture's grid.
+
+    A persisted grid is already in the upload file's format, so the fixture
+    doubles as a realistic, workflow-resolvable payload. ``overlapping`` adds a
+    copy of the first cell grown to span its whole column -- what a hand-edited
+    or concatenated config looks like, two cells claiming the same slots.
+
+    The copy overlaps the original only *partially* and is ordered ahead of the
+    cell owning the slots it grows into. That combination is what breaks the
+    preview: the region it claims still holds an unplaced slot, which Panel's
+    ``GridSpec`` dereferences. A cell that merely repaints fully-occupied slots
+    (an exact duplicate, say) is just as invalid but renders without raising,
+    so it would not exercise the failure this guards.
+    """
+    grid = yaml.safe_load(_FIXTURE.read_text())["plot_grids"]["grids"][0]
+    grid["title"] = title
+    if overlapping:
+        clash = copy.deepcopy(grid["cells"][0])
+        clash["geometry"]["row_span"] = grid["nrows"]
+        grid["cells"].insert(1, clash)
+    path.write_text(yaml.safe_dump(grid))
+    return path
 
 
 def _add_grid(dash: Dashboard, title: str) -> None:
@@ -303,3 +335,65 @@ def test_concurrent_grid_property_edits_resolve_to_one_title_without_crash():
 
         winner.goto_tab(winning_title)
         assert_updating(winner, "surviving grid after concurrent edit race")
+
+
+@pytest.mark.browser
+def test_uploading_a_grid_config_with_overlapping_cells_is_rejected(tmp_path):
+    """Import enforces the no-overlap invariant the click-to-place editor has.
+
+    A config whose cells claim the same slot renders in the live view (cells
+    overwrite, last wins) but the resulting grid is uneditable: building the
+    edit preview feeds the overlapping region into Panel's ``GridSpec``, which
+    dereferences the still-empty slot and raises, so edit mode aborts before
+    the Save/Copy buttons appear -- leaving no way to repair the grid from the
+    UI. Import is therefore the last point at which the user can still act on
+    it, and is where it is refused. The second half re-uploads the same grid
+    tiled, pinning the refusal to the overlap rather than to uploading at all.
+    """
+    with fake_dashboard("dummy") as fake, Dashboard.connect(fake.url) as dash:
+        page = dash.page
+        dash.goto_tab("Manage Plots")
+        page.get_by_role("button", name="Upload", exact=True).click()
+        file_input = page.locator('input[type="file"]')
+        log_offset = fake.log.stat().st_size
+
+        file_input.set_input_files(
+            _write_grid_config(
+                tmp_path / "overlapping.yaml", "Overlapping Import", overlapping=True
+            )
+        )
+
+        wait_until(
+            dash,
+            lambda: page.locator(".notyf__message").count() > 0,
+            label="the rejection notification",
+        )
+        assert "overlaps" in page.locator(".notyf__message").first.inner_text()
+        # Refused outright, not merely un-previewed: the form keeps its
+        # defaults, so a following "Add Grid" cannot import the layout anyway.
+        assert page.locator(_GRID_TITLE_INPUT).input_value() == "New Grid"
+        assert "Overlapping Import" not in dash.tab_names()
+        new_log = fake.log.read_text()[log_offset:]
+        assert "Traceback" not in new_log, (
+            f"server logged an exception rejecting the upload:\n{new_log}"
+        )
+
+        # Same grid, cells tiled: it imports and the new tab goes live.
+        file_input.set_input_files(
+            _write_grid_config(
+                tmp_path / "tiled.yaml", "Tiled Import", overlapping=False
+            )
+        )
+        wait_until(
+            dash,
+            lambda: page.locator(_GRID_TITLE_INPUT).input_value() == "Tiled Import",
+            label="the accepted upload to populate the form",
+        )
+        page.get_by_role("button", name="Add Grid", exact=True).click()
+        wait_until(
+            dash,
+            lambda: "Tiled Import" in dash.tab_names(),
+            label="tab 'Tiled Import' to appear",
+        )
+        dash.goto_tab("Tiled Import")
+        assert_updating(dash, "imported grid")

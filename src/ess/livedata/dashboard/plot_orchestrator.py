@@ -16,7 +16,7 @@ from __future__ import annotations
 import copy
 import threading
 import traceback
-from collections.abc import Iterator, Mapping, Sequence
+from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, NewType, Protocol
@@ -74,6 +74,33 @@ class CellGeometry:
     col: int
     row_span: int
     col_span: int
+
+    def overlaps(self, other: CellGeometry) -> bool:
+        """Return True if this cell shares any grid slot with ``other``."""
+        return (
+            self.row < other.row + other.row_span
+            and other.row < self.row + self.row_span
+            and self.col < other.col + other.col_span
+            and other.col < self.col + self.col_span
+        )
+
+
+def reject_overlapping_cells(geometries: Iterable[CellGeometry]) -> None:
+    """Raise ValueError if any two cell geometries overlap.
+
+    Grid cells must tile without overlap; overlapping cells claim the same
+    slot for two plots. This guards the collection-level entry points (config
+    load, file upload), which build a full cell set at once and so have to
+    decide before applying any of it: relying on ``add_cell`` alone would raise
+    partway through, leaving a half-built grid behind and reporting the fault
+    only once the user had committed to the import.
+    """
+    seen: list[CellGeometry] = []
+    for geometry in geometries:
+        for other in seen:
+            if geometry.overlaps(other):
+                raise ValueError(f'Cell geometry {geometry} overlaps {other}')
+        seen.append(geometry)
 
 
 @dataclass
@@ -327,6 +354,7 @@ class PlotOrchestrator:
         raw_templates: Sequence[dict[str, Any]] = (),
         instrument_config: Instrument | None = None,
         frame_clock: FrameClock | None = None,
+        on_change: Callable[[], None] | None = None,
     ) -> None:
         """
         Initialize the plot orchestrator.
@@ -354,6 +382,9 @@ class PlotOrchestrator:
             Shared counter advanced when a visible layer is recomputed, letting
             per-session poll loops coalesce synchronized plot flushes. A private
             instance is created if none is provided.
+        on_change
+            Called after every topology-version bump, e.g. to wake sessions so
+            grid/cell changes render without waiting for the next poll.
         """
         self._plotting_controller = plotting_controller
         self._job_orchestrator = job_orchestrator
@@ -368,6 +399,7 @@ class PlotOrchestrator:
         self._persist_suppressed = False
         self._plot_data_service = plot_data_service
         self._frame_clock = frame_clock or FrameClock()
+        self._on_change = on_change
         self._logger = structlog.get_logger()
 
         self._grids: dict[GridId, PlotGridConfig] = {}
@@ -417,6 +449,8 @@ class PlotOrchestrator:
     def _bump_topology_version(self) -> None:
         """Advance the topology version. IOLoop-thread only."""
         self._topology_version += 1
+        if self._on_change is not None:
+            self._on_change()
 
     @property
     def instrument(self) -> str:
@@ -667,12 +701,22 @@ class PlotOrchestrator:
         ------
         KeyError
             If the grid does not exist (e.g. removed by another session).
+        ValueError
+            If the geometry overlaps an existing cell in the grid. Grid cells
+            must tile the grid without overlap; overlapping cells would claim
+            the same slot for two plots.
         """
         if grid_id not in self._grids:
             raise KeyError(f'Grid {grid_id} no longer exists')
+        grid = self._grids[grid_id]
+        for existing in grid.cells.values():
+            if existing.geometry.overlaps(geometry):
+                raise ValueError(
+                    f'Cell geometry {geometry} overlaps existing cell '
+                    f'{existing.geometry} in grid {grid_id}'
+                )
         cell_id = CellId(uuid4())
         cell = PlotCell(geometry=geometry, layers=[], user_title=user_title)
-        grid = self._grids[grid_id]
         with self._topology_lock:
             grid.cells[cell_id] = cell
             self._cell_to_grid[cell_id] = grid_id
@@ -1530,6 +1574,7 @@ class PlotOrchestrator:
                 parsed = self.parse_raw_cell(cell_data)
                 if parsed is not None:
                     cells.append(parsed)
+            reject_overlapping_cells(c.geometry for c in cells)
 
             return GridSpec(
                 name=name,

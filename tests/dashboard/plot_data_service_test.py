@@ -222,6 +222,90 @@ class TestPlotDataService:
         assert service.get(layer_id).plotter is plotter_b
 
 
+class TestPlotDataServiceVersion:
+    """Aggregate version counter gating each session's poll pass.
+
+    Only transitions that actually took effect may advance it: the counter is
+    read once per tick to decide whether a session pays a full hold+freeze
+    pass, so a counter that moved without any layer changing costs every
+    session a pointless pass.
+    """
+
+    def test_job_started_advances_version(self):
+        service = PlotDataService()
+        before = service.version
+
+        service.job_started(LayerId(uuid4()), FakePlotter())
+
+        assert service.version == before + 1
+
+    def test_first_data_arrived_advances_version(self):
+        service = PlotDataService()
+        layer_id = LayerId(uuid4())
+        service.job_started(layer_id, FakePlotter())
+        before = service.version
+
+        service.data_arrived(layer_id)
+
+        assert service.version == before + 1
+
+    def test_further_data_arrived_does_not_advance_version(self):
+        """This is what keeps the poll gate quiet under steady data flow: once
+        a layer is READY, every subsequent data message is a no-op transition
+        and must not arm every session's poll pass."""
+        service = PlotDataService()
+        layer_id = LayerId(uuid4())
+        service.job_started(layer_id, FakePlotter())
+        service.data_arrived(layer_id)
+        version_at_ready = service.version
+
+        service.data_arrived(layer_id)
+        service.data_arrived(layer_id)
+
+        assert service.version == version_at_ready
+
+    def test_job_stopped_advances_version(self):
+        service = PlotDataService()
+        layer_id = LayerId(uuid4())
+        service.job_started(layer_id, FakePlotter())
+        service.data_arrived(layer_id)
+        before = service.version
+
+        service.job_stopped(layer_id)
+
+        assert service.version == before + 1
+
+    def test_error_occurred_advances_version(self):
+        service = PlotDataService()
+        layer_id = LayerId(uuid4())
+        service.job_started(layer_id, FakePlotter())
+        before = service.version
+
+        service.error_occurred(layer_id, 'boom')
+
+        assert service.version == before + 1
+
+    def test_rejected_transition_does_not_advance_version(self):
+        service = PlotDataService()
+        layer_id = LayerId(uuid4())
+        service.job_started(layer_id, FakePlotter())
+        service.job_stopped(layer_id)
+        version_at_stopped = service.version
+
+        service.job_stopped(layer_id)  # rejected: not valid from STOPPED
+
+        assert service.version == version_at_stopped
+
+    def test_transitions_on_unknown_layer_do_not_advance_version(self):
+        service = PlotDataService()
+        before = service.version
+
+        service.data_arrived(LayerId(uuid4()))
+        service.job_stopped(LayerId(uuid4()))
+
+        assert service.version == before
+
+
 class _Token:
     """Weakref-compatible stand-in for a viewer (real callers are SessionLayer)."""
 

@@ -246,3 +246,28 @@ def make_frame_aspect_opts(aspect: PlotAspect) -> dict[str, Any]:
             return {'responsive': True}
     cross = 'height' if aspect.stretch_mode == StretchMode.width else 'width'
     return {'responsive': True, cross: _INITIAL_CROSS_SIZE_PX, 'hooks': [hook]}
+
+
+def pane_sizing_mode(aspect: PlotAspect) -> str:
+    """Panel ``sizing_mode`` for the pane wrapping a figure sized by this aspect.
+
+    Must agree with the sizing mode HoloViews derives from
+    :func:`make_frame_aspect_opts`: a pane that stretches along only one axis
+    around a ``stretch_both`` figure leaves the other axis unconstrained, and
+    the figure collapses to zero size.
+
+    Parameters
+    ----------
+    aspect:
+        Plot aspect configuration.
+
+    Returns
+    -------
+    :
+        Panel sizing_mode ('stretch_both', 'stretch_width' or 'stretch_height').
+    """
+    if aspect.aspect_type == PlotAspectType.free:
+        return 'stretch_both'
+    if aspect.stretch_mode == StretchMode.width:
+        return 'stretch_width'
+    return 'stretch_height'

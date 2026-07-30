@@ -34,6 +34,7 @@ from .service_registry import ServiceRegistry
 from .session_registry import SessionRegistry
 from .stream_manager import StreamManager
 from .transport import Transport
+from .wakeup_hub import WakeupHub
 from .workflow_controller import WorkflowController
 
 logger = structlog.get_logger(__name__)
@@ -88,7 +89,15 @@ class DashboardServices:
 
         # Shared state stores for multi-session support
         self.plot_data_service = PlotDataService()
-        self.notification_queue = NotificationQueue()
+
+        # Wakes registered sessions when shared state changes: poked by the
+        # ingestion loop after each drain pass and by UI-driven version bumps
+        # (workflow state, plot topology, notifications). Sessions register
+        # via SessionUpdater; ticks stay poll-shaped and version-gated, the
+        # hub only moves their scheduling from a fast clock to events.
+        self.wakeup_hub = WakeupHub()
+
+        self.notification_queue = NotificationQueue(on_push=self.wakeup_hub.wake_all)
 
         # Session registry for tracking active browser sessions
         self.session_registry = SessionRegistry(stale_timeout_seconds=60.0)
@@ -147,7 +156,7 @@ class DashboardServices:
         while not self._stop_event.is_set():
             start = time.monotonic()
             try:
-                self.message_pump.update()
+                consumed = self.message_pump.update()
                 # Expire pending commands whose acknowledgement never arrived, so
                 # a silently dropped send surfaces as an error toast rather than a
                 # workflow stuck waiting for the backend. Cheap scan of a tiny dict.
@@ -168,6 +177,13 @@ class DashboardServices:
                 # Inside the try: an escaping exception would kill this thread
                 # and silently freeze ingestion for every session.
                 self.plot_orchestrator.flush_frames()
+                # Wake sessions only after the drain's frames are committed,
+                # so a woken tick observes the new generations. Any consumed
+                # message may have changed session-visible state (data frames,
+                # job status, acks); wrong-tab or no-op wakes are cheap, the
+                # per-session ticks gate the real work.
+                if consumed:
+                    self.wakeup_hub.wake_all()
             except KafkaException:
                 # Auth/fatal Kafka errors are not self-healing. Crash so systemd
                 # restarts the process with a fresh consumer; the in-process
@@ -238,6 +254,7 @@ class DashboardServices:
             instrument_config=self.instrument_config,
             plot_data_service=self.plot_data_service,
             frame_clock=self.frame_clock,
+            on_change=self.wakeup_hub.wake_all,
         )
         logger.info("PlotOrchestrator setup complete")
 
@@ -261,6 +278,7 @@ class DashboardServices:
             config_store=self.workflow_config_store,
             instrument_config=self.instrument_config,
             notification_queue=self.notification_queue,
+            on_change=self.wakeup_hub.wake_all,
         )
         self.roi_publisher.set_job_number_resolver(
             self.job_orchestrator.get_active_job_number
