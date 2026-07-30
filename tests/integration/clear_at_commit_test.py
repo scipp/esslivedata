@@ -13,6 +13,11 @@ from tests.integration.helpers import (
     wait_for_job_data,
 )
 
+#: Cumulative updates the first generation must span before the recommit. The
+#: post-commit observation can span a batch or two, so the bar needs a few more
+#: than that to stay clear of per-batch producer noise.
+_PRE_COMMIT_UPDATES = 5
+
 
 @pytest.mark.integration
 @pytest.mark.services('monitor')
@@ -21,7 +26,7 @@ def test_recommit_clears_accumulated_data(integration_env: IntegrationEnv) -> No
     Recommitting a running workflow resets its cumulative output.
 
     The commit flips the generation and clears the workflow's buffers, so the
-    cumulative total observed after the recommit must drop below the value
+    cumulative total observed after the recommit must fall clear of the value
     accumulated before it, instead of continuing to grow.
     """
     backend = integration_env.backend
@@ -44,12 +49,24 @@ def test_recommit_clears_accumulated_data(integration_env: IntegrationEnv) -> No
     first = cumulative_total()
     assert first is not None
 
-    # The cumulative output accumulates: wait until strictly above the first
-    # observation, so the pre-commit total spans several update intervals.
+    # Let the first generation accumulate over several backend updates. The
+    # comparison below is between two accumulation windows, and the post-commit
+    # one is not under the test's control: the dashboard exposes the latest
+    # ingested value rather than the new generation's first result, and its own
+    # background thread ingests while this test samples. A bar only one update
+    # above `first` is therefore decided by producer noise and poll timing
+    # instead of by the clear under test. Counting updates rather than sleeping
+    # a fixed span keeps this as short as the pipeline allows.
+    totals = [first]
+
+    def accumulated_enough() -> bool:
+        total = cumulative_total()
+        if total is not None and total > totals[-1]:
+            totals.append(total)
+        return len(totals) > _PRE_COMMIT_UPDATES
+
     wait_for_backend_condition(
-        backend,
-        lambda: (total := cumulative_total()) is not None and total > first,
-        timeout=30.0,
+        backend, accumulated_enough, timeout=60.0, poll_interval=0.1
     )
     pre_commit_total = cumulative_total()
     assert pre_commit_total is not None
@@ -64,8 +81,9 @@ def test_recommit_clears_accumulated_data(integration_env: IntegrationEnv) -> No
 
     # The commit cleared the workflow's buffers and old-generation data fails
     # the ingest filter, so the next readable cumulative output is the new
-    # generation's fresh accumulation. Capture it inside the condition: the
-    # total keeps growing, so a later re-read could mask the drop.
+    # generation's fresh accumulation. Capture it inside the condition, and
+    # poll tightly: the total keeps growing, so every missed poll lets the
+    # captured value drift further into the new generation.
     observed: list[float] = []
 
     def fresh_total_observed() -> bool:
@@ -75,9 +93,14 @@ def test_recommit_clears_accumulated_data(integration_env: IntegrationEnv) -> No
         observed.append(total)
         return True
 
-    wait_for_backend_condition(backend, fresh_total_observed, timeout=30.0)
+    wait_for_backend_condition(
+        backend, fresh_total_observed, timeout=30.0, poll_interval=0.05
+    )
     post_commit_total = observed[0]
-    assert post_commit_total < pre_commit_total, (
-        f"Cumulative total {post_commit_total} did not drop below the "
+    # A fresh accumulation of at most a batch or two, against a bar of
+    # _PRE_COMMIT_UPDATES updates: anything near the bar means the buffers kept
+    # accumulating across the commit.
+    assert post_commit_total < pre_commit_total / 2, (
+        f"Cumulative total {post_commit_total} did not drop clear of the "
         f"pre-commit value {pre_commit_total}"
     )

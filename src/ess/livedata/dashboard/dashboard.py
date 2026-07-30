@@ -42,6 +42,7 @@ class DashboardBase(ServiceBase, ABC):
         transport: str = 'kafka',
         config_dir: str | None = None,
         auto_start: bool = False,
+        collapsed_sidebar: bool = False,
         basic_auth_password: str | None = None,
         basic_auth_cookie_secret: str | None = None,
     ):
@@ -56,6 +57,7 @@ class DashboardBase(ServiceBase, ABC):
         self._port = port
         self._dev = dev
         self._auto_start = auto_start
+        self._collapsed_sidebar = collapsed_sidebar
         self._basic_auth_password = basic_auth_password
         self._basic_auth_cookie_secret = basic_auth_cookie_secret
 
@@ -242,6 +244,31 @@ class DashboardBase(ServiceBase, ABC):
 
     def create_layout(self) -> pn.template.MaterialTemplate:
         """Create the basic dashboard layout."""
+        # Own the document hold for the whole build so that widget code using
+        # ``pn.io.hold()`` nests inside it instead of taking its own.
+        #
+        # A nested ``pn.io.hold()`` would not release here (holoviz/panel#8691):
+        # it decides whether it was called off the document's thread by comparing
+        # against ``state._thread_id``, which Panel only assigns once it
+        # initializes the document -- after this function returns. Every hold
+        # taken here is therefore misclassified as off-thread and defers its
+        # unhold to a next-tick callback. Bokeh constructs the ServerSession in
+        # between and registers every session callback already on the document;
+        # the deferred unhold then replays the queued SessionCallbackAdded
+        # events, registering the same callbacks a second time. Bokeh rejects
+        # that with "A callback of the same type has already been added with this
+        # ID" and aborts dispatch of every event still queued behind it.
+        doc = pn.state.curdoc
+        doc.hold('combine')
+        try:
+            return self._build_layout()
+        finally:
+            # Flushes while the session does not exist yet, so the callbacks
+            # registered above are announced to nobody and are picked up exactly
+            # once, by the ServerSession's initial sweep of the document.
+            doc.unhold()
+
+    def _build_layout(self) -> pn.template.MaterialTemplate:
         # Create session updater first so widgets can register handlers
         session_updater = self._create_session_updater()
 
@@ -268,6 +295,7 @@ class DashboardBase(ServiceBase, ABC):
         template = pn.template.MaterialTemplate(
             title=self.get_dashboard_title(),
             sidebar=sidebar_with_heartbeat,
+            collapsed_sidebar=self._collapsed_sidebar,
             main=main_content,
             header_background=self.get_header_background(),
             header=header,

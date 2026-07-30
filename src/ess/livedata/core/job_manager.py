@@ -196,6 +196,7 @@ class JobFactory:
             input_streams=set(aux_streams.values()),
             gating_streams=context_streams,
             reset_on_run_transition=workflow_spec.reset_on_run_transition,
+            supports_reset=workflow_spec.supports_reset,
         )
 
 
@@ -447,10 +448,17 @@ class JobManager:
         """
         Reset a job with the given ID.
         This will clear the processor and reset the start and end times.
+
+        Raises for jobs whose spec declares ``supports_reset=False``: the
+        dashboard does not offer reset for them, so any command reaching this
+        point is a programming error (see the spec sites for why resetting
+        such jobs would corrupt downstream data).
         """
         record = self._jobs.get(job_id)
         if record is None:
             raise KeyError(f"Job {job_id} not found.")
+        if not record.job.supports_reset:
+            raise ValueError(f"Job {job_id} does not support reset.")
         record.job.reset()
 
         # Drop retry state: a finalize error keeps has_primary_data set so the

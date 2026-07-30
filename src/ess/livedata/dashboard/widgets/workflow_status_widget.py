@@ -456,12 +456,21 @@ class WorkflowStatusWidget:
             )
             buttons.append(stop_btn)
 
+            supports_reset = self._workflow_spec.supports_reset
             reset_btn = create_tool_button(
                 icon_name='backspace',
                 button_color=StatusColors.MUTED,
                 hover_color=HoverColors.MUTED,
                 on_click_callback=self._on_reset_click,
                 css_classes=[self._tool_css_class],
+                disabled=not supports_reset,
+                description=None
+                if supports_reset
+                else (
+                    'This workflow does not support reset: its outputs '
+                    'represent current state, not data accumulated since '
+                    'a start point.'
+                ),
             )
             buttons.append(reset_btn)
 

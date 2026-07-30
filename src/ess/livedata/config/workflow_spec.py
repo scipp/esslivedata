@@ -21,11 +21,12 @@ drives the UI's param↔output cross-references in both surfaces.
 
 from __future__ import annotations
 
+import enum
 import uuid
 from collections import defaultdict
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
-from typing import Any, ClassVar, Literal, TypeVar
+from typing import Annotated, Any, ClassVar, Literal, TypeVar
 
 import scipp as sc
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
@@ -39,16 +40,79 @@ JobNumber = uuid.UUID
 Windowing = Literal['since_start', 'per_update']
 
 
+class Temporality(enum.Enum):
+    """How an output field's values relate to time.
+
+    Declared per output field by annotating it :data:`WindowOutput`,
+    :data:`CumulativeOutput` or :data:`SeriesOutput`, and read back with
+    :meth:`WorkflowOutputsBase.temporality`::
+
+        current: WindowOutput = pydantic.Field(...)
+
+    Distinct from :data:`Windowing`, which selects *which* backing field a
+    user-facing view exposes for the window mode the user picked. Temporality is
+    a property of the field itself: what a single message means, and hence which
+    operations over successive messages are valid. The two are not
+    interchangeable — ``since_start`` is the default binding for fields that are
+    not accumulations at all (ROI readbacks, static views).
+    """
+
+    window = 'window'
+    """Covers ``[start_time, end_time)``; successive windows are disjoint and
+    advance. Summing or averaging over consecutive messages is meaningful, as is
+    normalizing counts by the window duration."""
+
+    cumulative = 'cumulative'
+    """Value as of ``end_time``, accumulated since ``start_time``, which stays
+    pinned for the lifetime of a job generation. Plotting the growth curve is
+    meaningful; aggregating over successive messages double-counts."""
+
+    series = 'series'
+    """Carries its own per-point ``time`` axis. Messages are disjoint chunks of
+    samples concatenated along that axis, so there is no single window duration
+    to normalize by."""
+
+
+WindowOutput = Annotated[sc.DataArray, Temporality.window]
+"""An output field covering one update interval. See :attr:`Temporality.window`."""
+
+CumulativeOutput = Annotated[sc.DataArray, Temporality.cumulative]
+"""An output field accumulating over a job generation.
+
+See :attr:`Temporality.cumulative`. This is also what a bare ``sc.DataArray``
+field means, so reduction outputs need no annotation; spell it out where a
+model mixes temporalities and the contrast carries information.
+"""
+
+SeriesOutput = Annotated[sc.DataArray, Temporality.series]
+"""An output field carrying its own ``time`` axis. See :attr:`Temporality.series`."""
+
+
+WINDOWING_FOR_TEMPORALITY: Mapping[Temporality, Windowing] = {
+    Temporality.window: 'per_update',
+    Temporality.series: 'per_update',
+    Temporality.cumulative: 'since_start',
+}
+"""Which window mode each temporality backs.
+
+``Windowing`` is a user-facing mode selector; ``Temporality`` is the property of
+the field that makes it a valid answer for that mode. The mapping is total, so
+views declare their member fields and the binding follows — there is no second
+place to state it and therefore nothing to keep in sync.
+"""
+
+
 @dataclass(frozen=True)
 class OutputView:
     """A user-facing output bundling one or more backend fields.
 
-    Each view represents a single quantity (e.g. "Histogram", "Total")
-    that may be observed over different time windows. The ``fields`` mapping
-    binds windowing flavors to the backend pydantic field names that carry
-    that view of the data — ``since_start`` for run-cumulative fields and
-    ``per_update`` for per-update fields. Window mode (selected by the user)
-    determines which one is subscribed to.
+    Each view represents a single quantity (e.g. "Histogram", "Total") that may
+    be observed over different time windows. ``fields`` names the backend
+    pydantic fields carrying that quantity; which window mode each one serves
+    follows from its declared :class:`Temporality` (see
+    :data:`WINDOWING_FOR_TEMPORALITY`), so a view typically pairs a
+    ``cumulative`` field with a ``window`` one. Resolution needs the outputs
+    model and therefore lives on :class:`WorkflowSpec`, not here.
 
     ``params`` names the workflow parameter fields (top-level fields of the
     workflow's params model) that shape this output. It powers the UI's
@@ -61,21 +125,9 @@ class OutputView:
 
     name: str
     title: str
-    fields: Mapping[Windowing, str]
+    fields: tuple[str, ...]
     description: str | None = None
     params: tuple[str, ...] = ()
-
-    def field_for(self, windowing: Windowing) -> str:
-        """Return the backend field name for the requested windowing.
-
-        Falls back to the other declared windowing when the requested one is
-        absent — handles views that only expose one (e.g. cumulative-only
-        quantities).
-        """
-        if (field_name := self.fields.get(windowing)) is not None:
-            return field_name
-        other: Windowing = 'per_update' if windowing == 'since_start' else 'since_start'
-        return self.fields[other]
 
 
 class WorkflowOutputsBase(BaseModel):
@@ -90,6 +142,28 @@ class WorkflowOutputsBase(BaseModel):
     model_config = ConfigDict(arbitrary_types_allowed=True)
 
     output_views: ClassVar[tuple[OutputView, ...]] = ()
+
+    @classmethod
+    def temporality(cls, field_name: str) -> Temporality:
+        """Return the declared :class:`Temporality` of an output field.
+
+        Fields that do not annotate one are ``cumulative``: a workflow output
+        accumulates over the job's lifetime unless it explicitly resets each
+        window, and the same default applies to outputs that are not
+        accumulations at all (readbacks, static views) — nothing may be summed
+        across their messages either.
+        """
+        for meta in cls.model_fields[field_name].metadata:
+            if isinstance(meta, Temporality):
+                return meta
+        return Temporality.cumulative
+
+    @classmethod
+    def fields_with(cls, temporality: Temporality) -> tuple[str, ...]:
+        """Return the names of output fields declaring the given temporality."""
+        return tuple(
+            name for name in cls.model_fields if cls.temporality(name) is temporality
+        )
 
 
 class DefaultOutputs(WorkflowOutputsBase):
@@ -354,8 +428,16 @@ class WorkflowSpec(BaseModel):
             "runs (e.g., timeseries)."
         ),
     )
+    supports_reset: bool = Field(
+        default=True,
+        description=(
+            "Whether jobs of this workflow support the manual reset action. "
+            "When False, the dashboard disables the reset button and the "
+            "backend rejects reset commands."
+        ),
+    )
     params: type[BaseModel] | None = Field(description="Model for workflow param.")
-    outputs: type[BaseModel] = Field(
+    outputs: type[WorkflowOutputsBase] = Field(
         default=DefaultOutputs,
         description=(
             "Pydantic model defining workflow outputs with their metadata. "
@@ -409,7 +491,9 @@ class WorkflowSpec(BaseModel):
 
     @field_validator('outputs', mode='after')
     @classmethod
-    def validate_unique_output_titles(cls, outputs: type[BaseModel]) -> type[BaseModel]:
+    def validate_unique_output_titles(
+        cls, outputs: type[WorkflowOutputsBase]
+    ) -> type[WorkflowOutputsBase]:
         """Validate that user-facing view titles are unique within the workflow."""
         views = _resolve_output_views(outputs)
         title_counts: dict[str, list[str]] = defaultdict(list)
@@ -431,6 +515,33 @@ class WorkflowSpec(BaseModel):
 
         return outputs
 
+    @field_validator('outputs', mode='after')
+    @classmethod
+    def validate_unambiguous_windowing(
+        cls, outputs: type[WorkflowOutputsBase]
+    ) -> type[WorkflowOutputsBase]:
+        """Validate that a view's fields back distinct window modes.
+
+        Two fields of one view resolving to the same :data:`Windowing` would
+        make the view ambiguous: selecting that mode could return either. The
+        usual cause is a missing :class:`Temporality` annotation, since
+        unannotated fields default to ``cumulative``.
+        """
+        for view in _resolve_output_views(outputs):
+            by_windowing: dict[Windowing, list[str]] = defaultdict(list)
+            for field_name in view.fields:
+                windowing = WINDOWING_FOR_TEMPORALITY[outputs.temporality(field_name)]
+                by_windowing[windowing].append(field_name)
+            for windowing, field_names in by_windowing.items():
+                if len(field_names) > 1:
+                    raise ValueError(
+                        f"Output view '{view.name}' has multiple fields backing "
+                        f"'{windowing}': {sorted(field_names)}. Annotate their "
+                        f"Temporality so each field backs a distinct window mode."
+                    )
+
+        return outputs
+
     def get_id(self) -> WorkflowId:
         """
         Get a unique identifier for the workflow.
@@ -446,8 +557,8 @@ class WorkflowSpec(BaseModel):
     def get_output_views(self) -> Sequence[OutputView]:
         """Return the user-facing output views for this workflow.
 
-        Falls back to one view per pydantic field (bound as ``since_start``)
-        when the outputs class does not declare ``output_views``.
+        Falls back to one view per pydantic field when the outputs class does
+        not declare ``output_views``.
         """
         return _resolve_output_views(self.outputs)
 
@@ -458,11 +569,45 @@ class WorkflowSpec(BaseModel):
                 return view
         return None
 
+    def _windowing_by_field(self, view_name: str) -> dict[Windowing, str]:
+        """Map each window mode the named view backs to the field serving it.
+
+        Derived from each member field's :class:`Temporality`; empty for an
+        unknown view. Distinctness is enforced at registration by
+        :meth:`validate_unambiguous_windowing`.
+        """
+        view = self.get_output_view(view_name)
+        if view is None:
+            return {}
+        return {
+            WINDOWING_FOR_TEMPORALITY[self.outputs.temporality(field_name)]: field_name
+            for field_name in view.fields
+        }
+
+    def windowing_options(self, view_name: str) -> frozenset[Windowing]:
+        """Return the window modes the named view has a real backing field for."""
+        return frozenset(self._windowing_by_field(view_name))
+
+    def field_for(self, view_name: str, windowing: Windowing) -> str:
+        """Return the backend field a view exposes for the requested windowing.
+
+        Falls back to the view's other field when the requested windowing has
+        no backing field — handles views exposing only one flavor (e.g.
+        cumulative-only quantities). Unknown views resolve to their own name,
+        which is the field name for workflows that declare no ``output_views``.
+        """
+        by_windowing = self._windowing_by_field(view_name)
+        if not by_windowing:
+            return view_name
+        if (field_name := by_windowing.get(windowing)) is not None:
+            return field_name
+        return next(iter(by_windowing.values()))
+
     def get_output_template(self, view_name: str) -> sc.DataArray | None:
         """Get a template DataArray for the specified output view.
 
         Returns the ``default_factory`` template of the view's canonical
-        backing field (``since_start`` if present, else ``per_update``).
+        backing field (the ``since_start`` one if present, else its other).
         Templates are empty DataArrays demonstrating the expected structure
         (dims, coords, units), used by the dashboard for plotter selection
         before any data has arrived.
@@ -470,10 +615,11 @@ class WorkflowSpec(BaseModel):
         Returns None if the view is unknown or its canonical field has no
         ``default_factory``.
         """
-        view = self.get_output_view(view_name)
-        if view is None:
+        if self.get_output_view(view_name) is None:
             return None
-        field_info = self.outputs.model_fields.get(view.field_for('since_start'))
+        field_info = self.outputs.model_fields.get(
+            self.field_for(view_name, 'since_start')
+        )
         if field_info is None or not field_info.default_factory:
             return None
         return field_info.default_factory()
@@ -660,18 +806,34 @@ class WorkflowConfig(BaseModel):
         return cls(**fields)
 
 
-def _is_timeseries_output(da: sc.DataArray) -> bool:
-    """Check if DataArray represents a timeseries (0-D with time coord)."""
-    return da.ndim == 0 and 'time' in da.coords
+_CORRELATABLE = (Temporality.window, Temporality.series)
 
 
-def _resolve_output_views(outputs: type[BaseModel]) -> tuple[OutputView, ...]:
+def _is_correlatable(outputs: type[WorkflowOutputsBase], field_name: str) -> bool:
+    """Check whether an output field can serve as a correlation axis.
+
+    Requires a scalar quantity that advances along wall-clock time: a per-window
+    value or a timestamped series. Cumulative fields are excluded — correlating
+    against a monotonically growing total says more about the run length than
+    about the quantity.
+    """
+    field_info = outputs.model_fields.get(field_name)
+    if field_info is None or not field_info.default_factory:
+        return False
+    if field_info.default_factory().ndim != 0:
+        return False
+    return outputs.temporality(field_name) in _CORRELATABLE
+
+
+def _resolve_output_views(
+    outputs: type[WorkflowOutputsBase],
+) -> tuple[OutputView, ...]:
     """Return the declared ``output_views`` or a default one-view-per-field set.
 
     When an outputs class does not declare ``output_views``, each pydantic
-    field becomes its own view: the bare field name is used as both the
-    view name and (via ``since_start``) the backing field. This keeps
-    reduction-style Outputs classes working without annotation.
+    field becomes its own view, with the bare field name used as both the view
+    name and the backing field. This keeps reduction-style Outputs classes
+    working without annotation.
     """
     declared = getattr(outputs, 'output_views', ())
     if declared:
@@ -680,7 +842,7 @@ def _resolve_output_views(outputs: type[BaseModel]) -> tuple[OutputView, ...]:
         OutputView(
             name=field_name,
             title=(field_info.title or field_name),
-            fields={'since_start': field_name},
+            fields=(field_name,),
             description=field_info.description,
         )
         for field_name, field_info in outputs.model_fields.items()
@@ -693,10 +855,10 @@ def find_timeseries_outputs(
     """
     Find all timeseries output views in the workflow registry.
 
-    A timeseries output is a 0-D DataArray with a 'time' coordinate. The
-    backing field for each ``per_update`` (or ``since_start``) entry of an
-    output view is inspected; views whose backing field templates match are
-    reported by view name.
+    A timeseries output is a 0-D field declaring :attr:`Temporality.window` or
+    :attr:`Temporality.series` — a scalar that advances along wall-clock time.
+    Every backing field of an output view is inspected; views with at least one
+    matching field are reported by view name.
 
     Parameters
     ----------
@@ -718,11 +880,8 @@ def find_timeseries_outputs(
 
         timeseries_views: list[str] = []
         for view in spec.get_output_views():
-            for field_name in view.fields.values():
-                field_info = spec.outputs.model_fields.get(field_name)
-                if field_info is None or not field_info.default_factory:
-                    continue
-                if _is_timeseries_output(field_info.default_factory()):
+            for field_name in view.fields:
+                if _is_correlatable(spec.outputs, field_name):
                     timeseries_views.append(view.name)
                     break
 

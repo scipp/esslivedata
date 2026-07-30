@@ -9,11 +9,14 @@ from enum import StrEnum, auto
 from typing import Any, Protocol, runtime_checkable
 
 import scipp as sc
+import structlog
 
 from ess.livedata.workflows.workflow_factory import Workflow
 
 from ..config.workflow_spec import JobId, ResultKey, WorkflowId
 from .timestamp import Timestamp
+
+logger = structlog.get_logger(__name__)
 
 
 @dataclass(slots=True, kw_only=True)
@@ -263,6 +266,7 @@ class Job:
         input_streams: set[str],
         gating_streams: set[str],
         reset_on_run_transition: bool = True,
+        supports_reset: bool = True,
     ) -> None:
         """
         Initialize a Job with the given parameters.
@@ -291,6 +295,9 @@ class Job:
             ADR 0002.
         reset_on_run_transition:
             Whether this job should be reset when a run transition occurs.
+        supports_reset:
+            Whether this job supports the manual reset action. See
+            :attr:`WorkflowSpec.supports_reset`.
         """
         self._job_id = job_id
         self._workflow_id = workflow_id
@@ -299,6 +306,7 @@ class Job:
         self._end_time: Timestamp | None = None
         self._source_names = source_names
         self._reset_on_run_transition = reset_on_run_transition
+        self._supports_reset = supports_reset
         self._input_streams: set[str] = input_streams
         self._gating_streams: set[str] = gating_streams
 
@@ -356,6 +364,10 @@ class Job:
     def reset_on_run_transition(self) -> bool:
         return self._reset_on_run_transition
 
+    @property
+    def supports_reset(self) -> bool:
+        return self._supports_reset
+
     def add(self, data: JobData) -> JobReply:
         try:
             # Primary and aux data are both keyed by canonical stream name, which
@@ -368,6 +380,22 @@ class Job:
             )
             if data.is_active():
                 if self._start_time is None:
+                    self._start_time = data.start_time
+                elif data.end_time < self._start_time:
+                    # A job cannot begin after its accumulation ends, so the
+                    # latched start is provably wrong: it came from a batch
+                    # anchored on a timestamp outside this stream's timeline
+                    # (plausible_anchor has nothing to weigh a lone message
+                    # against). The start is sticky, so without this it would
+                    # pin that value -- and an inconsistent time pair on every
+                    # result -- for the job's lifetime.
+                    logger.warning(
+                        'job_start_time_relatched',
+                        job_id=str(self._job_id),
+                        previous_start_time=str(self._start_time),
+                        start_time=str(data.start_time),
+                        end_time=str(data.end_time),
+                    )
                     self._start_time = data.start_time
                 self._end_time = data.end_time
             return JobReply(job_id=self._job_id)

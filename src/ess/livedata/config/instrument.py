@@ -589,6 +589,7 @@ class Instrument:
         outputs: type[Any],
         device_outputs: dict[str, str] | None = None,
         reset_on_run_transition: bool = True,
+        supports_reset: bool = True,
     ) -> SpecHandle:
         """
         Register workflow spec, return handle for later factory attachment.
@@ -648,6 +649,7 @@ class Instrument:
             outputs=outputs,
             device_outputs=device_outputs or {},
             reset_on_run_transition=reset_on_run_transition,
+            supports_reset=supports_reset,
         )
         return self.workflow_factory.register_spec(spec, service=service)
 

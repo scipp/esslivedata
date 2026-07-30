@@ -60,10 +60,11 @@ no text, `title`, or `aria-label` — leaving nothing semantic for browser autom
 *name* identity to slug (`workflow_status_widget.py`'s `_tool_css_class`), but a grid has
 none, so `lt-grid-*` slugs the grid *title* instead (`plot_grid_manager.py`) — the same
 title that also drives the grid's download filename. Plot cells have neither a name nor
-a stable title, so their titlebar pencil carries the grid position as
-`lt-cell-r{row}c{col}` (`cell.py`) — unique per grid, and only the active tab's grid is
-rendered. Do not rely on DOM order for cells: a rebuilt cell (e.g. after a rename) moves
-to the end of the document.
+a stable title, so every button in their titlebar — gear (or layer menu), pencil, and
+layer-details toggle — carries the grid position as `lt-cell-r{row}c{col}` (`cell.py`),
+unique per grid, and only the active tab's grid is rendered. Address one with a compound
+selector: `.lt-cell-r0c1.lt-tool-settings`. Do not rely on DOM order for cells: a rebuilt
+cell (e.g. after a rename) moves to the end of the document.
 
 These classes have no associated style rules — adding/removing them is visually inert.
 Treat them as a stable contract: do not drop them in refactors (a test in
@@ -87,7 +88,7 @@ it, on a port other than 5009 (interactive dev uses 5009):
 ```sh
 cp -r tests/dashboard/ui_config_fixtures/dummy "$TMP/cfg/dummy"
 python -m ess.livedata.dashboard.reduction --instrument dummy --transport fake \
-    --port 5011 --config-dir "$TMP/cfg" --no-fetch-announcements
+    --port 5011 --config-dir "$TMP/cfg" --no-fetch-announcements --collapsed-sidebar
 ```
 
 Add `--auto-start` (requires `--transport fake`) to commit every staged workflow on
@@ -95,6 +96,11 @@ launch so plots render with no interaction. Regenerate a fixture by configuring 
 UI, then copying the persisted `workflow_configs.yaml` (strip the runtime
 `current_job` key, keep `jobs`) and `plot_configs.yaml` from the config
 dir back into the fixture; `ui_config_fixtures_test.py` guards against drift.
+
+**Ports.** `fake_dashboard(...)` without a port takes one the OS reports free — how the
+browser tests launch, so two checkouts (or a suite next to an interactive dashboard) can
+run at once. Do not hand a test a port literal; they collide silently across branches.
+Pass an explicit port only when the URL must be known up front, e.g. to open it by hand.
 
 **Shadow DOM selectors.** Tool buttons and rows live in per-widget *open* shadow roots.
 Plain Playwright CSS locators pierce these, so `page.locator(".lt-tool-settings")` works
@@ -105,6 +111,12 @@ button with a *compound* selector on one element:
 - ❌ `.lt-wf-total_counts .lt-tool-player-stop` (matches nothing — the descendant
   crosses a shadow boundary)
 
+**Sidebar.** `--launch` passes `--collapsed-sidebar`, so the main content gets the full
+window width: the sidebar is static in automation runs (announcements are off) and an
+open drawer only narrows the plots under test and their screenshots. Pass the flag when
+running a server by hand too. It sets `MaterialTemplate.collapsed_sidebar`, so the page
+arrives collapsed — no clicking the hamburger, and it survives `page.reload()`.
+
 **Tabs.** The top-level tabs are Bokeh-owned `.bk-tab` divs with no `lt-*` hooks, so
 navigate by visible text (`page.get_by_text("Detectors", exact=True)`). Static tab
 titles are code constants: **Workflows**, **System Status**, **Manage Plots**; further
@@ -112,12 +124,15 @@ tabs are user/fixture plot-grid titles (the dummy fixture adds **Detectors**). W
 `dynamic=True` only the active tab's models exist, so a DOM/`lt-*` inventory reflects the
 *current* tab only — switch tabs before querying that tab's hooks.
 
-**Modals.** Settings (gear), edit (pencil), and grid/workflow config open a `pn.Modal`
+**Modals.** Settings (gear), cell edit (pencil), and workflow config open a `pn.Modal`
 rendered as `[role=dialog]` — use that as the open/visible signal (`Dashboard.open_modal`
 waits on it). Footer buttons are reachable by text (`Cancel`, `Update Plot`, `Back`). To
 dismiss, press **Escape** (a `ModalEscapeCloser` widget makes this work from initial
 focus) or click `.pnx-dialog-close`. Per-grid rows in **Manage Plots** carry
-`lt-grid-{title-slug}` (e.g. `.lt-grid-detectors.lt-tool-pencil`).
+`lt-grid-{title-slug}` (e.g. `.lt-grid-detectors.lt-tool-pencil`) — that pencil is the
+exception: it opens edit mode *inline* in the row, not a dialog, so `Dashboard.open_modal`
+times out on it. Wait on its fields instead (`input[placeholder="Enter grid title"]`) and
+commit with the `Save Changes` button.
 
 ### Driving workflow config flows
 

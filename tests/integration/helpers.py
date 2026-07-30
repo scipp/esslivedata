@@ -114,6 +114,41 @@ def wait_for_watermark_stall(
         previous = current
 
 
+def wait_for_watermark_advance(topic: str, *, since: int, timeout: float = 30.0) -> int:
+    """Wait until a topic's high watermark exceeds ``since``, then return it.
+
+    Complements :func:`wait_for_watermark_stall`: proves a producer is live
+    (e.g. before asserting a later stop makes it go quiet) without a fixed
+    sleep, which would either be too short in a slow CI run or waste time
+    otherwise.
+
+    Parameters
+    ----------
+    topic:
+        Topic whose single-partition high watermark to observe.
+    since:
+        Watermark value that must be exceeded for the wait to succeed.
+    timeout:
+        Maximum time to wait in seconds.
+
+    Raises
+    ------
+    WaitTimeout:
+        If the watermark has not advanced past ``since`` within the timeout.
+    """
+    deadline = time.time() + timeout
+    while True:
+        current = topic_high_watermark(topic)
+        if current > since:
+            return current
+        if time.time() > deadline:
+            raise WaitTimeout(
+                f"Watermark of {topic} did not advance past {since} "
+                f"after {timeout} seconds"
+            )
+        time.sleep(0.2)
+
+
 def wait_for_condition(
     condition: Callable[[], bool], timeout: float = 5.0, poll_interval: float = 0.1
 ) -> None:
@@ -151,12 +186,20 @@ def _get_job_data(
     The data plane is keyed by the stable ``DataKey`` (workflow, source,
     output); the per-commit job_number is provenance, not identity, so jobs
     are matched via their source_name.
+
+    Iteration already hides cleared keys, but it takes the lock separately from
+    each read: the dashboard's ingestion thread can flip a generation in
+    between (heartbeat adoption) and empty a key this call already accepted.
+    Such a key reads as absent -- there is genuinely no data for it yet.
     """
-    return {
-        key: data_service[key]
-        for key in data_service
-        if key.workflow_id == workflow_id and key.source_name == source_name
-    }
+    data: dict[DataKey, Any] = {}
+    for key in data_service:
+        if key.workflow_id == workflow_id and key.source_name == source_name:
+            try:
+                data[key] = data_service[key]
+            except KeyError:
+                continue
+    return data
 
 
 def get_output_data(

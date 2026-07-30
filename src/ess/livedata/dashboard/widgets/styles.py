@@ -42,15 +42,20 @@ class Colors:
     TAB_ACTIVE_BG = "#e8f4f8"
 
 
-class FreshnessPill:
-    """Color bands for the titlebar freshness/lag pill, by data staleness.
+class StatusPill:
+    """Color bands for the cell status pill and per-layer status badges.
 
-    Each band is ``(background, text, dot)``.
+    ``FRESH``/``STALE``/``OLD`` band live data age. ``STOPPED`` marks a
+    deliberately stopped job whose frozen snapshot is still valid — neutral
+    gray, no alarm. ``ERROR`` flags a failed layer and shares the alarm red
+    with ``OLD``. Each band is ``(background, text, dot)``.
     """
 
     FRESH = ("rgba(40, 167, 69, 0.16)", "#1e7e34", StatusColors.SUCCESS)
     STALE = ("rgba(255, 193, 7, 0.18)", "#946c00", StatusColors.WARNING)
     OLD = ("rgba(220, 53, 69, 0.16)", "#b21f2d", StatusColors.ERROR)
+    STOPPED = ("rgba(108, 117, 125, 0.16)", Colors.TEXT, StatusColors.MUTED)
+    ERROR = OLD
 
 
 class ErrorBox:

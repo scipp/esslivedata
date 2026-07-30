@@ -372,6 +372,41 @@ class TestGridUpload:
         assert grid_manager._title_input.value == original_title
         assert grid_manager._pending_upload_cells is None
 
+    def test_upload_overlapping_cells_rejected(self, grid_manager):
+        """A config with cells claiming the same slot is rejected on upload."""
+        yaml_content = b"""
+title: Overlapping
+nrows: 2
+ncols: 2
+cells:
+  - geometry: {row: 0, col: 0, row_span: 1, col_span: 1}
+    layers:
+    - data_sources:
+        primary:
+          workflow_id: test_instrument/test_workflow/1
+          source_names: [source1]
+          view_name: result
+      plot_name: image
+  - geometry: {row: 0, col: 0, row_span: 1, col_span: 2}
+    layers:
+    - data_sources:
+        primary:
+          workflow_id: test_instrument/test_workflow/1
+          source_names: [source1]
+          view_name: result
+      plot_name: image
+"""
+        original_title = grid_manager._title_input.value
+
+        class FakeEvent:
+            new = yaml_content
+
+        grid_manager._on_file_uploaded(FakeEvent())
+
+        # Rejected before form/pending state is populated.
+        assert grid_manager._title_input.value == original_title
+        assert grid_manager._pending_upload_cells is None
+
     def test_upload_invalid_cell_does_not_update_form(self, grid_manager):
         """Test that cell with missing geometry does not update form fields."""
         yaml_content = b"""
@@ -974,6 +1009,46 @@ class TestEditMode:
 
         assert grid_manager._editing_grid_id is None
         assert grid_manager._editing_cells is None
+
+    def test_save_changes_on_grid_removed_by_another_session_is_a_noop(
+        self, grid_manager, plot_orchestrator, workflow_id
+    ):
+        """Saving over a grid already removed elsewhere does not raise.
+
+        The removal landed in the orchestrator, but this session's topology
+        poll (``on_topology_changed``) has not run yet, so ``_editing_grid_id``
+        is still the stale id when Save Changes fires.
+        """
+        grid_id = self._add_grid_with_cell(plot_orchestrator, workflow_id)
+        grid_manager._enter_edit_mode(grid_id)
+
+        plot_orchestrator.remove_grid(grid_id)
+
+        grid_manager._on_save_changes(None)
+
+        assert grid_manager._editing_grid_id is None
+        assert plot_orchestrator.get_all_grids() == {}
+
+    def test_save_changes_after_own_poll_cleared_editing_state_is_a_noop(
+        self, grid_manager, plot_orchestrator, workflow_id
+    ):
+        """Saving with an already-cleared edit state does not raise.
+
+        Reproduces the two-session race: this session's own topology poll
+        notices the grid is gone and clears ``_editing_grid_id`` to ``None``
+        first, but a Save Changes click already queued client-side still
+        arrives and invokes the handler with nothing left to save.
+        """
+        grid_id = self._add_grid_with_cell(plot_orchestrator, workflow_id)
+        grid_manager._enter_edit_mode(grid_id)
+
+        plot_orchestrator.remove_grid(grid_id)
+        grid_manager.on_topology_changed()
+        assert grid_manager._editing_grid_id is None
+
+        grid_manager._on_save_changes(None)
+
+        assert plot_orchestrator.get_all_grids() == {}
 
     def test_exit_edit_mode_restores_ui(
         self, grid_manager, plot_orchestrator, workflow_id

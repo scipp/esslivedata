@@ -132,7 +132,7 @@ def create_layer_info_row(
     *,
     title: str | None = None,
     description: str | None = None,
-    stopped: bool = False,
+    badge: str | None = None,
     time_pane: pn.pane.HTML | None = None,
 ) -> pn.Row | pn.Column:
     """
@@ -150,8 +150,9 @@ def create_layer_info_row(
         Optional title text to display on the left side of the row.
     description:
         Optional description shown as tooltip when hovering over the title.
-    stopped:
-        If True, adds a visual indicator (border) showing workflow has ended.
+    badge:
+        Optional pre-rendered status pill HTML ("stopped"/"error"), placed at
+        the far left to mirror the titlebar pill position.
     time_pane:
         Optional pane showing this layer's data time range/lag, placed on its
         own line below the title and updated in place by the caller.
@@ -161,8 +162,18 @@ def create_layer_info_row(
     :
         Panel Row (or Column when a time pane is given) for one layer.
     """
-    # Build left content: title and optional tooltip icon
+    # Build left content: status badge, title, and optional tooltip icon
     left_items: list = []
+    if badge:
+        left_items.append(
+            pn.pane.HTML(
+                badge,
+                sizing_mode='fixed',
+                height=ButtonStyles.TOOL_BUTTON_SIZE,
+                margin=(0, 6, 0, 0),
+                styles={'display': 'flex', 'align-items': 'center'},
+            )
+        )
     if title:
         title_html = pn.pane.HTML(
             f'<span style="font-size: 12px; color: {Colors.TEXT};">{title}</span>',
@@ -194,12 +205,6 @@ def create_layer_info_row(
 
     margin = ButtonStyles.CELL_MARGIN
 
-    # Add border when workflow is stopped
-    styles = {}
-    if stopped:
-        styles['border'] = f'2px solid {Colors.TEXT}'
-        styles['border-radius'] = '4px'
-
     title_row = pn.Row(
         *left_items,
         pn.Spacer(sizing_mode='stretch_width'),
@@ -210,7 +215,6 @@ def create_layer_info_row(
 
     if time_pane is None:
         title_row.margin = (margin, margin, margin, margin)
-        title_row.styles = styles
         return title_row
 
     # Time info goes on its own line below the title row to avoid competing
@@ -220,7 +224,6 @@ def create_layer_info_row(
         time_pane,
         sizing_mode='stretch_width',
         margin=(margin, margin, margin, margin),
-        styles=styles,
     )
 
 
@@ -249,6 +252,7 @@ def _create_toolbar_visibility_button(
     *,
     visible: bool,
     on_toggle: Callable[[bool], None],
+    css_classes: list[str] | None = None,
 ) -> pn.widgets.Button:
     """Adjustments button toggling per-layer info-row visibility for a cell."""
 
@@ -271,7 +275,7 @@ def _create_toolbar_visibility_button(
         # Hand-rolled (toggling icon) so it bypasses create_tool_button; tag it
         # with the stable automation hooks by hand. Icon name varies, so use a
         # semantic suffix rather than lt-tool-{icon_name}.
-        css_classes=['lt-tool', 'lt-tool-layer-details'],
+        css_classes=['lt-tool', 'lt-tool-layer-details', *(css_classes or [])],
         stylesheets=create_tool_button_stylesheet(Colors.TEXT_MUTED, HoverColors.MUTED),
     )
     state = {'visible': visible}
@@ -290,6 +294,7 @@ def _create_configure_button_or_menu(
     *,
     layers: list[tuple[LayerId, str]],
     on_configure: Callable[[LayerId], None],
+    css_classes: list[str] | None = None,
 ) -> pn.widgets.Button | pn.widgets.MenuButton:
     """
     Gear button (single layer) or menu picking which layer to configure.
@@ -304,6 +309,8 @@ def _create_configure_button_or_menu(
         ``(layer_id, title)`` pairs for the cell's layers, in display order.
     on_configure:
         Callback invoked with the layer ID to configure.
+    css_classes:
+        Extra context classes, so the button is addressable per cell.
     """
     button_color = Colors.TEXT_MUTED
     hover_color = HoverColors.MUTED
@@ -315,6 +322,7 @@ def _create_configure_button_or_menu(
             button_color=button_color,
             hover_color=hover_color,
             on_click_callback=lambda: on_configure(layer_id),
+            css_classes=css_classes,
         )
 
     # Titles carry HTML entities (e.g. '&rarr;'); unescape for plain menu
@@ -353,7 +361,7 @@ def _create_configure_button_or_menu(
         margin=0,
         # MenuButton (dropdown), so it bypasses create_tool_button; tag it with
         # the same hooks as the single-layer gear for consistent automation.
-        css_classes=['lt-tool', 'lt-tool-settings'],
+        css_classes=['lt-tool', 'lt-tool-settings', *(css_classes or [])],
         stylesheets=stylesheets,
     )
 
@@ -409,9 +417,10 @@ def create_cell_titlebar(
         Optional pane showing the data freshness/lag indicator, placed between
         the title and the action buttons. Updated in place by the caller.
     css_classes:
-        Extra context classes for the edit (pencil) button so repeated cell
-        instances are uniquely addressable in automation (e.g.
-        ``lt-cell-r0c0``); a rebuilt cell's DOM position is not stable.
+        Extra context classes for every button in the titlebar, so repeated
+        cell instances are uniquely addressable in automation (e.g.
+        ``lt-cell-r0c0``); a rebuilt cell's DOM position is not stable, and
+        the three buttons are distinguished by their ``lt-tool-*`` class.
 
     Returns
     -------
@@ -429,6 +438,7 @@ def create_cell_titlebar(
     gear_button = _create_configure_button_or_menu(
         layers=configure_layers,
         on_configure=on_configure_layer,
+        css_classes=css_classes,
     )
     edit_button = create_tool_button(
         icon_name='pencil',
@@ -440,6 +450,7 @@ def create_cell_titlebar(
     toggle_button = _create_toolbar_visibility_button(
         visible=toolbars_visible,
         on_toggle=on_toggle_toolbars_callback,
+        css_classes=css_classes,
     )
 
     right_buttons: list = [gear_button, edit_button, toggle_button]

@@ -164,3 +164,128 @@ class TestAreaDetectorView:
 
         with pytest.raises(RuntimeError, match="finalize called without"):
             workflow.finalize()
+
+
+def _bounds(da: sc.DataArray) -> tuple[int, int]:
+    return da.coords['start_time'].value, da.coords['end_time'].value
+
+
+class TestAreaDetectorViewWindowBounds:
+    """The 'current' output must carry the bounds of the window it covers.
+
+    The dashboard derives freshness/lag and counts-per-second normalization from
+    start_time/end_time, and Job._add_time_coords deliberately leaves outputs that
+    set their own time coords alone.
+    """
+
+    @pytest.fixture
+    def workflow(self) -> AreaDetectorView:
+        return AreaDetectorView(
+            raw.LogicalView(transform=lambda da: da, input_sizes={'y': 4, 'x': 4})
+        )
+
+    @pytest.fixture
+    def frame(self) -> sc.DataArray:
+        return sc.DataArray(sc.ones(dims=['y', 'x'], shape=[4, 4]))
+
+    def test_current_carries_bounds_of_accumulated_window(self, workflow, frame):
+        workflow.accumulate(
+            {'detector': frame},
+            start_time=Timestamp.from_ns(1000),
+            end_time=Timestamp.from_ns(2000),
+        )
+
+        current = workflow.finalize()['current']
+
+        assert _bounds(current) == (1000, 2000)
+        # 'time' duplicates start_time until issue #1058 drops it everywhere.
+        assert sc.identical(current.coords['time'], current.coords['start_time'])
+
+    def test_bounds_span_all_accumulates_of_the_window(self, workflow, frame):
+        workflow.accumulate(
+            {'detector': frame},
+            start_time=Timestamp.from_ns(1000),
+            end_time=Timestamp.from_ns(2000),
+        )
+        workflow.accumulate(
+            {'detector': frame},
+            start_time=Timestamp.from_ns(2000),
+            end_time=Timestamp.from_ns(3000),
+        )
+        workflow.accumulate(
+            {'detector': frame},
+            start_time=Timestamp.from_ns(3000),
+            end_time=Timestamp.from_ns(4000),
+        )
+
+        assert _bounds(workflow.finalize()['current']) == (1000, 4000)
+
+    def test_bounds_reset_between_finalize_cycles(self, workflow, frame):
+        workflow.accumulate(
+            {'detector': frame},
+            start_time=Timestamp.from_ns(1000),
+            end_time=Timestamp.from_ns(2000),
+        )
+        workflow.finalize()
+
+        workflow.accumulate(
+            {'detector': frame},
+            start_time=Timestamp.from_ns(5000),
+            end_time=Timestamp.from_ns(6000),
+        )
+
+        assert _bounds(workflow.finalize()['current']) == (5000, 6000)
+
+    def test_bounds_reset_after_clear(self, workflow, frame):
+        workflow.accumulate(
+            {'detector': frame},
+            start_time=Timestamp.from_ns(1000),
+            end_time=Timestamp.from_ns(2000),
+        )
+        workflow.clear()
+
+        workflow.accumulate(
+            {'detector': frame},
+            start_time=Timestamp.from_ns(7000),
+            end_time=Timestamp.from_ns(8000),
+        )
+
+        assert _bounds(workflow.finalize()['current']) == (7000, 8000)
+
+    def test_bounds_restart_with_incompatible_image_structure(self, workflow):
+        def frame(x_offset: float) -> sc.DataArray:
+            return sc.DataArray(
+                sc.ones(dims=['y', 'x'], shape=[4, 4]),
+                coords={
+                    'x': sc.arange('x', 4, dtype='float64') + x_offset,
+                    'y': sc.arange('y', 4, dtype='float64'),
+                },
+            )
+
+        workflow.accumulate(
+            {'detector': frame(0.0)},
+            start_time=Timestamp.from_ns(1000),
+            end_time=Timestamp.from_ns(2000),
+        )
+        # Shifted coordinate -> accumulation restarts, and so does the window.
+        workflow.accumulate(
+            {'detector': frame(9.0)},
+            start_time=Timestamp.from_ns(2000),
+            end_time=Timestamp.from_ns(3000),
+        )
+
+        assert _bounds(workflow.finalize()['current']) == (2000, 3000)
+
+    def test_cumulative_has_no_time_coords(self, workflow, frame):
+        """Job._add_time_coords stamps the job-level range on 'cumulative'."""
+        workflow.accumulate(
+            {'detector': frame},
+            start_time=Timestamp.from_ns(1000),
+            end_time=Timestamp.from_ns(2000),
+        )
+
+        cumulative = workflow.finalize()['cumulative']
+
+        assert 'time' not in cumulative.coords
+        assert 'start_time' not in cumulative.coords
+        assert 'end_time' not in cumulative.coords

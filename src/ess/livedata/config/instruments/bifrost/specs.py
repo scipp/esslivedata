@@ -23,7 +23,12 @@ from ess.livedata.config import (
     instrument_registry,
     name_streams,
 )
-from ess.livedata.config.workflow_spec import OutputView, WorkflowOutputsBase
+from ess.livedata.config.workflow_spec import (
+    CumulativeOutput,
+    OutputView,
+    WindowOutput,
+    WorkflowOutputsBase,
+)
 from ess.livedata.parameter_models import EnergyEdges, QEdges
 from ess.livedata.workflows.detector_view_specs import SpectrumViewSpec
 from ess.livedata.workflows.monitor_workflow_specs import (
@@ -100,10 +105,7 @@ class DetectorRatemeterOutputs(WorkflowOutputsBase):
         OutputView(
             name='detector_region_counts',
             title='Detector Region Counts',
-            fields={
-                'since_start': 'detector_region_counts_cumulative',
-                'per_update': 'detector_region_counts',
-            },
+            fields=('detector_region_counts_cumulative', 'detector_region_counts'),
             description=(
                 'Counts for the selected arc and pixel range. With "since run '
                 'start" shows the count accumulated since the start of the run; '
@@ -114,7 +116,7 @@ class DetectorRatemeterOutputs(WorkflowOutputsBase):
         ),
     )
 
-    detector_region_counts: sc.DataArray = pydantic.Field(
+    detector_region_counts: WindowOutput = pydantic.Field(
         default_factory=lambda: sc.DataArray(
             sc.scalar(0, unit='counts'),
             coords={'time': sc.scalar(0, unit='ns')},
@@ -125,7 +127,7 @@ class DetectorRatemeterOutputs(WorkflowOutputsBase):
             'interval only. Resets each update interval.'
         ),
     )
-    detector_region_counts_cumulative: sc.DataArray = pydantic.Field(
+    detector_region_counts_cumulative: CumulativeOutput = pydantic.Field(
         default_factory=lambda: sc.DataArray(sc.scalar(0, unit='counts')),
         title='Detector Region Counts',
         description=(

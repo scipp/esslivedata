@@ -57,11 +57,13 @@ def _latest_time_ns(primary: dict[DataKey, sc.DataArray]) -> int | None:
     )
 
 
-# Used only to widen a zero-width range (see _ensure_span); the per-axis
+# Used only to widen a degenerate range (see ensure_span); the per-axis
 # padding fraction itself comes from HoloViews (see _hv_axis_padding).
 _DEGENERATE_PAD = 0.05
 _DEGENERATE_PAD_MIN = 0.5
 _DEGENERATE_LOG_FACTOR = 1.1
+_DEGENERATE_PAD_NS = 1e9  # one second, for epoch-nanosecond axes
+_DEGENERATE_ULPS = 4
 
 
 def _hv_axis_padding(element_type: type) -> tuple[float, float, float]:
@@ -76,31 +78,56 @@ def _hv_axis_padding(element_type: type) -> tuple[float, float, float]:
     return get_axis_padding(plot_cls.param.padding.default)
 
 
-def _ensure_span(lo: float, hi: float, *, log: bool) -> tuple[float, float]:
-    """Widen a zero-width range so Bokeh has something to render.
+def is_degenerate_span(lo: float, hi: float) -> bool:
+    """Whether ``(lo, hi)`` is too narrow for float64 to resolve.
+
+    Measured in units of the float64 spacing at the range's own magnitude, so
+    one test serves data axes and epoch-nanosecond datetime axes alike: a
+    float64 step is ~1e-16 next to a temperature in kelvin but a few hundred
+    nanoseconds next to a 2020s epoch, which is precisely the resolution below
+    which each range stops carrying information. A few ULP of slack admits
+    ranges that are nominally non-empty yet still unrenderable, such as the
+    one-ULP upper bound ``scipp.hist`` derives from a constant coord.
+    """
+    return hi - lo <= _DEGENERATE_ULPS * np.spacing(max(abs(lo), abs(hi)))
+
+
+def ensure_span(
+    lo: float, hi: float, *, log: bool, datetime: bool = False
+) -> tuple[float, float]:
+    """Widen a degenerate range so Bokeh has something to render.
 
     ``range_pad`` derives padding from the span, so it leaves a single-valued
     range (constant image, single point or bin) untouched; HoloViews handles
     this separately via ``default_span``. Bump multiplicatively on log axes to
     keep the lower bound positive, additively on linear axes.
+
+    The additive offset is a fraction of the magnitude, which presumes the axis
+    is measured from its zero. A datetime axis is measured from the epoch, where
+    5% of the magnitude is decades, so widen it by a fixed interval instead.
     """
-    if hi != lo:
+    if not is_degenerate_span(lo, hi):
         return lo, hi
     if log:
         return lo / _DEGENERATE_LOG_FACTOR, hi * _DEGENERATE_LOG_FACTOR
-    offset = max(abs(lo) * _DEGENERATE_PAD, _DEGENERATE_PAD_MIN)
+    if datetime:
+        offset = _DEGENERATE_PAD_NS
+    else:
+        offset = max(abs(lo) * _DEGENERATE_PAD, _DEGENERATE_PAD_MIN)
     return lo - offset, hi + offset
 
 
-def _pad_range(lo: float, hi: float, *, pad: float, log: bool) -> tuple[float, float]:
+def _pad_range(
+    lo: float, hi: float, *, pad: float, log: bool, datetime: bool = False
+) -> tuple[float, float]:
     """Pad ``(lo, hi)`` by fraction ``pad`` using HoloViews' range padding.
 
     ``pad`` is the per-axis fraction HoloViews assigns to the element type (see
     :func:`_hv_axis_padding`); :func:`range_pad` applies it in data space, or in
     log space when ``log=True``. ``pad=0`` (e.g. every image axis) is a no-op
-    beyond the zero-width guard.
+    beyond the degenerate-range guard.
     """
-    lo, hi = _ensure_span(lo, hi, log=log)
+    lo, hi = ensure_span(lo, hi, log=log, datetime=datetime)
     return range_pad(lo, hi, pad, log)
 
 
@@ -1083,10 +1110,15 @@ class LinePlotter(Plotter):
         targets: RangeTargets = {}
         dim = data.dim
         if dim in data.coords:
-            coord_values = data.coords[dim].values
-            coord_extent = _finite_min_max(coord_values, log=self._logx)
+            coord = data.coords[dim]
+            coord_extent = _finite_min_max(coord.values, log=self._logx)
             if coord_extent is not None:
-                targets['x'] = _pad_range(*coord_extent, pad=xpad, log=self._logx)
+                targets['x'] = _pad_range(
+                    *coord_extent,
+                    pad=xpad,
+                    log=self._logx,
+                    datetime=coord.dtype == sc.DType.datetime64,
+                )
         value_extent = _value_extent_with_errors(
             data, show_errors=self._errors != 'none', log=self._logy
         )
@@ -1416,10 +1448,15 @@ class Overlay1DPlotter(Plotter):
         targets: RangeTargets = {}
         plot_dim = data.dims[1]
         if plot_dim in data.coords:
-            coord_values = data.coords[plot_dim].values
-            coord_extent = _finite_min_max(coord_values, log=self._logx)
+            coord = data.coords[plot_dim]
+            coord_extent = _finite_min_max(coord.values, log=self._logx)
             if coord_extent is not None:
-                targets['x'] = _pad_range(*coord_extent, pad=xpad, log=self._logx)
+                targets['x'] = _pad_range(
+                    *coord_extent,
+                    pad=xpad,
+                    log=self._logx,
+                    datetime=coord.dtype == sc.DType.datetime64,
+                )
         value_extent = _value_extent_with_errors(
             data, show_errors=self._errors != 'none', log=self._logy
         )

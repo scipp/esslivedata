@@ -287,4 +287,7 @@ def register_wavelength_lut_workflow_spec(
         params=params,
         outputs=WavelengthLutOutputs,
         reset_on_run_transition=False,
+        # The LUT is recomputed from the retained chopper-setpoint history on
+        # the next trigger regardless, so a reset achieves nothing.
+        supports_reset=False,
     )

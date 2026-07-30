@@ -74,6 +74,15 @@ def _has_icon(icons: list[str | None], icon_name: str) -> bool:
     return expected_icon in icons
 
 
+def _get_reset_button(buttons) -> pn.widgets.Button:
+    """Return the reset tool button from a collection of header buttons."""
+    return next(
+        obj
+        for obj in buttons
+        if isinstance(obj, pn.widgets.Button) and 'lt-tool-backspace' in obj.css_classes
+    )
+
+
 @pytest.fixture
 def job_service():
     """Create a JobService for testing."""
@@ -403,6 +412,44 @@ class TestWorkflowStatusWidget:
         button_icons = _get_button_icons(header_buttons)
         assert not _has_icon(button_icons, 'player-play')  # No play button
         assert _has_icon(button_icons, 'player-stop')  # Stop button
+
+    def test_reset_button_enabled_when_spec_supports_reset(
+        self, workflow_status_widget, job_orchestrator, workflow_id
+    ):
+        job_orchestrator.stage_config(
+            workflow_id,
+            source_name='source1',
+            params={'threshold': 100.0},
+            aux_source_names={},
+        )
+        job_orchestrator.commit_workflow(workflow_id)
+        workflow_status_widget._build_widget()
+
+        reset_btn = _get_reset_button(workflow_status_widget._create_header_buttons())
+        assert not reset_btn.disabled
+        assert reset_btn.description is None
+
+    def test_reset_button_disabled_with_tooltip_when_spec_does_not_support_reset(
+        self, workflow_spec, workflow_id, job_orchestrator, job_service
+    ):
+        widget = WorkflowStatusWidget(
+            workflow_id=workflow_id,
+            workflow_spec=workflow_spec.model_copy(update={'supports_reset': False}),
+            orchestrator=job_orchestrator,
+            job_service=job_service,
+        )
+        job_orchestrator.stage_config(
+            workflow_id,
+            source_name='source1',
+            params={'threshold': 100.0},
+            aux_source_names={},
+        )
+        job_orchestrator.commit_workflow(workflow_id)
+        widget._build_widget()
+
+        reset_btn = _get_reset_button(widget._create_header_buttons())
+        assert reset_btn.disabled
+        assert 'does not support reset' in reset_btn.description.content
 
     def test_header_shows_play_button_when_running_with_modified_staged(
         self, workflow_status_widget, job_orchestrator, workflow_id
