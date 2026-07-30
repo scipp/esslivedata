@@ -457,8 +457,8 @@ class TestIdempotentInstallation:
         """Missing toolbar on first call must not lock the controller out.
 
         Real Bokeh plots always have a toolbar; this guards against a
-        regression where _tools_installed is set prematurely and a
-        subsequent render with a live toolbar misses tool installation.
+        regression where the controller records the installation prematurely
+        and a subsequent render with a live toolbar misses it.
         """
         k = _key()
         plotter = _FakePlotter(frozenset({'x'}), {k: {'x': (0.0, 1.0)}})
@@ -468,12 +468,33 @@ class TestIdempotentInstallation:
         plot_no_toolbar.state = None  # type: ignore[assignment]
         hook = controller.make_hook()
         hook(plot_no_toolbar, None)
-        assert controller._tools_installed is False
 
         plot, _x, _y, _c = _make_plot_all_handles()
         hook(plot, None)
-        assert controller._tools_installed is True
         assert len(plot.state.toolbar.tools) == 2  # x toggle + Fit
+
+    def test_second_figure_also_gets_tools(self) -> None:
+        """Every figure the cell's hook renders into must carry the tools.
+
+        The hook lives on the session's DynamicMap, which HoloViews can render
+        into more than one Bokeh figure (a rebuilt cell whose previous pane is
+        still in the document, or a kdim/Layout figure swap). Installing only
+        into the figure that happens to render first leaves the figure the
+        user sees with no toggles.
+        """
+        k = _key()
+        plotter = _FakePlotter(frozenset({'x', 'y'}), {k: {'x': (0.0, 1.0)}})
+        controller = CellAutoscaleController([plotter])
+        hook = controller.make_hook()
+
+        first, *_ = _make_plot_all_handles()
+        second, *_ = _make_plot_all_handles()
+        hook(first, None)
+        hook(second, None)
+
+        # Same tool models on both toolbars, so toggle state is shared.
+        assert second.state.toolbar.tools == first.state.toolbar.tools
+        assert len(second.state.toolbar.tools) == 3
 
 
 class TestHandleRefreshPerRender:
@@ -553,7 +574,6 @@ class TestDispose:
         assert fit_tool._callbacks == []
         assert controller._fit_tool is None
         assert controller._toggles == {}
-        assert controller._tools_installed is False
 
     def test_controller_collectable_after_dispose(self) -> None:
         """The on_change cycle (controller -> tool -> bound method ->
