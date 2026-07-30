@@ -83,7 +83,7 @@ class SystemStatusWidget:
         """
         if self._is_visible is not None and not self._is_visible():
             return False
-        return self._notification_widget.is_stale()
+        return self._notification_widget.has_pending_work()
 
     def _refresh_all(self) -> None:
         """Refresh all sub-widgets, gated by visibility predicate."""

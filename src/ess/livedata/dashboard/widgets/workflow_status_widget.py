@@ -1147,8 +1147,12 @@ class WorkflowStatusWidget:
             lambda: self._orchestrator.commit_workflow(self._workflow_id),
         )
 
-    def is_stale(self) -> bool:
+    def has_pending_work(self) -> bool:
         """True when a refresh would show something the browser has not seen.
+
+        Note that this is unrelated to heartbeat staleness
+        (``JobService.is_status_stale``): it asks whether shared state has moved
+        on since this session last rendered, not whether a status is old.
 
         Two independent sources: the workflow's state version (structural
         changes -> full rebuild) and the job-status version (badge, per-source
@@ -1495,7 +1499,7 @@ class WorkflowStatusListWidget:
             return True
         if self._orchestrator.get_gate_version() != self._last_gate_version:
             return True
-        return any(widget.is_stale() for widget in self._widgets.values())
+        return any(widget.has_pending_work() for widget in self._widgets.values())
 
     def _refresh_all(self) -> None:
         """Refresh all workflow status widgets.

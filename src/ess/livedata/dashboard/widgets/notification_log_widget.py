@@ -46,7 +46,7 @@ class NotificationLogWidget:
             margin=(0, 10),
         )
 
-    def is_stale(self) -> bool:
+    def has_pending_work(self) -> bool:
         """True when the queue advanced past the last rendered version."""
         return self._queue.version != self._last_version
 
