@@ -693,11 +693,22 @@ class PlotGridTabs:
         Bokeh models. Skipped layers keep their dirty flag set; a tab switch
         requests its own tick (:meth:`_on_active_tab_changed`), which sends the
         newly visible layers' latest cached state.
+
+        A hidden grid therefore does no display work at all between switches --
+        not even on the periodic full pass. Its layers are deactivated
+        (``activate_layer(..., False)``), so unless another session is viewing
+        them they do not even compute, though their buffers keep filling; this
+        pass only keeps their structure reconciled. What the user sees on
+        returning to the tab is the latest state, computed on the switch, not a
+        five-second-old rendering.
         """
         # Snapshot before reading any layer state, and record it only once the
-        # pass completes (below): a concurrent lifecycle change is then picked
-        # up by the next pass, and an exception escaping mid-pass leaves the
-        # gate armed so the next tick retries.
+        # pass completes (below). The ingestion thread bumps this counter while
+        # the pass runs, so reading it at the end would also absorb transitions
+        # that landed mid-pass and were never rendered, closing the gate on them
+        # until the next unconditional full pass. Recording late likewise leaves
+        # the gate armed when an exception escapes mid-pass, so the next tick
+        # retries.
         layer_version = self._plot_data_service.version
 
         # Reconcile grid tabs only when the shared topology changed. Runs on

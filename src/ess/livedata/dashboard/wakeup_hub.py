@@ -40,11 +40,21 @@ class WakeupHub:
     duplicate wakes are harmless; the housekeeping poll is the safety net.
 
     A per-session pending flag coalesces bursts: while a wake is scheduled but
-    has not run, further ``wake_all`` calls skip that session. The flag is
-    cleared *before* the tick body runs, so a change landing during the tick
-    schedules a fresh wake instead of waiting for the housekeeping poll, and
-    :meth:`clear_pending` re-arms it from the housekeeping tick so a scheduled
-    tick that never dispatches cannot silence a session for good.
+    has not run, further ``wake_all`` calls skip that session. Wakes genuinely
+    arrive faster than ticks can consume them, from two directions that have
+    nothing to do with multiple browser sessions: the ingestion loop wakes after
+    every drain pass that consumed anything and only sleeps when a pass was
+    empty, and one UI action fans out to several version bumps (a staging
+    transaction's commit, a grid template's per-cell topology bumps), each
+    poking ``wake_all`` from the same call stack before the IOLoop can run any
+    tick. Every scheduled tick that finds work pays a full hold+freeze pass, so
+    without the flag a burst would buy back exactly the redundant recompute this
+    mechanism exists to remove.
+
+    The flag is cleared *before* the tick body runs, so a change landing during
+    the tick schedules a fresh wake instead of waiting for the housekeeping poll,
+    and :meth:`clear_pending` re-arms it from the housekeeping tick so a
+    scheduled tick that never dispatches cannot silence a session for good.
 
     Sessions register only once their browser session has loaded (see the
     registration site in :class:`SessionUpdater`: a wake tick mutating the
