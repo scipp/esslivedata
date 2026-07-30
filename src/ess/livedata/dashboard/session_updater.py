@@ -35,7 +35,7 @@ logger = structlog.get_logger(__name__)
 # Cadence of the unconditional full pass within housekeeping ticks. It is the
 # clock for wall-clock-driven displays without a change counter (status
 # staleness at a 60 s threshold, heartbeat readouts) and bounds how long a
-# predicate hole can keep a widget stale. Time-based work on a finer grain
+# predicate hole can leave a widget unrefreshed. Time-based work on a finer grain
 # (freshness-pill stall aging at 2 s) must be encoded in its handler's
 # ``has_work`` predicate instead.
 _FULL_PASS_INTERVAL_S = 5.0
@@ -272,7 +272,7 @@ class SessionUpdater:
         Predicate-gated like a wake tick, except that every
         ``_FULL_PASS_INTERVAL_S`` it runs every handler unconditionally: the
         clock for wall-clock-driven updates no version counter signals, and
-        the bound on how long a predicate hole can keep a widget stale.
+        the bound on how long a predicate hole can leave a widget unrefreshed.
         The gated ticks in between exist to evaluate predicate *time* terms:
         wakes fire only on events, so state defined by the absence of events
         (a stalled stream aging a freshness pill) is noticed only because
