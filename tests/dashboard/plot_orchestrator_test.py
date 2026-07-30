@@ -21,6 +21,7 @@ from ess.livedata.dashboard.plot_orchestrator import (
     PlotOrchestrator,
     reject_overlapping_cells,
 )
+from ess.livedata.dashboard.plot_params import PlotParams1d, PlotParamsTimeseries
 from ess.livedata.dashboard.plots import PresenterBase
 
 
@@ -159,6 +160,7 @@ class FakePlottingController:
         plot_name: str,
         params,
         on_update,
+        temporality,
     ):
         """Set up data pipeline using real StreamManager (unified interface)."""
         from ess.livedata.dashboard.data_roles import PRIMARY
@@ -174,6 +176,7 @@ class FakePlottingController:
                 'source_names': source_names,
                 'output_name': output_name,
                 'plot_name': plot_name,
+                'temporality': temporality,
             }
         )
 
@@ -667,7 +670,7 @@ class TestWorkflowIntegrationAndPlotCreationTiming:
                 source_name=source_name,
                 output_name=plot_cell[1].view_name,
             )
-            fake_data_service[result_key] = sc.scalar(1.0)
+            fake_data_service[result_key] = sc.DataArray(sc.scalar(1.0))
 
         # Plotter count unchanged (no new plotter created on data arrival)
         assert fake_plotting_controller.call_count() == 1
@@ -702,7 +705,7 @@ class TestWorkflowIntegrationAndPlotCreationTiming:
                 source_name=source_name,
                 output_name=plot_cell[1].view_name,
             )
-            fake_data_service[result_key] = sc.scalar(1.0)
+            fake_data_service[result_key] = sc.DataArray(sc.scalar(1.0))
 
         # Verify plot was created
         assert fake_plotting_controller.call_count() == 1
@@ -754,7 +757,7 @@ class TestWorkflowIntegrationAndPlotCreationTiming:
                 source_name=config.source_names[0],
                 output_name=config.view_name,
             )
-            fake_data_service[result_key] = sc.scalar(1.0)
+            fake_data_service[result_key] = sc.DataArray(sc.scalar(1.0))
 
         # Both plots should be created
         assert fake_plotting_controller.call_count() == 2
@@ -837,7 +840,7 @@ class TestWorkflowIntegrationAndPlotCreationTiming:
             source_name='new_source',
             output_name='new_output',
         )
-        fake_data_service[result_key] = sc.scalar(1.0)
+        fake_data_service[result_key] = sc.DataArray(sc.scalar(1.0))
         plot_orchestrator.flush_frames()
 
         plotter = fake_plotting_controller.created_plotters[-1]
@@ -969,7 +972,7 @@ class TestTopologyVersion:
                     source_name=source_name,
                     output_name=plot_cell[1].view_name,
                 )
-            ] = sc.scalar(1.0)
+            ] = sc.DataArray(sc.scalar(1.0))
         plot_orchestrator.sync_job_states()
         plot_orchestrator.flush_frames()
 
@@ -1126,7 +1129,7 @@ def feed_result_data(data_service, config, workflow_id):
             source_name=source_name,
             output_name=config.view_name,
         )
-        data_service[result_key] = sc.scalar(1.0)
+        data_service[result_key] = sc.DataArray(sc.scalar(1.0))
 
 
 class TestBuildRobustness:
@@ -1370,7 +1373,7 @@ class TestCellRetrieval:
                 source_name=source_name,
                 output_name=plot_cell[1].view_name,
             )
-            fake_data_service[result_key] = sc.scalar(1.0)
+            fake_data_service[result_key] = sc.DataArray(sc.scalar(1.0))
         plot_orchestrator.flush_frames()
 
         # PlotDataService should have data for the layer
@@ -1478,7 +1481,7 @@ class TestCellRetrieval:
                 source_name=f'source_{i}',
                 output_name=f'output_{i}',
             )
-            fake_data_service[result_key] = sc.scalar(1.0)
+            fake_data_service[result_key] = sc.DataArray(sc.scalar(1.0))
         plot_orchestrator.flush_frames()
 
         # Simulate late subscriber (new session, page reload, etc.)
@@ -1536,7 +1539,7 @@ class TestCellRetrieval:
                 source_name=source_name,
                 output_name=config.view_name,
             )
-            fake_data_service[result_key] = sc.scalar(1.0)
+            fake_data_service[result_key] = sc.DataArray(sc.scalar(1.0))
         plot_orchestrator.flush_frames()
 
         # Verify layer has data in PlotDataService
@@ -1560,7 +1563,7 @@ class TestCellRetrieval:
             source_name='new_source',
             output_name='new_output',
         )
-        fake_data_service[result_key2] = sc.scalar(2.0)
+        fake_data_service[result_key2] = sc.DataArray(sc.scalar(2.0))
 
         # Verify plotter was recreated with new config
         assert fake_plotting_controller.call_count() == 2
@@ -1601,7 +1604,7 @@ class TestCellRetrieval:
                 source_name=source_name,
                 output_name=plot_cell[1].view_name,
             )
-            fake_data_service[result_key] = sc.scalar(1.0)
+            fake_data_service[result_key] = sc.DataArray(sc.scalar(1.0))
         plot_orchestrator.flush_frames()
 
         # Verify layer has data in PlotDataService
@@ -1705,7 +1708,7 @@ class TestSourceNameFiltering:
             source_name='source_A',
             output_name='test_output',
         )
-        fake_data_service[result_key_A] = sc.scalar(1.0)
+        fake_data_service[result_key_A] = sc.DataArray(sc.scalar(1.0))
 
         # Plotter SHOULD be created with partial data (progressive plotting)
         assert fake_plotting_controller.call_count() == 1, (
@@ -1722,7 +1725,7 @@ class TestSourceNameFiltering:
             source_name='source_B',
             output_name='test_output',
         )
-        fake_data_service[result_key_B] = sc.scalar(2.0)
+        fake_data_service[result_key_B] = sc.DataArray(sc.scalar(2.0))
 
         # Still only 1 create_plot call (plot updates via streaming, not recreation)
         assert fake_plotting_controller.call_count() == 1
@@ -1755,7 +1758,7 @@ class TestSourceNameFiltering:
             source_name='source_A',
             output_name='test_output',
         )
-        fake_data_service[result_key_A] = sc.scalar(1.0)
+        fake_data_service[result_key_A] = sc.DataArray(sc.scalar(1.0))
 
         # NOW add the plot (late subscription)
         grid_id = plot_orchestrator.add_grid(title='Test Grid', nrows=3, ncols=3)
@@ -1980,7 +1983,7 @@ class TestPlotAfterWorkflowStopped:
                 source_name=source_name,
                 output_name=config.view_name,
             )
-            fake_data_service[key] = sc.scalar(1.0)
+            fake_data_service[key] = sc.DataArray(sc.scalar(1.0))
 
     def test_new_layer_after_stop_displays_retained_data(
         self,
@@ -2122,7 +2125,7 @@ class TestTitleResolver:
                 source_name='monitor_0',
                 output_name=output_name,
             )
-            fake_data_service[result_key] = sc.scalar(1.0)
+            fake_data_service[result_key] = sc.DataArray(sc.scalar(1.0))
         plot_orchestrator.flush_frames()
 
         assert len(fake_plotting_controller.created_plotters) == 2
@@ -2211,7 +2214,7 @@ class TestTitleResolverOutputViews:
                 source_name='source1',
                 output_name='current',
             )
-        ] = sc.scalar(1.0)
+        ] = sc.DataArray(sc.scalar(1.0))
         plot_orchestrator.flush_frames()
 
         (plotter,) = fake_plotting_controller.created_plotters
@@ -2219,6 +2222,159 @@ class TestTitleResolverOutputViews:
         assert resolver.output('cumulative') == 'Histogram'
         assert resolver.output('current') == 'Histogram'
         assert resolver.output('unknown_field') == 'unknown_field'
+
+
+@pytest.fixture
+def mixed_temporality_spec(workflow_id):
+    """A spec whose ``histogram`` view backs both window modes, ``total`` one."""
+    import scipp as sc
+
+    from ess.livedata.config.workflow_spec import (
+        REDUCTION,
+        CumulativeOutput,
+        OutputView,
+        WindowOutput,
+        WorkflowOutputsBase,
+        WorkflowSpec,
+    )
+
+    class Params(pydantic.BaseModel):
+        threshold: float = 100.0
+
+    class MixedOutputs(WorkflowOutputsBase):
+        output_views = (
+            OutputView(
+                name='histogram',
+                title='Histogram',
+                fields=('cumulative', 'current'),
+            ),
+            OutputView(name='total', title='Total', fields=('total',)),
+        )
+
+        cumulative: CumulativeOutput = pydantic.Field(
+            default_factory=lambda: sc.DataArray(sc.scalar(0.0)),
+            title='Cumulative',
+        )
+        current: WindowOutput = pydantic.Field(
+            default_factory=lambda: sc.DataArray(sc.scalar(0.0)), title='Current'
+        )
+        total: CumulativeOutput = pydantic.Field(
+            default_factory=lambda: sc.DataArray(sc.scalar(0.0)), title='Total'
+        )
+
+    return WorkflowSpec(
+        instrument=workflow_id.instrument,
+        name=workflow_id.name,
+        version=workflow_id.version,
+        title='Test Workflow',
+        description='A test workflow',
+        source_names=['source1'],
+        params=Params,
+        aux_sources=None,
+        outputs=MixedOutputs,
+        group=REDUCTION,
+    )
+
+
+class TestTemporalityOfResolvedField:
+    """The pipeline is told what the field a view resolved to means.
+
+    ``PlottingController`` refuses to aggregate a window over a cumulative
+    field; without this wiring the guard would never see one.
+    """
+
+    @pytest.fixture
+    def workflow_spec(self, mixed_temporality_spec):
+        # Overrides the conftest fixture, which feeds the registry backing
+        # job_orchestrator.
+        return mixed_temporality_spec
+
+    @pytest.mark.parametrize(
+        ('view_name', 'expected'),
+        [('histogram', 'window'), ('total', 'cumulative')],
+        ids=['per_update_field', 'cumulative_only_view_falls_back'],
+    )
+    def test_temporality_follows_the_resolved_field(
+        self,
+        plot_orchestrator,
+        workflow_id,
+        workflow_spec,
+        job_orchestrator,
+        fake_plotting_controller,
+        view_name,
+        expected,
+    ):
+        from ess.livedata.config.workflow_spec import Temporality
+
+        commit_workflow_for_test(job_orchestrator, workflow_id, workflow_spec)
+        grid_id = plot_orchestrator.add_grid(title='Test Grid', nrows=1, ncols=1)
+        config = make_plot_config(
+            workflow_id, source_names=['source1'], output_name=view_name
+        )
+        add_cell_with_layer(plot_orchestrator, grid_id, DEFAULT_GEOMETRY, config)
+
+        (setup,) = fake_plotting_controller.get_pipeline_setups()
+        assert set(setup['temporality'].values()) == {Temporality(expected)}
+
+
+class TestWindowingSelectedByParams:
+    """Which backing field a view resolves to follows the params' window mode.
+
+    The general plots spell the choice as a mode selector, the timeseries
+    plotter as a cumulative checkbox; both must reach the same resolution.
+    """
+
+    @pytest.fixture
+    def workflow_spec(self, mixed_temporality_spec):
+        # Overrides the conftest fixture, which feeds the registry backing
+        # job_orchestrator.
+        return mixed_temporality_spec
+
+    @pytest.mark.parametrize(
+        ('params', 'expected_field'),
+        [
+            (PlotParamsTimeseries(), 'current'),
+            (
+                PlotParamsTimeseries.model_validate(
+                    {'accumulation': {'cumulative': True}}
+                ),
+                'cumulative',
+            ),
+            (PlotParams1d(), 'current'),
+            (
+                PlotParams1d.model_validate({'time_window': {'mode': 'since_start'}}),
+                'cumulative',
+            ),
+        ],
+        ids=[
+            'timeseries_per_update',
+            'timeseries_cumulative',
+            'plot_window',
+            'plot_since_start',
+        ],
+    )
+    def test_primary_subscribes_to_the_field_the_mode_selects(
+        self,
+        plot_orchestrator,
+        workflow_id,
+        workflow_spec,
+        job_orchestrator,
+        fake_plotting_controller,
+        params,
+        expected_field,
+    ):
+        commit_workflow_for_test(job_orchestrator, workflow_id, workflow_spec)
+        grid_id = plot_orchestrator.add_grid(title='Test Grid', nrows=1, ncols=1)
+        config = make_plot_config(
+            workflow_id,
+            source_names=['source1'],
+            output_name='histogram',
+            params=params,
+        )
+        add_cell_with_layer(plot_orchestrator, grid_id, DEFAULT_GEOMETRY, config)
+
+        (setup,) = fake_plotting_controller.get_pipeline_setups()
+        assert setup['output_name'] == expected_field
 
 
 class TestRenameGrid:
@@ -2799,8 +2955,8 @@ class TestDeliveryPausedForHiddenLayers:
             source_name='monitor_0',
             output_name='output_a',
         )
-        fake_data_service[key] = sc.scalar(1.0)
-        fake_data_service[key] = sc.scalar(2.0)
+        fake_data_service[key] = sc.DataArray(sc.scalar(1.0))
+        fake_data_service[key] = sc.DataArray(sc.scalar(2.0))
         plot_orchestrator.flush_frames()
 
         (plotter,) = fake_plotting_controller.created_plotters
@@ -2816,7 +2972,7 @@ class TestDeliveryPausedForHiddenLayers:
 
         # Releasing the last token pauses delivery again.
         plot_orchestrator.activate_layer(layer_id, viewer, False)
-        fake_data_service[key] = sc.scalar(3.0)
+        fake_data_service[key] = sc.DataArray(sc.scalar(3.0))
         plot_orchestrator.flush_frames()
         assert len(plotter.compute_calls) == 1
 
@@ -2852,7 +3008,7 @@ class TestFrameGeneration:
                 source_name=source_name,
                 output_name=plot_cell[1].view_name,
             )
-            fake_data_service[result_key] = sc.scalar(1.0)
+            fake_data_service[result_key] = sc.DataArray(sc.scalar(1.0))
 
     def test_visible_data_arrival_advances_generation_on_flush(
         self,
@@ -3029,7 +3185,7 @@ class TestSyncJobStates:
             source_name='source1',
             output_name=config.view_name,
         )
-        fake_data_service[key] = sc.scalar(1.0)
+        fake_data_service[key] = sc.DataArray(sc.scalar(1.0))
         plot_orchestrator.flush_frames()
         return layer_id, key
 
@@ -3085,7 +3241,7 @@ class TestSyncJobStates:
         commit_workflow_for_test(job_orchestrator, workflow_id, workflow_spec)
         plot_orchestrator.sync_job_states()
 
-        fake_data_service[key] = sc.scalar(2.0)
+        fake_data_service[key] = sc.DataArray(sc.scalar(2.0))
         plot_orchestrator.flush_frames()
 
         state = plot_data_service.get(layer_id)

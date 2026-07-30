@@ -20,7 +20,8 @@ from ess.livedata.dashboard.plot_orchestrator import (
     PlotConfig,
 )
 from ess.livedata.dashboard.plot_params import (
-    TimeWindowMixin,
+    PlotParams1d,
+    PlotParamsTimeseries,
     TimeWindowMode,
     TimeWindowParams,
 )
@@ -88,20 +89,23 @@ class TestPerPanelToolHooks:
             assert 'lt-cell-r0c0' in matches[0].css_classes, tool
 
 
-class _FakeParams(TimeWindowMixin):
-    pass
-
-
 class TestFormatWindowInfo:
     def test_returns_since_run_start_for_since_start_mode(self) -> None:
-        params = _FakeParams(
+        params = PlotParams1d(
             time_window=TimeWindowParams(mode=TimeWindowMode.since_start)
+        )
+        assert _format_window_info(params) == 'since run start'
+
+    def test_returns_since_run_start_for_cumulative_timeseries(self) -> None:
+        """The timeseries plotter spells the same choice as a checkbox."""
+        params = PlotParamsTimeseries.model_validate(
+            {'accumulation': {'cumulative': True}}
         )
         assert _format_window_info(params) == 'since run start'
 
     def test_returns_empty_for_window_mode(self) -> None:
         """Window mode shows no static label; data range comes from the plot."""
-        params = _FakeParams(
+        params = PlotParams1d(
             time_window=TimeWindowParams(
                 mode=TimeWindowMode.window, window_duration_seconds=10
             )
@@ -109,12 +113,15 @@ class TestFormatWindowInfo:
         assert _format_window_info(params) == ''
 
     def test_returns_empty_for_window_mode_zero_duration(self) -> None:
-        params = _FakeParams(
+        params = PlotParams1d(
             time_window=TimeWindowParams(
                 mode=TimeWindowMode.window, window_duration_seconds=0
             )
         )
         assert _format_window_info(params) == ''
+
+    def test_returns_empty_for_per_update_timeseries(self) -> None:
+        assert _format_window_info(PlotParamsTimeseries()) == ''
 
     def test_returns_empty_when_no_window_attr(self) -> None:
         class NoWindowParams(pydantic.BaseModel):
@@ -159,8 +166,7 @@ class TestGetPlotCellDisplayInfo:
                 )
             },
             plot_name='lines',
-            params=_FakeParams(),
-            supports_windowing=False,
+            params=PlotParams1d(),
         )
 
         title, _ = get_plot_cell_display_info(config, registry)
@@ -205,7 +211,7 @@ class TestGetPlotCellDisplayInfo:
                 )
             },
             plot_name='lines',
-            params=_FakeParams(
+            params=PlotParams1d(
                 time_window=TimeWindowParams(mode=TimeWindowMode.since_start)
             ),
         )
@@ -247,7 +253,7 @@ class TestPlotterTitleInDisplayInfo:
                 )
             },
             plot_name=plot_name,
-            params=_FakeParams(),
+            params=PlotParams1d(),
         )
 
     def test_title_includes_plotter_title(self) -> None:
@@ -301,7 +307,7 @@ def _make_layer(
             )
         },
         plot_name=plot_name,
-        params=params if params is not None else _FakeParams(),
+        params=params if params is not None else PlotParams1d(),
     )
     return Layer(layer_id=LayerId(uuid4()), config=config)
 
@@ -319,7 +325,7 @@ def _make_static_layer(name, plot_name='rectangle'):
             )
         },
         plot_name=plot_name,
-        params=_FakeParams(),
+        params=PlotParams1d(),
     )
     return Layer(layer_id=LayerId(uuid4()), config=config)
 

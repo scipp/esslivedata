@@ -205,9 +205,9 @@ class TestDetectorRatemeter:
     def test_ratemeter_raw_counts_carry_no_time_coords(self, bifrost_workflow):
         """Per-update counts are bare: time coords are stamped on accumulation.
 
-        Stamping a ``time`` coord here would suppress the ``start_time``/
-        ``end_time`` the dashboard's rate normalization needs (see
-        ``_add_time_coords``) and break coord matching across the accumulator sum.
+        Stamping a ``time`` coord here would suppress the ``start_time``/``time``
+        bounds the dashboard's rate normalization needs (see ``_add_time_coords``)
+        and break coord matching across the accumulator sum.
         """
         reduction_workflow, DetectorRegionCountsRaw = bifrost_workflow
         nexus_data = _make_test_event_data(arc_events={1: 50})
@@ -225,7 +225,6 @@ class TestDetectorRatemeter:
         assert result.unit == 'counts'
         assert 'time' not in result.coords
         assert 'start_time' not in result.coords
-        assert 'end_time' not in result.coords
 
     @pytest.mark.slow
     def test_ratemeter_current_output_normalizes_to_rate(self):
@@ -235,6 +234,7 @@ class TestDetectorRatemeter:
         builds it) and checks the current output can be normalized to a rate,
         while the cumulative output defers its time bounds to the job layer.
         """
+        from ess.livedata.dashboard.extractors import LatestValueExtractor
         from ess.livedata.dashboard.plots import _normalize_to_rate
         from ess.livedata.preprocessors.accumulation_mode import Cumulative, Current
         from ess.livedata.preprocessors.accumulators import (
@@ -273,8 +273,10 @@ class TestDetectorRatemeter:
 
         current = results['detector_region_counts']
         assert current.value == 100
-        assert {'time', 'start_time', 'end_time'} <= set(current.coords)
-        rate = _normalize_to_rate(current)
+        assert {'start_time', 'time'} <= set(current.coords)
+        # `_normalize_to_rate` reads the dashboard's `(start_time, end_time)` pair,
+        # which is minted at the extractor boundary rather than carried on the wire.
+        rate = _normalize_to_rate(LatestValueExtractor().extract(current))
         assert rate.unit == 'counts/s'
         assert rate.value == 50  # 100 counts / 2 s
 

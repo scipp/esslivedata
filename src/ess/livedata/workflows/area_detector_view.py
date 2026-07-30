@@ -103,12 +103,9 @@ class AreaDetectorView(Workflow):
         # 'current' covers only the window since the last finalize, so it carries
         # its own bounds instead of the job-level ones Job._add_time_coords would
         # otherwise stamp. 'cumulative' has no time coords and gets those.
-        start_time_coord = self._current_start_time.to_scipp()
-        end_time_coord = self._current_end_time.to_scipp()
         current = current.assign_coords(
-            time=start_time_coord,
-            start_time=start_time_coord,
-            end_time=end_time_coord,
+            start_time=self._current_start_time.to_scipp(),
+            time=self._current_end_time.to_scipp(),
         )
         self._current_start_time = None
         self._current_end_time = None

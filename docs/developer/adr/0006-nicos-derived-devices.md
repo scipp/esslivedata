@@ -1,6 +1,6 @@
 # ADR 0006: Expose designated workflow outputs to NICOS as derived devices
 
-- Status: accepted
+- Status: accepted (amended 2026-07-29)
 - Deciders: Simon
 - Date: 2026-06-29
 
@@ -45,7 +45,8 @@ device.
   is not part of the external identity.
 - **Wire schema**: `da00`. It carries the signal, its error bar, and the
   `start_time` coordinate as named variables. `f144` is a lone scalar and cannot
-  carry the marker; it is not used.
+  carry the marker; it is not used. (See the 2026-07-29 amendment for the upper
+  time bound this also carries.)
 - **Eligibility**: decided by the workflow registry (`WorkflowSpec.device_outputs`).
   The extractor trusts the contract and emits whatever it designates; there is no
   runtime scalar/cumulative check. Devices are scalar cumulative outputs by
@@ -240,3 +241,20 @@ job-level generation marker is a reliable signal. That notification is deferred.
   heartbeat; `ep01` is not used) and a separate validity channel (the `da00` error
   bar carries the uncertainty; NICOS scripts its own statistic). The internal
   `ResultKey` / `job_number` refactor is off this critical path.
+
+## Amendment 2026-07-29: the upper time bound is echoed as `end_time`
+
+The wire schema above names only `start_time`, but the device topic has always
+also carried the upper bound of the accumulation: `Job._add_time_coords` stamps
+it next to `start_time`, and `DeviceExtractor` republishes the output verbatim.
+
+That bound is now called `time` internally. It is the instant the value refers
+to, which for a cumulative device is when the total was observed, not when
+anything ended — `end_time` was a poor name for a still-running accumulation, and
+that is why it was renamed. It is, however, the name NICOS's consumer reads.
+
+`DeviceExtractor` therefore *adds* `end_time` alongside `time` rather than
+renaming it, so the device topic publishes `signal`, `start_time`, `end_time`,
+and now `time` as well. NICOS's contract is unchanged and it can adopt `time` on
+its own schedule; the decision above — `start_time` as the sole generation
+marker — is untouched.

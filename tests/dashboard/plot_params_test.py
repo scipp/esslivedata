@@ -26,7 +26,9 @@ class TestCreateExtractorsFromParams:
         """Test fallback to LatestValueExtractor when no window params provided."""
         keys = ['key1', 'key2']
 
-        extractors = create_extractors_from_params(keys=keys, window=None, spec=None)
+        extractors = create_extractors_from_params(
+            keys=keys, window=None, temporality={}, spec=None
+        )
 
         assert len(extractors) == 2
         assert all(isinstance(ext, LatestValueExtractor) for ext in extractors.values())
@@ -39,7 +41,9 @@ class TestCreateExtractorsFromParams:
             mode=TimeWindowMode.window, window_duration_seconds=0.0
         )
 
-        extractors = create_extractors_from_params(keys=keys, window=window, spec=None)
+        extractors = create_extractors_from_params(
+            keys=keys, window=window, temporality={}, spec=None
+        )
 
         assert len(extractors) == 1
         assert isinstance(extractors['key1'], LatestValueExtractor)
@@ -49,7 +53,9 @@ class TestCreateExtractorsFromParams:
         keys = ['key1']
         window = TimeWindowParams(mode=TimeWindowMode.since_start)
 
-        extractors = create_extractors_from_params(keys=keys, window=window, spec=None)
+        extractors = create_extractors_from_params(
+            keys=keys, window=window, temporality={}, spec=None
+        )
 
         assert len(extractors) == 1
         assert isinstance(extractors['key1'], LatestValueExtractor)
@@ -63,7 +69,9 @@ class TestCreateExtractorsFromParams:
             aggregation=WindowAggregation.nansum,
         )
 
-        extractors = create_extractors_from_params(keys=keys, window=window, spec=None)
+        extractors = create_extractors_from_params(
+            keys=keys, window=window, temporality={}, spec=None
+        )
 
         assert len(extractors) == 2
         assert all(
@@ -83,7 +91,9 @@ class TestCreateExtractorsFromParams:
         spec = Mock()
         spec.data_requirements.required_extractor = FullHistoryExtractor
 
-        extractors = create_extractors_from_params(keys=keys, window=window, spec=spec)
+        extractors = create_extractors_from_params(
+            keys=keys, window=window, temporality={}, spec=spec
+        )
 
         # Should use FullHistoryExtractor despite window params
         assert len(extractors) == 2
@@ -100,7 +110,9 @@ class TestCreateExtractorsFromParams:
         spec = Mock()
         spec.data_requirements.required_extractor = None
 
-        extractors = create_extractors_from_params(keys=keys, window=window, spec=spec)
+        extractors = create_extractors_from_params(
+            keys=keys, window=window, temporality={}, spec=spec
+        )
 
         assert isinstance(extractors['key1'], WindowAggregatingExtractor)
         assert extractors['key1'].get_required_timespan() == 3.0
@@ -110,7 +122,9 @@ class TestCreateExtractorsFromParams:
         keys = ['result1', 'result2', 'result3']
         window = TimeWindowParams(mode=TimeWindowMode.since_start)
 
-        extractors = create_extractors_from_params(keys=keys, window=window, spec=None)
+        extractors = create_extractors_from_params(
+            keys=keys, window=window, temporality={}, spec=None
+        )
 
         assert len(extractors) == 3
         assert set(extractors.keys()) == {'result1', 'result2', 'result3'}
@@ -121,7 +135,9 @@ class TestCreateExtractorsFromParams:
         keys = []
         window = TimeWindowParams(mode=TimeWindowMode.since_start)
 
-        extractors = create_extractors_from_params(keys=keys, window=window, spec=None)
+        extractors = create_extractors_from_params(
+            keys=keys, window=window, temporality={}, spec=None
+        )
 
         assert extractors == {}
 
@@ -134,7 +150,9 @@ class TestCreateExtractorsFromParams:
             aggregation=WindowAggregation.mean,
         )
 
-        extractors = create_extractors_from_params(keys=keys, window=window, spec=None)
+        extractors = create_extractors_from_params(
+            keys=keys, window=window, temporality={}, spec=None
+        )
 
         extractor = extractors['key1']
         assert isinstance(extractor, WindowAggregatingExtractor)

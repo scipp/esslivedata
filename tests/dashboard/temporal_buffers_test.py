@@ -81,6 +81,22 @@ def make_thick_slice(x_size, time_values, time_unit='s'):
     )
 
 
+def make_cumulative_slice(value, start_time, time, time_unit='s'):
+    """Create a cumulative output message: the value as of ``time``.
+
+    Mirrors what a ``Job`` publishes for a cumulative output: accumulated since
+    the generation's ``start_time``, which does not advance, and observed at
+    ``time``, which does.
+    """
+    return sc.DataArray(
+        sc.scalar(value, unit='counts'),
+        coords={
+            'start_time': sc.scalar(start_time, unit=time_unit),
+            'time': sc.scalar(time, unit=time_unit),
+        },
+    )
+
+
 def assert_buffer_has_time_data(buffer, expected_size):
     """Assert buffer contains time-dimensioned data of expected size."""
     result = buffer.get()
@@ -209,6 +225,49 @@ class TestTemporalBuffer:
         """Test that get returns None for empty buffer."""
         buffer = TemporalBuffer()
         assert buffer.get() is None
+
+    def test_cumulative_slices_accumulate_into_growth_curve(self):
+        """A cumulative output buffers because it carries `time` like any other."""
+        buffer = TemporalBuffer()
+
+        for i in range(3):
+            buffer.add(make_cumulative_slice(10.0 * i, 0.0, float(i)))
+
+        result = buffer.get()
+        assert sc.identical(
+            result.data,
+            sc.array(dims=['time'], values=[0.0, 10.0, 20.0], unit='counts'),
+        )
+        assert sc.identical(
+            result.coords['time'],
+            sc.array(dims=['time'], values=[0.0, 1.0, 2.0], unit='s'),
+        )
+
+    def test_pinned_start_time_does_not_collapse_cumulative_curve(self):
+        """A constant start_time is buffered per slice, not folded into metadata."""
+        buffer = TemporalBuffer()
+
+        for i in range(3):
+            buffer.add(make_cumulative_slice(float(i), 0.0, float(i)))
+
+        result = buffer.get()
+        assert sc.identical(
+            result.coords['start_time'], sc.zeros(dims=['time'], shape=[3], unit='s')
+        )
+
+    def test_cumulative_trimming_ages_by_time(self):
+        """Retention follows `time`; the pinned start_time must not age data out."""
+        buffer = TemporalBuffer()
+        buffer.set_required_timespan(2.0)
+        buffer.set_max_memory(100)  # Small limit so the buffer fills and trims
+
+        buffer.add(make_cumulative_slice(0.0, 0.0, 0.0))
+        for i in range(1, buffer._data_buffer.max_capacity):
+            buffer.add(make_cumulative_slice(float(i), 0.0, float(i)))
+        buffer.add(make_cumulative_slice(99.0, 0.0, 99.0))
+
+        result = buffer.get()
+        assert result.coords['time'].values[0] >= 97.0
 
     def test_clear_removes_all_data(self):
         """Test that clear removes all buffered data."""

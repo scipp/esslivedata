@@ -16,8 +16,11 @@ from ess.livedata.config.models import Interval, PolygonROI, RectangleROI
 from ess.livedata.config.roi_names import ROIGeometryType, get_roi_mapper
 from ess.livedata.config.workflow_spec import (
     REDUCTION,
+    CumulativeOutput,
     JobId,
     ResultKey,
+    SeriesOutput,
+    WindowOutput,
     WorkflowConfig,
     WorkflowId,
     WorkflowOutputsBase,
@@ -71,6 +74,31 @@ class OutputsTimeseries(WorkflowOutputsBase):
 
 class OutputsNoTemplate(WorkflowOutputsBase):
     result: sc.DataArray = Field(title='Result')
+
+
+def _scalar_template() -> sc.DataArray:
+    return sc.DataArray(sc.zeros(dims=[], shape=[], unit='counts'))
+
+
+class OutputsTemporality(WorkflowOutputsBase):
+    per_update: WindowOutput = Field(default_factory=_scalar_template, title='Window')
+    total: CumulativeOutput = Field(default_factory=_scalar_template, title='Total')
+    reading: SeriesOutput = Field(
+        default_factory=lambda: sc.DataArray(
+            sc.zeros(dims=[], shape=[], unit='K'),
+            coords={'time': sc.scalar(0, unit='ns', dtype='int64')},
+        ),
+        title='Reading',
+    )
+
+
+def _outputs(messages) -> dict[str, sc.DataArray]:
+    """Map output name to emitted data for the data messages in ``messages``."""
+    return {
+        ResultKey.model_validate_json(m.stream.name).output_name: m.value
+        for m in messages
+        if m.stream.kind is StreamKind.LIVEDATA_DATA
+    }
 
 
 def _spec(outputs: type[WorkflowOutputsBase], name: str) -> WorkflowSpec:
@@ -409,6 +437,41 @@ class TestROILoopback:
         session.publisher.set_job_number_resolver(lambda _: uuid.uuid4())
         session.publish({0: _rectangle(0.0, 0.0)})
         assert session.results()['roi_spectra_cumulative'].sizes['roi'] == 0
+
+
+class TestEmittedTimeCoords:
+    """The dashboard keys and ages its buffers by these coords."""
+
+    @pytest.fixture
+    def polls(self, monkeypatch: pytest.MonkeyPatch) -> list[dict[str, sc.DataArray]]:
+        # Zero update period makes every poll due, so each poll emits fresh data.
+        monkeypatch.setattr(
+            'ess.livedata.dashboard.fake_backend._UPDATE_PERIOD_SECONDS', 0.0
+        )
+        spec = _spec(OutputsTemporality, 'temporal')
+        backend = FakeBackend(_registry(spec))
+        backend.submit(_config(spec))
+        return [_outputs(backend.poll()) for _ in range(2)]
+
+    @pytest.mark.parametrize('output_name', ['per_update', 'total'])
+    def test_bounded_outputs_carry_start_time_and_time(self, polls, output_name: str):
+        coords = polls[0][output_name].coords
+        assert coords['start_time'].unit == sc.Unit('ns')
+        assert coords['time'].value >= coords['start_time'].value
+
+    def test_series_output_carries_time_but_no_start_time(self, polls) -> None:
+        coords = polls[0]['reading'].coords
+        assert 'time' in coords
+        assert 'start_time' not in coords
+
+    def test_cumulative_start_time_stays_pinned(self, polls) -> None:
+        first, second = (poll['total'].coords for poll in polls)
+        assert sc.identical(first['start_time'], second['start_time'])
+        assert second['time'].value >= first['time'].value
+
+    def test_window_covers_interval_since_previous_update(self, polls) -> None:
+        first, second = (poll['per_update'].coords for poll in polls)
+        assert sc.identical(second['start_time'], first['time'])
 
 
 @pytest.mark.parametrize('update', [0, 1, 7])

@@ -16,6 +16,12 @@ coordinate (stamped by the JobManager at production time, ns since epoch). It is
 constant for the lifetime of a generation and changes on reset or reconfigure,
 so NICOS uses it as a change-detector to distinguish a post-reset zero from a
 genuine low reading.
+
+The upper bound — the instant the value was observed — is spelled ``time``
+internally, but NICOS's consumer expects ``end_time``. The echo therefore *adds*
+``end_time`` alongside ``time`` rather than renaming it, so that the published
+contract is decoupled from our internal naming and NICOS can migrate on its own
+schedule.
 """
 
 from __future__ import annotations
@@ -56,7 +62,8 @@ class DeviceExtractor:
             One message per device output, keyed by device name on the
             :attr:`~ess.livedata.core.message.StreamKind.LIVEDATA_NICOS_DATA`
             stream. The output's ``start_time`` coordinate rides along as the
-            generation change-detector.
+            generation change-detector, and its ``time`` is echoed under the
+            ``end_time`` name NICOS reads (see the module docstring).
         """
         messages: list[Message[sc.DataArray]] = []
         for result in results:
@@ -68,6 +75,8 @@ class DeviceExtractor:
                 da = result.data.get(entry.output_name)
                 if da is None:
                     continue
+                if (observed_at := da.coords.get('time')) is not None:
+                    da = da.assign_coords(end_time=observed_at)
                 messages.append(
                     Message(
                         timestamp=result.start_time or Timestamp.from_ns(0),

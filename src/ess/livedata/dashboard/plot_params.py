@@ -4,10 +4,13 @@
 
 from __future__ import annotations
 
+import abc
 import enum
 from enum import StrEnum
 
 import pydantic
+
+from ..config.workflow_spec import Windowing
 
 
 class TimeWindowMode(enum.StrEnum):
@@ -255,6 +258,15 @@ class TimeWindowParams(pydantic.BaseModel):
         title="Aggregation",
     )
 
+    def aggregates_updates(self) -> bool:
+        """Whether these params combine several updates into one value.
+
+        ``since_start`` and a zero duration both reduce to taking the most
+        recent value of the subscribed stream; only window mode with a nonzero
+        duration sums or averages across updates.
+        """
+        return self.mode is TimeWindowMode.window and self.window_duration_seconds > 0
+
 
 class PlotParamsBase(pydantic.BaseModel):
     """Base class for plot parameters."""
@@ -318,7 +330,43 @@ class RateNormalizationParams(pydantic.BaseModel):
     )
 
 
-class TimeWindowMixin(pydantic.BaseModel):
+class WindowModeMixin(pydantic.BaseModel, abc.ABC):
+    """Mixin for params selecting which windowing their data is drawn from.
+
+    Plotters expose the choice differently -- full window controls for the
+    general plots, a single cumulative toggle for the timeseries plotter -- but
+    consumers downstream need only the resulting ``Windowing``, so that is what
+    the interface offers.
+
+    Because the control differs, so does what a view must back for it to mean
+    anything, and so does the field that carries it. Each implementation
+    therefore names its own fields to hide (see
+    ``plotting_controller.hidden_window_fields``).
+    """
+
+    @abc.abstractmethod
+    def windowing(self) -> Windowing:
+        """Return the windowing the primary data role subscribes to."""
+
+    @classmethod
+    @abc.abstractmethod
+    def hidden_fields(cls, options: frozenset[Windowing]) -> frozenset[str]:
+        """Return this class's fields whose control the view cannot back.
+
+        Parameters
+        ----------
+        options:
+            Windowing options the view has a real backing field for.
+
+        Returns
+        -------
+        :
+            Names of fields to omit from the config UI. Hidden fields keep their
+            default, which resolves to the view's only field either way.
+        """
+
+
+class TimeWindowMixin(WindowModeMixin):
     """Mixin adding a time-windowing/aggregation section to plot parameters."""
 
     time_window: TimeWindowParams = pydantic.Field(
@@ -339,6 +387,24 @@ class TimeWindowMixin(pydantic.BaseModel):
         ),
         title="Time Window",
     )
+
+    def windowing(self) -> Windowing:
+        return (
+            'since_start'
+            if self.time_window.mode is TimeWindowMode.since_start
+            else 'per_update'
+        )
+
+    @classmethod
+    def hidden_fields(cls, options: frozenset[Windowing]) -> frozenset[str]:
+        """Hide the whole group unless the view has something to window over.
+
+        The duration control aggregates a span of the per-update field and stays
+        meaningful on a view with no cumulative flavor; selecting ``since_start``
+        there is rejected at config time instead, which keeps the duration
+        control available (see ``plotting_controller.since_start_available``).
+        """
+        return frozenset() if 'per_update' in options else frozenset({'time_window'})
 
 
 class RateMixin(pydantic.BaseModel):
@@ -396,9 +462,35 @@ class TimeseriesScaleParams(pydantic.BaseModel):
     )
 
 
-class PlotParamsTimeseries(PlotDisplayParams1d):
+class TimeseriesAccumulationParams(pydantic.BaseModel):
+    """Which flavor of an output view the timeseries history follows."""
+
+    cumulative: bool = pydantic.Field(
+        default=False,
+        description=(
+            "Plot the total accumulated since the run started, instead of the "
+            "value of each individual update."
+        ),
+        title="Cumulative",
+    )
+
+
+class PlotParamsTimeseries(WindowModeMixin, PlotDisplayParams1d):
     """Parameters for the timeseries plotter (downsampling + display)."""
 
+    accumulation: TimeseriesAccumulationParams = pydantic.Field(
+        default_factory=TimeseriesAccumulationParams,
+        description=(
+            "Which flavor of the output this plot follows over time: the value "
+            "of each update as it arrives, or the total accumulated since the "
+            "run started."
+            "<br><br>"
+            "The window duration and aggregation offered by the other plotters "
+            "have no counterpart here: this plot shows every sample the buffer "
+            "holds, thinned only by <em>Downsampling</em>."
+        ),
+        title="Accumulation",
+    )
     plot_scale: TimeseriesScaleParams = pydantic.Field(
         default_factory=TimeseriesScaleParams,
         description="Scaling options for the plot axes.",
@@ -424,6 +516,21 @@ class PlotParamsTimeseries(PlotDisplayParams1d):
             "Period</em> of 1 h keeps the count below 4 000."
         ),
     )
+
+    def windowing(self) -> Windowing:
+        return 'since_start' if self.accumulation.cumulative else 'per_update'
+
+    @classmethod
+    def hidden_fields(cls, options: frozenset[Windowing]) -> frozenset[str]:
+        """Hide the toggle unless the view backs both flavors.
+
+        The toggle offers nothing but the choice between them, so on a view
+        backing only one, one of its two states either lies about the data shown
+        or is rejected at config time.
+        """
+        if {'per_update', 'since_start'} <= options:
+            return frozenset()
+        return frozenset({'accumulation'})
 
 
 class PlotParams1d(RateMixin, TimeWindowMixin, PlotDisplayParams1d):

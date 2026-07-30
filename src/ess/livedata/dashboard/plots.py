@@ -728,6 +728,8 @@ class Plotter:
 
         # Time bounds drive the cell titlebar's freshness indicator; they are
         # kept off the plot title to avoid minting an OptionTree entry per tick.
+        # Computed outside the try so a render failure still stamps the bounds
+        # of the data that was received.
         self._time_bounds = _compute_time_bounds(data)
         self._set_cached_state(result)
 
@@ -835,7 +837,16 @@ class Plotter:
 
     @property
     def time_bounds(self) -> TimeBounds | None:
-        """Time bounds of the most recently computed data, or None if absent."""
+        """Time bounds of the most recently computed data, or None if absent.
+
+        The freshness pill must describe exactly the extract currently
+        displayed, so its bounds are derived from the payload ``update()``
+        consumed rather than by a parallel subscriber — which could observe an
+        update the plot does not yet show, and would need a duplicate of the
+        subscription's extractor configuration to see the same bounds. The
+        plotter caches them for the same reason it caches the render: it is
+        the one shared point the per-session titlebar polls can pull from.
+        """
         return self._time_bounds
 
     def has_cached_state(self) -> bool:

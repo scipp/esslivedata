@@ -39,6 +39,7 @@ from ..config.roi_names import get_roi_mapper
 from ..config.workflow_spec import (
     JobId,
     ResultKey,
+    Temporality,
     WorkflowConfig,
     WorkflowId,
     WorkflowSpec,
@@ -128,9 +129,9 @@ def expand_template(
     sized dimensions are preserved. Coordinates and synthetic values are
     generated to match the template's dims, units, and dtype.
 
-    A scalar ``time`` coordinate (carried by per-update and timeseries outputs)
-    is stamped with the current time. The backend emits a fresh scalar each
-    update; the dashboard accumulates these into the time series.
+    A scalar ``time`` coordinate (carried by series outputs, whose ``time`` is
+    real per-sample data) is stamped with the current time. The backend emits a
+    fresh scalar each update; the dashboard accumulates these into the series.
 
     Parameters
     ----------
@@ -234,6 +235,7 @@ class _Job:
         self.variant = source_variant(config.job_id.source_name)
         self.start_time = Timestamp.now()
         self.rois: dict[str, sc.DataArray] = {}
+        self.previous_emit = self.start_time
 
     def output_templates(self) -> Mapping[str, sc.DataArray]:
         """Templates for every output field that declares one."""
@@ -335,6 +337,7 @@ class FakeBackend:
     def _emit_data(self, job: _Job) -> list[Message]:
         timestamp_ns = time.time_ns()
         variants = roi_variants(job.rois)
+        now = Timestamp.from_ns(timestamp_ns)
         messages = []
         for output_name, template in job.output_templates().items():
             key = ResultKey(
@@ -351,8 +354,27 @@ class FakeBackend:
                 value = expand_roi_spectra(template, variants, job.update, timestamp_ns)
             else:
                 value = expand_template(template, job.update, timestamp_ns, job.variant)
+            # Production arrives at these coords by a different route:
+            # `StreamProcessorWorkflow.finalize` and `AreaDetectorView.finalize`
+            # assign per-interval bounds to the outputs their factory names in
+            # `window_outputs=`, then `Job._add_time_coords` stamps one (job start,
+            # latest observation) pair on whatever is left carrying neither. Keying
+            # off the `Temporality` declaration reproduces the composite, but more
+            # forgivingly: in production only a named `window_outputs=` entry gets
+            # per-interval bounds, whatever it declares.
+            temporality = job.spec.outputs.temporality(output_name)
+            if temporality is not Temporality.series:
+                start_time = (
+                    job.start_time
+                    if temporality is Temporality.cumulative
+                    else job.previous_emit
+                )
+                value = value.assign_coords(
+                    start_time=start_time.to_scipp(), time=now.to_scipp()
+                )
             messages.append(Message(stream=stream, value=value))
         job.update += 1
+        job.previous_emit = now
         return messages
 
 

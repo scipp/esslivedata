@@ -5,12 +5,14 @@ import scipp as sc
 
 from ess.livedata.config.workflow_spec import (
     REDUCTION,
+    WindowOutput,
     WorkflowId,
     WorkflowOutputsBase,
     WorkflowSpec,
 )
 from ess.livedata.dashboard.data_roles import X_AXIS, Y_AXIS
 from ess.livedata.dashboard.plot_orchestrator import DataSourceConfig
+from ess.livedata.dashboard.plot_params import PlotParams1d, PlotParamsTimeseries
 from ess.livedata.dashboard.widgets.plot_config_modal import (
     _build_timeseries_options,
     _inject_axis_source_titles,
@@ -281,7 +283,10 @@ class TestBuildTimeseriesOptions:
 class TestResolveOutputDisplayHints:
     def test_static_overlay_preselects_all_and_no_hidden_fields(self):
         hints = _resolve_output_display_hints(
-            is_static=True, workflow_spec=None, view_name="any"
+            is_static=True,
+            workflow_spec=None,
+            params_class=PlotParams1d,
+            view_name="any",
         )
         assert hints.preselect_all_sources is True
         assert hints.hidden_fields == frozenset()
@@ -294,7 +299,10 @@ class TestResolveOutputDisplayHints:
 
         spec = _make_workflow_spec("Scalar output", Outputs)
         hints = _resolve_output_display_hints(
-            is_static=False, workflow_spec=spec, view_name="counts"
+            is_static=False,
+            workflow_spec=spec,
+            params_class=PlotParams1d,
+            view_name="counts",
         )
         assert hints.preselect_all_sources is True
 
@@ -306,7 +314,10 @@ class TestResolveOutputDisplayHints:
 
         spec = _make_workflow_spec("1D output", Outputs)
         hints = _resolve_output_display_hints(
-            is_static=False, workflow_spec=spec, view_name="spectrum"
+            is_static=False,
+            workflow_spec=spec,
+            params_class=PlotParams1d,
+            view_name="spectrum",
         )
         assert hints.preselect_all_sources is True
 
@@ -318,7 +329,10 @@ class TestResolveOutputDisplayHints:
 
         spec = _make_workflow_spec("2D output", Outputs)
         hints = _resolve_output_display_hints(
-            is_static=False, workflow_spec=spec, view_name="image"
+            is_static=False,
+            workflow_spec=spec,
+            params_class=PlotParams1d,
+            view_name="image",
         )
         assert hints.preselect_all_sources is False
 
@@ -332,36 +346,34 @@ class TestResolveOutputDisplayHints:
 
         spec = _make_workflow_spec("3D output", Outputs)
         hints = _resolve_output_display_hints(
-            is_static=False, workflow_spec=spec, view_name="volume"
+            is_static=False,
+            workflow_spec=spec,
+            params_class=PlotParams1d,
+            view_name="volume",
         )
         assert hints.preselect_all_sources is False
 
-    def test_output_with_time_coord_does_not_hide_window(self):
+    def test_window_control_visibility_follows_the_plotter_params(self):
+        # Which window-mode control a params class carries decides what the view
+        # must back for it: a per-update-only view backs the duration control but
+        # not the timeseries cumulative toggle.
         class Outputs(WorkflowOutputsBase):
-            spectrum: sc.DataArray = pydantic.Field(
-                default_factory=lambda: sc.DataArray(
-                    sc.zeros(sizes={'time': 0, 'wavelength': 0}),
-                    coords={'time': sc.zeros(sizes={'time': 0})},
-                ),
-            )
-
-        spec = _make_workflow_spec("Windowed output", Outputs)
-        hints = _resolve_output_display_hints(
-            is_static=False, workflow_spec=spec, view_name="spectrum"
-        )
-        assert 'time_window' in hints.hidden_fields
-
-    def test_output_without_time_coord_hides_window(self):
-        class Outputs(WorkflowOutputsBase):
-            total: sc.DataArray = pydantic.Field(
+            spectrum: WindowOutput = pydantic.Field(
                 default_factory=lambda: sc.DataArray(sc.zeros(sizes={'wavelength': 0})),
             )
 
-        spec = _make_workflow_spec("Cumulative output", Outputs)
-        hints = _resolve_output_display_hints(
-            is_static=False, workflow_spec=spec, view_name="total"
-        )
-        assert 'time_window' in hints.hidden_fields
+        spec = _make_workflow_spec("Windowed output", Outputs)
+
+        def hidden(params_class: type[pydantic.BaseModel]) -> frozenset[str]:
+            return _resolve_output_display_hints(
+                is_static=False,
+                workflow_spec=spec,
+                params_class=params_class,
+                view_name="spectrum",
+            ).hidden_fields
+
+        assert 'time_window' not in hidden(PlotParams1d)
+        assert 'accumulation' in hidden(PlotParamsTimeseries)
 
     def test_unknown_output_preselects_all(self):
         class Outputs(WorkflowOutputsBase):
@@ -371,6 +383,9 @@ class TestResolveOutputDisplayHints:
 
         spec = _make_workflow_spec("Some workflow", Outputs)
         hints = _resolve_output_display_hints(
-            is_static=False, workflow_spec=spec, view_name="nonexistent"
+            is_static=False,
+            workflow_spec=spec,
+            params_class=PlotParams1d,
+            view_name="nonexistent",
         )
         assert hints.preselect_all_sources is True

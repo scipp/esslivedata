@@ -75,7 +75,7 @@ class TestLatestValueExtractor:
     def test_extract_scalar_data(self):
         """Extract from scalar data."""
         extractor = LatestValueExtractor()
-        data = sc.scalar(42.0, unit='counts')
+        data = sc.DataArray(sc.scalar(42.0, unit='counts'))
 
         result = extractor.extract(data)
 

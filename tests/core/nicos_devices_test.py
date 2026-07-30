@@ -3,9 +3,10 @@
 """Tests for NICOS device extraction.
 
 Uses the real ``dummy`` instrument registry and real workflow specs, so the
-extractor needs no live registry. Devices are cumulative outputs carrying a
-``start_time`` coordinate (stamped by the JobManager); the extractor republishes
-them under their stable device name with that coordinate riding along.
+extractor needs no live registry. Devices are cumulative outputs carrying
+``start_time`` and ``time`` coordinates (stamped by the JobManager); the
+extractor republishes them under their stable device name with those riding
+along, plus ``end_time`` under the name NICOS's consumer reads.
 """
 
 from __future__ import annotations
@@ -29,6 +30,7 @@ from ess.livedata.kafka.sink_serializers import make_default_sink_serializer
 MONITOR_WORKFLOW = 'dummy/monitor_histogram/1'
 DEVICE_NAME = 'monitor1_counts_total'
 START_TIME = Timestamp.from_ns(1000)
+OBSERVED_AT = Timestamp.from_ns(2000)
 
 
 @pytest.fixture(scope='module')
@@ -62,11 +64,14 @@ def job_id() -> JobId:
 def result(job_id: JobId) -> JobResult:
     data = sc.DataGroup(
         {
-            # (a) in the contract -> extracted. Carries the start_time coord the
+            # (a) in the contract -> extracted. Carries the coord pair the
             # JobManager stamps on cumulative outputs.
             'counts_total_cumulative': sc.DataArray(
                 sc.scalar(42, unit='counts'),
-                coords={'start_time': START_TIME.to_scipp()},
+                coords={
+                    'start_time': START_TIME.to_scipp(),
+                    'time': OBSERVED_AT.to_scipp(),
+                },
             ),
             # (b), (c) not in the contract -> skipped, regardless of shape.
             'cumulative': sc.DataArray(
@@ -80,7 +85,7 @@ def result(job_id: JobId) -> JobResult:
         job_id=job_id,
         workflow_id=WorkflowId.from_string(MONITOR_WORKFLOW),
         start_time=START_TIME,
-        end_time=Timestamp.from_ns(2000),
+        end_time=OBSERVED_AT,
         data=data,
     )
 
@@ -115,6 +120,18 @@ def test_extraction_carries_start_time_coord(
     coord = message.value.coords['start_time']
     assert coord.value == START_TIME.to_ns()
     assert coord.unit == 'ns'
+
+
+def test_echoes_time_under_the_end_time_name_nicos_reads(
+    extractor: DeviceExtractor, result: JobResult
+) -> None:
+    # Added rather than renamed, so the published contract is decoupled from
+    # our internal naming and NICOS can migrate on its own schedule.
+    (message,) = extractor.extract([result])
+
+    coords = message.value.coords
+    assert coords['end_time'].value == OBSERVED_AT.to_ns()
+    assert sc.identical(coords['time'], coords['end_time'])
 
 
 def test_result_without_data_is_skipped(

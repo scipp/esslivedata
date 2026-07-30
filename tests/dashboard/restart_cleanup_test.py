@@ -28,7 +28,10 @@ from ess.livedata.core.message import STATUS_STREAM_ID, StreamId, StreamKind
 from ess.livedata.dashboard.active_job_registry import ActiveJobRegistry
 from ess.livedata.dashboard.command_service import CommandService
 from ess.livedata.dashboard.data_service import DataService, DataServiceSubscriber
-from ess.livedata.dashboard.extractors import LatestValueExtractor
+from ess.livedata.dashboard.extractors import (
+    FullHistoryExtractor,
+    LatestValueExtractor,
+)
 from ess.livedata.dashboard.job_orchestrator import JobOrchestrator
 from ess.livedata.dashboard.job_service import JobService
 from ess.livedata.dashboard.message_pump import MessagePump
@@ -62,11 +65,51 @@ def _data_keys(workflow_spec) -> list[DataKey]:
     ]
 
 
-class _KeysSubscriber(DataServiceSubscriber):
-    """Subscriber over a fixed set of keys, for pulling data with stamps."""
+def _publish_cumulative(
+    message_pump,
+    workflow_spec,
+    job_number,
+    start_ns: int,
+    times_ns: list[int],
+) -> None:
+    """Publish one cumulative message per timestamp, for every source.
 
-    def __init__(self, keys: list[DataKey]) -> None:
-        self._extractors = {key: LatestValueExtractor() for key in keys}
+    ``start_ns`` is pinned across the batch, as a generation's ``start_time`` is,
+    and the value restarts from zero each call, as a restarted accumulation does.
+    """
+    for source_name in workflow_spec.source_names:
+        key = _make_result_key(workflow_spec.get_id(), source_name, job_number)
+        for i, time_ns in enumerate(times_ns):
+            message_pump.forward(
+                _data_stream_id(key),
+                sc.DataArray(
+                    sc.scalar(float(i), unit='counts'),
+                    coords={
+                        'start_time': sc.scalar(start_ns, unit='ns'),
+                        'time': sc.scalar(time_ns, unit='ns'),
+                    },
+                ),
+            )
+
+
+def _history_sizes(data_service, subscriber) -> list[int]:
+    """Buffered history length per subscribed key, in a stable order."""
+    snapshot = data_service.snapshot(subscriber)
+    return [snapshot[key].sizes['time'] for key in sorted(snapshot, key=str)]
+
+
+class _KeysSubscriber(DataServiceSubscriber):
+    """Subscriber over a fixed set of keys, for pulling data with stamps.
+
+    The extractor type also decides the buffer backing each key, so pass
+    ``FullHistoryExtractor`` to exercise a ``TemporalBuffer`` rather than a
+    ``SingleValueBuffer``.
+    """
+
+    def __init__(
+        self, keys: list[DataKey], extractor: type = LatestValueExtractor
+    ) -> None:
+        self._extractors = {key: extractor() for key in keys}
         super().__init__()
 
     @property
@@ -124,7 +167,7 @@ class TestRestartCleanup:
         job_ids = job_orchestrator.commit_workflow(workflow_id)
         for source_name in workflow_spec.source_names:
             key = _make_result_key(workflow_id, source_name, job_ids[0].job_number)
-            message_pump.forward(_data_stream_id(key), sc.scalar(1.0))
+            message_pump.forward(_data_stream_id(key), sc.DataArray(sc.scalar(1.0)))
 
         subscriber = _KeysSubscriber(_data_keys(workflow_spec))
         data_service.register_subscriber(subscriber)
@@ -145,7 +188,7 @@ class TestRestartCleanup:
         key = _make_result_key(
             workflow_id, workflow_spec.source_names[0], job_ids[0].job_number
         )
-        message_pump.forward(_data_stream_id(key), sc.scalar(1.0))
+        message_pump.forward(_data_stream_id(key), sc.DataArray(sc.scalar(1.0)))
         assert key.data_key in data_service
 
         # No staging between commits: byte-identical config.
@@ -154,6 +197,76 @@ class TestRestartCleanup:
         subscriber = _KeysSubscriber(_data_keys(workflow_spec))
         data_service.register_subscriber(subscriber)
         assert data_service.snapshot(subscriber) == {}
+
+    def test_accumulated_cumulative_history_cleared_on_recommit(self, workflow_spec):
+        """A cumulative growth curve must not survive its generation.
+
+        A recommit may carry a changed config, so the curve either side of it is
+        not necessarily the same quantity. A *reset* is the opposite case: the
+        same accumulation restarting, whose history is worth keeping — NICOS
+        resets once per scan point, and the resulting sawtooth is how that scan
+        reads on a wall-clock plot.
+
+        Nothing on the data path tells the two apart. DataKey strips the
+        job_number, so the buffer is reused, and TemporalBuffer drops the
+        accumulated coords before comparing metadata, so the changed start_time
+        triggers nothing either. The generation flip's clear_keys is the only
+        thing separating them, hence this guard.
+        """
+        message_pump, job_orchestrator, data_service, _ = _make_system(workflow_spec)
+        workflow_id = workflow_spec.get_id()
+        subscriber = _KeysSubscriber(_data_keys(workflow_spec), FullHistoryExtractor)
+        data_service.register_subscriber(subscriber)
+
+        job_ids = job_orchestrator.commit_workflow(workflow_id)
+        _publish_cumulative(
+            message_pump, workflow_spec, job_ids[0].job_number, 0, [0, 100, 200]
+        )
+        assert _history_sizes(data_service, subscriber) == [3, 3]
+
+        job_ids = job_orchestrator.commit_workflow(workflow_id)
+
+        assert data_service.snapshot(subscriber) == {}
+
+        # The next generation starts its own curve rather than extending the old.
+        _publish_cumulative(
+            message_pump, workflow_spec, job_ids[0].job_number, 1000, [1000]
+        )
+        assert _history_sizes(data_service, subscriber) == [1, 1]
+
+    def test_cumulative_history_survives_a_reset(self, workflow_spec):
+        """A reset restarts the accumulation without discarding its history.
+
+        NICOS resets once per scan point (ADR 0006: move motor, reset, count,
+        repeat), so the sawtooth this leaves on a wall-clock plot *is* how a scan
+        reads: one tooth per point, its height the counts collected there.
+        Unlike a recommit, a reset cannot have changed the config, so the curve
+        either side of it is the same quantity.
+
+        The dashboard is not told about the reset at all — the job number is
+        unchanged, so the restarted values simply append. This pins that, since
+        it is the behavior a reader would otherwise mistake for the missing
+        clear that :meth:`test_accumulated_cumulative_history_cleared_on_recommit`
+        guards.
+        """
+        message_pump, job_orchestrator, data_service, _ = _make_system(workflow_spec)
+        workflow_id = workflow_spec.get_id()
+        subscriber = _KeysSubscriber(_data_keys(workflow_spec), FullHistoryExtractor)
+        data_service.register_subscriber(subscriber)
+
+        job_ids = job_orchestrator.commit_workflow(workflow_id)
+        job_number = job_ids[0].job_number
+        _publish_cumulative(message_pump, workflow_spec, job_number, 0, [0, 100, 200])
+
+        # Guards against the assertion below passing vacuously: the reset must
+        # actually have been dispatched to the running jobs.
+        assert job_orchestrator.reset_workflow(workflow_id) is True
+
+        # The backend re-latches start_time and the total restarts from zero, but
+        # the generation — and so the buffer — is the same one.
+        _publish_cumulative(message_pump, workflow_spec, job_number, 300, [300, 400])
+
+        assert _history_sizes(data_service, subscriber) == [5, 5]
 
     def test_data_retained_after_stop(self, workflow_spec):
         """Stopping does not evict: the stopped generation's data stays
@@ -164,7 +277,7 @@ class TestRestartCleanup:
         job_ids = job_orchestrator.commit_workflow(workflow_id)
         for sn in workflow_spec.source_names:
             key = _make_result_key(workflow_id, sn, job_ids[0].job_number)
-            message_pump.forward(_data_stream_id(key), sc.scalar(1.0))
+            message_pump.forward(_data_stream_id(key), sc.DataArray(sc.scalar(1.0)))
 
         job_orchestrator.stop_workflow(workflow_id)
 
@@ -184,7 +297,7 @@ class TestRestartCleanup:
         job_orchestrator.commit_workflow(workflow_id)
 
         key = _make_result_key(workflow_id, workflow_spec.source_names[0], old_number)
-        message_pump.forward(_data_stream_id(key), sc.scalar(42.0))
+        message_pump.forward(_data_stream_id(key), sc.DataArray(sc.scalar(42.0)))
 
         assert len(data_service) == 0
 
@@ -196,14 +309,14 @@ class TestRestartCleanup:
         job_ids_1 = job_orchestrator.commit_workflow(workflow_id)
         for sn in workflow_spec.source_names:
             key = _make_result_key(workflow_id, sn, job_ids_1[0].job_number)
-            message_pump.forward(_data_stream_id(key), sc.scalar(1.0))
+            message_pump.forward(_data_stream_id(key), sc.DataArray(sc.scalar(1.0)))
 
         job_ids_2 = job_orchestrator.commit_workflow(workflow_id)
         new_number = job_ids_2[0].job_number
 
         for sn in workflow_spec.source_names:
             key = _make_result_key(workflow_id, sn, new_number)
-            message_pump.forward(_data_stream_id(key), sc.scalar(99.0))
+            message_pump.forward(_data_stream_id(key), sc.DataArray(sc.scalar(99.0)))
 
         for data_key in _data_keys(workflow_spec):
             assert data_key in data_service
@@ -295,8 +408,8 @@ class TestRestartCleanup:
         key_2 = _make_result_key(
             wf_id_2, workflow_spec_2.source_names[0], jobs_2[0].job_number
         )
-        message_pump.forward(_data_stream_id(key_1), sc.scalar(1.0))
-        message_pump.forward(_data_stream_id(key_2), sc.scalar(2.0))
+        message_pump.forward(_data_stream_id(key_1), sc.DataArray(sc.scalar(1.0)))
+        message_pump.forward(_data_stream_id(key_2), sc.DataArray(sc.scalar(2.0)))
 
         job_orchestrator.commit_workflow(wf_id_1)
         job_orchestrator.commit_workflow(wf_id_1)
@@ -338,7 +451,7 @@ class TestConcurrentForwardAndCommit:
                     try:
                         with registry.ingestion_guard():
                             message_pump.forward(
-                                _data_stream_id(key), sc.scalar(float(i))
+                                _data_stream_id(key), sc.DataArray(sc.scalar(float(i)))
                             )
                     except Exception as exc:
                         errors.append(exc)
@@ -396,7 +509,9 @@ class TestConcurrentForwardAndCommit:
             with registry.ingestion_guard():
                 for sn in workflow_spec.source_names:
                     key = _make_result_key(workflow_id, sn, job_ids[0].job_number)
-                    message_pump.forward(_data_stream_id(key), sc.scalar(value))
+                    message_pump.forward(
+                        _data_stream_id(key), sc.DataArray(sc.scalar(value))
+                    )
 
         def ingest_loop():
             try:

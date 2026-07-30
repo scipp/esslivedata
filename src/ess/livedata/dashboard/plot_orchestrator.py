@@ -29,6 +29,7 @@ from ess.livedata.config.grid_template import GridSpec
 from ess.livedata.config.workflow_spec import (
     DataKey,
     JobNumber,
+    Temporality,
     Windowing,
     WorkflowId,
     WorkflowSpec,
@@ -39,7 +40,7 @@ from .data_roles import PRIMARY
 from .data_service import DataService
 from .frame_clock import FrameClock
 from .plot_data_service import LayerId, PlotDataService
-from .plot_params import TimeWindowMixin, TimeWindowMode
+from .plot_params import WindowModeMixin
 from .plotting_controller import PlottingController
 
 if TYPE_CHECKING:
@@ -124,12 +125,14 @@ class ResolvedDataSource:
     Produced by :func:`_build_resolved_data_sources` from a
     :class:`DataSourceConfig`: ``output_name`` carries the backend pydantic
     field name selected for the current window mode, ready to key a
-    :class:`DataKey`. Runtime-only — never persisted.
+    :class:`DataKey`, and ``temporality`` what that field's messages mean.
+    Runtime-only — never persisted.
     """
 
     workflow_id: WorkflowId
     source_names: list[str]
     output_name: str
+    temporality: Temporality | None = None
 
 
 @dataclass
@@ -153,7 +156,6 @@ class PlotConfig:
     data_sources: dict[str, DataSourceConfig]
     plot_name: str
     params: pydantic.BaseModel
-    supports_windowing: bool = True
 
     @property
     def workflow_id(self) -> WorkflowId:
@@ -225,11 +227,6 @@ class PlotGridConfig:
     enabled: bool = True
 
 
-def _windowing_for_mode(mode: TimeWindowMode) -> Windowing:
-    """Map a window mode to the windowing its data is subscribed from."""
-    return 'since_start' if mode is TimeWindowMode.since_start else 'per_update'
-
-
 def _windowing_for_role(role: str, params: pydantic.BaseModel) -> Windowing:
     """Return the windowing wanted by a data role.
 
@@ -238,8 +235,7 @@ def _windowing_for_role(role: str, params: pydantic.BaseModel) -> Windowing:
     """
     if role != PRIMARY:
         return 'per_update'
-    window = params.time_window if isinstance(params, TimeWindowMixin) else None
-    return _windowing_for_mode(window.mode) if window is not None else 'per_update'
+    return params.windowing() if isinstance(params, WindowModeMixin) else 'per_update'
 
 
 def _build_resolved_data_sources(
@@ -250,34 +246,46 @@ def _build_resolved_data_sources(
 
     Falls back to the view name verbatim when the data source's workflow is
     not in the registry (lets a layer whose workflow has not been seen yet
-    still set up a pipeline, keyed by whatever name it was given).
+    still set up a pipeline, keyed by whatever name it was given); its
+    temporality is unknown in that case.
     """
     resolved: dict[str, ResolvedDataSource] = {}
     for role, ds in config.data_sources.items():
         spec = registry.get(ds.workflow_id)
-        output_name = (
-            spec.field_for(ds.view_name, _windowing_for_role(role, config.params))
-            if spec is not None
-            else ds.view_name
-        )
+        if spec is None:
+            output_name, temporality = ds.view_name, None
+        else:
+            output_name = spec.field_for(
+                ds.view_name, _windowing_for_role(role, config.params)
+            )
+            # An unknown view resolves to its own name, which need not be a field.
+            temporality = (
+                spec.outputs.temporality(output_name)
+                if output_name in spec.outputs.model_fields
+                else None
+            )
         resolved[role] = ResolvedDataSource(
             workflow_id=ds.workflow_id,
             source_names=ds.source_names,
             output_name=output_name,
+            temporality=temporality,
         )
     return resolved
 
 
-def _build_keys_by_role(
+def _build_subscription_keys(
     data_sources: dict[str, ResolvedDataSource],
-) -> dict[str, list[DataKey]]:
-    """Build stable DataKeys grouped by role.
+) -> tuple[dict[str, list[DataKey]], dict[DataKey, Temporality | None]]:
+    """Build stable DataKeys grouped by role, plus what each key's data means.
 
     Keys carry no job identity — they are fully determined by the plot
-    config.
+    config. The temporality map is minted in the same pass, so the two cannot
+    disagree about which keys exist.
     """
-    return {
-        role: [
+    keys_by_role: dict[str, list[DataKey]] = {}
+    temporality: dict[DataKey, Temporality | None] = {}
+    for role, ds in data_sources.items():
+        keys = [
             DataKey(
                 workflow_id=ds.workflow_id,
                 source_name=sn,
@@ -285,28 +293,9 @@ def _build_keys_by_role(
             )
             for sn in ds.source_names
         ]
-        for role, ds in data_sources.items()
-    }
-
-
-def _resolve_supports_windowing(
-    data_sources: dict[str, DataSourceConfig],
-    registry: Mapping[WorkflowId, WorkflowSpec],
-) -> bool:
-    """Determine whether the primary view exposes window/latest modes.
-
-    Returns ``False`` for cumulative-only views (no ``per_update`` stream),
-    in which case only ``TimeWindowMode.since_start`` is meaningful.
-    """
-    if PRIMARY not in data_sources:
-        return True
-    from .plotting_controller import output_view_supports_windowing
-
-    primary = data_sources[PRIMARY]
-    spec = registry.get(primary.workflow_id)
-    if spec is None:
-        return True
-    return output_view_supports_windowing(spec, primary.view_name)
+        keys_by_role[role] = keys
+        temporality.update(dict.fromkeys(keys, ds.temporality))
+    return keys_by_role, temporality
 
 
 @dataclass
@@ -1317,12 +1306,14 @@ class PlotOrchestrator:
             # Set up data pipeline - updates mark the layer dirty; flush_frames
             # pulls and rebuilds. The immediate mark covers retained data
             # already present, so the plot shows without waiting for a delta.
+            keys_by_role, temporality = _build_subscription_keys(resolved_data_sources)
             try:
                 subscriber = self._plotting_controller.setup_pipeline(
-                    keys_by_role=_build_keys_by_role(resolved_data_sources),
+                    keys_by_role=keys_by_role,
                     plot_name=config.plot_name,
                     params=config.params,
                     on_update=lambda: self._mark_layer_dirty(layer_id),
+                    temporality=temporality,
                 )
                 self._data_subscriptions[layer_id] = subscriber
                 self._mark_layer_dirty(layer_id)
@@ -1509,15 +1500,10 @@ class PlotOrchestrator:
             for role, ds in layer_data['data_sources'].items()
         }
 
-        supports_windowing = _resolve_supports_windowing(
-            data_sources, self._job_orchestrator.get_workflow_registry()
-        )
-
         config = PlotConfig(
             data_sources=data_sources,
             plot_name=plot_name,
             params=params,
-            supports_windowing=supports_windowing,
         )
 
         return Layer(layer_id=LayerId(uuid4()), config=config)

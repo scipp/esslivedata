@@ -11,15 +11,24 @@ import scipp as sc
 from ess.livedata.config.workflow_spec import (
     REDUCTION,
     CumulativeOutput,
+    DataKey,
+    OutputView,
+    Temporality,
     WindowOutput,
     WorkflowId,
     WorkflowOutputsBase,
     WorkflowSpec,
 )
+from ess.livedata.dashboard.data_roles import PRIMARY
 from ess.livedata.dashboard.data_service import DataService
+from ess.livedata.dashboard.plot_params import (
+    PlotDisplayParams1d,
+    PlotParams1d,
+    PlotParamsTimeseries,
+)
 from ess.livedata.dashboard.plotting_controller import (
     PlottingController,
-    output_view_supports_windowing,
+    hidden_window_fields,
     since_start_available,
 )
 from ess.livedata.dashboard.stream_manager import StreamManager
@@ -494,120 +503,126 @@ class TestOverlayPatterns:
                 assert all('request' in name for name in overlays)
 
 
-class TestOutputViewSupportsWindowing:
-    def test_true_when_view_has_both_streams(self) -> None:
-        from ess.livedata.config.workflow_spec import OutputView
+class TestHiddenWindowFields:
+    """The window-mode control is hidden when the view cannot back its options."""
 
-        class Outputs(WorkflowOutputsBase):
-            output_views: ClassVar[tuple[OutputView, ...]] = (
-                OutputView(
-                    name='image',
-                    title='Image',
-                    fields=('cumulative', 'current'),
-                ),
-            )
-
-            current: WindowOutput = pydantic.Field(
-                default_factory=lambda: sc.DataArray(
-                    sc.zeros(dims=['x'], shape=[0]),
-                )
-            )
-            cumulative: CumulativeOutput = pydantic.Field(
-                default_factory=lambda: sc.DataArray(
-                    sc.zeros(dims=['x'], shape=[0]),
-                )
-            )
-
-        spec = WorkflowSpec(
+    def _spec(self, outputs: type[WorkflowOutputsBase]) -> WorkflowSpec:
+        return WorkflowSpec(
             instrument='test',
             name='wf',
             version=1,
             title='T',
             description='D',
-            outputs=Outputs,
+            outputs=outputs,
             params=None,
             group=REDUCTION,
         )
-        assert output_view_supports_windowing(spec, 'image') is True
 
-    def test_false_for_cumulative_only_view(self) -> None:
-        from typing import ClassVar
-
-        from ess.livedata.config.workflow_spec import OutputView
-
+    @pytest.fixture
+    def both_flavors(self) -> WorkflowSpec:
         class Outputs(WorkflowOutputsBase):
             output_views: ClassVar[tuple[OutputView, ...]] = (
                 OutputView(
-                    name='i_of_q',
-                    title='I(Q)',
-                    fields=('i_of_q',),
+                    name='total', title='Total', fields=('cumulative', 'current')
                 ),
+            )
+            current: WindowOutput = pydantic.Field(
+                default_factory=lambda: sc.DataArray(sc.scalar(0, unit='counts'))
+            )
+            cumulative: CumulativeOutput = pydantic.Field(
+                default_factory=lambda: sc.DataArray(sc.scalar(0, unit='counts'))
+            )
+
+        return self._spec(Outputs)
+
+    @pytest.fixture
+    def cumulative_only(self) -> WorkflowSpec:
+        class Outputs(WorkflowOutputsBase):
+            output_views: ClassVar[tuple[OutputView, ...]] = (
+                OutputView(name='i_of_q', title='I(Q)', fields=('i_of_q',)),
             )
             i_of_q: sc.DataArray = pydantic.Field(
                 default_factory=lambda: sc.DataArray(
-                    sc.zeros(dims=['Q'], shape=[0], unit='counts'),
+                    sc.zeros(dims=['Q'], shape=[0], unit='counts')
                 )
             )
 
-        spec = WorkflowSpec(
-            instrument='test',
-            name='wf',
-            version=1,
-            title='T',
-            description='D',
-            outputs=Outputs,
-            params=None,
-            group=REDUCTION,
-        )
-        assert output_view_supports_windowing(spec, 'i_of_q') is False
+        return self._spec(Outputs)
 
-    def test_true_for_per_update_only_view(self) -> None:
-        # A per_update-only view still supports the duration/aggregation controls;
-        # the since_start mode is rejected at config time, not by hiding controls.
-        from ess.livedata.config.workflow_spec import OutputView
-
+    @pytest.fixture
+    def per_update_only(self) -> WorkflowSpec:
         class Outputs(WorkflowOutputsBase):
             output_views: ClassVar[tuple[OutputView, ...]] = (
-                OutputView(
-                    name='total',
-                    title='Total',
-                    fields=('counts_total',),
-                ),
+                OutputView(name='total', title='Total', fields=('counts_total',)),
             )
             counts_total: WindowOutput = pydantic.Field(
                 default_factory=lambda: sc.DataArray(sc.scalar(0, unit='counts'))
             )
 
-        spec = WorkflowSpec(
-            instrument='test',
-            name='wf',
-            version=1,
-            title='T',
-            description='D',
-            outputs=Outputs,
-            params=None,
-            group=REDUCTION,
-        )
-        assert output_view_supports_windowing(spec, 'total') is True
+        return self._spec(Outputs)
 
-    def test_true_when_view_unknown(self) -> None:
+    @pytest.mark.parametrize('params_class', [PlotParams1d, PlotParamsTimeseries])
+    def test_shown_when_view_has_both_flavors(
+        self, both_flavors: WorkflowSpec, params_class: type[pydantic.BaseModel]
+    ) -> None:
+        assert hidden_window_fields(params_class, both_flavors, 'total') == frozenset()
+
+    @pytest.mark.parametrize(
+        ('params_class', 'field'),
+        [(PlotParams1d, 'time_window'), (PlotParamsTimeseries, 'accumulation')],
+    )
+    def test_hidden_for_cumulative_only_view(
+        self,
+        cumulative_only: WorkflowSpec,
+        params_class: type[pydantic.BaseModel],
+        field: str,
+    ) -> None:
+        assert hidden_window_fields(
+            params_class, cumulative_only, 'i_of_q'
+        ) == frozenset({field})
+
+    def test_shown_for_per_update_only_view_with_duration_control(
+        self, per_update_only: WorkflowSpec
+    ) -> None:
+        # The duration/aggregation controls still apply; since_start is rejected at
+        # config time rather than by hiding them.
+        assert (
+            hidden_window_fields(PlotParams1d, per_update_only, 'total') == frozenset()
+        )
+
+    def test_hidden_for_per_update_only_view_with_cumulative_toggle(
+        self, per_update_only: WorkflowSpec
+    ) -> None:
+        # The toggle offers nothing but the two flavors, so with one missing there
+        # is nothing to toggle.
+        assert hidden_window_fields(
+            PlotParamsTimeseries, per_update_only, 'total'
+        ) == frozenset({'accumulation'})
+
+    def test_shown_when_view_unknown(self, both_flavors: WorkflowSpec) -> None:
+        assert (
+            hidden_window_fields(PlotParamsTimeseries, both_flavors, 'nonexistent')
+            == frozenset()
+        )
+
+    def test_shown_for_params_without_window_mode(
+        self, cumulative_only: WorkflowSpec
+    ) -> None:
+        # Correlation histograms have no window-mode control to hide.
+        assert (
+            hidden_window_fields(PlotDisplayParams1d, cumulative_only, 'i_of_q')
+            == frozenset()
+        )
+
+    def test_hidden_for_default_view_of_unannotated_field(self) -> None:
         class Outputs(WorkflowOutputsBase):
             result: sc.DataArray = pydantic.Field(title='Result')
 
-        spec = WorkflowSpec(
-            instrument='test',
-            name='wf',
-            version=1,
-            title='T',
-            description='D',
-            outputs=Outputs,
-            params=None,
-            group=REDUCTION,
-        )
-        # Default (fallback) view per field uses `since_start`, so no windowing.
-        assert output_view_supports_windowing(spec, 'result') is False
-        # Unknown view name → True (be permissive).
-        assert output_view_supports_windowing(spec, 'nonexistent') is True
+        # A field with no Temporality annotation is cumulative, and the fallback
+        # one-view-per-field resolution therefore backs since_start only.
+        assert hidden_window_fields(
+            PlotParams1d, self._spec(Outputs), 'result'
+        ) == frozenset({'time_window'})
 
 
 class TestSinceStartAvailable:
@@ -687,7 +702,7 @@ class TestCreateExtractorsFromParams:
 
         keys = self._make_keys()
         params = TimeWindowParams(mode=TimeWindowMode.since_start)
-        extractors = create_extractors_from_params(keys, params)
+        extractors = create_extractors_from_params(keys, params, {})
         assert all(isinstance(e, LatestValueExtractor) for e in extractors.values())
 
     def test_window_with_zero_duration_uses_latest_value_extractor(self) -> None:
@@ -701,7 +716,7 @@ class TestCreateExtractorsFromParams:
         params = TimeWindowParams(
             mode=TimeWindowMode.window, window_duration_seconds=0.0
         )
-        extractors = create_extractors_from_params(keys, params)
+        extractors = create_extractors_from_params(keys, params, {})
         assert all(isinstance(e, LatestValueExtractor) for e in extractors.values())
 
     def test_window_uses_window_aggregating_extractor(self) -> None:
@@ -715,10 +730,78 @@ class TestCreateExtractorsFromParams:
         params = TimeWindowParams(
             mode=TimeWindowMode.window, window_duration_seconds=5.0
         )
-        extractors = create_extractors_from_params(keys, params)
+        extractors = create_extractors_from_params(keys, params, {})
         assert all(
             isinstance(e, WindowAggregatingExtractor) for e in extractors.values()
         )
+
+    def test_required_extractor_ignores_cumulative_temporality(self) -> None:
+        # A plotter fixing its extractor never aggregates, so the window params
+        # it was handed say nothing about what its data will be put through.
+        from ess.livedata.dashboard.extractors import FullHistoryExtractor
+        from ess.livedata.dashboard.plot_params import TimeWindowMode, TimeWindowParams
+        from ess.livedata.dashboard.plotter_registry import plotter_registry
+        from ess.livedata.dashboard.plotting_controller import (
+            create_extractors_from_params,
+        )
+
+        keys = self._make_keys()
+        params = TimeWindowParams(
+            mode=TimeWindowMode.window, window_duration_seconds=5.0
+        )
+        extractors = create_extractors_from_params(
+            keys,
+            params,
+            dict.fromkeys(keys, Temporality.cumulative),
+            plotter_registry.get_spec('timeseries'),
+        )
+        assert all(isinstance(e, FullHistoryExtractor) for e in extractors.values())
+
+
+class TestAggregationOfCumulativeIsRejected:
+    """Summing consecutive messages of a cumulative field double-counts.
+
+    The window controls are hidden for views without a per-update field, but
+    ``field_for`` falls back to the cumulative field, so a persisted config can
+    still ask for it.
+    """
+
+    def _setup(self, controller, temporality, duration_seconds: float):
+        from ess.livedata.dashboard.plot_params import (
+            PlotParams1d,
+            TimeWindowMode,
+            TimeWindowParams,
+        )
+
+        wf_id = WorkflowId(instrument='test', name='wf', version=1)
+        keys = [DataKey(workflow_id=wf_id, source_name='src', output_name='total')]
+        params = PlotParams1d(
+            time_window=TimeWindowParams(
+                mode=TimeWindowMode.window, window_duration_seconds=duration_seconds
+            )
+        )
+        return controller.setup_pipeline(
+            keys_by_role={PRIMARY: keys},
+            plot_name='lines',
+            params=params,
+            on_update=lambda: None,
+            temporality=dict.fromkeys(keys, temporality),
+        )
+
+    def test_aggregating_a_cumulative_field_raises(self, plotting_controller):
+        with pytest.raises(ValueError, match='total'):
+            self._setup(plotting_controller, Temporality.cumulative, 5.0)
+
+    @pytest.mark.parametrize(
+        'temporality', [Temporality.window, Temporality.series, None]
+    )
+    def test_aggregating_other_temporalities_is_allowed(
+        self, plotting_controller, temporality
+    ):
+        assert self._setup(plotting_controller, temporality, 5.0) is not None
+
+    def test_cumulative_without_aggregation_is_allowed(self, plotting_controller):
+        assert self._setup(plotting_controller, Temporality.cumulative, 0.0) is not None
 
 
 class TestWorkflowSpecFieldFor:

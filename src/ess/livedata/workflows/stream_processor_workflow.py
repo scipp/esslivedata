@@ -77,7 +77,8 @@ class StreamProcessorWorkflow(Workflow):
             Mapping from output names to sciline keys for target outputs.
         window_outputs:
             Output names representing the current window (delta since last finalize).
-            These receive time, start_time, end_time coords.
+            These receive their own ``start_time``/``time`` coords, bounding the
+            window rather than the job.
         **kwargs:
             Additional arguments passed to StreamProcessor.
         """
@@ -228,14 +229,12 @@ class StreamProcessorWorkflow(Workflow):
         # Add time coords to window outputs
         if self._window_outputs and self._current_start_time is not None:
             start_time_coord = self._current_start_time.to_scipp()
-            end_time_coord = self._current_end_time.to_scipp()
+            time_coord = self._current_end_time.to_scipp()
 
             for name in self._window_outputs:
                 if name in results:
                     results[name] = results[name].assign_coords(
-                        time=start_time_coord,
-                        start_time=start_time_coord,
-                        end_time=end_time_coord,
+                        start_time=start_time_coord, time=time_coord
                     )
 
         # Reset time tracking for next period
