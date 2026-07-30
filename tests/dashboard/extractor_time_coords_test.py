@@ -3,13 +3,18 @@
 """
 Tests for time coordinate handling in extractors.
 
-Extractors should ensure that extracted data has correct start_time/end_time
-coordinates reflecting the actual time range of the extracted data, not stale
-coordinates from the buffer reference.
+Extractors are the naming boundary: on the wire a value's upper bound is its
+``time``, and every extractor turns the covered range into the scalar
+``(start_time, end_time)`` pair the plotters read. The pair must reflect the
+actual range of the extracted data, not stale coordinates from the buffer
+reference, and must be pristine wall-clock time even where ``time`` itself is
+shifted for display. A series output has no such range: its ``time`` is the
+per-sample axis, so it is left alone.
 """
 
 import time
 
+import pytest
 import scipp as sc
 
 from ess.livedata.dashboard.extractors import (
@@ -17,6 +22,7 @@ from ess.livedata.dashboard.extractors import (
     LatestValueExtractor,
     WindowAggregatingExtractor,
 )
+from ess.livedata.dashboard.time_utils import get_local_timezone_offset_ns
 
 
 def _make_buffered_data(
@@ -24,34 +30,29 @@ def _make_buffered_data(
     time_span_seconds: float = 5.0,
 ) -> sc.DataArray:
     """
-    Create data simulating what comes from a TemporalBuffer.
+    Create data simulating what a TemporalBuffer holds for a window output.
 
-    The data has:
-    - A 'time' dimension with actual timestamps (recent)
-    - 1-D start_time/end_time coords (one per time slice, as TemporalBuffer stores them)
+    Each buffered slice covers ``[start_time, time]``: ``time`` is the instant
+    the window closed, one second after it opened. Both are 1-D, one value per
+    slice. The two are deliberately distinct, so that a test cannot pass by
+    reading the wrong one.
     """
     now_ns = time.time_ns()
 
-    # Time values: spanning the last `time_span_seconds`
+    # Window close times: spanning the last `time_span_seconds`
     time_step_ns = int(time_span_seconds * 1e9 / num_points)
     time_values = [
         now_ns - (num_points - 1 - i) * time_step_ns for i in range(num_points)
     ]
-
-    # Each frame has its own start_time/end_time (1-D coords)
-    # Assume each frame covers 1 second
     frame_duration_ns = int(1e9)
-    start_time_values = time_values  # start_time == time for each frame
-    end_time_values = [t + frame_duration_ns for t in time_values]
+    start_time_values = [t - frame_duration_ns for t in time_values]
 
     return sc.DataArray(
         data=sc.array(dims=['time', 'x'], values=[[1.0, 2.0]] * num_points),
         coords={
             'time': sc.array(dims=['time'], values=time_values, unit='ns'),
             'x': sc.array(dims=['x'], values=[0.0, 1.0]),
-            # 1-D coords as TemporalBuffer produces
             'start_time': sc.array(dims=['time'], values=start_time_values, unit='ns'),
-            'end_time': sc.array(dims=['time'], values=end_time_values, unit='ns'),
         },
     )
 
@@ -72,18 +73,57 @@ class TestFullHistoryExtractor:
         assert result.coords['start_time'].ndim == 0  # Scalar
         assert sc.identical(result.coords['start_time'], expected_start)
 
-    def test_sets_end_time_from_max_of_1d_coord(self):
-        """end_time should be max of the 1-D end_time coord."""
+    def test_sets_end_time_from_last_of_1d_time_coord(self):
+        """end_time is minted from the wire's upper bound, the 'time' coord."""
         data = _make_buffered_data(num_points=5, time_span_seconds=5.0)
         extractor = FullHistoryExtractor()
 
         result = extractor.extract(data)
 
-        # Result should have scalar end_time = max of input 1-D end_time
-        expected_end = data.coords['end_time'][-1]
-        assert 'end_time' in result.coords
         assert result.coords['end_time'].ndim == 0  # Scalar
-        assert sc.identical(result.coords['end_time'], expected_end)
+        assert sc.identical(result.coords['end_time'], data.coords['time'][-1])
+
+    def test_end_time_is_pristine_wall_clock_despite_the_display_shift(self):
+        """The bounds are provenance, so the timezone shift must not reach them.
+
+        ``time`` is shifted into the local timezone for Bokeh's axis; taking the
+        bounds afterwards would misreport them by the UTC offset.
+        """
+        data = _make_buffered_data(num_points=5, time_span_seconds=5.0)
+
+        result = FullHistoryExtractor().extract(data)
+
+        assert sc.identical(result.coords['end_time'], data.coords['time'][-1])
+        assert sc.identical(result.coords['start_time'], data.coords['start_time'][0])
+
+    def test_time_axis_survives_as_the_1d_dim_coord(self):
+        """Minting the scalar bounds must not overwrite the plotted x axis.
+
+        ``assign_coords`` replaces a 1-D dim coord with a scalar silently, so a
+        bound accidentally emitted under the name ``time`` would kill the axis
+        with no error anywhere.
+        """
+        data = _make_buffered_data(num_points=5, time_span_seconds=5.0)
+
+        result = FullHistoryExtractor().extract(data)
+
+        assert result.coords['time'].ndim == 1
+        assert result.coords['time'].sizes['time'] == 5
+
+    def test_plotted_axis_is_the_window_close_not_its_start(self):
+        """A window output's wall-clock x is its right edge.
+
+        The axis is the wire's ``time``, offset into the local timezone for
+        Bokeh and nothing else — in particular not the interval's ``start_time``.
+        """
+        data = _make_buffered_data(num_points=5, time_span_seconds=5.0)
+        origin = sc.epoch(unit='ns') + get_local_timezone_offset_ns().to_scipp().to(
+            unit='ns', dtype='int64'
+        )
+
+        result = FullHistoryExtractor().extract(data)
+
+        assert sc.identical(result.coords['time'], origin + data.coords['time'])
 
     def test_end_time_reflects_actual_data_range(self):
         """end_time should reflect the actual data, giving recent lag."""
@@ -106,10 +146,8 @@ class TestFullHistoryExtractor:
             dims=['time'], values=time_values, unit='ns'
         )
 
-        # Create with 1-D start_time/end_time coords
         frame_duration_ns = int(1e9)
-        start_time_values = time_values
-        end_time_values = [t + frame_duration_ns for t in time_values]
+        start_time_values = [t - frame_duration_ns for t in time_values]
 
         data = sc.DataArray(
             data=sc.array(dims=['time', 'x'], values=[[1.0, 2.0]] * 5),
@@ -119,7 +157,6 @@ class TestFullHistoryExtractor:
                 'start_time': sc.array(
                     dims=['time'], values=start_time_values, unit='ns'
                 ),
-                'end_time': sc.array(dims=['time'], values=end_time_values, unit='ns'),
             },
         )
         extractor = FullHistoryExtractor()
@@ -200,14 +237,65 @@ class TestLatestValueExtractor:
         assert lag_seconds < 5.0, f"end_time lag {lag_seconds}s should be ~0s"
 
     def test_extracts_last_value_from_1d_coords(self):
-        """Should extract the last value from 1-D start_time/end_time coords."""
+        """Should extract the last slice's bounds, end_time minted from 'time'."""
         data = _make_buffered_data(num_points=5, time_span_seconds=5.0)
         extractor = LatestValueExtractor()
 
         result = extractor.extract(data)
 
-        # Verify coords are from the last slice
-        expected_start = data.coords['start_time'][-1]
-        expected_end = data.coords['end_time'][-1]
-        assert sc.identical(result.coords['start_time'], expected_start)
-        assert sc.identical(result.coords['end_time'], expected_end)
+        assert sc.identical(result.coords['start_time'], data.coords['start_time'][-1])
+        assert sc.identical(result.coords['end_time'], data.coords['time'][-1])
+
+    def test_mints_end_time_for_an_unbuffered_message(self):
+        """A single message reaches this extractor via SingleValueBuffer.
+
+        It carries the wire's ``(start_time, time)`` and no time dim, so the
+        plotters would see no ``end_time`` at all without the boundary applying
+        here too.
+        """
+        message = sc.DataArray(
+            sc.scalar(5.0, unit='counts'),
+            coords={
+                'start_time': sc.scalar(1000, unit='ns'),
+                'time': sc.scalar(3000, unit='ns'),
+            },
+        )
+
+        result = LatestValueExtractor().extract(message)
+
+        assert sc.identical(result.coords['start_time'], sc.scalar(1000, unit='ns'))
+        assert sc.identical(result.coords['end_time'], sc.scalar(3000, unit='ns'))
+
+
+class TestSeriesOutputsCarryNoBounds:
+    """A series output's ``time`` is its x axis, not a bound to translate.
+
+    Its age is already legible on the plot, so minting ``end_time`` from the
+    last sample would drive the freshness pill and the lag readout off the
+    device's sampling rate rather than the pipeline's latency. ``start_time``
+    is what separates a bounded output from a series one, so the pair is
+    minted whole or not at all.
+    """
+
+    @pytest.fixture
+    def samples(self) -> sc.DataArray:
+        return sc.DataArray(
+            sc.array(dims=['time'], values=[1.0, 2.0, 3.0], unit='K'),
+            coords={
+                'time': sc.array(
+                    dims=['time'], values=[100, 200, 300], unit='ns', dtype='int64'
+                )
+            },
+        )
+
+    def test_full_history_mints_no_bounds(self, samples: sc.DataArray) -> None:
+        result = FullHistoryExtractor().extract(samples)
+
+        assert 'end_time' not in result.coords
+        assert 'start_time' not in result.coords
+
+    def test_latest_value_mints_no_bounds(self, samples: sc.DataArray) -> None:
+        result = LatestValueExtractor().extract(samples)
+
+        assert 'end_time' not in result.coords
+        assert 'start_time' not in result.coords

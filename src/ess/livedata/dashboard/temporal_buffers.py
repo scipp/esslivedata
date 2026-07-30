@@ -314,7 +314,7 @@ class TemporalBuffer(BufferProtocol[sc.DataArray]):
 
     # 0-D coord names that are still treated as per-sample on a single-slice
     # message (where ``time`` dim is absent, so the dim signal can't be used).
-    _SCALAR_ACCUMULATED_NAMES = ('time', 'start_time', 'end_time')
+    _SCALAR_ACCUMULATED_NAMES = ('time', 'start_time')
 
     DEFAULT_MAX_MEMORY = 20 * 1024 * 1024  # 20 MB
 

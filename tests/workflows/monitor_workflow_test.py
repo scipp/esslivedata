@@ -391,7 +391,7 @@ class TestMonitorWorkflowIntegration:
         assert results['counts_in_toa_range_cumulative'].value == 5.0
 
     def test_time_coords_on_delta_outputs(self, toa_edges, sample_binned_events):
-        """Delta outputs get time, start_time, end_time coords."""
+        """Delta outputs get start_time and time coords bounding the window."""
         workflow = create_monitor_workflow('monitor_1', toa_edges)
         workflow.build()
         workflow.accumulate(
@@ -401,29 +401,10 @@ class TestMonitorWorkflowIntegration:
         )
         results = workflow.finalize()
 
-        # Current (window histogram) should have time coords
-        assert 'time' in results['current'].coords
-        assert 'start_time' in results['current'].coords
-        assert 'end_time' in results['current'].coords
-        assert results['current'].coords['time'].value == 1000
-        assert results['current'].coords['start_time'].value == 1000
-        assert results['current'].coords['end_time'].value == 2000
-
-        # counts_total should have time coords
-        assert 'time' in results['counts_total'].coords
-        assert 'start_time' in results['counts_total'].coords
-        assert 'end_time' in results['counts_total'].coords
-        assert results['counts_total'].coords['time'].value == 1000
-        assert results['counts_total'].coords['start_time'].value == 1000
-        assert results['counts_total'].coords['end_time'].value == 2000
-
-        # counts_in_toa_range should have time coords
-        assert 'time' in results['counts_in_toa_range'].coords
-        assert 'start_time' in results['counts_in_toa_range'].coords
-        assert 'end_time' in results['counts_in_toa_range'].coords
-        assert results['counts_in_toa_range'].coords['time'].value == 1000
-        assert results['counts_in_toa_range'].coords['start_time'].value == 1000
-        assert results['counts_in_toa_range'].coords['end_time'].value == 2000
+        for name in ('current', 'counts_total', 'counts_in_toa_range'):
+            coords = results[name].coords
+            assert coords['start_time'].value == 1000, name
+            assert coords['time'].value == 2000, name
 
     def test_cumulative_output_has_no_time_coords(
         self, toa_edges, sample_binned_events
@@ -438,17 +419,20 @@ class TestMonitorWorkflowIntegration:
         )
         results = workflow.finalize()
 
-        assert 'time' not in results['cumulative'].coords
-        assert 'start_time' not in results['cumulative'].coords
-        assert 'end_time' not in results['cumulative'].coords
-        # Cumulative scalar totals also span all time, so no time coords.
-        assert 'time' not in results['counts_total_cumulative'].coords
-        assert 'time' not in results['counts_in_toa_range_cumulative'].coords
+        # Scalar totals span all time as well.
+        for name in (
+            'cumulative',
+            'counts_total_cumulative',
+            'counts_in_toa_range_cumulative',
+        ):
+            coords = results[name].coords
+            assert 'start_time' not in coords, name
+            assert 'time' not in coords, name
 
     def test_time_coords_track_first_start_last_end(
         self, toa_edges, sample_binned_events
     ):
-        """Time coords should track first start_time and last end_time."""
+        """start_time tracks the first accumulate, time the last."""
         workflow = create_monitor_workflow('monitor_1', toa_edges)
         workflow.build()
         # Multiple accumulate calls before finalize
@@ -469,10 +453,8 @@ class TestMonitorWorkflowIntegration:
         )
         results = workflow.finalize()
 
-        # start_time should be from first accumulate, end_time from last
-        assert results['current'].coords['time'].value == 1000
         assert results['current'].coords['start_time'].value == 1000
-        assert results['current'].coords['end_time'].value == 4000
+        assert results['current'].coords['time'].value == 4000
 
     def test_time_coords_reset_after_finalize(self, toa_edges, sample_binned_events):
         """Time coords should reset between finalize cycles."""
@@ -487,7 +469,7 @@ class TestMonitorWorkflowIntegration:
         )
         results1 = workflow.finalize()
         assert results1['current'].coords['start_time'].value == 1000
-        assert results1['current'].coords['end_time'].value == 2000
+        assert results1['current'].coords['time'].value == 2000
 
         # Second cycle should have fresh time tracking
         workflow.accumulate(
@@ -497,7 +479,7 @@ class TestMonitorWorkflowIntegration:
         )
         results2 = workflow.finalize()
         assert results2['current'].coords['start_time'].value == 5000
-        assert results2['current'].coords['end_time'].value == 6000
+        assert results2['current'].coords['time'].value == 6000
 
     def test_cumulative_accumulates_window_clears(
         self, toa_edges, sample_binned_events

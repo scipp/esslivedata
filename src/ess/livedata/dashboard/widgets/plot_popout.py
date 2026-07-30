@@ -33,12 +33,20 @@ This is why there is no cap on the number of pop-outs -- comparing several
 detectors side by side is the point, and the cost of that is bounded by the
 screen it has to fit on.
 
+Session ticks are gated on a ``has_work`` predicate over shared state (ADR
+0007), and working a window's controls touches none of it: closing, minimizing
+and restoring change only what this session shows. So the manager reports them
+to its owner, which requests a tick -- the same treatment a tab switch gets.
+The data path needs no such help: a new frame for the grid behind a live
+pop-out is shared state, and ``PlotGridTabs`` widens its predicate to see it.
+
 Pop-outs are per session and non-persistent: they are not part of the plot
 topology, so closing the browser tab discards them.
 """
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from typing import ClassVar
 
 import panel as pn
@@ -205,9 +213,19 @@ class PlotPopoutManager:
     Holds the zero-height container that roots the windows in the component
     tree (the same trick the modal container uses) and keeps at most one
     pop-out per cell.
+
+    Parameters
+    ----------
+    on_visibility_change:
+        Called when the user changes what a window shows: closing, minimizing
+        or restoring it. None of those moves shared state, so no version-gated
+        predicate can see them and the session has to be told to run a pass
+        (the same treatment a tab switch gets). Opening needs no such call:
+        the pop-out button lives in a cell titlebar, so the cell is on the
+        visible tab and already live and rendering.
     """
 
-    def __init__(self) -> None:
+    def __init__(self, on_visibility_change: Callable[[], None]) -> None:
         # Zero-height so the container does not compete for vertical space;
         # the windows themselves render as free-floating overlays. The fitter
         # is invisible and only installs document-level handlers, so it costs
@@ -216,6 +234,7 @@ class PlotPopoutManager:
             PopoutWindowFitter(), height=0, sizing_mode='stretch_width'
         )
         self._open: dict[CellId, pn.layout.FloatPanel] = {}
+        self._on_visibility_change = on_visibility_change
 
     @property
     def container(self) -> pn.Column:
@@ -293,12 +312,22 @@ class PlotPopoutManager:
             self.close(cell_id)
 
     def _on_status(self, cell_id: CellId, status: str) -> None:
-        """Drop the pop-out once the user closes its window.
+        """React to the window's own controls: close, minimize, restore.
 
         ``FloatPanel.status`` round-trips from jsPanel, so the window's own
-        close button lands here. Minimize and restore need no handling: they
-        change what :meth:`live_cells` reports, which the next poll pass reads
-        for itself.
+        buttons land here. A status this manager assigned itself does not:
+        :meth:`close` drops the registry entry before assigning, so the
+        unregistered cell returns early. That is what keeps the close/reopen
+        of a cell rebuild from asking for a pass from inside the pass doing
+        the rebuilding.
+
+        Minimize and restore move nothing a predicate could watch -- only what
+        :meth:`live_cells` reports -- so they must ask for the pass that acts
+        on them, or a restored window would sit frozen at whatever it showed
+        when it was minimized until the next full pass.
         """
+        if cell_id not in self._open:
+            return
         if status == 'closed':
             self.close(cell_id)
+        self._on_visibility_change()

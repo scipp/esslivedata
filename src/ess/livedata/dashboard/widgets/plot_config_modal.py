@@ -119,6 +119,7 @@ def _resolve_output_display_hints(
     is_static: bool,
     workflow_spec: WorkflowSpec | None,
     view_name: str,
+    params_class: type[pydantic.BaseModel],
 ) -> OutputDisplayHints:
     """Derive UI hints from the workflow output view.
 
@@ -134,6 +135,9 @@ def _resolve_output_display_hints(
         for static overlays.
     view_name:
         Name of the selected output view.
+    params_class:
+        Params model of the selected plotter. Which window-mode control it
+        carries decides what the view must back for that control to apply.
 
     Returns
     -------
@@ -142,18 +146,11 @@ def _resolve_output_display_hints(
     """
     if is_static:
         return OutputDisplayHints(hidden_fields=frozenset(), preselect_all_sources=True)
-    from ess.livedata.dashboard.plotting_controller import (
-        output_view_supports_windowing,
-    )
+    from ess.livedata.dashboard.plotting_controller import hidden_window_fields
 
-    supports_windowing = output_view_supports_windowing(workflow_spec, view_name)
-    hidden = frozenset({'time_window'}) if not supports_windowing else frozenset()
+    hidden = hidden_window_fields(params_class, workflow_spec, view_name)
 
-    template = (
-        workflow_spec.get_output_template(view_name)
-        if workflow_spec is not None
-        else None
-    )
+    template = workflow_spec.get_output_template(view_name)
     preselect_all = template is None or template.ndim < 2
 
     return OutputDisplayHints(hidden_fields=hidden, preselect_all_sources=preselect_all)
@@ -1046,7 +1043,6 @@ class SpecBasedConfigurationStep(WizardStep[PlotterSelection | None, PlotConfig]
         self._last_axis_sources: dict[str, DataSourceConfig] | None = None
         # Store result from callback
         self._last_config_result: PlotConfig | None = None
-        self._supports_windowing: bool = True
 
     @property
     def name(self) -> str:
@@ -1197,8 +1193,8 @@ class SpecBasedConfigurationStep(WizardStep[PlotterSelection | None, PlotConfig]
             is_static=is_static,
             workflow_spec=workflow_spec if not is_static else None,
             view_name=self._plotter_selection.view_name,
+            params_class=plot_spec.params,
         )
-        self._supports_windowing = 'time_window' not in hints.hidden_fields
 
         # For new plots, use display hints to decide source pre-selection.
         # 2D+ outputs (images) default to empty so the user picks one source.
@@ -1273,7 +1269,6 @@ class SpecBasedConfigurationStep(WizardStep[PlotterSelection | None, PlotConfig]
             data_sources=data_sources,
             plot_name=self._plotter_selection.plot_name,
             params=params,
-            supports_windowing=self._supports_windowing,
         )
 
     def _validate_window_mode(
@@ -1284,11 +1279,13 @@ class SpecBasedConfigurationStep(WizardStep[PlotterSelection | None, PlotConfig]
         Returns ``True`` if the configuration may proceed. Otherwise shows an
         error and returns ``False`` so the modal stays open.
         """
-        from ess.livedata.dashboard.plot_params import TimeWindowMixin, TimeWindowMode
+        from ess.livedata.dashboard.plot_params import WindowModeMixin
         from ess.livedata.dashboard.plotting_controller import since_start_available
 
-        window = params.time_window if isinstance(params, TimeWindowMixin) else None
-        if window is None or window.mode is not TimeWindowMode.since_start:
+        if (
+            not isinstance(params, WindowModeMixin)
+            or params.windowing() != 'since_start'
+        ):
             return True
         if self._plotter_selection is None:
             return True

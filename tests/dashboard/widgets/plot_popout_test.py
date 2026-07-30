@@ -19,6 +19,7 @@ import scipp as sc
 from ess.livedata.config.workflow_spec import DataKey, WorkflowId
 from ess.livedata.dashboard.data_roles import PRIMARY
 from ess.livedata.dashboard.data_service import DataService
+from ess.livedata.dashboard.frame_clock import FrameClock
 from ess.livedata.dashboard.job_service import JobService
 from ess.livedata.dashboard.notification_queue import NotificationQueue
 from ess.livedata.dashboard.plot_data_service import PlotDataService
@@ -65,7 +66,18 @@ def job_service():
 
 
 @pytest.fixture
-def plot_orchestrator(job_orchestrator, data_service, plot_data_service):
+def frame_clock():
+    """The orchestrator's frame clock, shared with the tests.
+
+    A committed frame is the signal a session's tick predicate reacts to, so
+    holding the clock lets a test raise it for a chosen grid without standing
+    up the ingestion path that would normally do the committing.
+    """
+    return FrameClock()
+
+
+@pytest.fixture
+def plot_orchestrator(job_orchestrator, data_service, plot_data_service, frame_clock):
     stream_manager = StreamManager(data_service=data_service)
     return PlotOrchestrator(
         plotting_controller=PlottingController(stream_manager=stream_manager),
@@ -73,6 +85,7 @@ def plot_orchestrator(job_orchestrator, data_service, plot_data_service):
         data_service=data_service,
         instrument='dummy',
         plot_data_service=plot_data_service,
+        frame_clock=frame_clock,
     )
 
 
@@ -177,6 +190,17 @@ def _open_windows(plot_grid_tabs) -> list:
         for obj in plot_grid_tabs._popouts.container.objects
         if isinstance(obj, pn.layout.FloatPanel)
     ]
+
+
+def _tick(plot_grid_tabs) -> None:
+    """Drive one gated poll cycle, as SessionUpdater's wake ticks do.
+
+    Session ticks run the poll pass only when ``_has_pending_work`` fires, so
+    driving the pass directly would let a pop-out that the predicate cannot
+    see pass these tests while freezing in the browser.
+    """
+    if plot_grid_tabs._has_pending_work():
+        plot_grid_tabs._poll_for_plot_updates()
 
 
 class TestPopoutRendersTheCellsPlotAgain:
@@ -404,7 +428,7 @@ class TestPopoutKeepsItsCellLive:
     ):
         plot_grid_tabs.tabs.active = 0  # Workflows: no grid is visible
 
-        plot_grid_tabs._poll_for_plot_updates()
+        _tick(plot_grid_tabs)
 
         assert plot_grid_tabs._popouts.open_cells() == frozenset()
         assert not _layer_is_active(
@@ -417,7 +441,7 @@ class TestPopoutKeepsItsCellLive:
         plot_grid_tabs._show_popout(line_cell)
         plot_grid_tabs.tabs.active = 0
 
-        plot_grid_tabs._poll_for_plot_updates()
+        _tick(plot_grid_tabs)
 
         assert plot_grid_tabs._popouts.open_cells() == frozenset({line_cell})
         assert _layer_is_active(
@@ -429,10 +453,10 @@ class TestPopoutKeepsItsCellLive:
     ):
         plot_grid_tabs._show_popout(line_cell)
         plot_grid_tabs.tabs.active = 0
-        plot_grid_tabs._poll_for_plot_updates()
+        _tick(plot_grid_tabs)
 
-        plot_grid_tabs._popouts.close(line_cell)
-        plot_grid_tabs._poll_for_plot_updates()
+        # jsPanel round-trips the user's click on the window's close button.
+        _open_windows(plot_grid_tabs)[0].status = 'closed'
 
         assert not _layer_is_active(
             plot_grid_tabs, plot_orchestrator, plot_data_service, line_cell
@@ -449,9 +473,12 @@ class TestPopoutKeepsItsCellLive:
         """
         plot_grid_tabs._show_popout(line_cell)
         plot_grid_tabs.tabs.active = 0
+        _tick(plot_grid_tabs)
+        assert _layer_is_active(
+            plot_grid_tabs, plot_orchestrator, plot_data_service, line_cell
+        )
 
         _open_windows(plot_grid_tabs)[0].status = status
-        plot_grid_tabs._poll_for_plot_updates()
 
         assert not _layer_is_active(
             plot_grid_tabs, plot_orchestrator, plot_data_service, line_cell
@@ -460,14 +487,18 @@ class TestPopoutKeepsItsCellLive:
     def test_restoring_the_window_wakes_its_cell(
         self, plot_grid_tabs, plot_orchestrator, plot_data_service, line_cell
     ):
+        """Restoring must reach the cell without waiting for a full pass.
+
+        Nothing shared moves when a window is restored, so no ``has_work``
+        predicate can see it; the manager asks for the pass itself. Hence no
+        tick here -- an assertion that survives only if it did.
+        """
         plot_grid_tabs._show_popout(line_cell)
         plot_grid_tabs.tabs.active = 0
         window = _open_windows(plot_grid_tabs)[0]
         window.status = 'minimized'
-        plot_grid_tabs._poll_for_plot_updates()
 
         window.status = 'normalized'
-        plot_grid_tabs._poll_for_plot_updates()
 
         assert _layer_is_active(
             plot_grid_tabs, plot_orchestrator, plot_data_service, line_cell
@@ -481,9 +512,70 @@ class TestPopoutKeepsItsCellLive:
         _open_windows(plot_grid_tabs)[0].status = 'minimized'
 
         plot_orchestrator.set_cell_title(line_cell, 'Renamed')
-        plot_grid_tabs._poll_for_plot_updates()
+        _tick(plot_grid_tabs)
 
         assert len(_open_windows(plot_grid_tabs)) == 1
+
+
+class TestPopoutWakesTheSessionItFloatsOver:
+    """Ticks are predicate-gated, so a pop-out must be visible to the gate.
+
+    A session parked on another tab is woken by every data burst, but only
+    runs the poll pass when ``_has_pending_work`` fires. If that predicate
+    stayed scoped to the visible grid, the pass feeding the pop-out would
+    never run and the window would silently freeze.
+    """
+
+    def test_frame_for_a_popped_out_grid_wakes_a_session_on_another_tab(
+        self, plot_grid_tabs, frame_clock, line_cell
+    ):
+        plot_grid_tabs._show_popout(line_cell)
+        plot_grid_tabs.tabs.active = 0
+        _tick(plot_grid_tabs)
+        assert not plot_grid_tabs._has_pending_work()
+
+        _new_frame(frame_clock, plot_grid_tabs, line_cell)
+
+        assert plot_grid_tabs._has_pending_work()
+
+    def test_frame_for_a_hidden_grid_alone_does_not_wake_the_session(
+        self, plot_grid_tabs, frame_clock, line_cell
+    ):
+        """The widening must not become "wake on any grid".
+
+        Scoping the gate per grid is what keeps another session's tab from
+        costing this one a hold+freeze pass; a pop-out buys in one more grid,
+        not all of them.
+        """
+        plot_grid_tabs.tabs.active = 0
+        _tick(plot_grid_tabs)
+        assert not plot_grid_tabs._has_pending_work()
+
+        _new_frame(frame_clock, plot_grid_tabs, line_cell)
+
+        assert not plot_grid_tabs._has_pending_work()
+
+    def test_minimized_window_does_not_wake_the_session(
+        self, plot_grid_tabs, frame_clock, line_cell
+    ):
+        plot_grid_tabs._show_popout(line_cell)
+        plot_grid_tabs.tabs.active = 0
+        _open_windows(plot_grid_tabs)[0].status = 'minimized'
+        _tick(plot_grid_tabs)
+        assert not plot_grid_tabs._has_pending_work()
+
+        _new_frame(frame_clock, plot_grid_tabs, line_cell)
+
+        assert not plot_grid_tabs._has_pending_work()
+
+
+def _new_frame(frame_clock, plot_grid_tabs, cell_id) -> None:
+    """Signal a completed data-burst frame for the grid holding a cell.
+
+    What the ingestion thread does at the end of a burst, and what a live
+    pop-out on a hidden tab must still react to.
+    """
+    frame_clock.commit(plot_grid_tabs._cell_grid[cell_id])
 
 
 def _layer_is_active(plot_grid_tabs, plot_orchestrator, plot_data_service, cell_id):

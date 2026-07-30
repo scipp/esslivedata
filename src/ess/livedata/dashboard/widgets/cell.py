@@ -27,6 +27,7 @@ from ess.livedata.config.workflow_spec import WorkflowId, WorkflowSpec
 
 from ..cell_autoscale import CellAutoscaleController, build_controller_from_layers
 from ..format_utils import extract_error_summary
+from ..frame_aspect import pane_sizing_mode
 from ..hover_suspend import make_hover_suspend_hook
 from ..plot_data_service import LayerState, LayerStateMachine, PlotDataService
 from ..plot_orchestrator import (
@@ -34,10 +35,9 @@ from ..plot_orchestrator import (
     CellId,
     LayerId,
     PlotCell,
-    PlotConfig,
     PlotOrchestrator,
 )
-from ..plot_params import PlotAspectType, StretchMode
+from ..plot_params import PlotAspect, PlotAspectType
 from ..plots import TimeBounds, format_time_info, merge_time_bounds
 from ..save_filename import build_save_filename_from_cell, make_save_filename_hook
 from ..session_layer import SessionLayer
@@ -54,28 +54,8 @@ from .styles import Colors, StatusColors, StatusPill
 logger = structlog.get_logger(__name__)
 
 
-def _get_sizing_mode(config: PlotConfig) -> str:
-    """Extract Panel sizing_mode from plot configuration.
-
-    Parameters
-    ----------
-    config:
-        Plot configuration containing plotter params.
-
-    Returns
-    -------
-    :
-        Panel sizing_mode string ('stretch_both', 'stretch_width', or 'stretch_height').
-    """
-    params = config.params
-    if hasattr(params, 'plot_aspect'):
-        aspect = params.plot_aspect
-        if aspect.aspect_type == PlotAspectType.free:
-            return 'stretch_both'
-        if aspect.stretch_mode == StretchMode.width:
-            return 'stretch_width'
-        return 'stretch_height'
-    return 'stretch_both'
+# Params without a configurable aspect size like an unconstrained plot.
+_FREE_ASPECT = PlotAspect(aspect_type=PlotAspectType.free)
 
 
 # Data-age thresholds in seconds (now minus the oldest data's end time) that
@@ -339,7 +319,8 @@ def compose_cell_plot(cell: PlotCell, deps: CellDeps) -> ComposedPlot | None:
 
     # Layers of one cell are consistent for overlay, so the first one's aspect
     # config sets the sizing mode for the whole composition.
-    sizing_mode = _get_sizing_mode(cell.layers[0].config)
+    params = cell.layers[0].config.params
+    sizing_mode = pane_sizing_mode(getattr(params, 'plot_aspect', _FREE_ASPECT))
 
     result: hv.DynamicMap | hv.Element
     if len(plots) == 1:

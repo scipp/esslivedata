@@ -2,13 +2,14 @@
 # Copyright (c) 2025 Scipp contributors (https://github.com/scipp)
 from __future__ import annotations
 
-from collections.abc import Callable, Hashable
+from collections.abc import Callable, Hashable, Mapping
 from typing import TypeVar
 
 import pydantic
 
 from ess.livedata.config.workflow_spec import (
     DataKey,
+    Temporality,
     WorkflowSpec,
 )
 
@@ -18,7 +19,7 @@ from .extractors import (
     UpdateExtractor,
     WindowAggregatingExtractor,
 )
-from .plot_params import TimeWindowMixin, TimeWindowMode, TimeWindowParams
+from .plot_params import TimeWindowMixin, TimeWindowParams, WindowModeMixin
 from .plotter_registry import (
     OVERLAY_PATTERNS,
     PlotterSpec,
@@ -178,6 +179,7 @@ class PlottingController:
         plot_name: str,
         params: dict | pydantic.BaseModel,
         on_update: Callable[[], None],
+        temporality: Mapping[DataKey, Temporality | None],
     ) -> DataSubscriber:
         """
         Set up data pipeline for any plot type.
@@ -198,6 +200,10 @@ class PlottingController:
         on_update
             Callback invoked when any of the keys changed; see
             :py:class:`DataSubscriber`.
+        temporality
+            Declared :class:`Temporality` of the field each key resolved to,
+            ``None`` where the workflow is not in the registry. Aggregation is
+            rejected for the keys it must not be applied to.
 
         Returns
         -------
@@ -218,7 +224,7 @@ class PlottingController:
         all_keys = [key for keys in keys_by_role.values() for key in keys]
 
         # Standard path: single subscription with role-aware assembly
-        extractors = create_extractors_from_params(all_keys, window, spec)
+        extractors = create_extractors_from_params(all_keys, window, temporality, spec)
         return self._stream_manager.make_stream(
             keys_by_role=keys_by_role,
             on_update=on_update,
@@ -271,22 +277,51 @@ class PlottingController:
         return getattr(plotter, 'is_overlayable', True)
 
 
-def output_view_supports_windowing(workflow_spec: WorkflowSpec, view_name: str) -> bool:
-    """Return whether the window controls (mode, duration, aggregation) apply.
+def _reject_cumulative_aggregation(
+    temporality: Mapping[DataKey, Temporality | None],
+) -> None:
+    """Raise if a window aggregation would be applied to a cumulative field.
 
-    Windowing applies when the view exposes a ``per_update`` field: the window
-    duration aggregates a span of that field, independent of whether a
-    ``since_start`` field also exists. Cumulative-only views (e.g. ``I(Q)``)
-    have no per-update field to window over, so the controls are hidden and the
-    view locks to ``since_start``.
-
-    Offering ``since_start`` mode on a view that lacks a cumulative field is
-    rejected at config time (see :func:`since_start_available`), not by hiding
-    the controls -- that would also remove the still-meaningful duration control.
+    Every message of a cumulative field carries the whole history, so summing
+    consecutive ones double-counts. The window controls are hidden for views
+    without a per-update field, but ``WorkflowSpec.field_for`` falls back to the
+    cumulative field, so a persisted config built when the view still had a
+    per-update field would otherwise aggregate one silently.
     """
-    if workflow_spec.get_output_view(view_name) is None:
-        return True
-    return 'per_update' in workflow_spec.windowing_options(view_name)
+    outputs = sorted(
+        {
+            key.output_name
+            for key, declared in temporality.items()
+            if declared is Temporality.cumulative
+        }
+    )
+    if not outputs:
+        return
+    raise ValueError(
+        f"Cannot aggregate a time window over {', '.join(outputs)}: each message "
+        "holds the total accumulated since the run started, so summing them counts "
+        "the same events repeatedly. Select 'since run start' mode, or a window "
+        "over a per-update output."
+    )
+
+
+def hidden_window_fields(
+    params_class: type[pydantic.BaseModel], workflow_spec: WorkflowSpec, view_name: str
+) -> frozenset[str]:
+    """Return the params fields to hide because the view cannot back them.
+
+    Which fields those are is the params class's business -- see
+    :meth:`WindowModeMixin.hidden_fields`; this only supplies the windowing
+    options the named view has real backing fields for.
+
+    Permissive for unknown views and for params without a window mode.
+    """
+    if not issubclass(params_class, WindowModeMixin):
+        return frozenset()
+    options = workflow_spec.windowing_options(view_name)
+    if not options:
+        return frozenset()
+    return params_class.hidden_fields(options)
 
 
 def since_start_available(workflow_spec: WorkflowSpec, view_name: str) -> bool:
@@ -304,6 +339,7 @@ def since_start_available(workflow_spec: WorkflowSpec, view_name: str) -> bool:
 def create_extractors_from_params(
     keys: list[DataKey],
     window: TimeWindowParams | None,
+    temporality: Mapping[DataKey, Temporality | None],
     spec: PlotterSpec | None = None,
 ) -> dict[DataKey, UpdateExtractor]:
     """
@@ -316,6 +352,10 @@ def create_extractors_from_params(
     window:
         Window parameters for extraction mode and aggregation.
         If None, falls back to LatestValueExtractor.
+    temporality:
+        Declared :class:`Temporality` per key, ``None`` where unknown. Only
+        consulted when an aggregating extractor would be built, since that is
+        the only construction a cumulative field cannot survive.
     spec:
         Optional plotter specification. If provided and contains a required
         extractor, that extractor type is used.
@@ -330,15 +370,11 @@ def create_extractors_from_params(
         extractor_type = spec.data_requirements.required_extractor
         return {key: extractor_type() for key in keys}
 
-    # No fixed requirement - check if window params provided.
-    # `since_start` and window mode with duration==0 both reduce to taking the
-    # most recent value of the subscribed stream (stream choice is encoded in
-    # the DataKey). Only window mode with duration>0 needs aggregation.
-    if (
-        window is not None
-        and window.mode is TimeWindowMode.window
-        and window.window_duration_seconds > 0
-    ):
+    # No fixed requirement - check if window params provided. Stream choice is
+    # encoded in the DataKey, so only aggregation over several updates needs a
+    # dedicated extractor.
+    if window is not None and window.aggregates_updates():
+        _reject_cumulative_aggregation(temporality)
         return {
             key: WindowAggregatingExtractor(
                 window_duration_seconds=window.window_duration_seconds,

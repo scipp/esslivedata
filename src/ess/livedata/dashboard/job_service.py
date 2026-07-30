@@ -27,6 +27,18 @@ class JobService:
         self._job_status_timestamps: dict[JobId, int] = {}
         self._heartbeat_timeout_ns = heartbeat_timeout_ns
         self._on_status_updated: Callable[[JobStatus], None] | None = None
+        self._version = 0
+
+    @property
+    def version(self) -> int:
+        """Counter advanced whenever the stored statuses change.
+
+        Observed job status carries no per-workflow version of its own, yet it
+        drives live badges, per-source dots and timing text. Widgets gate their
+        refresh on this counter so a status arriving between structural changes
+        still reaches the browser promptly.
+        """
+        return self._version
 
     @property
     def on_status_updated(self) -> Callable[[JobStatus], None] | None:
@@ -51,6 +63,7 @@ class JobService:
         logger.debug("Job status updated: %s", job_status)
         self._job_statuses[job_status.job_id] = job_status
         self._job_status_timestamps[job_status.job_id] = time.time_ns()
+        self._version += 1
         if self._on_status_updated is not None:
             self._on_status_updated(job_status)
 
@@ -104,6 +117,8 @@ class JobService:
             logger.debug("Pruning stale job status %s", jid)
             self._job_statuses.pop(jid, None)
             self._job_status_timestamps.pop(jid, None)
+        if stale:
+            self._version += 1
 
     def remove_jobs_by_number(self, job_number: UUID) -> None:
         """Remove all jobs matching a given job number.
@@ -116,3 +131,5 @@ class JobService:
             logger.debug("Removing job %s (job_number=%s)", jid, job_number)
             self._job_statuses.pop(jid, None)
             self._job_status_timestamps.pop(jid, None)
+        if to_remove:
+            self._version += 1

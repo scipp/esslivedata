@@ -213,39 +213,45 @@ def _add_time_coords(
     data: sc.DataGroup, start_time: Timestamp | None, end_time: Timestamp | None
 ) -> sc.DataGroup:
     """
-    Add start_time and end_time as 0-D coordinates to all DataArrays in a DataGroup.
+    Add start_time and time as 0-D coordinates to all DataArrays in a DataGroup.
 
-    These coordinates provide temporal provenance for each output, enabling lag
-    calculation in the dashboard (lag = current_time - end_time).
+    ``time`` is the instant the value refers to — here, the job's latest
+    observation — and ``start_time`` says since when the value accumulated. The
+    dashboard buffers and plots against ``time`` and derives lag from it
+    (lag = current_time - time).
 
-    DataArrays are skipped in two cases:
+    DataArrays already carrying ``start_time`` or ``time`` are skipped. One rule,
+    two reasons:
 
-    - Already have start_time or end_time coordinates. This allows workflows to
-      set their own time coords for outputs that represent different time ranges
-      (e.g., "current" outputs that only cover the period since the last finalize,
-      not the entire job duration).
-    - Have a 'time' coordinate. A 'time' coordinate means the data carries its
-      own timestamps (e.g., timeseries log data), making start_time/end_time
-      redundant. Adding scalar start_time/end_time to such data would also cause
-      a dimension mismatch in TemporalBuffer, which accumulates data along the
-      'time' dimension.
+    - A workflow may stamp its own bounds for an output covering a different
+      interval than the job (a window output, whose ``time`` is when the
+      interval closed rather than when the job last saw data). We have no idea
+      what those bounds mean, so pairing one of ours with one of theirs would be
+      inconsistent — hence skipping on ``start_time`` alone, too.
+    - A series output's ``time`` is per-sample data, not a bound. Adding scalar
+      coords there would also cause a dimension mismatch in TemporalBuffer,
+      which accumulates data along the 'time' dimension.
+
+    Raises
+    ------
+    ValueError
+        If the job has no time bounds. Every output must be stamped or the
+        dashboard cannot buffer it, and a job finalizing before it accumulated
+        any primary data is a scheduling fault rather than a state to paper over
+        by emitting untimestamped data.
     """
     if start_time is None or end_time is None:
-        return data
+        raise ValueError(
+            "Job has no time bounds to stamp on its outputs: finalized before "
+            "accumulating any primary data."
+        )
     start_coord = start_time.to_scipp()
-    end_coord = end_time.to_scipp()
+    time_coord = end_time.to_scipp()
 
     def maybe_add_coords(val: sc.DataArray) -> sc.DataArray:
-        # Skip if workflow already set time coords - we have no idea what they
-        # mean, and adding our own would create an inconsistent pair.
-        if 'start_time' in val.coords or 'end_time' in val.coords:
+        if 'start_time' in val.coords or 'time' in val.coords:
             return val
-        # Skip if data carries a 'time' coordinate. A 'time' coordinate means
-        # the data has its own timestamps (e.g., timeseries log data), making
-        # start_time/end_time redundant.
-        if 'time' in val.coords:
-            return val
-        return val.assign_coords(start_time=start_coord, end_time=end_coord)
+        return val.assign_coords(start_time=start_coord, time=time_coord)
 
     return sc.DataGroup(
         {
