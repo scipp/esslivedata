@@ -655,8 +655,10 @@ class PlotGridTabs:
         # replaces, so it has to be rebuilt too. Reopening rather than closing
         # keeps the window following its cell: a rebuild is triggered by things
         # the user did elsewhere (a rename, a job restart), and having the
-        # floating view vanish in response would look like a crash.
-        was_popped_out = cell_id in self._popouts.open_cells()
+        # floating view vanish in response would look like a crash. Carrying
+        # the status over keeps a minimized window minimized -- and its cell
+        # asleep -- rather than popping every parked window open.
+        popout_status = self._popouts.status_of(cell_id)
         self._popouts.close(cell_id)
         cell_widget = CellWidget(
             cell_id, cell, self._cell_deps, toolbars_visible=toolbars_visible
@@ -664,8 +666,8 @@ class PlotGridTabs:
         self._cells[cell_id] = cell_widget
         if previous is not None:
             previous.dispose()
-        if was_popped_out:
-            self._popouts.open(cell_id, cell_widget)
+        if popout_status is not None:
+            self._popouts.open(cell_id, cell_widget, status=popout_status)
         return cell_widget
 
     def _on_active_tab_changed(self, event) -> None:
@@ -692,6 +694,12 @@ class PlotGridTabs:
         Read by both :meth:`_has_pending_work` and the pass it gates, which
         have to agree on what counts as live: a predicate blind to a grid the
         pass would flush leaves that pop-out frozen until the next full pass.
+
+        The clock is per grid, so a pop-out buys wakes for every frame of the
+        grid behind it -- committed whenever any session keeps any of that
+        grid's cells computing -- not just for its own cell. The extra passes
+        are cheap (nothing pending, nothing flushed) and bounded by the frame
+        rate; a per-cell clock is not worth carrying for that.
         """
         live_grids = {active_grid_id} | {
             grid_id
@@ -750,9 +758,10 @@ class PlotGridTabs:
         - Sweeps cells that vanished from topology, removing and disposing them.
         - Creates/updates session layers and pushes data to the active tab.
 
-        Only layers on the currently visible grid tab call ``update_pipe()``,
-        since ``dynamic=True`` on Tabs means hidden tabs have no materialized
-        Bokeh models. Skipped layers keep their dirty flag set; a tab switch
+        Only layers this session renders -- the visible grid tab, plus any
+        cell with a showing pop-out window -- call ``update_pipe()``, since
+        ``dynamic=True`` on Tabs means hidden tabs have no materialized Bokeh
+        models. Skipped layers keep their dirty flag set; a tab switch
         requests its own tick (:meth:`_on_active_tab_changed`), which sends the
         newly visible layers' latest cached state.
 
@@ -789,26 +798,42 @@ class PlotGridTabs:
         active_cell_bounds: dict[CellId, dict[LayerId, TimeBounds | None]] = {}
         active_grid_id = self._get_active_grid_id()
 
-        # Flush plot data only when a new data-burst frame is ready for the
-        # visible tab (so all its layers from one burst repaint in a single
-        # frame, never staggered across poll ticks) or when the visible tab
-        # changed (newly shown cells must render their latest data without
-        # waiting for the next frame). Scoping the generation per grid means
-        # data arriving for another session's tab does not wake this session,
-        # and a cell whose pop-out is on screen counts as live wherever it sits
-        # (see :meth:`_live_generations`).
+        # Flush a grid's plot data only when a new data-burst frame is ready
+        # for that grid (so all its layers from one burst repaint in a single
+        # frame, never staggered across poll ticks) or when it just became
+        # the visible tab (newly shown cells must render their latest data
+        # without waiting for the next frame). Staleness is per grid, not one
+        # flag: a presenter holds pending data as soon as the ingestion
+        # thread builds its layer, before the grid's frame commits, so a
+        # shared flag would let a frame for a pop-out's grid push the visible
+        # grid's half-built burst (or vice versa). Scoping the generation per
+        # grid also means data arriving for another session's tab does not
+        # wake this session, and a cell whose pop-out is on screen counts as
+        # live wherever it sits (see :meth:`_live_generations`).
         # The cheap per-tick work below -- version/lifecycle scan, layer
-        # activation, freshness-pill aging -- always runs so it stays responsive.
+        # activation, freshness-pill aging -- always runs so it stays
+        # responsive.
         popout_cells = self._popouts.live_cells()
         generations = self._live_generations(active_grid_id, popout_cells)
-        flush_due = (
-            generations != self._last_generations
-            or active_grid_id != self._last_active_grid_id
-        )
+        stale_grids = {
+            grid_id
+            for grid_id, generation in generations.items()
+            if generation != self._last_generations.get(grid_id)
+        }
+        if active_grid_id != self._last_active_grid_id:
+            stale_grids.add(active_grid_id)
 
         for grid_id, plot_grid in self._grid_widgets.items():
             grid_config = self._orchestrator.peek_grid(grid_id)
-            if grid_config is None or not grid_config.enabled:
+            if grid_config is None:
+                continue
+            if not grid_config.enabled:
+                # A disabled grid's layers lose their viewers (orphan sweep
+                # below), so a pop-out over one of its cells would float on,
+                # frozen, with no cue. Close it; the cell widget itself is
+                # kept for a re-enable.
+                for cell_id in grid_config.cells:
+                    self._popouts.close(cell_id)
                 continue
 
             grid_is_visible = grid_id == active_grid_id
@@ -824,6 +849,7 @@ class PlotGridTabs:
                 # user works in another tab; the window shows it either way.
                 # Minimized, it shows nothing and sleeps with its grid.
                 is_active = grid_is_visible or cell_id in popout_cells
+                flush_cell = is_active and grid_id in stale_grids
 
                 # Detect composition changes (layer add/remove/reconfigure,
                 # title). Plotter swaps keep the layer ids and are handled by
@@ -880,9 +906,10 @@ class PlotGridTabs:
 
                     # Push pending data to the browser. Runs after activate_layer
                     # so a tab-switch 0→1 build is sent on this same tick. Gated
-                    # on flush_due to coalesce a burst's layers into one frame;
-                    # no-op anyway unless the presenter has a pending update.
-                    if is_active and flush_due:
+                    # on the grid's staleness to coalesce a burst's layers into
+                    # one frame; no-op anyway unless the presenter has a pending
+                    # update.
+                    if flush_cell:
                         session_layer.update_pipe()
 
         # Clean up orphaned session layers (removed from orchestrator). Per-cell
@@ -948,26 +975,29 @@ class PlotGridTabs:
         # The per-layer time/lag row only changes on a new frame, so it tracks
         # the data flush too.
         now_mono = time.monotonic()
-        stalled = now_mono - self._last_freshness_update
-        freshness_due = flush_due or stalled >= _FRESHNESS_STALL_INTERVAL_S
-        if freshness_due:
+        stalled = now_mono - self._last_freshness_update >= _FRESHNESS_STALL_INTERVAL_S
+        # The stall timer serves the visible grid's pills, so only a flush
+        # that reached them resets it: frames for a pop-out's grid must not
+        # keep deferring the aging of a visible grid whose own stream stalled.
+        if active_grid_id in stale_grids or stalled:
             self._last_freshness_update = now_mono
         for cell_id, per_layer in active_cell_bounds.items():
             cell_widget = self._cells.get(cell_id)
             if cell_widget is None:
                 continue
-            if freshness_due:
+            cell_flushed = self._cell_grid.get(cell_id) in stale_grids
+            if cell_flushed or stalled:
                 cell_widget.update_freshness(per_layer)
-            if flush_due:
+            if cell_flushed:
                 for layer_id, bounds in per_layer.items():
                     cell_widget.update_layer_time(layer_id, bounds)
 
-        # Record gate state for the next poll. Only advance the flushed
-        # generations when we actually flushed (flush_due), so a tab change that
-        # piggybacks on unchanged generations does not suppress the flush for
-        # the next genuine frame.
-        if flush_due:
-            self._last_generations = generations
+        # Record gate state for the next poll. Every stale grid was flushed in
+        # the pass above, so the generations read this pass can be recorded
+        # wholesale: a grid that was not stale records the value it already
+        # had. (An exception escaping the pass skips this, leaving the gate
+        # armed so the next tick retries.)
+        self._last_generations = generations
         self._last_active_grid_id = active_grid_id
         self._last_layer_version = layer_version
 

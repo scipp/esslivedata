@@ -145,8 +145,7 @@ def _static_config() -> PlotConfig:
     )
 
 
-@pytest.fixture
-def line_plotter():
+def _make_line_plotter() -> LinePlotter:
     """A real ``LinePlotter`` holding one computed curve.
 
     Real rather than a stub: the properties under test — a shared autoscale
@@ -160,13 +159,18 @@ def line_plotter():
 
 
 @pytest.fixture
-def line_cell(plot_orchestrator, plot_grid_tabs, plot_data_service, line_plotter):
-    """A built cell showing a live 1-D line plot."""
-    grid_id = plot_orchestrator.add_grid(title='G', nrows=1, ncols=1)
+def line_plotter():
+    return _make_line_plotter()
+
+
+def _add_line_cell(
+    plot_orchestrator, plot_grid_tabs, plot_data_service, plotter, *, title
+):
+    """Add a 1x1 grid holding one built cell showing a live 1-D line plot."""
+    grid_id = plot_orchestrator.add_grid(title=title, nrows=1, ncols=1)
     cell_id = plot_orchestrator.add_cell(grid_id, _GEOMETRY)
     layer_id = plot_orchestrator.add_layer(cell_id, _line_config())
 
-    plotter = line_plotter
     plot_data_service.job_started(layer_id, plotter)
     plot_data_service.data_arrived(layer_id)
 
@@ -177,6 +181,14 @@ def line_cell(plot_orchestrator, plot_grid_tabs, plot_data_service, line_plotter
 
     plot_grid_tabs._poll_for_plot_updates()
     return cell_id
+
+
+@pytest.fixture
+def line_cell(plot_orchestrator, plot_grid_tabs, plot_data_service, line_plotter):
+    """A built cell showing a live 1-D line plot."""
+    return _add_line_cell(
+        plot_orchestrator, plot_grid_tabs, plot_data_service, line_plotter, title='G'
+    )
 
 
 def _open_windows(plot_grid_tabs) -> list:
@@ -400,6 +412,50 @@ class TestPopoutLifecycle:
 
         assert _open_windows(plot_grid_tabs) == []
 
+    def test_disabling_the_grid_closes_the_window(
+        self, plot_grid_tabs, plot_orchestrator, line_cell
+    ):
+        """A disabled grid's layers stop computing (they lose their viewers),
+        so its pop-out would float on frozen; it is closed instead. The cell
+        itself survives for a re-enable."""
+        plot_grid_tabs._show_popout(line_cell)
+
+        plot_orchestrator.set_grid_enabled(
+            plot_grid_tabs._cell_grid[line_cell], enabled=False
+        )
+        _tick(plot_grid_tabs)
+
+        assert _open_windows(plot_grid_tabs) == []
+        assert line_cell in plot_grid_tabs._cells
+
+    def test_reopening_after_a_close_does_not_cover_an_open_window(
+        self, plot_grid_tabs, plot_orchestrator, plot_data_service, line_cell
+    ):
+        """Cascade slots are never reused: counting open windows instead
+        would land the third window exactly on the second after the first
+        closed, hiding the covered window's close button."""
+        second = _add_line_cell(
+            plot_orchestrator,
+            plot_grid_tabs,
+            plot_data_service,
+            _make_line_plotter(),
+            title='H',
+        )
+        third = _add_line_cell(
+            plot_orchestrator,
+            plot_grid_tabs,
+            plot_data_service,
+            _make_line_plotter(),
+            title='I',
+        )
+        plot_grid_tabs._show_popout(line_cell)
+        plot_grid_tabs._show_popout(second)
+        _open_windows(plot_grid_tabs)[0].status = 'closed'
+        plot_grid_tabs._show_popout(third)
+
+        offsets = {(w.offsetx, w.offsety) for w in _open_windows(plot_grid_tabs)}
+        assert len(offsets) == 2
+
     def test_session_teardown_closes_all_windows(self, plot_grid_tabs, line_cell):
         plot_grid_tabs._show_popout(line_cell)
 
@@ -430,7 +486,7 @@ class TestPopoutKeepsItsCellLive:
 
         _tick(plot_grid_tabs)
 
-        assert plot_grid_tabs._popouts.open_cells() == frozenset()
+        assert _open_windows(plot_grid_tabs) == []
         assert not _layer_is_active(
             plot_grid_tabs, plot_orchestrator, plot_data_service, line_cell
         )
@@ -443,7 +499,7 @@ class TestPopoutKeepsItsCellLive:
 
         _tick(plot_grid_tabs)
 
-        assert plot_grid_tabs._popouts.open_cells() == frozenset({line_cell})
+        assert plot_grid_tabs._popouts.status_of(line_cell) == 'normalized'
         assert _layer_is_active(
             plot_grid_tabs, plot_orchestrator, plot_data_service, line_cell
         )
@@ -505,16 +561,28 @@ class TestPopoutKeepsItsCellLive:
         )
 
     def test_minimized_window_still_survives_a_cell_rebuild(
-        self, plot_grid_tabs, plot_orchestrator, line_cell
+        self, plot_grid_tabs, plot_orchestrator, plot_data_service, line_cell
     ):
-        """Sleeping is not closing: the user's window must still be there."""
+        """Sleeping is not closing: the user's window must still be there.
+
+        And still be *sleeping*: reopening normalized would pop every parked
+        window open on a job restart and wake every cell behind them, letting
+        rebuilds defeat the minimize-to-sleep handle.
+        """
         plot_grid_tabs._show_popout(line_cell)
+        plot_grid_tabs.tabs.active = 0
         _open_windows(plot_grid_tabs)[0].status = 'minimized'
+        _tick(plot_grid_tabs)
 
         plot_orchestrator.set_cell_title(line_cell, 'Renamed')
         _tick(plot_grid_tabs)
 
-        assert len(_open_windows(plot_grid_tabs)) == 1
+        windows = _open_windows(plot_grid_tabs)
+        assert len(windows) == 1
+        assert windows[0].status == 'minimized'
+        assert not _layer_is_active(
+            plot_grid_tabs, plot_orchestrator, plot_data_service, line_cell
+        )
 
 
 class TestPopoutWakesTheSessionItFloatsOver:
@@ -586,6 +654,112 @@ def _layer_is_active(plot_grid_tabs, plot_orchestrator, plot_data_service, cell_
     """
     layer_id = plot_orchestrator.get_cell(cell_id).layers[0].layer_id
     return plot_data_service.get(layer_id).has_viewers
+
+
+class TestPerGridFrameFlush:
+    """The flush gate is per grid, not one flag for the session.
+
+    A presenter holds pending data as soon as the ingestion thread builds its
+    layer, *before* the grid's frame commits. With a pop-out from another grid
+    live, a session renders two grids; a shared gate would let a frame for
+    either push the other's half-built burst, staggering layers of one burst
+    across repaints -- the very thing the frame clock exists to prevent.
+    """
+
+    @pytest.fixture
+    def popped_out_cell(self, plot_orchestrator, plot_grid_tabs, plot_data_service):
+        """A second grid's cell, popped out into a floating window."""
+        cell_id = _add_line_cell(
+            plot_orchestrator,
+            plot_grid_tabs,
+            plot_data_service,
+            _make_line_plotter(),
+            title='H',
+        )
+        plot_grid_tabs._show_popout(cell_id)
+        return cell_id
+
+    def test_frame_for_the_popout_grid_leaves_the_visible_burst_pending(
+        self,
+        plot_grid_tabs,
+        plot_orchestrator,
+        plot_data_service,
+        frame_clock,
+        line_cell,
+        popped_out_cell,
+    ):
+        _show_grid_tab(plot_grid_tabs, line_cell)
+        _tick(plot_grid_tabs)
+
+        _build_layer(plot_orchestrator, plot_data_service, line_cell)
+        _new_frame(frame_clock, plot_grid_tabs, popped_out_cell)
+        _tick(plot_grid_tabs)
+
+        assert _has_pending(plot_grid_tabs, plot_orchestrator, line_cell)
+
+    def test_frame_for_the_own_grid_flushes_the_visible_burst(
+        self,
+        plot_grid_tabs,
+        plot_orchestrator,
+        plot_data_service,
+        frame_clock,
+        line_cell,
+        popped_out_cell,
+    ):
+        _show_grid_tab(plot_grid_tabs, line_cell)
+        _tick(plot_grid_tabs)
+
+        _build_layer(plot_orchestrator, plot_data_service, line_cell)
+        _new_frame(frame_clock, plot_grid_tabs, line_cell)
+        _tick(plot_grid_tabs)
+
+        assert not _has_pending(plot_grid_tabs, plot_orchestrator, line_cell)
+
+    def test_frame_for_the_popout_grid_flushes_the_window(
+        self,
+        plot_grid_tabs,
+        plot_orchestrator,
+        plot_data_service,
+        frame_clock,
+        line_cell,
+        popped_out_cell,
+    ):
+        _show_grid_tab(plot_grid_tabs, line_cell)
+        _tick(plot_grid_tabs)
+
+        _build_layer(plot_orchestrator, plot_data_service, popped_out_cell)
+        _new_frame(frame_clock, plot_grid_tabs, popped_out_cell)
+        _tick(plot_grid_tabs)
+
+        assert not _has_pending(plot_grid_tabs, plot_orchestrator, popped_out_cell)
+
+
+def _show_grid_tab(plot_grid_tabs, cell_id) -> None:
+    """Make the tab of the grid holding a cell the visible one."""
+    grid_id = plot_grid_tabs._cell_grid[cell_id]
+    tabbed = plot_grid_tabs._tabbed_grid_ids()
+    plot_grid_tabs.tabs.active = plot_grid_tabs._static_tabs_count + tabbed.index(
+        grid_id
+    )
+
+
+def _build_layer(plot_orchestrator, plot_data_service, cell_id) -> None:
+    """Recompute the cell's plotter, as the ingestion thread's layer build does.
+
+    Its presenters now hold a pending update, ahead of the grid's frame
+    commit -- the mid-burst state a flush for another grid must not push.
+    """
+    layer_id = plot_orchestrator.get_cell(cell_id).layers[0].layer_id
+    plotter = plot_data_service.get(layer_id).plotter
+    key = DataKey(workflow_id=_WORKFLOW, source_name='s1', output_name='out')
+    plotter.compute({PRIMARY: {key: _curve([4.0, 5.0, 6.0])}})
+
+
+def _has_pending(plot_grid_tabs, plot_orchestrator, cell_id) -> bool:
+    """Whether the cell's layer still holds an unflushed update."""
+    layer_id = plot_orchestrator.get_cell(cell_id).layers[0].layer_id
+    session_layer = plot_grid_tabs._session_layers[layer_id]
+    return session_layer.components.presenter.has_pending_update()
 
 
 class TestPopoutDoesNotBlockDataFlow:

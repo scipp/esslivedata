@@ -33,6 +33,11 @@ This is why there is no cap on the number of pop-outs -- comparing several
 detectors side by side is the point, and the cost of that is bounded by the
 screen it has to fit on.
 
+Known gap: the window shows the plot alone -- the freshness/lag pill stays in
+the cell titlebar, which a hidden tab does not render. A stalled stream
+therefore freezes a pop-out with no staleness cue: the cell keeps computing,
+but nothing in the window marks the data as old.
+
 Session ticks are gated on a ``has_work`` predicate over shared state (ADR
 0007), and working a window's controls touches none of it: closing, minimizing
 and restoring change only what this session shows. So the manager reports them
@@ -157,7 +162,11 @@ _VISIBLE_STATUSES = frozenset({'normalized', 'maximized'})
 
 
 def _build_window(
-    title: str, composed: ComposedPlot, css_classes: list[str], cascade: int
+    title: str,
+    composed: ComposedPlot,
+    css_classes: list[str],
+    cascade: int,
+    status: str,
 ) -> pn.layout.FloatPanel:
     """Build the floating window for one cell's plot.
 
@@ -170,8 +179,11 @@ def _build_window(
     css_classes:
         Automation hooks for the window element.
     cascade:
-        How many windows are already open, offsetting this one so it does not
-        land exactly on top of them.
+        Cascade slot for this window, offsetting it so it does not land
+        exactly on top of an already-open one.
+    status:
+        Initial jsPanel status. ``FloatPanel`` applies a non-default status on
+        render, so a window rebuilt from a minimized one opens minimized.
     """
     offset = _CASCADE_STEP * (cascade % _CASCADE_WRAP)
     return pn.layout.FloatPanel(
@@ -204,6 +216,7 @@ def _build_window(
         config={'contentSize': f'{_POPOUT_WIDTH} {_CONTENT_HEIGHT}'},
         theme=Colors.TAB_BORDER,
         css_classes=css_classes,
+        status=status,
     )
 
 
@@ -234,6 +247,11 @@ class PlotPopoutManager:
             PopoutWindowFitter(), height=0, sizing_mode='stretch_width'
         )
         self._open: dict[CellId, pn.layout.FloatPanel] = {}
+        # Monotone cascade slot counter. Counting open windows instead would
+        # re-issue an occupied slot after a close (open A, open B, close A,
+        # open C lands C exactly on B), hiding the covered window's close
+        # button -- the very thing the cascade offset exists to avoid.
+        self._cascade = 0
         self._on_visibility_change = on_visibility_change
 
     @property
@@ -241,14 +259,16 @@ class PlotPopoutManager:
         """The container to mount in the session's top-level layout."""
         return self._container
 
-    def open_cells(self) -> frozenset[CellId]:
-        """Cells that have a pop-out window, whether or not it is showing.
+    def status_of(self, cell_id: CellId) -> str | None:
+        """The cell's window status ('normalized', 'minimized', ...), or None.
 
-        Existence, not visibility -- a minimized window is still the user's
-        window and must survive a rebuild of the cell behind it. Use
+        None means no window exists; any status means one does, however it is
+        showing -- a minimized window is still the user's window and must
+        survive a rebuild of the cell behind it, minimized. Use
         :meth:`live_cells` to decide what to keep computing.
         """
-        return frozenset(self._open)
+        window = self._open.get(cell_id)
+        return None if window is None else window.status
 
     def live_cells(self) -> frozenset[CellId]:
         """Cells whose pop-out is actually rendering, and must stay computed.
@@ -266,7 +286,9 @@ class PlotPopoutManager:
             if window.status in _VISIBLE_STATUSES
         )
 
-    def open(self, cell_id: CellId, cell_widget: CellWidget) -> None:
+    def open(
+        self, cell_id: CellId, cell_widget: CellWidget, status: str | None = None
+    ) -> None:
         """Open (or re-open) the pop-out for a cell.
 
         Re-opening replaces an existing window for the same cell rather than
@@ -275,6 +297,18 @@ class PlotPopoutManager:
 
         A cell showing a status placeholder has no plot to show, so nothing
         opens.
+
+        Parameters
+        ----------
+        cell_id:
+            The cell to open a window for.
+        cell_widget:
+            The cell's widget, whose composition the window renders.
+        status:
+            jsPanel status to open with; a cell rebuild passes the old
+            window's status so a minimized window stays minimized (and its
+            cell asleep). The window's position and size are not carried
+            over. Defaults to a normal window.
         """
         composed = cell_widget.composed
         if composed is None:
@@ -287,8 +321,10 @@ class PlotPopoutManager:
             # Per-cell automation hook, slugged by grid position like the cell
             # titlebar's — a CellId is a UUID, useless as a stable selector.
             css_classes=['lt-popout', f'lt-popout-r{geometry.row}c{geometry.col}'],
-            cascade=len(self._open),
+            cascade=self._cascade,
+            status=status if status is not None else 'normalized',
         )
+        self._cascade += 1
         window.param.watch(lambda event: self._on_status(cell_id, event.new), 'status')
         self._open[cell_id] = window
         self._container.append(window)
