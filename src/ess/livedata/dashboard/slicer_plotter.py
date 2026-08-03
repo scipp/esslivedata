@@ -16,13 +16,11 @@ from ess.livedata.config.workflow_spec import DataKey
 from .data_roles import PRIMARY
 from .plot_params import PlotParams3d, PlotScale, PlotScaleParams2d, TickParams
 from .plots import (
-    _HOVER_ELEMENTS_2D,
     Plotter,
     PresenterBase,
     _hv_axis_padding,
     _normalize_to_rate,
     _pad_range,
-    _typed_opts,
 )
 from .range_hook import Axis
 from .scipp_to_holoviews import to_holoviews
@@ -57,8 +55,9 @@ class SlicerPresenter(PresenterBase):
         sizing_opts: dict[str, Any],
     ) -> None:
         super().__init__(plotter)
-        self._base_opts = base_opts
         self._sizing_opts = sizing_opts
+        # Built once so the per-slice ``.opts()`` call does not reassemble it.
+        self._element_opts = {**base_opts, **sizing_opts, 'tools': ['hover']}
         self._kdims: list[hv.Dimension] | None = None
 
     def present(self, pipe: hv.streams.Pipe) -> hv.DynamicMap:
@@ -94,18 +93,12 @@ class SlicerPresenter(PresenterBase):
                 array_data, data.clim, mode=mode, slice_dim=slice_dim, **kwargs
             )
 
-        dmap = hv.DynamicMap(render, streams=[pipe], kdims=self._kdims, cache_size=1)
-        return dmap.opts(*self._style_opts())
-
-    def _style_opts(self) -> list[hv.Options]:
-        """Static styling declared once on the DynamicMap (see
-        :meth:`Plotter.style_opts`); the data-dependent clim stays per slice."""
-        return _typed_opts(
-            _HOVER_ELEMENTS_2D,
-            **self._base_opts,
-            **self._sizing_opts,
-            tools=['hover'],
-        )
+        # Unlike DefaultPresenter, styling is applied per rendered slice rather
+        # than declared on the DynamicMap: element options on a DynamicMap wrap
+        # it in a HoloViews operation, and a kdim-carrying DynamicMap tolerates
+        # only one such wrap. The grid cell adds a second one when it attaches
+        # its hooks, and the wrapper is then unable to reconstruct the kdim key.
+        return hv.DynamicMap(render, streams=[pipe], kdims=self._kdims, cache_size=1)
 
     def _initialize_kdims(self, state: SlicerState) -> None:
         """
@@ -205,12 +198,10 @@ class SlicerPresenter(PresenterBase):
             plot_data = self._slice_data(data, slice_dim, kwargs)
 
         image = to_holoviews(plot_data)
-        # base_opts/sizing are declared once on the DynamicMap (see _style_opts);
-        # only the data-dependent clim is applied per slice here for a consistent
-        # color scale across slices.
-        if clim is not None:
-            return image.opts(clim=clim)
-        return image
+        # The pre-computed clim keeps the color scale consistent across slices.
+        if clim is None:
+            return image.opts(**self._element_opts)
+        return image.opts(**self._element_opts, clim=clim)
 
     def _slice_data(
         self, data: sc.DataArray, slice_dim: str, kwargs: dict
