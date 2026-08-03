@@ -210,9 +210,7 @@ class Timestamp:
         tz:
             Target timezone.  ``None`` keeps the result in UTC.
         """
-        dt = datetime.datetime.fromtimestamp(
-            self._ns / _NS_PER_S, tz=datetime.timezone.utc
-        )
+        dt = datetime.datetime.fromtimestamp(self._ns / _NS_PER_S, tz=datetime.UTC)
         return dt.astimezone(tz) if tz is not None else dt
 
     def to_scipp(self) -> Any:

@@ -80,7 +80,7 @@ class Device:
 def _format_generation(generation_ns: int | None) -> str:
     if generation_ns is None:
         return "&mdash;"
-    dt = datetime.datetime.fromtimestamp(generation_ns / 1e9, tz=datetime.timezone.utc)
+    dt = datetime.datetime.fromtimestamp(generation_ns / 1e9, tz=datetime.UTC)
     return dt.strftime("%H:%M:%S")
 
 
