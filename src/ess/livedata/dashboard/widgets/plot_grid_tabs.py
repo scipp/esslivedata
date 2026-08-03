@@ -11,7 +11,7 @@ session's own periodic tick (see ``PlotOrchestrator`` "Threading").
 from __future__ import annotations
 
 import time
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Mapping, Sequence
 from contextlib import nullcontext
 
 import panel as pn
@@ -36,6 +36,7 @@ from ..session_layer import SessionLayer
 from ..session_updater import SessionUpdater
 from .cell import CellDeps, CellWidget
 from .cell_properties_modal import CellPropertiesModal
+from .icons import get_icon_data_uri
 from .modal_escape_closer import ModalEscapeCloser
 from .plot_config_modal import PlotConfigModal
 from .plot_grid import PlotGrid
@@ -52,6 +53,61 @@ logger = structlog.get_logger(__name__)
 # path then never triggers and the pill updates once per frame, avoiding a
 # beat between the flush and the timer that would double-update the age.
 _FRESHNESS_STALL_INTERVAL_S = 2.0
+
+
+def _static_tab_stylesheet(icons: Sequence[str]) -> str:
+    """CSS distinguishing the fixed leading tabs from the plot-grid tabs.
+
+    Bokeh renders a tab label as plain text, so an icon cannot be part of the
+    title; it is painted on a ``::before`` pseudo-element selected by tab
+    position (the static tabs are always the first ones). ``mask-image`` rather
+    than ``background-image`` makes the icon take the tab's ``currentColor``, so
+    it follows the label through the active/inactive color change for free.
+
+    Parameters
+    ----------
+    icons:
+        Icon name per static tab, in tab order.
+    """
+    masks = '\n'.join(
+        f"""
+        .bk-tab:nth-child({position})::before {{
+            mask-image: url("{uri}");
+            -webkit-mask-image: url("{uri}");
+        }}"""
+        for position, uri in enumerate(
+            (get_icon_data_uri(icon, color=None) for icon in icons), start=1
+        )
+    )
+    return f"""
+        .bk-tab:nth-child(-n+{len(icons)}) {{
+            font-weight: bold;
+        }}
+        .bk-tab:nth-child(-n+{len(icons)})::before {{
+            content: '';
+            display: inline-block;
+            width: 1.15em;
+            height: 1.15em;
+            margin-right: 0.4em;
+            vertical-align: -0.22em;
+            background-color: currentColor;
+            mask-size: contain;
+            mask-repeat: no-repeat;
+            mask-position: center;
+            -webkit-mask-size: contain;
+            -webkit-mask-repeat: no-repeat;
+            -webkit-mask-position: center;
+        }}
+        {masks}
+        .bk-tab {{
+            border-bottom: 1px solid {Colors.TAB_BORDER} !important;
+        }}
+        .bk-tab.bk-active {{
+            background-color: {Colors.TAB_ACTIVE_BG} !important;
+            border: 1px solid {Colors.TAB_BORDER} !important;
+            border-bottom: none !important;
+        }}
+        """
 
 
 class _BatchedTabs(pn.Tabs):
@@ -178,13 +234,25 @@ class PlotGridTabs:
             on_reconfigure_layer=self._on_reconfigure_layer,
         )
 
-        # Determine number of static tabs for stylesheet
-        static_tab_count = 3 if system_status_widget else 2
-
-        # Build nth-child selectors for static tabs
-        static_tab_selectors = ',\n                '.join(
-            f'.bk-tab:nth-child({i})' for i in range(1, static_tab_count + 1)
+        # The manager reports locally-initiated grid creations so this session
+        # (only) focuses the new tab on its next poll; other sessions merely
+        # gain the tab.
+        self._grid_manager = PlotGridManager(
+            orchestrator=plot_orchestrator,
+            workflow_registry=workflow_registry,
+            on_local_grid_created=self._on_local_grid_created,
         )
+
+        # Fixed tabs, in order, ahead of the variable number of grid tabs. Each
+        # carries an icon so the two groups are distinguishable at a glance;
+        # grid tabs deliberately carry none, making a bare label the mark of a
+        # user-created grid.
+        static_tabs = [('Workflows', 'workflow', workflow_status_widget.panel())]
+        if system_status_widget is not None:
+            static_tabs.append(
+                ('System Status', 'activity', system_status_widget.panel())
+            )
+        static_tabs.append(('Manage Plots', 'layout-grid', self._grid_manager.panel))
 
         # Main tabs widget.
         # IMPORTANT: dynamic=True is critical for performance. Without it, Panel
@@ -197,21 +265,7 @@ class PlotGridTabs:
         self._tabs = _BatchedTabs(
             sizing_mode='stretch_both',
             dynamic=True,
-            stylesheets=[
-                f"""
-                {static_tab_selectors} {{
-                    font-weight: bold;
-                }}
-                .bk-tab {{
-                    border-bottom: 1px solid {Colors.TAB_BORDER} !important;
-                }}
-                .bk-tab.bk-active {{
-                    background-color: {Colors.TAB_ACTIVE_BG} !important;
-                    border: 1px solid {Colors.TAB_BORDER} !important;
-                    border-bottom: none !important;
-                }}
-                """
-            ],
+            stylesheets=[_static_tab_stylesheet([icon for _, icon, _ in static_tabs])],
         )
 
         # Modal container for plot configuration
@@ -236,22 +290,8 @@ class PlotGridTabs:
             sizing_mode='stretch_both',
         )
 
-        # Add Workflows tab (always first)
-        self._tabs.append(('Workflows', workflow_status_widget.panel()))
-
-        # Add System Status tab (second, if widget provided)
-        if system_status_widget is not None:
-            self._tabs.append(('System Status', system_status_widget.panel()))
-
-        # Add Manage tab. The manager reports locally-initiated grid creations
-        # so this session (only) focuses the new tab on its next poll; other
-        # sessions merely gain the tab.
-        self._grid_manager = PlotGridManager(
-            orchestrator=plot_orchestrator,
-            workflow_registry=workflow_registry,
-            on_local_grid_created=self._on_local_grid_created,
-        )
-        self._tabs.append(('Manage Plots', self._grid_manager.panel))
+        for title, _, panel in static_tabs:
+            self._tabs.append((title, panel))
 
         # Store static tabs count for use as offset in grid tab index calculations
         self._static_tabs_count = len(self._tabs)
