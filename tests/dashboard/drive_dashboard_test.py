@@ -62,3 +62,30 @@ def test_wait_until_ready_reports_a_dead_server_instead_of_waiting_it_out(tmp_pa
         )
     assert time.monotonic() - started < 10, "did not fail fast on a dead server"
     assert "Address already in use" in str(exc_info.value)
+
+
+@pytest.mark.browser
+def test_terminate_reaps_a_server_that_ignores_sigterm():
+    # A dashboard too busy to act on SIGTERM has to be killed, and a kill that
+    # is not waited on leaves the child unreaped. ``Popen.__del__`` warns about
+    # exactly that ("still running", i.e. ``returncode is None``) whenever the
+    # object is collected, and pytest turns the warning into a failure of
+    # whichever test is running by then -- never this one. Asserting the child
+    # was reaped is what keeps that failure from being planted here.
+    proc = subprocess.Popen(  # noqa: S603
+        [
+            sys.executable,
+            "-c",
+            "import signal, time; signal.signal(signal.SIGTERM, signal.SIG_IGN); "
+            "time.sleep(60)",
+        ],
+    )
+    try:
+        drive_dashboard._terminate(proc, timeout_s=0.5)
+        reaped = proc.returncode
+    finally:
+        # Read the verdict before this net can reap the child itself.
+        proc.kill()
+        proc.wait()
+
+    assert reaped is not None, "killed server was left unreaped"
