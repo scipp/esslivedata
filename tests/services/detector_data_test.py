@@ -44,10 +44,13 @@ detector_source_name = {
     'bifrost': 'unified_detector',
     'loki': 'loki_detector_0',
     'nmx': 'detector_panel_0',
+    'beer': 'beer_detector_s2',
 }
 
 
-@pytest.mark.parametrize("instrument", ['bifrost', 'dummy', 'dream', 'loki', 'nmx'])
+@pytest.mark.parametrize(
+    "instrument", ['beer', 'bifrost', 'dummy', 'dream', 'loki', 'nmx']
+)
 def test_can_configure_and_stop_detector_workflow(
     instrument: str,
     caplog: pytest.LogCaptureFixture,

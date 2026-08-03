@@ -148,12 +148,30 @@ def make_f144_log_lut(instrument: Instrument) -> StreamLUT:
 def make_common_stream_mapping_inputs(
     instrument: str,
     *,
+    monitors: StreamLUT | None = None,
     monitor_names: list[str] | None = None,
     cbm_start: int = 1,
 ) -> dict[str, Any]:
+    """Assemble the StreamMapping inputs shared by all instruments.
+
+    Parameters
+    ----------
+    instrument:
+        Instrument name, used to derive the topic names.
+    monitors:
+        Explicit beam-monitor LUT, for instruments whose Kafka source names do
+        not follow the ``cbm{i}`` convention. Overrides ``monitor_names`` and
+        ``cbm_start``.
+    monitor_names:
+        Internal monitor names, mapped positionally onto ``cbm{i}`` sources.
+    cbm_start:
+        Index of the first ``cbm{i}`` source name.
+    """
     return {
         'instrument': instrument,
-        'monitors': _make_cbm_monitors(
+        'monitors': monitors
+        if monitors is not None
+        else _make_cbm_monitors(
             instrument, monitor_names=monitor_names, cbm_start=cbm_start
         ),
         **_make_livedata_topics(instrument),
