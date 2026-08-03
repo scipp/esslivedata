@@ -43,6 +43,12 @@ def refresh(self):
 
 Do not use Unicode characters for button icons. Use embedded SVG icons from `dashboard/widgets/icons.py` via `get_icon()`. Use the `create_tool_button()` helper from `dashboard/widgets/buttons.py` for consistent styling.
 
+Where the icon cannot be a widget — a Bokeh tab label is plain text, for instance —
+paint it on a `::before` pseudo-element with `mask-image: url(get_icon_data_uri(name,
+color=None))` and `background-color: currentColor`. A mask reads only the alpha channel,
+so the icon inherits the element's text color and follows its active/hover states without
+a second, recolored copy (see `_static_tab_stylesheet` in `plot_grid_tabs.py`).
+
 ## Stable CSS hooks for automation
 
 Tool buttons render as label-less icons inside per-widget shadow DOM, so they carry
@@ -120,7 +126,10 @@ arrives collapsed — no clicking the hamburger, and it survives `page.reload()`
 **Tabs.** The top-level tabs are Bokeh-owned `.bk-tab` divs with no `lt-*` hooks, so
 navigate by visible text (`page.get_by_text("Detectors", exact=True)`). Static tab
 titles are code constants: **Workflows**, **System Status**, **Manage Plots**; further
-tabs are user/fixture plot-grid titles (the dummy fixture adds **Detectors**). With
+tabs are user/fixture plot-grid titles (the dummy fixture adds **Detectors**). Only the
+static tabs carry a leading icon, keyed to their position, so a bare label identifies a
+plot-grid tab visually — but the icon is a CSS pseudo-element, invisible to text
+locators. With
 `dynamic=True` only the active tab's models exist, so a DOM/`lt-*` inventory reflects the
 *current* tab only — switch tabs before querying that tab's hooks.
 

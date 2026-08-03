@@ -50,9 +50,9 @@ def _svg_filled(paths: str) -> str:
     return f'<svg {_SVG_ATTRS_FILLED}>{paths}</svg>'
 
 
-def _rotate90(paths: str) -> str:
-    """Rotate path elements 90° about the 24x24 viewBox centre."""
-    return f'<g transform="rotate(90 12 12)">{paths}</g>'
+def _rotate(paths: str, degrees: int) -> str:
+    """Rotate path elements clockwise about the 24x24 viewBox centre."""
+    return f'<g transform="rotate({degrees} 12 12)">{paths}</g>'
 
 
 # Icon registry: name -> SVG content
@@ -148,6 +148,35 @@ _ICONS: dict[str, str] = {
         '<path d="M5 7l1 12a2 2 0 0 0 2 2h8a2 2 0 0 0 2 -2l1 -12"/>'
         '<path d="M9 7v-3a1 1 0 0 1 1 -1h4a1 1 0 0 1 1 1v3"/>'
     ),
+    # Workflow: Tabler ``sitemap`` rotated a quarter turn, so the branches
+    # converge left-to-right rather than fanning out downwards -- several input
+    # streams reduced into one result, in the reading direction.
+    'workflow': _svg(
+        _rotate(
+            '<path d="M3 17a2 2 0 0 1 2 -2h2a2 2 0 0 1 2 2v2a2 2 0 0 1 -2 2h-2a2 2 0 '
+            '0 1 -2 -2l0 -2"/>'
+            '<path d="M15 17a2 2 0 0 1 2 -2h2a2 2 0 0 1 2 2v2a2 2 0 0 1 -2 2h-2a2 2 0 '
+            '0 1 -2 -2l0 -2"/>'
+            '<path d="M9 5a2 2 0 0 1 2 -2h2a2 2 0 0 1 2 2v2a2 2 0 0 1 -2 2h-2a2 2 0 0 '
+            '1 -2 -2l0 -2"/>'
+            '<path d="M6 15v-1a2 2 0 0 1 2 -2h8a2 2 0 0 1 2 2v1"/>'
+            '<path d="M12 9l0 3"/>',
+            90,
+        )
+    ),
+    # Activity (pulse trace / system health)
+    'activity': _svg('<path d="M3 12h4l3 8l4 -16l3 8h4"/>'),
+    # Layout-grid (plot grid arrangement)
+    'layout-grid': _svg(
+        '<path d="M4 5a1 1 0 0 1 1 -1h4a1 1 0 0 1 1 1v4a1 1 0 0 1 -1 1h-4a1 1 0 0 1 '
+        '-1 -1l0 -4"/>'
+        '<path d="M14 5a1 1 0 0 1 1 -1h4a1 1 0 0 1 1 1v4a1 1 0 0 1 -1 1h-4a1 1 0 0 1 '
+        '-1 -1l0 -4"/>'
+        '<path d="M4 15a1 1 0 0 1 1 -1h4a1 1 0 0 1 1 1v4a1 1 0 0 1 -1 1h-4a1 1 0 0 1 '
+        '-1 -1l0 -4"/>'
+        '<path d="M14 15a1 1 0 0 1 1 -1h4a1 1 0 0 1 1 1v4a1 1 0 0 1 -1 1h-4a1 1 0 0 1 '
+        '-1 -1l0 -4"/>'
+    ),
     # Arrows-minimize (fit data to viewport)
     'arrows-minimize': _svg(
         '<path d="M5 9l4 0l0 -4"/>'
@@ -203,8 +232,8 @@ _CONTRAST_2_FILLED = (  # Tabler ``contrast-2`` (filled)
 )
 _ICONS['autoscale-x'] = _svg(_AUTOFIT_CONTENT)
 _ICONS['autoscale-x-on'] = _svg_filled(_AUTOFIT_CONTENT_FILLED)
-_ICONS['autoscale-y'] = _svg(_rotate90(_AUTOFIT_CONTENT))
-_ICONS['autoscale-y-on'] = _svg_filled(_rotate90(_AUTOFIT_CONTENT_FILLED))
+_ICONS['autoscale-y'] = _svg(_rotate(_AUTOFIT_CONTENT, 90))
+_ICONS['autoscale-y-on'] = _svg_filled(_rotate(_AUTOFIT_CONTENT_FILLED, 90))
 _ICONS['autoscale-c'] = _svg(_CONTRAST_2)
 _ICONS['autoscale-c-on'] = _svg_filled(_CONTRAST_2_FILLED)
 
@@ -217,11 +246,11 @@ def get_icon(name: str) -> str:
     ----------
     name:
         Icon name. Available icons:
-        arrows-minimize, autoscale-c, autoscale-c-on, autoscale-x,
+        activity, arrows-minimize, autoscale-c, autoscale-c-on, autoscale-x,
         autoscale-x-on, autoscale-y, autoscale-y-on, backspace, check,
-        chevron-down, chevron-right, chevron-up, download, eye, eye-off, pencil,
-        player-pause, player-play, player-stop, plus, refresh, settings, stack,
-        stack-2, trash, x.
+        chevron-down, chevron-right, chevron-up, download, eye, eye-off,
+        layout-grid, pencil, player-pause, player-play, player-stop, plus,
+        refresh, settings, stack, stack-2, trash, workflow, x.
 
     Returns
     -------
@@ -257,7 +286,9 @@ icons visually.
 """
 
 
-def get_icon_data_uri(name: str, *, color: str = BOKEH_TOOLBAR_ICON_COLOR) -> str:
+def get_icon_data_uri(
+    name: str, *, color: str | None = BOKEH_TOOLBAR_ICON_COLOR
+) -> str:
     """Return an icon as a ``data:image/svg+xml;base64,...`` URI.
 
     Useful for Bokeh ``CustomAction(icon=...)``, which accepts a data URI with
@@ -265,11 +296,15 @@ def get_icon_data_uri(name: str, *, color: str = BOKEH_TOOLBAR_ICON_COLOR) -> st
     SVG's ``currentColor`` -- on the ``stroke`` for outline icons and on the
     ``fill`` for solid icons -- so the icon renders in a fixed color rather than
     falling back to black.
+
+    Pass ``color=None`` for a CSS ``mask-image``: a mask reads only the alpha
+    channel and paints in the masked element's own color, so baking one in is
+    pointless and hides that the icon follows the surrounding text color.
     """
-    svg = (
-        get_icon(name)
-        .replace('stroke="currentColor"', f'stroke="{color}"')
-        .replace('fill="currentColor"', f'fill="{color}"')
-    )
+    svg = get_icon(name)
+    if color is not None:
+        svg = svg.replace('stroke="currentColor"', f'stroke="{color}"').replace(
+            'fill="currentColor"', f'fill="{color}"'
+        )
     encoded = base64.b64encode(svg.encode('utf-8')).decode('ascii')
     return f'data:image/svg+xml;base64,{encoded}'
