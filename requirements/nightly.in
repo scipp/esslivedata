@@ -8,7 +8,7 @@ ess-streaming-data-types
 essreduce>=26.6.3
 jinja2
 pydantic>=2
-scipp>=25.02.0
+scipp>=26.7.0
 scippneutron>=25.11.1
 pooch
 structlog>=24.0.0
