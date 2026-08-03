@@ -83,7 +83,7 @@ register_monitor_workflow_specs(
 instrument.add_logical_view(
     name='bank_view',
     title='Detector Bank',
-    description='Bank image, summed over the 12 panels and binned to 2 mm pixels.',
+    description='Bank image, summed over the 12 panels and binned to 4 mm pixels.',
     source_names=detector_names,
     transform=get_bank_view,
     reduction_dim=['panel', 'y_bin', 'x_bin'],

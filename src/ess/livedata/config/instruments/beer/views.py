@@ -17,13 +17,13 @@ import scipp as sc
 #: transpose the images and nothing else.
 BANK_SIZES = {'panel': 12, 'y': 1000, 'x': 1000}
 
-#: Spatial downsampling factors, chosen to keep each view's screen -- and hence
-#: the accumulated per-pixel time-of-arrival histogram behind it -- near 250k
-#: pixels, the budget of the largest existing detector view (TBL's 512x512
-#: Timepix3). At full 1 mm resolution a single bank would be 12M screen pixels,
-#: which is not viable for a live view.
+#: Spatial downsampling factors. They bound each view's screen -- and hence the
+#: accumulated per-pixel time-of-arrival histogram behind it -- at a few hundred
+#: thousand pixels, in the range of the largest existing detector view (TBL's
+#: 512x512 Timepix3). At full 1 mm resolution a single bank would be 12M screen
+#: pixels, which is not viable for a live view.
 _PANEL_VIEW_FACTOR = 8  # 12 panels of 125x125, i.e. 8 mm pixels
-_BANK_VIEW_FACTOR = 2  # one 500x500 image, i.e. 2 mm pixels
+_BANK_VIEW_FACTOR = 4  # one 250x250 image, i.e. 4 mm pixels
 
 
 def _fold_bank(da: sc.DataArray, *, factor: int) -> sc.DataArray:

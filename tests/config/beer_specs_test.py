@@ -26,10 +26,10 @@ def bank() -> sc.DataArray:
 
 def test_bank_view_yields_single_image_summed_over_panels(bank: sc.DataArray) -> None:
     image = get_bank_view(bank, 'beer_detector_s2').sum(['panel', 'y_bin', 'x_bin'])
-    assert image.sizes == {'y': 500, 'x': 500}
-    # Each screen pixel collects 12 panels times a 2x2 pixel block.
+    assert image.sizes == {'y': 250, 'x': 250}
+    # Each screen pixel collects 12 panels times a 4x4 pixel block.
     assert sc.identical(
-        image.data, sc.full(sizes=image.sizes, value=48.0, unit='counts')
+        image.data, sc.full(sizes=image.sizes, value=192.0, unit='counts')
     )
 
 
