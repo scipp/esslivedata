@@ -24,6 +24,12 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version-file: '.github/workflows/python-version-ci'
+      # pre-commit 4.6.1 installs `language: node` hooks with
+      # `npm install --allow-git=root`, a flag that only exists in npm 12. The
+      # runner image ships npm 10, where the install leaves no executable
+      # behind and the hook fails with "Executable not found". See #1162.
+      - name: Update npm for pre-commit's node hooks
+        run: npm install -g npm@^12
       - uses: pre-commit/action@v3.0.1
         with:
           extra_args: --all-files
