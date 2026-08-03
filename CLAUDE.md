@@ -8,7 +8,7 @@ Terminology: `src/ess/livedata/glossary.md` (cross-cutting + backend) and `src/e
 
 ### Environment Setup
 
-In the devcontainer, micromamba (Python 3.11) is auto-activated -- `python`, `pytest`, `tox` etc. just work.
+In the devcontainer, micromamba is auto-activated -- `python`, `pytest`, `tox` etc. just work.
 
 **Worktree Setup** (when launched with `claude -w`):
 
