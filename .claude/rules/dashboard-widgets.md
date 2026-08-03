@@ -198,6 +198,18 @@ Note that `dynamic=True` only gates Bokeh model creation. Python-side periodic c
 (e.g., `SessionUpdater` custom handlers) still run for all registered widgets regardless
 of which tab is visible. Use an `is_visible` predicate to skip refresh work for hidden tabs.
 
+### Markup panes built after page load
+
+Panel keeps a markup pane (`pn.pane.HTML`, `Markdown`, `Str`) behind
+`visibility: hidden` until every `<link>` stylesheet in it has fired `load`, and arms
+that reveal exactly once, while rendering. A pane built after page load first renders
+against `cdn.holoviz.org` URLs — its model is not in a document yet, so Panel falls back
+to the CDN — and Panel then swaps those links for the locally served copies. The load
+events the reveal waits on belong to the discarded links, so the pane can stay invisible
+for the rest of the session while its model, text and layout are all correct and
+live-updating (#1154). `dashboard/design.py` overrides the latch for the whole app; a
+template built without `LivedataDesign` brings the bug back.
+
 ## Colors and styling
 
 All colors must come from `dashboard/widgets/styles.py`. Do not hard-code hex color values

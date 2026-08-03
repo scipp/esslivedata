@@ -14,6 +14,7 @@ from ess.livedata import ServiceBase, __version__, format_version
 
 from .config_store import ConfigStoreManager
 from .dashboard_services import DashboardServices
+from .design import LivedataDesign
 from .fake_backend import FakeBackendTransport
 from .kafka_transport import DashboardKafkaTransport
 from .session_registry import SessionId
@@ -294,6 +295,7 @@ class DashboardBase(ServiceBase, ABC):
 
         template = pn.template.MaterialTemplate(
             title=self.get_dashboard_title(),
+            design=LivedataDesign,
             sidebar=sidebar_with_heartbeat,
             collapsed_sidebar=self._collapsed_sidebar,
             main=main_content,

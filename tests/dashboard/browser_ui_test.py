@@ -9,6 +9,8 @@ through the stable ``lt-*`` automation hooks:
 - session reload restores tabs and live updates;
 - a grid created in one session appears in others without stealing focus;
 - a cell title survives a no-op Save of the cell-properties modal;
+- a cell rebuilt in an open session renders its titlebar rather than an
+  invisible one;
 - disabling or removing a grid keeps the remaining tabs resolving and
   updating;
 - two sessions racing to save edits on the same grid converge on one title,
@@ -25,6 +27,7 @@ cleanly where Playwright is absent).
 from __future__ import annotations
 
 import copy
+import re
 from pathlib import Path
 
 import pytest
@@ -162,6 +165,45 @@ def test_cell_title_survives_noop_save_of_cell_properties_modal():
         assert page.get_by_text("My Cell", exact=True).first.is_visible()
         dash.open_modal(pencil)
         assert page.locator(_CELL_TITLE_INPUT).input_value() == "My Cell"
+
+
+@pytest.mark.browser
+def test_rebuilt_cell_titlebar_panes_are_visible_without_cdn_access():
+    """A cell rebuilt in an open session must show its titlebar, not hide it.
+
+    Panel reveals a markup pane's content only once every stylesheet ``<link>``
+    in it has fired ``load``, and arms that reveal once, while rendering. A pane
+    built after page load -- every cell the poll loop rebuilds -- first renders
+    against cdn.holoviz.org URLs, which Panel then swaps for the locally served
+    copies; the load events the reveal waits on belong to the discarded links.
+    The pane's model, text and layout stay correct, so the failure is invisible
+    to every assertion except a visibility check.
+
+    Blocking the CDN, as the deployment network does, makes those links fail for
+    certain instead of racing the swap, which is what makes this deterministic.
+    Which pane loses that race varies, so both titlebar panes are checked.
+    """
+    with fake_dashboard("dummy") as fake, Dashboard.connect(fake.url) as dash:
+        page = dash.page
+        page.route("**cdn.holoviz.org/**", lambda route: route.abort())
+        dash.goto_tab("Detectors")
+
+        # Renaming rebuilds the cell, minting fresh titlebar panes.
+        dash.open_modal(".lt-cell-r0c0.lt-tool-pencil")
+        page.locator(_CELL_TITLE_INPUT).fill("Rebuilt Cell")
+        page.get_by_role("button", name="Save", exact=True).click()
+
+        title = page.get_by_text("Rebuilt Cell", exact=True).first
+        wait_until(
+            dash, lambda: title.count() > 0, label="renamed cell title in the DOM"
+        )
+        assert title.is_visible(), "rebuilt cell title is in the DOM but invisible"
+
+        # The freshness pill is the same kind of pane and the symptom that was
+        # reported; it fills on the first freshness-due poll after the rebuild.
+        pill = page.get_by_text(re.compile(r"^\d+(\.\d+)?[sm]$")).first
+        wait_until(dash, lambda: pill.count() > 0, label="freshness pill in the DOM")
+        assert pill.is_visible(), "freshness pill is in the DOM but invisible"
 
 
 @pytest.mark.browser
