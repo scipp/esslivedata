@@ -18,11 +18,11 @@ patches those URLs to the locally served copies, swapping the pane's ``<link>``
 elements for new ones. The load events the reveal is waiting on belong to the
 discarded elements and never arrive, so the pane stays invisible for the rest of
 the session while its Bokeh model, text and layout are all correct and
-live-updating (#1154).
+live-updating (#1154, holoviz/panel#8696).
 
 Overriding the reveal is safe here: our markup carries inline styling, so there
 is no unstyled-content flash to suppress, and the content has to show the moment
-it is inserted.
+it is inserted. Drop this design once a Panel release re-arms the reveal.
 """
 
 from typing import Any, ClassVar

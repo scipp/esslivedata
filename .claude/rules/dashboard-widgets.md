@@ -207,8 +207,8 @@ against `cdn.holoviz.org` URLs — its model is not in a document yet, so Panel 
 to the CDN — and Panel then swaps those links for the locally served copies. The load
 events the reveal waits on belong to the discarded links, so the pane can stay invisible
 for the rest of the session while its model, text and layout are all correct and
-live-updating (#1154). `dashboard/design.py` overrides the latch for the whole app; a
-template built without `LivedataDesign` brings the bug back.
+live-updating (#1154, holoviz/panel#8696). `dashboard/design.py` overrides the latch for
+the whole app; a template built without `LivedataDesign` brings the bug back.
 
 ## Colors and styling
 

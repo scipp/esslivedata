@@ -175,9 +175,9 @@ def test_rebuilt_cell_titlebar_panes_are_visible_without_cdn_access():
     in it has fired ``load``, and arms that reveal once, while rendering. A pane
     built after page load -- every cell the poll loop rebuilds -- first renders
     against cdn.holoviz.org URLs, which Panel then swaps for the locally served
-    copies; the load events the reveal waits on belong to the discarded links.
-    The pane's model, text and layout stay correct, so the failure is invisible
-    to every assertion except a visibility check.
+    copies; the load events the reveal waits on belong to the discarded links
+    (holoviz/panel#8696). The pane's model, text and layout stay correct, so the
+    failure is invisible to every assertion except a visibility check.
 
     Blocking the CDN, as the deployment network does, makes those links fail for
     certain instead of racing the swap, which is what makes this deterministic.
