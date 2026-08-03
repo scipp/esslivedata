@@ -17,7 +17,6 @@ from __future__ import annotations
 import importlib.metadata
 import os
 import socket
-from typing import TypeVar
 
 import scipp as sc
 from streaming_data_types import dataarray_da00, logdata_f144
@@ -32,8 +31,6 @@ from .sink import MessageSerializer, SerializationError, SerializedMessage
 from .sink_routing import RouteByStatusTypeSerializer, RouteByStreamKindSerializer
 from .x5f2_compat import job_status_to_x5f2, service_status_to_x5f2
 
-T = TypeVar('T')
-
 
 def _get_software_version() -> str:
     """Get the software version for x5f2 messages."""
@@ -43,7 +40,7 @@ def _get_software_version() -> str:
         return '0.0.0'
 
 
-class _TopicResolvingSerializer(MessageSerializer[T]):
+class _TopicResolvingSerializer[T](MessageSerializer[T]):
     """
     Base class for serializers that resolve a Kafka topic from the instrument
     name and stream kind, and wrap encoding errors in :class:`SerializationError`.

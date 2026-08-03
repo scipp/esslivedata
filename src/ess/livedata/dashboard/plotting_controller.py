@@ -2,8 +2,7 @@
 # Copyright (c) 2025 Scipp contributors (https://github.com/scipp)
 from __future__ import annotations
 
-from collections.abc import Callable, Hashable, Mapping
-from typing import TypeVar
+from collections.abc import Callable, Mapping
 
 import pydantic
 
@@ -28,9 +27,6 @@ from .plotter_registry import (
 from .roi_publisher import ROIPublisher
 from .roi_request_plots import ROIPublisherAware
 from .stream_manager import StreamManager
-
-K = TypeVar('K', bound=Hashable)
-V = TypeVar('V')
 
 
 class PlottingController:

@@ -6,17 +6,14 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from collections.abc import Callable
-from typing import Any, Generic, TypeVar
+from typing import Any
 
 import panel as pn
 
 from .styles import ModalSizing
 
-TInput = TypeVar('TInput')
-TOutput = TypeVar('TOutput')
 
-
-class WizardStep(ABC, Generic[TInput, TOutput]):
+class WizardStep[TInput, TOutput](ABC):
     """
     Base class for wizard step components.
 

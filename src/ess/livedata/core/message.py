@@ -5,13 +5,9 @@ from __future__ import annotations
 from collections.abc import Sequence
 from dataclasses import dataclass, field
 from enum import StrEnum
-from typing import Generic, Protocol, TypeVar
+from typing import Protocol
 
 from .timestamp import Timestamp
-
-T = TypeVar('T')
-Tin = TypeVar('Tin')
-Tout = TypeVar('Tout')
 
 
 class StreamKind(StrEnum):
@@ -68,7 +64,7 @@ class RunStop:
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
-class Message(Generic[T]):
+class Message[T]:
     """
     A message with a timestamp and a stream key.
 
@@ -92,12 +88,12 @@ class Message(Generic[T]):
         return self.timestamp < other.timestamp
 
 
-class MessageSource(Protocol, Generic[Tin]):
+class MessageSource[Tin](Protocol):
     # Note that Tin is often (but not always) Message[T]
     def get_messages(self) -> Sequence[Tin]: ...
 
 
-class MessageSink(Protocol, Generic[Tout]):
+class MessageSink[Tout](Protocol):
     def publish_messages(self, messages: list[Message[Tout]]) -> None:
         """
         Publish messages to the producer.

@@ -2,18 +2,14 @@
 # Copyright (c) 2024 Scipp contributors (https://github.com/scipp)
 from __future__ import annotations
 
-from typing import ClassVar, Generic, Protocol, TypeVar
+from typing import ClassVar, Protocol
 
 from ..config.instrument import Instrument
-from .message import StreamId, Tin, Tout
+from .message import StreamId
 from .timestamp import Timestamp
 
-T = TypeVar('T')
-U = TypeVar('U')
-V = TypeVar('V')
 
-
-class Accumulator(Protocol, Generic[T, U]):
+class Accumulator[T, U](Protocol):
     """
     Protocol for an accumulator that accumulates data over time.
 
@@ -57,7 +53,7 @@ class Accumulator(Protocol, Generic[T, U]):
         """
 
 
-class PreprocessorFactory(Protocol, Generic[Tin, Tout]):
+class PreprocessorFactory[Tin, Tout](Protocol):
     """
     Factory for creating preprocessors (accumulators) for message streams.
 
@@ -70,7 +66,7 @@ class PreprocessorFactory(Protocol, Generic[Tin, Tout]):
         return None
 
 
-class JobBasedPreprocessorFactoryBase(PreprocessorFactory[Tin, Tout]):
+class JobBasedPreprocessorFactoryBase[Tin, Tout](PreprocessorFactory[Tin, Tout]):
     """Factory base used by job-based backend services."""
 
     def __init__(self, *, instrument: Instrument) -> None:

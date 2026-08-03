@@ -6,7 +6,6 @@ from __future__ import annotations
 
 from collections.abc import Hashable, Iterator, Mapping, Sequence
 from dataclasses import dataclass, field
-from typing import Generic, TypeVar
 
 import scipp as sc
 import structlog
@@ -15,8 +14,6 @@ from .extractors import LatestValueExtractor, UpdateExtractor
 from .temporal_buffers import BufferProtocol, SingleValueBuffer, TemporalBuffer
 
 logger = structlog.get_logger()
-
-K = TypeVar('K', bound=Hashable)
 
 
 @dataclass
@@ -29,7 +26,7 @@ class _BufferState:
     )  # Stored as list internally
 
 
-class TemporalBufferManager(Mapping[K, BufferProtocol[sc.DataArray]], Generic[K]):
+class TemporalBufferManager[K: Hashable](Mapping[K, BufferProtocol[sc.DataArray]]):
     """
     Manages buffers, switching between SingleValueBuffer and TemporalBuffer.
 

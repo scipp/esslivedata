@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, Generic, TypeVar
+from typing import Any
 
 import scipp as sc
 from ess.reduce import streaming
@@ -15,8 +15,6 @@ from ..core.timestamp import Timestamp
 from .to_nxevent_data import MonitorEvents
 
 __all__ = ["MonitorEvents"]
-
-T = TypeVar('T')
 
 
 @dataclass
@@ -153,7 +151,7 @@ class _NoCopyWindowAccumulator(NoCopyAccumulator):
     Must not be constructed directly — use :func:`make_no_copy_accumulator_pair`.
     """
 
-    def _do_push(self, value: T) -> None:
+    def _do_push[T](self, value: T) -> None:
         self._reset_if_geometry_changed(value)
         if self._value is None:
             self._value = value
@@ -197,7 +195,7 @@ def make_no_copy_accumulator_pair(
     )
 
 
-class LatestValue(streaming.Accumulator[T], Generic[T]):
+class LatestValue[T](streaming.Accumulator[T]):
     """
     Streaming accumulator that keeps only the latest value.
 

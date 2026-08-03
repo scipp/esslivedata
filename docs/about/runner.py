@@ -4,7 +4,7 @@ from abc import ABC, abstractmethod
 from collections.abc import Callable
 from contextlib import contextmanager
 from dataclasses import asdict, dataclass
-from typing import Generic, NewType, TypeVar
+from typing import NewType
 
 from environments import (
     BenchmarkEnvironment,
@@ -35,12 +35,9 @@ class BenchmarkResult:  # Measurement results should always have value and unit.
     space: SpaceMeasurement | None = None
 
 
-_Item = TypeVar("_Item")
-
-
-def _append_row(
-    obj: dict[str, list[_Item | None]], row: dict[str, _Item]
-) -> dict[str, list[_Item | None]]:
+def _append_row[Item](
+    obj: dict[str, list[Item | None]], row: dict[str, Item]
+) -> dict[str, list[Item | None]]:
     """
     Helper function to extend Pandas Dataframe-like dictionary.
     All columns(Corresponding to the highest level keys)
@@ -62,11 +59,8 @@ def _append_row(
     return obj
 
 
-R = TypeVar("R")
-
-
 @dataclass
-class SingleRunReport(Generic[R]):
+class SingleRunReport[R]:
     callable_name: BenchmarkTargetName
     benchmark_result: BenchmarkResult
     arguments: dict
@@ -117,7 +111,9 @@ class BenchmarkRunner(ABC):
 class SimpleRunner(BenchmarkRunner):
     """Benchmark runner that simply measures duration of a function call."""
 
-    def __call__(self, func: Callable[..., R], *args, **kwargs) -> SingleRunReport[R]:
+    def __call__[R](
+        self, func: Callable[..., R], *args, **kwargs
+    ) -> SingleRunReport[R]:
         import inspect
         import time
 
