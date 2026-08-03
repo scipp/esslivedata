@@ -130,6 +130,20 @@ def present_figure(plotter, data_dict):
     return render_to_bokeh(presenter.present(pipe)).state
 
 
+def present_figure_with_cell_hooks(plotter, data_dict):
+    """Render a plotter the way a grid cell does: present, then attach hooks.
+
+    ``CellWidget`` attaches its own hooks (SaveTool filename, hover suspend,
+    autoscale) with a further ``.opts()`` call on whatever the presenter
+    returned, so every presenter's output must survive that.
+    """
+    plotter.compute({'primary': data_dict})
+    presenter = plotter.create_presenter()
+    pipe = hv.streams.Pipe(data=plotter.get_cached_state())
+    composed = presenter.present(pipe).opts(hooks=[lambda plot, element: None])
+    return render_to_bokeh(composed).state
+
+
 class TestTitleResolver:
     def test_get_legend_label_includes_output_by_default(self):
         from ess.livedata.dashboard.plots import TitleResolver
@@ -200,6 +214,12 @@ class TestImagePlotter:
                 "ignore", "All-NaN slice encountered", RuntimeWarning
             )
             render_to_bokeh(hv_element)
+
+    def test_renders_with_cell_hooks(
+        self, image_plotter, constant_nonzero_data, data_key
+    ):
+        """Cell-attached hooks must not break the presenter's DynamicMap."""
+        present_figure_with_cell_hooks(image_plotter, {data_key: constant_nonzero_data})
 
     def test_plot_with_constant_nonzero_values_does_not_raise(
         self, image_plotter, constant_nonzero_data, data_key
@@ -1089,6 +1109,12 @@ class TestSlicerPlotter:
 
         result = dmap['slice', 'z', z_value, y_value, x_value]
         assert isinstance(result, hv.Image)
+
+    def test_presenter_dmap_renders_with_cell_hooks(
+        self, slicer_plotter, data_3d, data_key
+    ):
+        """Cell-attached hooks must not break the slicer's kdim-driven DynamicMap."""
+        present_figure_with_cell_hooks(slicer_plotter, {data_key: data_3d})
 
     # === Edge coordinate tests ===
 
