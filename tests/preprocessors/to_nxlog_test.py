@@ -6,7 +6,7 @@ from scipp.testing import assert_identical
 
 from ess.livedata.core.timestamp import Timestamp
 from ess.livedata.preprocessors.accumulators import LogData
-from ess.livedata.preprocessors.to_nxlog import ToNXlog
+from ess.livedata.preprocessors.to_nxlog import ToNXlog, nxlog_for_stream
 
 
 def test_to_nxlog_initialization():
@@ -585,3 +585,175 @@ def test_missing_idle_raises_when_has_idle():
     accumulator = ToNXlog(attrs={'units': 'mm'}, has_idle=True)
     with pytest.raises(ValueError, match="Idle"):
         accumulator.add(Timestamp.from_ns(0), LogData(time=1000, value=1.0))
+
+
+class TestRetention:
+    """History is bounded by max_size and max_age, whichever binds first."""
+
+    def make(self, *, max_size=1_000_000, max_age_s=30 * 86400, **kwargs):
+        return ToNXlog(
+            attrs={'units': 'm'},
+            max_size=max_size,
+            max_age=sc.scalar(max_age_s, unit='s'),
+            **kwargs,
+        )
+
+    def push(self, acc, times, *, scale=1_000_000_000):
+        for t in times:
+            acc.add(0, LogData(time=int(t * scale), value=float(t)))
+
+    def times(self, acc):
+        return [
+            int(t) // 1_000_000_000
+            for t in acc.get().coords['time'].values.view('int64')
+        ]
+
+    def test_max_size_drops_oldest_samples(self):
+        acc = self.make(max_size=5)
+        self.push(acc, range(1, 12))
+        assert self.times(acc) == [7, 8, 9, 10, 11]
+
+    def test_below_max_size_keeps_everything(self):
+        acc = self.make(max_size=100)
+        self.push(acc, range(1, 12))
+        assert self.times(acc) == list(range(1, 12))
+
+    def test_max_age_drops_expired_samples(self):
+        acc = self.make(max_age_s=10)
+        self.push(acc, [1, 2, 3, 20, 21])
+        # Cutoff is 21-10=11; samples 1 and 2 are expired, 3 is the anchor.
+        assert self.times(acc) == [3, 20, 21]
+
+    def test_age_cutoff_retains_anchor_for_previous_mode_lookup(self):
+        acc = self.make(max_age_s=10)
+        self.push(acc, [0, 100])
+        # Everything is older than the cutoff, but dropping the last sample at
+        # or before it would make sc.lookup(mode='previous') return NaN.
+        assert self.times(acc) == [0, 100]
+        lut = sc.lookup(acc.get(), 'time', mode='previous')
+        query = sc.epoch(unit='ns') + sc.array(
+            dims=['t'], values=[50_000_000_000], unit='ns'
+        )
+        assert lut[query].values.tolist() == [0.0]
+
+    def test_age_measured_against_newest_sample_not_wall_clock(self):
+        acc = self.make(max_age_s=10)
+        self.push(acc, [1, 2, 3])
+        # A stalled device keeps its history; nothing ages out without new data.
+        assert self.times(acc) == [1, 2, 3]
+
+    def test_never_trims_below_one_sample(self):
+        acc = self.make(max_size=1, max_age_s=1)
+        self.push(acc, [1, 100, 1000])
+        assert self.times(acc) == [1000]
+
+    def test_size_and_age_combined_take_the_tighter_bound(self):
+        acc = self.make(max_size=3, max_age_s=100)
+        self.push(acc, range(1, 10))
+        assert self.times(acc) == [7, 8, 9]
+
+    def test_retained_window_survives_many_relocations(self):
+        acc = self.make(max_size=4)
+        self.push(acc, range(1, 500))
+        assert self.times(acc) == [496, 497, 498, 499]
+        assert list(acc.get().values) == [496.0, 497.0, 498.0, 499.0]
+
+    def test_values_and_coords_stay_aligned_across_relocation(self):
+        acc = ToNXlog(
+            attrs={'units': 'm'},
+            max_size=4,
+            has_target=True,
+            has_idle=True,
+        )
+        for t in range(1, 200):
+            acc.add(
+                0,
+                LogData(
+                    time=t * 1_000_000_000,
+                    value=float(t),
+                    target=float(-t),
+                    idle=t % 2,
+                ),
+            )
+        result = acc.get()
+        assert list(result.values) == [196.0, 197.0, 198.0, 199.0]
+        assert list(result.coords['target'].values) == [-196.0, -197.0, -198.0, -199.0]
+        assert list(result.coords['idle'].values) == [0, 1, 0, 1]
+
+    def test_variances_survive_relocation(self):
+        acc = ToNXlog(attrs={'units': 'm'}, max_size=3)
+        for t in range(1, 100):
+            acc.add(
+                0,
+                LogData(time=t * 1_000_000_000, value=float(t), variances=float(t) * 2),
+            )
+        result = acc.get()
+        assert list(result.values) == [97.0, 98.0, 99.0]
+        assert list(result.variances) == [194.0, 196.0, 198.0]
+
+    def test_buffer_capacity_stays_bounded(self):
+        acc = self.make(max_size=100)
+        self.push(acc, range(1, 5000))
+        assert acc.get().sizes['time'] == 100
+        assert acc._timeseries.sizes['time'] <= 100 + 100  # max_size + max slack
+
+    def test_get_view_is_not_rewritten_by_later_relocation(self):
+        acc = self.make(max_size=4)
+        self.push(acc, range(1, 20))
+        view = acc.get()
+        before = list(view.values)
+        self.push(acc, range(20, 500))
+        assert list(view.values) == before
+
+    def test_clear_resets_retention_state(self):
+        acc = self.make(max_size=4)
+        self.push(acc, range(1, 50))
+        acc.clear()
+        self.push(acc, [100, 101])
+        assert self.times(acc) == [100, 101]
+
+    def test_rejects_non_positive_max_size(self):
+        with pytest.raises(ValueError, match="max_size must be at least 1"):
+            ToNXlog(attrs={}, max_size=0)
+
+
+class TestRelocationPhase:
+    """Equal-rate logs must not relocate in the same batch forever."""
+
+    MAX_SIZE = 64
+
+    def relocation_points(self, phase: int, n: int) -> set[int]:
+        """Sample counts at which the buffer is reallocated.
+
+        Points during the initial fill are excluded: capacity doubles from 2
+        regardless of phase, so every log necessarily reallocates at the same
+        counts then. That is a one-off warm-up, whereas the steady-state period
+        repeats for the process lifetime and is what must be spread out.
+        """
+        acc = ToNXlog(attrs={'units': 'm'}, max_size=self.MAX_SIZE, phase=phase)
+        points = set()
+        previous = None
+        for t in range(1, n):
+            acc.add(0, LogData(time=t * 1_000_000_000, value=float(t)))
+            current = id(acc._timeseries)
+            if previous is not None and current != previous and t > 2 * self.MAX_SIZE:
+                points.add(t)
+            previous = current
+        return points
+
+    def test_distinct_phases_relocate_at_distinct_points(self):
+        streams = [self.relocation_points(phase, 2000) for phase in (0, 1, 2, 3)]
+        assert all(len(points) > 1 for points in streams)
+        # No batch ever relocates every log at once.
+        assert set.intersection(*streams) == set()
+
+    def test_phase_is_stable_across_instances(self):
+        assert self.relocation_points(5, 500) == self.relocation_points(5, 500)
+
+    def test_stream_name_determines_phase(self):
+        from ess.livedata.config.stream import F144Stream
+
+        stream = F144Stream(units='m', topic='t', source='s')
+        a = nxlog_for_stream(stream, name='chopper_1')
+        b = nxlog_for_stream(stream, name='chopper_2')
+        assert a._slack != b._slack

@@ -53,7 +53,9 @@ class DetectorPreprocessorFactory(JobBasedPreprocessorFactoryBase):
             case StreamKind.LIVEDATA_ROI:
                 return LatestValueAccumulator()
             case StreamKind.LOG | StreamKind.DEVICE:
-                return nxlog_for_stream(self._instrument.streams.get(key.name))
+                return nxlog_for_stream(
+                    self._instrument.streams.get(key.name), name=key.name
+                )
             case _:
                 return None
 

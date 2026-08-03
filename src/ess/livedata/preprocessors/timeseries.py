@@ -44,9 +44,13 @@ class LogdataPreprocessorFactory(
     def make_preprocessor(self, key: StreamId) -> Accumulator | None:
         match key.kind:
             case StreamKind.DEVICE:
-                return nxlog_for_stream(self._instrument.streams.get(key.name))
+                return nxlog_for_stream(
+                    self._instrument.streams.get(key.name), name=key.name
+                )
             case StreamKind.LOG:
-                accumulator = nxlog_for_stream(self._instrument.streams.get(key.name))
+                accumulator = nxlog_for_stream(
+                    self._instrument.streams.get(key.name), name=key.name
+                )
                 if accumulator is not None:
                     return accumulator
                 if key.name in _SYNTHETIC_LOG_SOURCES:
