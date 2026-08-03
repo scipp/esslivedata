@@ -6,7 +6,7 @@ import time
 import uuid
 from collections import defaultdict
 from dataclasses import replace
-from typing import Any, Generic
+from typing import Any
 
 import structlog
 
@@ -37,8 +37,6 @@ from .message import (
     RunStop,
     StreamId,
     StreamKind,
-    Tin,
-    Tout,
 )
 from .message_batcher import (
     AdaptiveMessageBatcher,
@@ -52,7 +50,7 @@ from .timestamp import Duration, Timestamp
 logger = structlog.get_logger(__name__)
 
 
-class MessagePreprocessor(Generic[Tin, Tout]):
+class MessagePreprocessor[Tin, Tout]:
     """Message preprocessor that handles batches of messages."""
 
     def __init__(
@@ -146,7 +144,7 @@ class MessagePreprocessor(Generic[Tin, Tout]):
         )
 
 
-class OrchestratingProcessor(Generic[Tin, Tout]):
+class OrchestratingProcessor[Tin, Tout]:
     def __init__(
         self,
         *,

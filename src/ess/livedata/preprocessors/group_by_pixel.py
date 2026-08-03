@@ -11,10 +11,12 @@ import ess.livedata.preprocessors._patch_group_event_data  # noqa: F401
 
 from ..core.preprocessor import Accumulator
 from ..core.timestamp import Timestamp
-from .to_nxevent_data import Events, ToNXevent_data
+from .to_nxevent_data import DetectorEvents, MonitorEvents, ToNXevent_data
 
 
-class GroupByPixel(Accumulator[Events, sc.DataArray]):
+class GroupByPixel[Events: (DetectorEvents, MonitorEvents)](
+    Accumulator[Events, sc.DataArray]
+):
     """Accumulator that groups events by detector pixel.
 
     Wraps a ``ToNXevent_data`` accumulator and applies ``group_event_data``

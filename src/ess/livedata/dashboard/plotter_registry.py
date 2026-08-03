@@ -9,7 +9,7 @@ import typing
 from collections import UserDict
 from collections.abc import Callable
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any, Generic, Protocol, TypeVar
+from typing import TYPE_CHECKING, Any, Protocol
 
 import pydantic
 import scipp as sc
@@ -106,11 +106,7 @@ class PlotterSpec(pydantic.BaseModel):
     )
 
 
-# Type variable for parameter types
-P = TypeVar('P', bound=pydantic.BaseModel)
-
-
-class PlotterFactory(Protocol, Generic[P]):
+class PlotterFactory[P: pydantic.BaseModel](Protocol):
     def __call__(self, params: P) -> Plotter: ...
 
 
@@ -132,7 +128,7 @@ class PlotterEntry:
 
 
 class PlotterRegistry(UserDict[str, PlotterEntry]):
-    def register_plotter(
+    def register_plotter[P: pydantic.BaseModel](
         self,
         name: str,
         title: str,

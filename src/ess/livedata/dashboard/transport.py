@@ -5,14 +5,12 @@
 from collections.abc import Sequence
 from dataclasses import dataclass
 from types import TracebackType
-from typing import Generic, Protocol, TypeVar
+from typing import Protocol
 
 from ..core.message import Message, MessageSink, MessageSource
 
-TResources = TypeVar('TResources', covariant=True)
 
-
-class Transport(Protocol, Generic[TResources]):
+class Transport[TResources](Protocol):
     """
     Protocol for message transport implementations.
 

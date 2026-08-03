@@ -1,14 +1,10 @@
 # SPDX-License-Identifier: BSD-3-Clause
 # Copyright (c) 2024 Scipp contributors (https://github.com/scipp)
-from typing import Generic, TypeVar
-
 from .core import Message
 from .core.message import RESPONSES_STREAM_ID, STATUS_STREAM_ID
 
-T = TypeVar('T')
 
-
-class FakeMessageSource(Generic[T]):
+class FakeMessageSource[T]:
     """
     A fake message source that returns messages from memory for testing purposes.
     """
@@ -25,7 +21,7 @@ class FakeMessageSource(Generic[T]):
         return messages
 
 
-class FakeMessageSink(Generic[T]):
+class FakeMessageSink[T]:
     """
     A fake message sink that stores messages in memory for testing purposes.
 

@@ -35,7 +35,7 @@ from __future__ import annotations
 import threading
 from abc import ABC, abstractmethod
 from collections.abc import Callable
-from typing import TYPE_CHECKING, Any, Generic, Protocol, TypeVar, runtime_checkable
+from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 
 import holoviews as hv
 import pydantic
@@ -309,11 +309,6 @@ class PolygonConverter:
 if TYPE_CHECKING:
     from ess.livedata.config.workflow_spec import DataKey
 
-# TypeVars for generic base class
-ROIType = TypeVar('ROIType', RectangleROI, PolygonROI)
-ParamsType = TypeVar('ParamsType', bound=pydantic.BaseModel)
-ConverterType = TypeVar('ConverterType', RectangleConverter, PolygonConverter)
-
 
 class OptionalRectanglesCoordinates(RectanglesCoordinates):
     """Wrapper for optional rectangle coordinate input.
@@ -528,7 +523,11 @@ class PolygonsRequestPresenter(BaseROIRequestPresenter):
         )
 
 
-class BaseROIRequestPlotter(Plotter, ABC, Generic[ROIType, ParamsType, ConverterType]):
+class BaseROIRequestPlotter[
+    ROIType: (RectangleROI, PolygonROI),
+    ParamsType: pydantic.BaseModel,
+    ConverterType: (RectangleConverter, PolygonConverter),
+](Plotter, ABC):
     """Base class for interactive ROI request plotters.
 
     Implements compute() to extract data-dependent info and create_presenter()

@@ -3,13 +3,11 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from typing import Any, Generic, TypeVar
+from typing import Any
 
 from pydantic import BaseModel, Field
 
 from ess.livedata.config.workflow_spec import AuxSources
-
-Model = TypeVar('Model')
 
 DEFAULT_SOURCE_PRESELECTION_CAP = 5
 """Maximum number of sources to pre-select by default.
@@ -42,7 +40,7 @@ class ConfigurationState(BaseModel):
     )
 
 
-class ConfigurationAdapter(ABC, Generic[Model]):
+class ConfigurationAdapter[Model](ABC):
     """
     Abstract adapter for providing configuration data to generic widgets.
 
@@ -96,6 +94,7 @@ class ConfigurationAdapter(ABC, Generic[Model]):
     @property
     def aux_sources(self) -> AuxSources | None:
         """Auxiliary source specification, or None if the workflow has none."""
+        return None
 
     @property
     def initial_aux_source_names(self) -> dict[str, str]:
