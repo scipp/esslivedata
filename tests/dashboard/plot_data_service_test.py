@@ -184,6 +184,53 @@ class TestLayerStateMachineOtherTransitions:
         assert state.state == LayerState.ERROR
 
 
+class TestLayerStateMachineErrorRecovery:
+    """ERROR must be left by evidence the layer works, not only by a restart."""
+
+    def test_data_arrived_recovers_from_error(self):
+        """A completed build proves the fault cleared, so the layer heals."""
+        state = LayerStateMachine()
+        plotter = FakePlotter()
+        state.job_started(plotter)
+        state.error_occurred("boom")
+        version_at_error = state.version
+
+        state.data_arrived()
+
+        assert state.state == LayerState.READY
+        assert state.error_message is None
+        assert state.version == version_at_error + 1
+
+    def test_recovered_layer_displays_its_plot(self):
+        """The point of recovering: the cell stops showing the error
+        placeholder for a layer whose data computes fine."""
+        state = LayerStateMachine()
+        plotter = FakePlotter()
+        state.job_started(plotter)
+        state.error_occurred("boom")
+        plotter.compute({'data': 1})
+        assert not state.has_displayable_plot()
+
+        state.data_arrived()
+
+        assert state.has_displayable_plot()
+
+    def test_job_stopped_leaves_error_intact(self):
+        """A stop is not evidence the fault cleared; the error needs attention
+        and outranks the frozen-snapshot presentation of STOPPED."""
+        state = LayerStateMachine()
+        plotter = FakePlotter()
+        state.job_started(plotter)
+        state.error_occurred("boom")
+        version_at_error = state.version
+
+        state.job_stopped()
+
+        assert state.state == LayerState.ERROR
+        assert state.error_message == "boom"
+        assert state.version == version_at_error
+
+
 class TestPlotDataService:
     """Tests for PlotDataService."""
 
