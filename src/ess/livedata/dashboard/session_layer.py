@@ -14,7 +14,7 @@ from dataclasses import dataclass
 
 import holoviews as hv
 
-from .plot_data_service import LayerId, LayerStateMachine
+from .plot_data_service import LayerId, LayerSnapshot
 from .plots import Plotter, PresenterBase
 
 
@@ -64,7 +64,7 @@ class SessionComponents:
         return plotter is not None and self.presenter.is_owned_by(plotter)
 
     @classmethod
-    def create(cls, state: LayerStateMachine) -> SessionComponents | None:
+    def create(cls, state: LayerSnapshot) -> SessionComponents | None:
         """
         Create session components if data is available.
 
@@ -131,7 +131,7 @@ class SessionLayer:
             return False
         return self.components.update_pipe()
 
-    def ensure_components(self, state: LayerStateMachine) -> bool:
+    def ensure_components(self, state: LayerSnapshot) -> bool:
         """
         Ensure components exist if data is now available.
 

@@ -10,7 +10,7 @@ The dashboard runs on two kinds of threads: the shared ingestion thread
 (`DashboardServices._update_loop`, draining Kafka and driving orchestrator
 updates at ~50 ms), and each session's Tornado/Bokeh IOLoop (UI callbacks and
 the 100 ms session poll, under that session's document lock). Layer activation
-runs on the latter — the poll pass calls `LayerStateMachine.set_active`, so
+runs on the latter — the poll pass calls `PlotDataService.set_active`, so
 activation flushes and Kafka-delta builds enter the same gate from opposite
 threads. Session-bound objects (`Pipe`, `DynamicMap`, Bokeh documents) may only
 be mutated on their own session's IOLoop — a hard constraint established in

@@ -1199,14 +1199,16 @@ class TestBuildRobustness:
         commit_workflow_for_test(job_orchestrator, workflow_id, workflow_spec)
         feed_result_data(fake_data_service, plot_cell[1], workflow_id)
 
-        state = plot_data_service.get(layer_id)
         old_plotter = fake_plotting_controller.created_plotters[0]
         new_plotter = FakePlotter()
-        old_plotter.on_compute = lambda: state.job_started(new_plotter)
+        old_plotter.on_compute = lambda: plot_data_service.job_started(
+            layer_id, new_plotter
+        )
 
         plot_orchestrator.flush_frames()
 
         assert old_plotter.compute_calls  # the stale build did run
+        state = plot_data_service.get(layer_id)
         assert state.plotter is new_plotter
         assert state.state is LayerState.WAITING_FOR_DATA
 
