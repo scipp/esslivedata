@@ -58,6 +58,7 @@ test = [
     "pytest-xdist",
     "scippneutron>=25.07.0",
 ]
+beer = []
 bifrost = [
     "essspectroscopy>=26.6.0",
 ]
