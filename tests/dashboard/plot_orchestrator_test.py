@@ -1177,6 +1177,56 @@ class TestBuildRobustness:
         assert state.state is LayerState.ERROR
         assert "extractor boom" in state.error_message
 
+    def test_layer_recovers_from_transient_extraction_error(
+        self,
+        workflow_id,
+        workflow_spec,
+        job_orchestrator,
+        fake_data_service,
+        fake_stream_manager,
+    ):
+        """A fault that clears must not leave the layer stuck in ERROR: the
+        next successful build is evidence the layer is healthy again."""
+        from ess.livedata.dashboard.extractors import LatestValueExtractor
+
+        fail = [True]
+
+        class FlakyExtractor(LatestValueExtractor):
+            def extract(self, data):
+                if fail[0]:
+                    raise RuntimeError("extractor boom")
+                return super().extract(data)
+
+        controller = FakePlottingController(
+            stream_manager=fake_stream_manager, extractor_factory=FlakyExtractor
+        )
+        plot_data_service = PlotDataService()
+        orchestrator = PlotOrchestrator(
+            plotting_controller=controller,
+            job_orchestrator=job_orchestrator,
+            data_service=fake_data_service,
+            instrument='dummy',
+            plot_data_service=plot_data_service,
+        )
+        grid_id = orchestrator.add_grid(title='Test Grid', nrows=3, ncols=3)
+        config = make_plot_config(workflow_id)
+        cell_id = add_cell_with_layer(orchestrator, grid_id, DEFAULT_GEOMETRY, config)
+        layer_id = orchestrator.get_cell(cell_id).layers[0].layer_id
+        commit_workflow_for_test(job_orchestrator, workflow_id, workflow_spec)
+
+        feed_result_data(fake_data_service, config, workflow_id)
+        orchestrator.flush_frames()
+        assert plot_data_service.get(layer_id).state is LayerState.ERROR
+
+        fail[0] = False
+        feed_result_data(fake_data_service, config, workflow_id)
+        orchestrator.flush_frames()
+
+        state = plot_data_service.get(layer_id)
+        assert state.state is LayerState.READY
+        assert state.error_message is None
+        assert state.has_displayable_plot()
+
     def test_stale_build_does_not_mark_swapped_plotter_ready(
         self,
         plot_orchestrator,
@@ -1199,14 +1249,16 @@ class TestBuildRobustness:
         commit_workflow_for_test(job_orchestrator, workflow_id, workflow_spec)
         feed_result_data(fake_data_service, plot_cell[1], workflow_id)
 
-        state = plot_data_service.get(layer_id)
         old_plotter = fake_plotting_controller.created_plotters[0]
         new_plotter = FakePlotter()
-        old_plotter.on_compute = lambda: state.job_started(new_plotter)
+        old_plotter.on_compute = lambda: plot_data_service.job_started(
+            layer_id, new_plotter
+        )
 
         plot_orchestrator.flush_frames()
 
         assert old_plotter.compute_calls  # the stale build did run
+        state = plot_data_service.get(layer_id)
         assert state.plotter is new_plotter
         assert state.state is LayerState.WAITING_FOR_DATA
 

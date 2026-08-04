@@ -1,13 +1,13 @@
 # SPDX-License-Identifier: BSD-3-Clause
 # Copyright (c) 2025 Scipp contributors (https://github.com/scipp)
-"""Tests for PlotDataService and LayerStateMachine."""
+"""Tests for PlotDataService and LayerSnapshot."""
 
 import weakref
 
 from ess.livedata.dashboard.plot_data_service import (
     LayerId,
+    LayerSnapshot,
     LayerState,
-    LayerStateMachine,
     PlotDataService,
 )
 from ess.livedata.dashboard.plots import PresenterBase
@@ -178,195 +178,144 @@ class TestPlotDataService:
         assert service.get(LayerId('layer-1')) is None
 
 
-class TestLayerStateMachine:
-    """Tests for the LayerStateMachine state transitions."""
+class TestLayerSnapshot:
+    """Tests for LayerSnapshot's pure state transitions."""
 
     def test_initial_state_is_waiting_for_data(self):
-        machine = LayerStateMachine()
-        assert machine.state == LayerState.WAITING_FOR_DATA
-        assert machine.version == 0
-        assert machine.plotter is None
-        assert machine.error_message is None
+        snapshot = LayerSnapshot()
+        assert snapshot.state == LayerState.WAITING_FOR_DATA
+        assert snapshot.version == 0
+        assert snapshot.plotter is None
+        assert snapshot.error_message is None
+
+    def test_transitions_do_not_mutate_the_receiver(self):
+        """The whole point of the type: readers holding one are never surprised."""
+        original = LayerSnapshot().job_started(FakePlotter(state='data'))
+
+        updated = original.data_arrived()
+
+        assert updated is not original
+        assert updated.state == LayerState.READY
+        assert original.state == LayerState.WAITING_FOR_DATA
+        assert original.version == 1
 
     def test_job_started_transitions_to_waiting_for_data(self):
-        machine = LayerStateMachine()
         plotter = FakePlotter(state=None)
 
-        machine.job_started(plotter)
+        snapshot = LayerSnapshot().job_started(plotter)
 
-        assert machine.state == LayerState.WAITING_FOR_DATA
-        assert machine.version == 1
-        assert machine.plotter is plotter
+        assert snapshot.state == LayerState.WAITING_FOR_DATA
+        assert snapshot.version == 1
+        assert snapshot.plotter is plotter
 
     def test_data_arrived_transitions_to_ready(self):
-        machine = LayerStateMachine()
         plotter = FakePlotter(state='data')
-        machine.job_started(plotter)
+        snapshot = LayerSnapshot().job_started(plotter)
 
-        machine.data_arrived()
+        snapshot = snapshot.data_arrived()
 
-        assert machine.state == LayerState.READY
-        assert machine.version == 2
-        assert machine.plotter is plotter
+        assert snapshot.state == LayerState.READY
+        assert snapshot.version == 2
+        assert snapshot.plotter is plotter
 
     def test_job_stopped_from_waiting_for_data(self):
-        machine = LayerStateMachine()
-        plotter = FakePlotter(state=None)
-        machine.job_started(plotter)
+        snapshot = LayerSnapshot().job_started(FakePlotter(state=None))
 
-        machine.job_stopped()
+        snapshot = snapshot.job_stopped()
 
-        assert machine.state == LayerState.STOPPED
-        assert machine.version == 2
+        assert snapshot.state == LayerState.STOPPED
+        assert snapshot.version == 2
 
     def test_job_stopped_from_ready(self):
-        machine = LayerStateMachine()
-        plotter = FakePlotter(state='data')
-        machine.job_started(plotter)
-        machine.data_arrived()
+        snapshot = LayerSnapshot().job_started(FakePlotter(state='data'))
+        snapshot = snapshot.data_arrived()
 
-        machine.job_stopped()
+        snapshot = snapshot.job_stopped()
 
-        assert machine.state == LayerState.STOPPED
-        assert machine.version == 3
+        assert snapshot.state == LayerState.STOPPED
+        assert snapshot.version == 3
 
     def test_error_occurred_from_any_state(self):
-        machine = LayerStateMachine()
+        snapshot = LayerSnapshot().error_occurred("test error")
 
-        machine.error_occurred("test error")
-
-        assert machine.state == LayerState.ERROR
-        assert machine.error_message == "test error"
-        assert machine.version == 1
+        assert snapshot.state == LayerState.ERROR
+        assert snapshot.error_message == "test error"
+        assert snapshot.version == 1
 
     def test_job_started_from_stopped_restarts(self):
-        machine = LayerStateMachine()
-        plotter1 = FakePlotter(state='data')
-        machine.job_started(plotter1)
-        machine.data_arrived()
-        machine.job_stopped()
-        assert machine.state == LayerState.STOPPED
+        snapshot = LayerSnapshot().job_started(FakePlotter(state='data'))
+        snapshot = snapshot.data_arrived().job_stopped()
+        assert snapshot.state == LayerState.STOPPED
 
         plotter2 = FakePlotter(state=None)
-        machine.job_started(plotter2)
+        snapshot = snapshot.job_started(plotter2)
 
-        assert machine.state == LayerState.WAITING_FOR_DATA
-        assert machine.plotter is plotter2
-        assert machine.version == 4
+        assert snapshot.state == LayerState.WAITING_FOR_DATA
+        assert snapshot.plotter is plotter2
+        assert snapshot.version == 4
 
     def test_job_started_from_error_recovers(self):
-        machine = LayerStateMachine()
-        machine.error_occurred("some error")
-        assert machine.state == LayerState.ERROR
+        snapshot = LayerSnapshot().error_occurred("some error")
+        assert snapshot.state == LayerState.ERROR
 
         plotter = FakePlotter(state=None)
-        machine.job_started(plotter)
+        snapshot = snapshot.job_started(plotter)
 
-        assert machine.state == LayerState.WAITING_FOR_DATA
-        assert machine.error_message is None
-        assert machine.version == 2
+        assert snapshot.state == LayerState.WAITING_FOR_DATA
+        assert snapshot.error_message is None
+        assert snapshot.version == 2
 
     def test_job_started_from_ready_restarts(self):
         """Test restart while in READY state (workflow restart with data)."""
-        machine = LayerStateMachine()
-        plotter1 = FakePlotter(state='data')
-        machine.job_started(plotter1)
-        machine.data_arrived()
-        assert machine.state == LayerState.READY
+        snapshot = LayerSnapshot().job_started(FakePlotter(state='data'))
+        snapshot = snapshot.data_arrived()
+        assert snapshot.state == LayerState.READY
 
         plotter2 = FakePlotter(state=None)
-        machine.job_started(plotter2)
+        snapshot = snapshot.job_started(plotter2)
 
-        assert machine.state == LayerState.WAITING_FOR_DATA
-        assert machine.plotter is plotter2
-        assert machine.version == 3
+        assert snapshot.state == LayerState.WAITING_FOR_DATA
+        assert snapshot.plotter is plotter2
+        assert snapshot.version == 3
 
     def test_invalid_data_arrived_from_ready_is_ignored(self):
-        machine = LayerStateMachine()
-        plotter = FakePlotter(state='data')
-        machine.job_started(plotter)
-        machine.data_arrived()
-        version_before = machine.version
+        snapshot = LayerSnapshot().job_started(FakePlotter(state='data'))
+        snapshot = snapshot.data_arrived()
 
-        machine.data_arrived()  # Invalid: already in READY
-
-        assert machine.state == LayerState.READY
-        assert machine.version == version_before  # No version increment
+        assert snapshot.data_arrived() is None  # Invalid: already in READY
 
     def test_invalid_job_stopped_when_already_stopped_is_ignored(self):
-        machine = LayerStateMachine()
-        machine.job_stopped()
-        version_before = machine.version
+        snapshot = LayerSnapshot().job_stopped()
 
-        machine.job_stopped()  # Invalid: already stopped
-
-        assert machine.state == LayerState.STOPPED
-        assert machine.version == version_before
+        assert snapshot.job_stopped() is None  # Invalid: already stopped
 
     def test_data_arrived_while_stopped_is_silent_noop(self):
-        machine = LayerStateMachine()
-        machine.job_stopped()
-        version_before = machine.version
+        snapshot = LayerSnapshot().job_stopped()
 
-        machine.data_arrived()  # Retained data rendered while stopped
-
-        assert machine.state == LayerState.STOPPED
-        assert machine.version == version_before
+        # Retained data rendered while stopped
+        assert snapshot.data_arrived() is None
 
     def test_has_displayable_plot_ready_with_data(self):
-        machine = LayerStateMachine()
-        plotter = FakePlotter(state='data')
-        machine.job_started(plotter)
-        machine.data_arrived()
+        snapshot = LayerSnapshot().job_started(FakePlotter(state='data'))
+        snapshot = snapshot.data_arrived()
 
-        assert machine.has_displayable_plot() is True
+        assert snapshot.has_displayable_plot() is True
 
     def test_has_displayable_plot_stopped_with_data(self):
-        machine = LayerStateMachine()
-        plotter = FakePlotter(state='data')
-        machine.job_started(plotter)
-        machine.data_arrived()
-        machine.job_stopped()
+        snapshot = LayerSnapshot().job_started(FakePlotter(state='data'))
+        snapshot = snapshot.data_arrived().job_stopped()
 
-        assert machine.has_displayable_plot() is True
+        assert snapshot.has_displayable_plot() is True
 
     def test_has_displayable_plot_waiting_for_data_is_false(self):
-        machine = LayerStateMachine()
-        plotter = FakePlotter(state=None)
-        machine.job_started(plotter)
+        snapshot = LayerSnapshot().job_started(FakePlotter(state=None))
 
-        assert machine.has_displayable_plot() is False
+        assert snapshot.has_displayable_plot() is False
 
     def test_has_displayable_plot_error_is_false(self):
-        machine = LayerStateMachine()
-        machine.error_occurred("error")
+        snapshot = LayerSnapshot().error_occurred("error")
 
-        assert machine.has_displayable_plot() is False
-
-    def test_job_stopped_marks_presenters_dirty(self):
-        machine = LayerStateMachine()
-        plotter = FakePlotter(state='data')
-        machine.job_started(plotter)
-        machine.data_arrived()
-
-        presenter = plotter.create_presenter()
-        presenter._dirty = False
-
-        machine.job_stopped()
-
-        assert presenter.has_pending_update() is True
-
-    def test_error_occurred_marks_presenters_dirty(self):
-        machine = LayerStateMachine()
-        plotter = FakePlotter(state='data')
-        machine.job_started(plotter)
-
-        presenter = plotter.create_presenter()
-        presenter._dirty = False
-
-        machine.error_occurred("error")
-
-        assert presenter.has_pending_update() is True
+        assert snapshot.has_displayable_plot() is False
 
 
 class TestPlotDataServiceStateMachine:
