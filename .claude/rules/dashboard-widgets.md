@@ -124,6 +124,14 @@ screenshot with the `base64 -d` pipeline the log prints next to it.
 present but not visible means it rendered and was hidden, none at all means the click
 never reached its handler.
 
+The server log tail is what distinguishes *why* it never reached the handler. Static
+assets are served off the same IOLoop as everything else, so their `tornado.access`
+timings measure how long that loop was blocked: a `GET /static/...` taking seconds
+means the click's round-trip was queued behind the session's periodic pass, not lost
+(#1185). Sub-millisecond serves with no post-click activity at all point at a dropped
+click instead. `Dashboard.open_modal` re-clicks rather than waiting once, because only
+one of those two recovers.
+
 One console line is a red herring: `pageerror: Cannot read properties of undefined
 (reading 'parent_style')` fires on **every** run, passing or failing. It is
 [bokeh#15274](https://github.com/bokeh/bokeh/issues/15274) — our plot grid is a
