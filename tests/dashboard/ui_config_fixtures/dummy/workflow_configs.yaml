@@ -27,6 +27,38 @@ dummy/monitor_histogram/1:
         coordinate_mode: *id001
         toa_edges: *id002
         toa_range: *id003
+dummy/panel_0_layers/1:
+  jobs:
+    panel_0:
+      aux_source_names: {}
+      params:
+        coordinate_mode:
+          mode: toa
+        pixel_weighting:
+          enabled: false
+          method: pixel_number
+        toa_edges:
+          num_bins: 100
+          scale: linear
+          start: 0.0
+          stop: 71.42857142857143
+          unit: ms
+        toa_range:
+          enabled: false
+          start: 0.0
+          stop: 10.0
+          unit: μs
+        wavelength_edges:
+          num_bins: 100
+          scale: linear
+          start: 1.0
+          stop: 10.0
+          unit: Å
+        wavelength_range:
+          enabled: false
+          start: 0.0
+          stop: 10.0
+          unit: Å
 dummy/panel_0_xy/1:
   jobs:
     panel_0:

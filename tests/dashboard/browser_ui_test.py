@@ -209,28 +209,30 @@ def test_rebuilt_cell_titlebar_panes_are_visible_without_cdn_access():
 @pytest.mark.browser
 def test_remaining_tabs_keep_updating_after_disabling_and_removing_grids():
     with fake_dashboard("dummy") as fake, Dashboard.connect(fake.url) as dash:
-        # Arrange three grids ordered [Bravo, Charlie, Detectors]: two empty
-        # grids ahead of the fixture's populated one, so disabling the first
-        # and removing the middle both shift the Detectors tab position --
-        # the regression class where tab indices fall out of alignment with
-        # the grid list once a preceding grid is hidden or gone.
+        # Order the grids [Diagnostics, Bravo, Charlie, Detectors]: two empty
+        # grids ahead of the fixture's populated one, so disabling one and
+        # removing the next both shift the Detectors tab position -- the
+        # regression class where tab indices fall out of alignment with the
+        # grid list once a preceding grid is hidden or gone.
         dash.goto_tab("Manage Plots")
         _add_grid(dash, "Bravo")
         dash.goto_tab("Manage Plots")
         _add_grid(dash, "Charlie")
         dash.goto_tab("Manage Plots")
         for expected in (
-            ["Bravo", "Detectors", "Charlie"],
-            ["Bravo", "Charlie", "Detectors"],
+            ["Diagnostics", "Detectors", "Bravo", "Charlie"],
+            ["Diagnostics", "Bravo", "Detectors", "Charlie"],
+            ["Diagnostics", "Bravo", "Charlie", "Detectors"],
         ):
             dash.click(".lt-grid-detectors.lt-tool-chevron-down")
             wait_until(
                 dash,
-                lambda expected=expected: dash.tab_names()[-3:] == expected,
+                lambda expected=expected: dash.tab_names()[-4:] == expected,
                 label=f"grid tab order {expected}",
             )
 
-        # Disable the first grid: its tab vanishes, the rest keep working.
+        # Disable a grid ahead of Detectors: its tab vanishes, the rest keep
+        # working.
         dash.click(".lt-grid-bravo.lt-tool-eye")
         wait_until(
             dash,
@@ -241,7 +243,7 @@ def test_remaining_tabs_keep_updating_after_disabling_and_removing_grids():
         dash.goto_tab("Detectors")
         assert_updating(dash, "Detectors tab after disabling first grid")
 
-        # Remove the middle grid of [Bravo (disabled), Charlie, Detectors].
+        # Remove the grid between the disabled Bravo and Detectors.
         dash.goto_tab("Manage Plots")
         dash.click(".lt-grid-charlie.lt-tool-x")
         wait_until(

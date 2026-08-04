@@ -146,7 +146,8 @@ arrives collapsed — no clicking the hamburger, and it survives `page.reload()`
 **Tabs.** The top-level tabs are Bokeh-owned `.bk-tab` divs with no `lt-*` hooks, so
 navigate by visible text (`page.get_by_text("Detectors", exact=True)`). Static tab
 titles are code constants: **Workflows**, **System Status**, **Manage Plots**; further
-tabs are user/fixture plot-grid titles (the dummy fixture adds **Detectors**). Only the
+tabs are user/fixture plot-grid titles (the dummy fixture adds **Detectors** and
+**Diagnostics**). Only the
 static tabs carry a leading icon, keyed to their position, so a bare label identifies a
 plot-grid tab visually — but the icon is a CSS pseudo-element, invisible to text
 locators. With
