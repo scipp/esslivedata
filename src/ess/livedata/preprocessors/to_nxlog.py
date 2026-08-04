@@ -244,7 +244,9 @@ class ToNXlog(Accumulator[LogData, sc.DataArray]):
         # Keep the allocated array to avoid reallocations
 
 
-def nxlog_for_stream(stream: Stream | None, *, name: str = '') -> ToNXlog | None:
+def nxlog_for_stream(
+    stream: Stream | None, *, name: str = '', max_size: int = DEFAULT_MAX_SIZE
+) -> ToNXlog | None:
     """ToNXlog preprocessor for a Device or F144Stream entry, or None.
 
     Maps the two stream types that produce NXlog-shaped time series to a
@@ -255,6 +257,9 @@ def nxlog_for_stream(stream: Stream | None, *, name: str = '') -> ToNXlog | None
     ``name`` seeds the buffer's relocation phase and must be the stream name, so
     that logs sharing a publishing rate do not relocate in lock-step. A stable
     hash is used rather than :func:`hash` so the phase survives restarts.
+
+    ``max_size`` overrides :data:`DEFAULT_MAX_SIZE` for services that read the
+    buffer differently; see ``BACKFILL_MAX_SIZE`` in the timeseries factory.
     """
     phase = zlib.crc32(name.encode())
     if isinstance(stream, Device):
@@ -262,8 +267,9 @@ def nxlog_for_stream(stream: Stream | None, *, name: str = '') -> ToNXlog | None
             attrs={'units': stream.units},
             has_target=stream.target is not None,
             has_idle=stream.idle is not None,
+            max_size=max_size,
             phase=phase,
         )
     if isinstance(stream, F144Stream):
-        return ToNXlog(attrs={'units': stream.units}, phase=phase)
+        return ToNXlog(attrs={'units': stream.units}, max_size=max_size, phase=phase)
     return None

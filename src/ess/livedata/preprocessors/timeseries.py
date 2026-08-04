@@ -26,6 +26,21 @@ logger = structlog.get_logger(__name__)
 #: would have).
 _SYNTHETIC_LOG_SOURCES: frozenset[str] = frozenset({CHOPPER_CASCADE_SOURCE})
 
+#: Retained samples per log in this service, shallower than
+#: :data:`DEFAULT_MAX_SIZE`, which detector and reduction workflows need for their
+#: lookups. Here the buffer has a single consumer: the backfill a job receives on
+#: activation, published as its first ``delta`` (the wavelength-LUT workflow reads
+#: only the newest sample). Retention is therefore a backfill budget, capping both
+#: that message and the RAM held for every log stream, plotted or not. Instruments
+#: declare hundreds of log streams and the dashboard can start a job for each at
+#: one click, which publishes every buffer at once. This keeps a week for a log
+#: ticking once a minute -- the regime long experiments depend on -- and ~160 kB
+#: of backfill for a 14 Hz chopper. Raise it when a concrete requirement for
+#: deeper backfill appears. It must stay well above the samples one stream can
+#: deliver between two service cycles, or they are dropped before publication --
+#: the gap :class:`TimeseriesStreamProcessor` warns about.
+BACKFILL_MAX_SIZE = 10_000
+
 
 class LogdataPreprocessorFactory(
     JobBasedPreprocessorFactoryBase[LogData, sc.DataArray]
@@ -45,16 +60,20 @@ class LogdataPreprocessorFactory(
         match key.kind:
             case StreamKind.DEVICE:
                 return nxlog_for_stream(
-                    self._instrument.streams.get(key.name), name=key.name
+                    self._instrument.streams.get(key.name),
+                    name=key.name,
+                    max_size=BACKFILL_MAX_SIZE,
                 )
             case StreamKind.LOG:
                 accumulator = nxlog_for_stream(
-                    self._instrument.streams.get(key.name), name=key.name
+                    self._instrument.streams.get(key.name),
+                    name=key.name,
+                    max_size=BACKFILL_MAX_SIZE,
                 )
                 if accumulator is not None:
                     return accumulator
                 if key.name in _SYNTHETIC_LOG_SOURCES:
-                    return ToNXlog(attrs={})
+                    return ToNXlog(attrs={}, max_size=BACKFILL_MAX_SIZE)
                 logger.warning(
                     "No attributes found for source name '%s'. "
                     "Messages will be dropped.",

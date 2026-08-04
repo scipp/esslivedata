@@ -2,6 +2,7 @@
 # Copyright (c) 2025 Scipp contributors (https://github.com/scipp)
 import pytest
 import scipp as sc
+from structlog.testing import capture_logs
 
 from ess.livedata.preprocessors.accumulators import LogData
 from ess.livedata.preprocessors.to_nxlog import ToNXlog
@@ -130,3 +131,33 @@ class TestTrimmedBuffer:
             {'log': self.trimmed(nxlog, drop=1)}, start_time=0, end_time=0
         )
         assert values(processor.finalize()) == [4.0]
+
+    def test_trim_past_the_cursor_warns(self, processor, nxlog):
+        push(nxlog, (10, 1.0), (20, 2.0))
+        run_cycle(processor, nxlog)
+
+        # Retention drops t=30 before it is ever published: a silent gap.
+        push(nxlog, (30, 3.0), (40, 4.0))
+        with capture_logs() as captured:
+            processor.accumulate(
+                {'motion1': self.trimmed(nxlog, drop=3)}, start_time=0, end_time=0
+            )
+            processor.finalize()
+
+        assert [entry['event'] for entry in captured] == [
+            'publication_cursor_outside_retained_window'
+        ]
+        assert captured[0]['source_name'] == 'motion1'
+
+    def test_trim_behind_the_cursor_does_not_warn(self, processor, nxlog):
+        push(nxlog, (10, 1.0), (20, 2.0), (30, 3.0))
+        run_cycle(processor, nxlog)
+
+        push(nxlog, (40, 4.0))
+        with capture_logs() as captured:
+            processor.accumulate(
+                {'motion1': self.trimmed(nxlog, drop=1)}, start_time=0, end_time=0
+            )
+            processor.finalize()
+
+        assert captured == []
