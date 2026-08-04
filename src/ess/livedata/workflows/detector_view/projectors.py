@@ -7,8 +7,8 @@ This module provides the Projector protocol and concrete implementations for
 projecting detector events from pixel coordinates to screen coordinates.
 
 Two projection strategies are supported:
-1. GeometricProjector: Uses calibrated positions to project to xy_plane or
-   cylinder_mantle_z coordinates.
+1. GeometricProjector: Uses calibrated positions to project to a plane or a
+   cylinder mantle.
 2. LogicalProjector: Reshapes detector data using fold/slice transforms,
    optionally reducing dimensions.
 """
@@ -48,7 +48,7 @@ class GeometricProjector:
     Projects events using geometric coordinate transformation.
 
     Uses calibrated positions (with optional noise replicas) to project
-    detector pixels to screen coordinates (xy_plane or cylinder_mantle_z).
+    detector pixels to screen coordinates (a plane or a cylinder mantle).
     Bins events instead of histogramming counts, preserving TOF information.
 
     Parameters
@@ -317,7 +317,7 @@ def make_geometric_projector(
     coords:
         Calibrated position with noisy replicas from NeXus workflow.
     projection_type:
-        Type of geometric projection ('xy_plane' or 'cylinder_mantle_z').
+        Type of geometric projection; see ``GeometricViewConfig``.
     resolution:
         Resolution (number of bins) for each screen dimension.
     flip_x:
