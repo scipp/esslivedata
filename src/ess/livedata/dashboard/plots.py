@@ -11,6 +11,12 @@ from typing import Any, ClassVar
 
 import holoviews as hv
 import numpy as np
+
+# holoviews imports pandas lazily during rendering (e.g. the masked-type check
+# in its isfinite). If that first import races another thread's pandas import,
+# the render fails on a partially initialized module (#1192). Import eagerly,
+# before any render thread exists.
+import pandas  # noqa: F401
 import scipp as sc
 from bokeh.models import TeeHead
 from holoviews.core.util import range_pad
@@ -722,9 +728,7 @@ class Plotter:
             result = self._build_result(data, resolver, **kwargs)
         except Exception as e:
             self._range_targets = {}
-            result = hv.Text(0.5, 0.5, f"Error: {e}").opts(
-                text_align='center', text_baseline='middle', responsive=True
-            )
+            result = self._error_placeholder(f"Error: {e}")
 
         # Time bounds drive the cell titlebar's freshness indicator; they are
         # kept off the plot title to avoid minting an OptionTree entry per tick.
@@ -784,6 +788,27 @@ class Plotter:
                 )
             ]
 
+        return self._combine(plots)
+
+    def _error_placeholder(self, message: str) -> hv.Element:
+        """Stand-in frame for a failed render.
+
+        Must share the container type of the plotter's data frames: the
+        session's DynamicMap holds one type per plotter, and a mismatched
+        frame wedges it permanently (#1193). Plotters whose
+        :meth:`_build_result` emits a different frame type override this to
+        match.
+        """
+        return self._combine(
+            [
+                hv.Text(0.5, 0.5, message).opts(
+                    text_align='center', text_baseline='middle', responsive=True
+                )
+            ]
+        )
+
+    def _combine(self, plots: list[hv.Element]) -> hv.Overlay | hv.Layout:
+        """Combine elements into the container type every frame must share."""
         if self.layout_params.combine_mode == 'overlay':
             return hv.Overlay(plots)
         # Always a Layout in layout mode, even for a single dataset, so that

@@ -1568,6 +1568,40 @@ class TestPlotterOverlayMode:
         assert 'No data' in str(text_element.data)
 
 
+class TestRenderErrorPlaceholder:
+    """A failed render must not change the container type of the frame.
+
+    The session's DynamicMap holds one container type per plotter; a bare
+    error placeholder next to Overlay/Layout frames wedges it permanently and
+    the cell never updates again (#1193).
+    """
+
+    @pytest.fixture
+    def poison_data(self):
+        """Data a LinePlotter cannot render: a Curve needs 1-D input."""
+        return sc.DataArray(sc.array(dims=['x', 'y'], values=[[1.0], [2.0]]))
+
+    @pytest.mark.parametrize(
+        ('combine_mode', 'container'),
+        [('overlay', hv.Overlay), ('layout', hv.Layout)],
+    )
+    def test_error_placeholder_uses_same_container_as_data(
+        self, data_key, poison_data, combine_mode, container
+    ):
+        from ess.livedata.dashboard.plot_params import LayoutParams
+
+        params = PlotParams1d(layout=LayoutParams(combine_mode=combine_mode))
+        plotter = plots.LinePlotter.from_params(params)
+
+        plotter.compute({'primary': {data_key: poison_data}})
+        result = plotter.get_cached_state()
+
+        assert isinstance(result, container)
+        text_element = next(iter(result))
+        assert isinstance(text_element, hv.Text)
+        assert 'Error' in str(text_element.data)
+
+
 class TestOverlayUnitConsistency:
     """Layers sharing one figure must share one unit per axis.
 
