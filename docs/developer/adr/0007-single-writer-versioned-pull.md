@@ -9,7 +9,9 @@
 The dashboard runs on two kinds of threads: the shared ingestion thread
 (`DashboardServices._update_loop`, draining Kafka and driving orchestrator
 updates at ~50 ms), and each session's Tornado/Bokeh IOLoop (UI callbacks and
-the 100 ms session poll, under that session's document lock). Layer activation
+the 100 ms session poll, under that session's document lock; the fixed-cadence
+poll has since been replaced by wake ticks plus a slow housekeeping tick — see
+the end of ADR 0005). Layer activation
 runs on the latter — the poll pass calls `PlotDataService.set_active`, so
 activation flushes and Kafka-delta builds enter the same gate from opposite
 threads. Session-bound objects (`Pipe`, `DynamicMap`, Bokeh documents) may only

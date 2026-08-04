@@ -406,6 +406,10 @@ class PlotDataService:
         watching (see ``has_viewers``), so the caller must then rebuild the
         layer from current DataService content.
 
+        The layer need not have a lifecycle snapshot: viewer interest is
+        independent state, so tokens acquired before ``job_started`` are
+        retained rather than dropped.
+
         A ``weakref.finalize`` is attached on first acquire so the token is
         auto-released if the caller is garbage-collected without an explicit
         release. Explicit ``set_active(..., False)`` remains the fast path;
@@ -414,21 +418,26 @@ class PlotDataService:
         """
         key = id(token)
         with self._lock:
+            if not active:
+                # Don't resurrect an entry for a removed layer: releases keep
+                # arriving after ``remove`` (e.g. the session poll's orphan
+                # sweep), and layer ids are never reused.
+                tokens = self._viewers.get(layer_id)
+                if tokens is not None:
+                    tokens.discard(key)
+                return False
             tokens = self._viewers.setdefault(layer_id, set())
             was_active = bool(tokens)
-            if active:
-                tokens.add(key)
-                if (layer_id, key) not in self._finalized_keys:
-                    self._finalized_keys.add((layer_id, key))
-                    # Captures ``key`` (an int) and a bound method, not the
-                    # token itself — so the finalizer does not keep the token
-                    # alive. CPython runs the finalizer before the token's
-                    # memory can be reused for a different object, so an
-                    # ``id()`` collision cannot race with an active token.
-                    weakref.finalize(token, self._release_token, layer_id, key)
-            else:
-                tokens.discard(key)
-            return active and not was_active
+            tokens.add(key)
+            if (layer_id, key) not in self._finalized_keys:
+                self._finalized_keys.add((layer_id, key))
+                # Captures ``key`` (an int) and a bound method, not the
+                # token itself — so the finalizer does not keep the token
+                # alive. CPython runs the finalizer before the token's
+                # memory can be reused for a different object, so an
+                # ``id()`` collision cannot race with an active token.
+                weakref.finalize(token, self._release_token, layer_id, key)
+            return not was_active
 
     def has_viewers(self, layer_id: LayerId) -> bool:
         """Whether any viewer token is held on a layer; gates frame-flush compute."""
