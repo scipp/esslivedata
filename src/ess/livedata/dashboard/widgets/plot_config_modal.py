@@ -405,7 +405,7 @@ class WorkflowAndOutputSelectionStep(WizardStep[None, OutputSelection]):
             options=options,
             orientation='horizontal',
             color='primary',
-            button_style='outline',
+            variant='outline',
             sizing_mode='stretch_width',
             stylesheets=[_NO_TRANSITION_CSS],
         )
@@ -417,7 +417,7 @@ class WorkflowAndOutputSelectionStep(WizardStep[None, OutputSelection]):
             options={},
             orientation='vertical',
             color='primary',
-            button_style='outline',
+            variant='outline',
             sizing_mode='stretch_width',
             stylesheets=[_NO_TRANSITION_CSS],
         )
@@ -429,7 +429,7 @@ class WorkflowAndOutputSelectionStep(WizardStep[None, OutputSelection]):
             options={},
             orientation='vertical',
             color='primary',
-            button_style='outline',
+            variant='outline',
             sizing_mode='stretch_width',
             stylesheets=[_NO_TRANSITION_CSS],
         )
@@ -860,7 +860,7 @@ class PlotterSelectionStep(WizardStep[OutputSelection | None, PlotterSelection])
             value=initial_value,
             orientation='vertical',
             color="primary",
-            button_style="outline",
+            variant="outline",
             sizing_mode='stretch_width',
         )
         self._radio_group.param.watch(self._on_plotter_selection_change, 'value')
