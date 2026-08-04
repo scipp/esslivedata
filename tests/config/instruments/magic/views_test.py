@@ -49,18 +49,20 @@ def test_wire_view_keeps_strip_for_reduction_then_yields_wire(bank: str) -> None
     # reduction_dim='strip' must be present and is reduced by the framework.
     assert 'strip' in transformed.dims
     reduced = transformed.sum('strip')
-    assert reduced.dims == ('wire', 'other')
+    assert reduced.dims == ('wire', 'segment')
     assert reduced.sizes['wire'] == DETECTOR_BANK_SIZES[bank]['wire']
     assert reduced.data.sum().value == da.data.sum().value
 
 
-def test_strip_view_keeps_other_for_reduction_then_yields_strip(bank: str) -> None:
+def test_strip_view_keeps_wire_segment_for_reduction_then_yields_strip(
+    bank: str,
+) -> None:
     da = _raw_counts(bank)
     transformed = get_strip_view(da, bank)
 
-    # reduction_dim='other' must be present and is reduced by the framework.
-    assert 'other' in transformed.dims
-    reduced = transformed.sum('other')
+    # reduction_dim='wire/segment' must be present and is reduced by the framework.
+    assert 'wire/segment' in transformed.dims
+    reduced = transformed.sum('wire/segment')
     assert reduced.dims == ('strip',)
     assert reduced.sizes['strip'] == DETECTOR_BANK_SIZES[bank]['strip']
     assert reduced.data.sum().value == da.data.sum().value

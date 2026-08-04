@@ -38,9 +38,8 @@ DETECTOR_BANK_SIZES: dict[str, dict[str, int]] = {
 def get_wire_view(da: sc.DataArray, source_name: str) -> sc.DataArray:
     """Transform to fold detector data for wire view.
 
-    Folds raw detector data into its logical structure and flattens all
-    dimensions except ``wire`` and ``strip`` into ``other``. The subsequent
-    summing over ``strip`` is handled by the ``reduction_dim`` parameter in
+    Folds raw detector data into its logical structure. The subsequent summing
+    over ``strip`` is handled by the ``reduction_dim`` parameter in
     add_logical_view to preserve binned event structure for histogramming.
 
     Parameters
@@ -53,23 +52,19 @@ def get_wire_view(da: sc.DataArray, source_name: str) -> sc.DataArray:
     Returns
     -------
     :
-        Folded data with dimensions (strip, wire, other).
-        After reduction over ``strip``: (wire, other).
+        Folded data with dimensions (wire, strip, segment).
+        After reduction over ``strip``: (wire, segment).
     """
-    folded = da.fold(dim=da.dim, sizes=DETECTOR_BANK_SIZES[source_name])
-    other_dims = tuple(d for d in folded.dims if d not in ('wire', 'strip'))
-    return folded.transpose(('strip', 'wire', *other_dims)).flatten(
-        other_dims, to='other'
-    )
+    return da.fold(dim=da.dim, sizes=DETECTOR_BANK_SIZES[source_name])
 
 
 def get_strip_view(da: sc.DataArray, source_name: str) -> sc.DataArray:
     """Transform to fold detector data for strip view.
 
-    Folds raw detector data into its logical structure and flattens all non-strip
-    dimensions into ``other``. The subsequent summing over ``other`` is handled by
-    the ``reduction_dim`` parameter in add_logical_view to preserve binned event
-    structure for histogramming.
+    Folds raw detector data into its logical structure and flattens ``wire`` and
+    ``segment`` into a single dimension. The subsequent summing over that
+    dimension is handled by the ``reduction_dim`` parameter in add_logical_view
+    to preserve binned event structure for histogramming.
 
     Parameters
     ----------
@@ -81,11 +76,10 @@ def get_strip_view(da: sc.DataArray, source_name: str) -> sc.DataArray:
     Returns
     -------
     :
-        Folded data with dimensions (other, strip).
-        After reduction over ``other``: (strip,).
+        Folded data with dimensions (wire/segment, strip).
+        After reduction over ``wire/segment``: (strip,).
     """
     folded = da.fold(dim=da.dim, sizes=DETECTOR_BANK_SIZES[source_name])
-    non_strip_dims = tuple(d for d in folded.dims if d != 'strip')
-    return folded.transpose((*non_strip_dims, 'strip')).flatten(
-        non_strip_dims, to='other'
+    return folded.transpose(('wire', 'segment', 'strip')).flatten(
+        ('wire', 'segment'), to='wire/segment'
     )

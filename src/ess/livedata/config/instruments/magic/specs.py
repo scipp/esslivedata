@@ -100,7 +100,7 @@ strip_view_handle = instrument.add_logical_view(
     transform=get_strip_view,
     output_ndim=1,
     roi_support=False,
-    reduction_dim='other',
+    reduction_dim='wire/segment',
 )
 
 # Both banks are vertical (Y-axis) cylinders; project onto the mantle. Pixel
