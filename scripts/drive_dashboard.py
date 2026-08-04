@@ -55,6 +55,7 @@ import sys
 import tempfile
 import time
 import urllib.request
+import warnings
 from collections import deque
 from collections.abc import Iterator
 from contextlib import contextmanager
@@ -87,6 +88,13 @@ _CHROMIUM_ENV = "PLAYWRIGHT_CHROMIUM_EXECUTABLE"
 # budget is this times the retry count; see Dashboard.open_modal for why it is
 # spent across several clicks rather than in one wait.
 MODAL_ATTEMPT_MS = 8000
+# Opening prefix of the warning a recovered modal emits. Retries that hid
+# themselves would make the browser job look healthy and take away the only
+# field measurement of how often the dashboard stalls (#1185), so a recovery is
+# reported even though the test passes. pytest swallows stdout from a passing
+# test, hence a warning: pyproject downgrades this one message from the
+# blanket ``error`` filter so it lands in the run's warnings summary.
+RECOVERY_PREFIX = "modal opened only on attempt"
 # Console lines kept per session. A dashboard session logs steadily, so the tail
 # is what matters and the cap keeps a long run from growing without bound.
 CONSOLE_LIMIT = 200
@@ -195,26 +203,47 @@ class Dashboard:
         click did land, so waiting is the only recovery. Hence the re-click is
         conditional on the trigger still being there.
 
+        Every recovery warns (see :data:`RECOVERY_PREFIX`), naming which of the
+        two it was, so absorbing these does not also hide how often they happen.
+
         Returns the dialog locator. Dismiss with ``page.keyboard.press("Escape")``
         (a ModalEscapeCloser widget makes Escape work from initial focus) or by
         clicking ``.pnx-dialog-close``.
         """
         dialog = self.page.locator("[role=dialog]").first
         self.click(trigger, retries=retries)
+        reclicks = 0
         for attempt in range(retries):
             try:
                 dialog.wait_for(state="visible", timeout=MODAL_ATTEMPT_MS)
-                return dialog
             except PlaywrightTimeoutError:
                 if attempt == retries - 1:
                     raise
-                try:
-                    if self._locate(trigger).is_visible():
-                        self._locate(trigger).click(timeout=4000)
-                except PlaywrightTimeoutError:
-                    # A re-click that cannot land is not the failure worth
-                    # reporting; let the next wait raise on the missing dialog.
-                    pass
+                reclicks += self._reclick_if_present(trigger)
+            else:
+                if attempt:
+                    how = f"{reclicks} re-click(s)" if reclicks else "waiting alone"
+                    warnings.warn(
+                        f"{RECOVERY_PREFIX} {attempt + 1} of {retries} via {how}"
+                        f" ({trigger!r}): the session was slow to act on the"
+                        f" click (#1185) or dropped it (#1174)",
+                        stacklevel=2,
+                    )
+                return dialog
+
+    def _reclick_if_present(self, trigger: str | Locator) -> bool:
+        """Re-issue a click whose effect never arrived. True if one was sent.
+
+        A failed re-click is not the failure worth reporting -- the caller's
+        next wait raises on the missing dialog, which says more.
+        """
+        try:
+            if not self._locate(trigger).is_visible():
+                return False
+            self._locate(trigger).click(timeout=4000)
+        except PlaywrightTimeoutError:
+            return False
+        return True
 
     def screenshot(self, path: str | Path, *, full_page: bool = True) -> None:
         self.page.screenshot(path=str(path), full_page=full_page)
