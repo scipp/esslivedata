@@ -1,13 +1,13 @@
 # SPDX-License-Identifier: BSD-3-Clause
 # Copyright (c) 2025 Scipp contributors (https://github.com/scipp)
-"""Tests for PlotDataService and LayerStateMachine."""
+"""Tests for PlotDataService and LayerSnapshot."""
 
 from uuid import uuid4
 
 from ess.livedata.dashboard.plot_data_service import (
     LayerId,
+    LayerSnapshot,
     LayerState,
-    LayerStateMachine,
     PlotDataService,
 )
 
@@ -33,169 +33,151 @@ class FakePlotter:
         pass
 
 
-class TestLayerStateMachineVersionInvariant:
+class TestLayerSnapshotVersionInvariant:
     """Test version invariant: plotter change always increments version."""
 
     def test_job_started_increments_version_from_initial_state(self):
-        """Version increments when job_started called on a fresh machine."""
-        state = LayerStateMachine()
+        """Version increments when job_started called on a fresh snapshot."""
+        state = LayerSnapshot()
         assert state.version == 0
         assert state.state == LayerState.WAITING_FOR_DATA
 
         plotter = FakePlotter()
-        state.job_started(plotter)
+        state = state.job_started(plotter)
 
         assert state.version == 1
         assert state.plotter is plotter
 
     def test_job_started_increments_version_from_stopped(self):
         """Version increments when job_started called from STOPPED."""
-        state = LayerStateMachine()
         plotter_a = FakePlotter()
         plotter_a.compute({'data': 1})
 
-        state.job_started(plotter_a)
-        state.data_arrived()
-        state.job_stopped()
+        state = LayerSnapshot().job_started(plotter_a)
+        state = state.data_arrived().job_stopped()
 
         version_after_stop = state.version
         assert state.state == LayerState.STOPPED
 
         # Simulate workflow restart with new plotter
         plotter_b = FakePlotter()
-        state.job_started(plotter_b)
+        state = state.job_started(plotter_b)
 
         assert state.version == version_after_stop + 1
         assert state.plotter is plotter_b
 
     def test_job_started_increments_version_from_ready(self):
         """Version increments when job_started called from READY (workflow restart)."""
-        state = LayerStateMachine()
         plotter_a = FakePlotter()
         plotter_a.compute({'data': 1})
 
-        state.job_started(plotter_a)
-        state.data_arrived()
+        state = LayerSnapshot().job_started(plotter_a)
+        state = state.data_arrived()
 
         version_after_ready = state.version
         assert state.state == LayerState.READY
 
         # Simulate workflow restart with new plotter while still running
         plotter_b = FakePlotter()
-        state.job_started(plotter_b)
+        state = state.job_started(plotter_b)
 
         assert state.version == version_after_ready + 1
         assert state.plotter is plotter_b
 
     def test_job_started_increments_version_from_waiting_for_data(self):
         """Version increments when plotter replaced while waiting for data."""
-        state = LayerStateMachine()
-        plotter_a = FakePlotter()
-        state.job_started(plotter_a)
+        state = LayerSnapshot().job_started(FakePlotter())
 
         version_after_first_start = state.version
         assert state.state == LayerState.WAITING_FOR_DATA
 
         # Workflow restarted before data arrived
         plotter_b = FakePlotter()
-        state.job_started(plotter_b)
+        state = state.job_started(plotter_b)
 
         assert state.version == version_after_first_start + 1
         assert state.plotter is plotter_b
 
     def test_job_started_increments_version_from_error(self):
         """Version increments when job_started called from ERROR state."""
-        state = LayerStateMachine()
-        state.error_occurred("test error")
+        state = LayerSnapshot().error_occurred("test error")
 
         version_after_error = state.version
         assert state.state == LayerState.ERROR
 
         plotter = FakePlotter()
-        state.job_started(plotter)
+        state = state.job_started(plotter)
 
         assert state.version == version_after_error + 1
         assert state.plotter is plotter
 
     def test_job_started_with_same_plotter_still_increments_version(self):
         """Version increments even when called with the same plotter instance."""
-        state = LayerStateMachine()
         plotter = FakePlotter()
 
-        state.job_started(plotter)
+        state = LayerSnapshot().job_started(plotter)
         version_after_first = state.version
 
-        state.job_stopped()
-        state.job_started(plotter)  # Same plotter instance
+        state = state.job_stopped()
+        state = state.job_started(plotter)  # Same plotter instance
 
         assert state.version == version_after_first + 2  # +1 for stop, +1 for start
 
 
-class TestLayerStateMachineOtherTransitions:
+class TestLayerSnapshotOtherTransitions:
     """Tests for other state transitions that also affect version."""
 
     def test_data_arrived_increments_version(self):
         """Version increments when data arrives."""
-        state = LayerStateMachine()
-        plotter = FakePlotter()
-        state.job_started(plotter)
+        state = LayerSnapshot().job_started(FakePlotter())
         version_before = state.version
 
-        state.data_arrived()
+        state = state.data_arrived()
 
         assert state.version == version_before + 1
         assert state.state == LayerState.READY
 
     def test_data_arrived_no_op_when_already_ready(self):
-        """Subsequent data arrivals don't increment version."""
-        state = LayerStateMachine()
-        plotter = FakePlotter()
-        state.job_started(plotter)
-        state.data_arrived()
-        version_at_ready = state.version
+        """Subsequent data arrivals are rejected, leaving the snapshot in place."""
+        state = LayerSnapshot().job_started(FakePlotter())
+        state = state.data_arrived()
 
         # Subsequent data arrivals are no-ops
-        state.data_arrived()
-        state.data_arrived()
-
-        assert state.version == version_at_ready
+        assert state.data_arrived() is None
+        assert state.data_arrived() is None
 
     def test_job_stopped_increments_version(self):
         """Version increments when job is stopped."""
-        state = LayerStateMachine()
-        plotter = FakePlotter()
-        state.job_started(plotter)
-        state.data_arrived()
+        state = LayerSnapshot().job_started(FakePlotter())
+        state = state.data_arrived()
         version_before = state.version
 
-        state.job_stopped()
+        state = state.job_stopped()
 
         assert state.version == version_before + 1
         assert state.state == LayerState.STOPPED
 
     def test_error_occurred_increments_version(self):
         """Version increments when error occurs."""
-        state = LayerStateMachine()
+        state = LayerSnapshot()
         version_before = state.version
 
-        state.error_occurred("test error")
+        state = state.error_occurred("test error")
 
         assert state.version == version_before + 1
         assert state.state == LayerState.ERROR
 
 
-class TestLayerStateMachineErrorRecovery:
+class TestLayerSnapshotErrorRecovery:
     """ERROR must be left by evidence the layer works, not only by a restart."""
 
     def test_data_arrived_recovers_from_error(self):
         """A completed build proves the fault cleared, so the layer heals."""
-        state = LayerStateMachine()
-        plotter = FakePlotter()
-        state.job_started(plotter)
-        state.error_occurred("boom")
+        state = LayerSnapshot().job_started(FakePlotter())
+        state = state.error_occurred("boom")
         version_at_error = state.version
 
-        state.data_arrived()
+        state = state.data_arrived()
 
         assert state.state == LayerState.READY
         assert state.error_message is None
@@ -204,31 +186,25 @@ class TestLayerStateMachineErrorRecovery:
     def test_recovered_layer_displays_its_plot(self):
         """The point of recovering: the cell stops showing the error
         placeholder for a layer whose data computes fine."""
-        state = LayerStateMachine()
         plotter = FakePlotter()
-        state.job_started(plotter)
-        state.error_occurred("boom")
+        state = LayerSnapshot().job_started(plotter)
+        state = state.error_occurred("boom")
         plotter.compute({'data': 1})
         assert not state.has_displayable_plot()
 
-        state.data_arrived()
+        state = state.data_arrived()
 
         assert state.has_displayable_plot()
 
     def test_job_stopped_leaves_error_intact(self):
         """A stop is not evidence the fault cleared; the error needs attention
         and outranks the frozen-snapshot presentation of STOPPED."""
-        state = LayerStateMachine()
-        plotter = FakePlotter()
-        state.job_started(plotter)
-        state.error_occurred("boom")
-        version_at_error = state.version
+        state = LayerSnapshot().job_started(FakePlotter())
+        state = state.error_occurred("boom")
 
-        state.job_stopped()
-
+        assert state.job_stopped() is None
         assert state.state == LayerState.ERROR
         assert state.error_message == "boom"
-        assert state.version == version_at_error
 
 
 class TestPlotDataService:
@@ -358,74 +334,149 @@ class _Token:
 
 
 class TestLayerViewerGate:
-    """Tests for the viewer gate on LayerStateMachine.
+    """Tests for the viewer gate on PlotDataService.
 
-    The gate tracks viewer interest tokens. On 0→1 transition (first viewer),
-    the orchestrator rebuilds the layer from DataService; on 1→0 (last
-    viewer released), the layer is skipped at frame flushes.
+    The gate tracks viewer interest tokens, keyed per layer. It is held apart
+    from the lifecycle snapshots because interest is per (session, layer)
+    while lifecycle state is per layer. On the 0→1 transition (first viewer)
+    the orchestrator rebuilds the layer from DataService; on 1→0 (last viewer
+    released), the layer is skipped at frame flushes.
     """
 
-    def _ready_state(self) -> tuple[LayerStateMachine, FakePlotter]:
-        state = LayerStateMachine()
-        plotter = FakePlotter()
-        state.job_started(plotter)
-        return state, plotter
+    def _started_layer(self) -> tuple[PlotDataService, LayerId]:
+        service = PlotDataService()
+        layer_id = LayerId(uuid4())
+        service.job_started(layer_id, FakePlotter())
+        return service, layer_id
 
     def test_set_active_reports_zero_to_one_transition(self):
         """set_active returns True on the 0→1 transition only."""
-        state, _plotter = self._ready_state()
+        service, layer_id = self._started_layer()
         token = _Token()
-        assert state.set_active(token, True) is True
+        assert service.set_active(layer_id, token, True) is True
         # Re-activating the same token is not a transition.
-        assert state.set_active(token, True) is False
-        state.set_active(token, False)
-        assert state.set_active(token, True) is True
+        assert service.set_active(layer_id, token, True) is False
+        service.set_active(layer_id, token, False)
+        assert service.set_active(layer_id, token, True) is True
 
     def test_has_viewers_tracks_active_tokens(self):
         """has_viewers reflects whether any viewer holds a token."""
-        state, _plotter = self._ready_state()
+        service, layer_id = self._started_layer()
         t1, t2 = _Token(), _Token()
-        assert not state.has_viewers
-        state.set_active(t1, True)
-        state.set_active(t2, True)
-        assert state.has_viewers
-        state.set_active(t1, False)
-        assert state.has_viewers
-        state.set_active(t2, False)
-        assert not state.has_viewers
+        assert not service.has_viewers(layer_id)
+        service.set_active(layer_id, t1, True)
+        service.set_active(layer_id, t2, True)
+        assert service.has_viewers(layer_id)
+        service.set_active(layer_id, t1, False)
+        assert service.has_viewers(layer_id)
+        service.set_active(layer_id, t2, False)
+        assert not service.has_viewers(layer_id)
 
     def test_multiple_tokens_keep_layer_active(self):
         """Layer stays active while any viewer holds a token."""
-        state, _plotter = self._ready_state()
+        service, layer_id = self._started_layer()
         t1, t2 = _Token(), _Token()
-        assert state.set_active(t1, True) is True
+        assert service.set_active(layer_id, t1, True) is True
         # Second token while already active is not a transition.
-        assert state.set_active(t2, True) is False
-        assert state.has_viewers
+        assert service.set_active(layer_id, t2, True) is False
+        assert service.has_viewers(layer_id)
         # Release one; still active (t2 holds it).
-        state.set_active(t1, False)
-        assert state.has_viewers
+        service.set_active(layer_id, t1, False)
+        assert service.has_viewers(layer_id)
         # Release the second; gate closes.
-        state.set_active(t2, False)
-        assert not state.has_viewers
+        service.set_active(layer_id, t2, False)
+        assert not service.has_viewers(layer_id)
+
+    def test_gate_is_per_layer(self):
+        """A viewer on one layer must not open another layer's gate."""
+        service, layer_id = self._started_layer()
+        other_id = LayerId(uuid4())
+        service.job_started(other_id, FakePlotter())
+        token = _Token()
+
+        service.set_active(layer_id, token, True)
+
+        assert service.has_viewers(layer_id)
+        assert not service.has_viewers(other_id)
 
     def test_release_of_unknown_token_is_noop(self):
         """Releasing a token never acquired is safe."""
-        state, _plotter = self._ready_state()
+        service, layer_id = self._started_layer()
         unknown = _Token()
-        assert state.set_active(unknown, False) is False
-        assert not state.has_viewers
+        assert service.set_active(layer_id, unknown, False) is False
+        assert not service.has_viewers(layer_id)
+
+    def test_has_viewers_on_unknown_layer_is_false(self):
+        service = PlotDataService()
+        assert not service.has_viewers(LayerId(uuid4()))
+
+    def test_remove_drops_viewer_gate(self):
+        """Removing a layer must not leave its gate open for a recreated id."""
+        service, layer_id = self._started_layer()
+        token = _Token()
+        service.set_active(layer_id, token, True)
+
+        service.remove(layer_id)
+
+        assert not service.has_viewers(layer_id)
 
     def test_token_auto_released_on_garbage_collection(self):
         """Finalizer closes gate if caller is gc'd without explicit release."""
         import gc
 
-        state, _plotter = self._ready_state()
+        service, layer_id = self._started_layer()
         token = _Token()
-        state.set_active(token, True)
-        assert state.has_viewers
+        service.set_active(layer_id, token, True)
+        assert service.has_viewers(layer_id)
         # Drop the only reference and force gc; finalizer must release the key.
         del token
         gc.collect()
         # Gate is now closed.
-        assert not state.has_viewers
+        assert not service.has_viewers(layer_id)
+
+
+class TestSnapshotIdentity:
+    """Snapshot identity is the orchestrator's staleness check.
+
+    ``PlotOrchestrator`` captures a snapshot before a pull and, after compute,
+    re-reads it and compares by identity to decide whether its result is still
+    current. That only works if an effective transition always yields a new
+    object and a rejected one never does.
+    """
+
+    def test_effective_transition_replaces_snapshot(self):
+        service = PlotDataService()
+        layer_id = LayerId(uuid4())
+        service.job_started(layer_id, FakePlotter())
+        before = service.get(layer_id)
+
+        service.data_arrived(layer_id)
+
+        assert service.get(layer_id) is not before
+
+    def test_rejected_transition_keeps_snapshot(self):
+        service = PlotDataService()
+        layer_id = LayerId(uuid4())
+        service.job_started(layer_id, FakePlotter())
+        service.data_arrived(layer_id)
+        before = service.get(layer_id)
+
+        service.data_arrived(layer_id)  # no-op: already READY
+
+        assert service.get(layer_id) is before
+
+    def test_plotter_swap_replaces_snapshot(self):
+        """The pairing #1060 was about: a swap must invalidate a held capture."""
+        service = PlotDataService()
+        layer_id = LayerId(uuid4())
+        service.job_started(layer_id, FakePlotter())
+        captured = service.get(layer_id)
+
+        service.job_started(layer_id, FakePlotter())
+
+        current = service.get(layer_id)
+        assert current is not captured
+        assert captured.plotter is not current.plotter
+        # The capture still describes the state it was taken in.
+        assert captured.version == 1
+        assert current.version == 2

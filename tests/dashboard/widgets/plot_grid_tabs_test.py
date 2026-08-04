@@ -438,11 +438,11 @@ class TestShutdown:
         layer_id = _register_active_layer(
             plot_orchestrator, plot_data_service, plot_grid_tabs
         )
-        assert plot_data_service.get(layer_id).has_viewers
+        assert plot_data_service.has_viewers(layer_id)
 
         plot_grid_tabs.sever()
 
-        assert not plot_data_service.get(layer_id).has_viewers
+        assert not plot_data_service.has_viewers(layer_id)
         assert plot_grid_tabs._session_layers == {}
 
     def test_sever_is_idempotent(self, plot_grid_tabs):
@@ -527,7 +527,7 @@ class TestReaperTeardown:
         )
         # Hold an active viewer token so we can observe tier-2 release it.
         layer_id = _register_active_layer(plot_orchestrator, plot_data_service, widget)
-        assert plot_data_service.get(layer_id).has_viewers
+        assert plot_data_service.has_viewers(layer_id)
 
         cleaned = registry.cleanup_stale_sessions()
 
@@ -535,7 +535,7 @@ class TestReaperTeardown:
         # Tier 2 ran inline on the reaper thread: the session's viewer token was
         # released and its session-layer records cleared. There is no lifecycle
         # subscription to sever under polling.
-        assert not plot_data_service.get(layer_id).has_viewers
+        assert not plot_data_service.has_viewers(layer_id)
         assert widget._session_layers == {}
         # Tier 1 was NOT run on the reaper thread: the periodic callback is not
         # stopped here, it is scheduled onto the session's IOLoop instead.
