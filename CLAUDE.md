@@ -56,8 +56,17 @@ Uses [Copier](https://copier.readthedocs.io/) with [Scipp template](https://gith
 
 Services require Kafka (`docker-compose up kafka`). Use `--dev` for simplified topic structure.
 
+The whole stack runs in one terminal via `esslivedata-dev <instrument>` (or
+`python -m ess.livedata.scripts.dev`): it creates the topics, starts the fakes, the
+backend services and the dashboard, prefixes their logs per service, and stops them
+together on Ctrl-C. Name groups (`detectors`, `monitors`, `reduction`, `timeseries`) to
+run a subset, `--reload` to restart the stack on source changes. Per-machine NeXus
+files to replay come from a git-ignored `dev.toml` (`[nexus_files]` keyed by
+instrument), so switching instrument stays a one-token change.
+
 Services: `fake_monitors`, `fake_detectors`, `fake_logdata`, `monitor_data`, `detector_data`, `data_reduction`, `timeseries`.
-Run as: `python -m ess.livedata.services.<name> --instrument dummy [--dev]`
+Run individually as: `python -m ess.livedata.services.<name> --instrument dummy [--dev]`
+The fakes always publish to the dev topic names, so consuming services need `--dev`.
 
 Dashboard: `python -m ess.livedata.dashboard.reduction --instrument dummy`
 
