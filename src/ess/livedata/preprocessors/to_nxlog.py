@@ -25,6 +25,16 @@ DEFAULT_MAX_SIZE = 1_000_000
 DEFAULT_MAX_AGE = sc.scalar(30, unit='day')
 
 
+def _empty_with_capacity(var: sc.Variable, capacity: int) -> sc.Variable:
+    """Uninitialized variable like ``var`` but with ``capacity`` time points."""
+    return sc.empty(
+        sizes={**var.sizes, 'time': capacity},
+        unit=var.unit,
+        dtype=var.dtype,
+        with_variances=var.variances is not None,
+    )
+
+
 class ToNXlog(Accumulator[LogData, sc.DataArray]):
     """
     Preprocessor for log data.
@@ -145,22 +155,17 @@ class ToNXlog(Accumulator[LogData, sc.DataArray]):
         that are still reading it. The old buffer stays alive for as long as any
         such view does.
         """
-        template = self._timeseries
-        live = self._end - self._start
-        data = sc.empty(
-            dims=template.data.dims,
-            shape=(capacity, *template.data.shape[1:]),
-            unit=template.data.unit,
-            dtype=template.data.dtype,
-            with_variances=template.data.variances is not None,
-        )
-        data['time', :live] = template.data['time', self._start : self._end]
+        old = self._timeseries['time', self._start : self._end]
+        live = old.sizes['time']
+        # Data and coords are copied variable by variable: assigning a DataArray
+        # slice would compare the coords of both sides, which the uninitialized
+        # destination cannot satisfy.
+        data = _empty_with_capacity(old.data, capacity)
+        data['time', :live] = old.data
         coords = {}
-        for name, coord in template.coords.items():
-            new = sc.empty(
-                dims=coord.dims, shape=(capacity,), unit=coord.unit, dtype=coord.dtype
-            )
-            new['time', :live] = coord['time', self._start : self._end]
+        for name, coord in old.coords.items():
+            new = _empty_with_capacity(coord, capacity)
+            new['time', :live] = coord
             coords[name] = new
         self._timeseries = sc.DataArray(data, coords=coords)
         self._start = 0
