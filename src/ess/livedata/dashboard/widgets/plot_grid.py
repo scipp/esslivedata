@@ -260,7 +260,10 @@ class PlotGrid:
             large_font=large_font,
         )
 
-        # Create a button that fills the cell
+        # Create a button that fills the cell. The position hook makes the
+        # two-click place gesture addressable for automation; empty and
+        # occupied cells are hooked apart (occupied ones carry `lt-cell-*`,
+        # see cell.py) because a selector must be able to demand an empty one.
         button = pn.widgets.Button(
             label=appearance.label,
             sizing_mode='stretch_both',
@@ -269,6 +272,7 @@ class PlotGrid:
             styles=appearance.styles,
             stylesheets=appearance.stylesheets,
             margin=GridCellStyles.CELL_MARGIN,
+            css_classes=['lt-empty-cell', f'lt-empty-cell-r{row}c{col}'],
         )
 
         # Store reference for in-place updates

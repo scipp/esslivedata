@@ -4,6 +4,7 @@
 
 from ess.livedata.dashboard.widgets.buttons import (
     ButtonStyles,
+    create_download_button,
     create_tool_button,
 )
 
@@ -32,3 +33,16 @@ def test_tool_button_appends_caller_css_classes() -> None:
     assert 'lt-tool' in button.css_classes
     assert 'lt-tool-x' in button.css_classes
     assert 'lt-wf-monitor_histogram' in button.css_classes
+
+
+def test_download_button_carries_stable_css_classes() -> None:
+    # A FileDownload renders as a label-less icon like any other tool button,
+    # so it follows the same hook convention.
+    button = create_download_button(
+        filename='grid.yaml',
+        callback=lambda: '',
+        css_classes=['lt-grid-detectors'],
+    )
+    assert 'lt-tool' in button.css_classes
+    assert 'lt-tool-download' in button.css_classes
+    assert 'lt-grid-detectors' in button.css_classes
