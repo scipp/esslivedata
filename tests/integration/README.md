@@ -2,6 +2,12 @@
 
 Integration tests verify end-to-end behavior of ESSlivedata by running actual services (as subprocesses) and communicating through real Kafka. Ensure Kafka is running (`docker-compose up kafka`) before running tests.
 
+## Scope
+
+Every test here needs a broker, is marked `@pytest.mark.integration`, and asserts something *only the wire can show*: that a command became a durable Kafka record, that a real service consumed it, that a real service's output is what the dashboard consumes. Behavior that a fake transport or an injected clock can pin belongs in `tests/dashboard/` or `tests/services/` — an integration test that duplicates it buys nothing and costs tens of seconds of wall clock. Tests that need no broker do not belong here at all: they would silently run in the default suite while `tox -e integration` never selects them.
+
+`helpers.py` is a helper library rather than a test module, so it has its own unit tests in `helpers_test.py` (unmarked, broker-free, and intentionally part of the default suite).
+
 ## Pytest Markers
 
 - **`@pytest.mark.integration`**: Marks a test as an integration test
@@ -22,6 +28,7 @@ See `helpers.py` for utilities that wait for specific jobs:
 - `wait_for_job_data()` - Wait for data to arrive for specific job(s)
 - `wait_for_job_statuses()` - Wait for status updates for specific job(s)
 - `wait_for_condition()` - Generic condition waiter
+- `topic_high_watermark()`, `wait_for_watermark_advance()`, `wait_for_watermark_stall()` - Observe a topic's offsets without consuming, to prove a message was (or was not) written
 
 **Always use helpers instead of `time.sleep()` or manual `backend.update()` loops.**
 

@@ -15,6 +15,13 @@ from ess.livedata.config.workflow_spec import DataKey, JobId, WorkflowId
 logger = logging.getLogger(__name__)
 
 
+#: Time allowed for the broker to answer a metadata request before diagnostics
+#: give up. Diagnostics run on the failure path, where the broker being gone is
+#: one of the hypotheses, so the probe must not add a per-topic stall to every
+#: timeout.
+_BROKER_PROBE_TIMEOUT = 3.0
+
+
 class WaitTimeout(Exception):
     """Raised when waiting for a condition times out."""
 
@@ -28,13 +35,18 @@ def dump_diagnostics(backend: Any, instrument: str = 'dummy') -> None:
     distinguishing "backend never published" from "dashboard never consumed".
     Lines are prefixed DIAG so CI failure annotations can grep them.
     """
-    from confluent_kafka import Consumer, TopicPartition
+    from confluent_kafka import Consumer, KafkaException, TopicPartition
 
     logger.warning("DIAG data_service keys: %s", list(backend.data_service))
     logger.warning("DIAG job_statuses: %s", backend.job_service.job_statuses)
     config = load_config(namespace=config_names.kafka, env='dev')
     consumer = Consumer({**config, 'group.id': f'diag-{uuid.uuid4()}'})
     try:
+        try:
+            consumer.list_topics(timeout=_BROKER_PROBE_TIMEOUT)
+        except KafkaException as e:
+            logger.warning("DIAG broker unreachable, no topic offsets: %s", e)
+            return
         for suffix in (
             'beam_monitor',
             'detector',

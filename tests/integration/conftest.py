@@ -86,7 +86,7 @@ def create_service_group(
     logger.info("Starting services for instrument: %s", instrument)
 
     try:
-        services.start_all(startup_delay=10.0)
+        services.start_all()
         yield services
     finally:
         services.stop_all()
