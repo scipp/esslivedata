@@ -276,8 +276,7 @@ def test_multi_layer_cell_gear_picks_the_layer_to_configure():
         # first: the source selector is pre-filled with the chosen layer's
         # source. (The dialog's own inner_text is empty -- Panel renders each
         # widget into its own shadow root -- so assert on the chip itself.)
-        entries[1].click()
-        page.locator("[role=dialog]").first.wait_for(state="visible", timeout=10000)
+        dash.open_modal(entries[1])
         chip = page.locator(".choices__list--multiple .choices__item").first
         chip.wait_for(state="visible", timeout=10000)
         assert chip.inner_text().startswith("monitor2")
