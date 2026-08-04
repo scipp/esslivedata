@@ -3,6 +3,7 @@
 """Tests for interactive ROI request plotters."""
 
 import holoviews as hv
+import numpy as np
 import pytest
 
 from ess.livedata.config.models import RectangleROI
@@ -96,3 +97,26 @@ def test_edit_persists_and_second_presenter_is_seeded_from_it(
         'x1': [5.0],
         'y1': [6.0],
     }
+
+
+@pytest.mark.parametrize('count', [0, 1, 2])
+def test_edit_from_browser_synced_arrays_is_applied(
+    computed_plotter: RectanglesRequestPlotter, count: int
+) -> None:
+    """The browser syncs the BoxEdit columns back as numpy arrays.
+
+    Their truth value raises for every length but one, so a truthiness guard
+    dropped whole edits (silently -- the handler logs and swallows).
+    """
+    presenter = computed_plotter.create_presenter()
+
+    presenter._handle_edit(
+        {
+            'x0': np.arange(count, dtype=float),
+            'x1': np.arange(count, dtype=float) + 4.0,
+            'y0': np.arange(count, dtype=float),
+            'y1': np.arange(count, dtype=float) + 4.0,
+        }
+    )
+
+    assert len(computed_plotter._current_rois) == count
