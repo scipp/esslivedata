@@ -110,6 +110,12 @@ class TablePlotter(Plotter):
             precision=params.format.precision,
         )
 
+    def _error_placeholder(self, message: str) -> hv.Element:
+        """Bare Text, matching this plotter's uncombined no-data placeholder."""
+        return hv.Text(0.5, 0.5, message).opts(
+            text_align='center', text_baseline='middle', **self._sizing_opts
+        )
+
     def _build_result(
         self,
         data: dict[DataKey, sc.DataArray],
