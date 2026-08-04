@@ -8,11 +8,22 @@ import uuid
 from collections.abc import Callable
 from typing import Any
 
+import pydantic
+
 from ess.livedata.config import config_names
 from ess.livedata.config.config_loader import load_config
 from ess.livedata.config.workflow_spec import DataKey, JobId, WorkflowId
 
 logger = logging.getLogger(__name__)
+
+
+class NoParams(pydantic.BaseModel):
+    """Config to start a workflow whose spec declares ``params=None``.
+
+    ``WorkflowController.start_workflow`` takes a model and dumps it, so a
+    parameterless workflow needs an empty one — the same empty params dict the
+    dashboard's no-parameters configuration widget produces.
+    """
 
 
 #: Time allowed for the broker to answer a metadata request before diagnostics
