@@ -47,11 +47,17 @@ class LayerState(Enum):
     STOPPED → WAITING_FOR_DATA           [job_started(plotter)]
     STOPPED → ERROR                      [error_occurred(msg)]
 
+    ERROR → READY                        [data_arrived()]
     ERROR → WAITING_FOR_DATA             [job_started(plotter)]
 
     A layer in STOPPED may still display retained data: ``data_arrived``
     while STOPPED is a no-op and ``has_displayable_plot`` reports True once
     the plotter holds a computed frame.
+
+    ERROR is left by evidence that the layer works again — a completed build
+    — or by a fresh job. A stop is not such evidence, so ``job_stopped`` while
+    in ERROR is a no-op: an error needs attention and outranks the frozen-
+    snapshot presentation of STOPPED.
     """
 
     WAITING_FOR_DATA = auto()
@@ -132,7 +138,13 @@ class LayerSnapshot:
         """
         Transition to READY when data arrives.
 
-        Valid from: WAITING_FOR_DATA.
+        Valid from: WAITING_FOR_DATA and ERROR. Recovering from ERROR is
+        deliberate: extraction and compute keep running for an errored layer,
+        so a completed build proves the fault cleared and a transient failure
+        must not blank the plot until the workflow restarts. An intermittent
+        fault therefore makes the cell alternate between plot and error —
+        noisier than settling, but not stale.
+
         No-op from READY (data continues to arrive after first update) and
         from STOPPED (a layer bound to a stopped workflow's retained data
         renders it but stays STOPPED).
@@ -140,34 +152,31 @@ class LayerSnapshot:
         Returns
         -------
         :
-            The successor snapshot, or None if this was a no-op or invalid.
+            The successor snapshot, or None if this was a no-op.
         """
         if self.state in {LayerState.READY, LayerState.STOPPED}:
             return None
 
-        if self.state != LayerState.WAITING_FOR_DATA:
-            logger.warning(
-                "Invalid transition: data_arrived() called in state %s (expected %s)",
-                self.state.name,
-                LayerState.WAITING_FOR_DATA.name,
-            )
-            return None
-
         return dataclasses.replace(
-            self, state=LayerState.READY, version=self.version + 1
+            self, state=LayerState.READY, version=self.version + 1, error_message=None
         )
 
     def job_stopped(self) -> LayerSnapshot | None:
         """
         Transition to STOPPED when job is stopped.
 
-        Valid from: WAITING_FOR_DATA, READY.
+        Valid from: WAITING_FOR_DATA, READY. No-op from ERROR, where the error
+        is the more informative presentation and is kept.
 
         Returns
         -------
         :
-            The successor snapshot, or None if invalid from the current state.
+            The successor snapshot, or None if a no-op or invalid from the
+            current state.
         """
+        if self.state is LayerState.ERROR:
+            return None
+
         valid_from = {LayerState.WAITING_FOR_DATA, LayerState.READY}
         if self.state not in valid_from:
             logger.warning(
