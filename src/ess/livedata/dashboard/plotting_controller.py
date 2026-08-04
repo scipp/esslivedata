@@ -208,12 +208,11 @@ class PlottingController:
             DataService.unregister_subscriber() to stop receiving updates
             (e.g., when workflow restarts).
         """
+        spec = plotter_registry.get_spec(plot_name)
         # Validate params if dict, pass through if already a model
         if isinstance(params, dict):
-            spec = plotter_registry.get_spec(plot_name)
-            params = spec.params(**params) if spec.params else pydantic.BaseModel()
+            params = spec.params(**params)
 
-        spec = plotter_registry.get_spec(plot_name)
         window = params.time_window if isinstance(params, TimeWindowMixin) else None
 
         # Flatten keys for extractor creation

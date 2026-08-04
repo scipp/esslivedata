@@ -1400,9 +1400,6 @@ class PlotOrchestrator:
             self._logger.warning('Skipping cell with unknown plotter %s', plot_name)
             return None
 
-        if spec.params is None:
-            return pydantic.BaseModel()
-
         try:
             return spec.params(**params)
         except Exception:
