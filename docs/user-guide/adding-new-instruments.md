@@ -512,7 +512,7 @@ For more details see [ess.reduce.live.raw](https://scipp.github.io/essreduce/gen
 ### Geometry Files
 
 Geometry files are needed when:
-- Using geometric projections (`xy_plane`, `cylinder_mantle_z`)
+- Using geometric projections (`xy_plane`, `cylinder_mantle_y`, `cylinder_mantle_z`)
 - Loading `detector_number` from NeXus (if not provided explicitly)
 
 If you configure `detector_number` explicitly via `configure_detector()`, no geometry file is needed.

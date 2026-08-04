@@ -332,8 +332,9 @@ def make_geometric_projector(
     # Use existing projection functions from essreduce
     if projection_type == 'xy_plane':
         projected_coords = make_xy_plane_coords(coords)
-    elif projection_type == 'cylinder_mantle_z':
-        projected_coords = make_cylinder_mantle_coords(coords)
+    elif projection_type in ('cylinder_mantle_y', 'cylinder_mantle_z'):
+        # The cylinder axis ('y' or 'z') is the last character of the name.
+        projected_coords = make_cylinder_mantle_coords(coords, axis=projection_type[-1])
     else:
         raise ValueError(f"Unknown projection type: {projection_type}")
 

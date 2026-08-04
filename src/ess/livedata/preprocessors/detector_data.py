@@ -80,6 +80,7 @@ _registry = {
     'geometry-tbl-2025-12-03.nxs': 'md5:040a70659155eb386245755455ee3e62',
     'geometry-tbl-2026-07-01.nxs': 'md5:81535e5468a6907e47b97c4cb8e1fd3c',
     'geometry-estia-2025-12-16.nxs': 'md5:07d33010189a50ee46ee5f649f848ca5',
+    'geometry-magic-2026-08-03.nxs': 'md5:d74c943d7b80c81916df2d23eb4d8045',
 }
 
 
