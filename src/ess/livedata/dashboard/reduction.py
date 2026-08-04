@@ -10,6 +10,7 @@ from urllib.request import urlopen
 import holoviews as hv
 import panel as pn
 from holoviews.plotting.bokeh.plot import LayoutPlot
+from holoviews.plotting.util import process_cmap
 from panel.io.resources import CDN_DIST
 from panel.theme.material import Material
 
@@ -51,6 +52,13 @@ ANNOUNCEMENTS_URL = (
 
 pn.extension('holoviews', 'modal', notifications=True, template='material')
 hv.extension('bokeh')
+
+# The first colormap resolution walks every provider, and colorcet's import
+# registers hundreds of colormaps with matplotlib, each miss paying difflib
+# suggestion generation -- ~2.5 s of CPU. Lazily that lands on a session's
+# IOLoop during its first plot render, blocking every request for seconds
+# (#1185). Resolve one cmap now to pay it here, at process startup.
+process_cmap('viridis')
 
 # Remove Bokeh logo from Layout toolbars by patching LayoutPlot.initialize_plot
 
