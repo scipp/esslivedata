@@ -1,5 +1,6 @@
 # SPDX-License-Identifier: BSD-3-Clause
 # Copyright (c) 2025 Scipp contributors (https://github.com/scipp)
+import numpy as np
 import pytest
 import scipp as sc
 from scipp.testing import assert_identical
@@ -62,7 +63,9 @@ def test_to_nxlog_get_multiple_values():
 
     # Test timestamps are correct relative to start time
     start_time = sc.epoch(unit='ns')
-    expected_times = [start_time.value + t for t in [1000000, 2000000, 3000000]]
+    expected_times = [
+        start_time.value + np.timedelta64(t, 'ns') for t in [1000000, 2000000, 3000000]
+    ]
     expected_time_coord = sc.array(dims=['time'], values=expected_times, unit='ns')
     assert_identical(result.coords['time'], expected_time_coord)
 
@@ -145,7 +148,9 @@ def test_to_nxlog_add_values_with_increasing_timestamps():
     )
 
     start_time = sc.epoch(unit='ns')
-    expected_times = [start_time.value + t for t in [1000000, 2000000, 3000000]]
+    expected_times = [
+        start_time.value + np.timedelta64(t, 'ns') for t in [1000000, 2000000, 3000000]
+    ]
     expected_time_coord = sc.array(dims=['time'], values=expected_times, unit='ns')
     assert_identical(result.coords['time'], expected_time_coord)
 
@@ -182,7 +187,8 @@ def test_capacity_expansion_with_many_adds():
     assert result.sizes["time"] == 19
     expected_times = [10, 20, 30, 40, 50, 60, 70] + [i * 10 for i in range(8, 20)]
     expected_time_values = [
-        sc.datetime('1970-01-01T00:00:00.000000', unit='ns').value + t
+        sc.datetime('1970-01-01T00:00:00.000000', unit='ns').value
+        + np.timedelta64(t, 'ns')
         for t in expected_times
     ]
     assert_identical(
@@ -303,7 +309,9 @@ def test_to_nxlog_array_data_1d():
     )
 
     start_time = sc.epoch(unit='ns')
-    expected_times = [start_time.value + t for t in [1000000, 2000000]]
+    expected_times = [
+        start_time.value + np.timedelta64(t, 'ns') for t in [1000000, 2000000]
+    ]
     expected_time_coord = sc.array(dims=['time'], values=expected_times, unit='ns')
     assert_identical(result.coords['time'], expected_time_coord)
 
