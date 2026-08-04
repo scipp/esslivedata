@@ -29,6 +29,7 @@ See `helpers.py` for utilities that wait for specific jobs:
 - `wait_for_job_statuses()` - Wait for status updates for specific job(s)
 - `wait_for_condition()` - Generic condition waiter
 - `topic_high_watermark()`, `wait_for_watermark_advance()`, `wait_for_watermark_stall()` - Observe a topic's offsets without consuming, to prove a message was (or was not) written
+- `NoParams` - Config model for starting a workflow whose spec declares `params=None`
 
 **Always use helpers instead of `time.sleep()` or manual `backend.update()` loops.**
 

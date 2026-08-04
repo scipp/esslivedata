@@ -221,6 +221,11 @@ class ServiceProcess:
         args = self._build_command_args()
         logger.info("Starting service: %s with args: %s", self.service_module, args)
 
+        # Readiness is detected by matching captured output, so a restarted
+        # process must not inherit the previous run's readiness messages.
+        self._stdout_lines.clear()
+        self._stderr_lines.clear()
+
         self.process = subprocess.Popen(  # noqa: S603
             args,
             stdout=subprocess.PIPE,
