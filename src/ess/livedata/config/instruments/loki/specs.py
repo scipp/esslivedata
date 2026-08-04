@@ -18,13 +18,16 @@ from ess.livedata.config import (
     name_streams,
 )
 from ess.livedata.config.workflow_spec import (
+    DETECTORS,
     MONITORS,
     AuxInput,
     AuxSources,
     WorkflowOutputsBase,
 )
 from ess.livedata.workflows.detector_view_specs import (
-    register_detector_view_spec,
+    DetectorROIAuxSources,
+    DetectorViewOutputs,
+    DetectorViewParams,
 )
 from ess.livedata.workflows.monitor_workflow_specs import (
     MonitorDataParams,
@@ -255,10 +258,16 @@ instrument.add_logical_view(
     output_ndim=1,
 )
 
-xy_projection_handle = register_detector_view_spec(
-    instrument=instrument,
-    projection='xy_plane',
+xy_projection_handle = instrument.register_spec(
+    group=DETECTORS,
+    name='detector_xy_projection',
+    version=1,
+    title='Detector XY Projection',
+    description='Projection of a detector bank onto an XY-plane.',
     source_names=detector_names,
+    aux_sources=DetectorROIAuxSources(),
+    params=DetectorViewParams,
+    outputs=DetectorViewOutputs,
 )
 
 # Register tube view for all detector banks

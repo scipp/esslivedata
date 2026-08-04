@@ -89,7 +89,7 @@ class GeometricViewConfig:
         is per-screen-pixel; document this caveat at registration.
     """
 
-    projection_type: Literal['xy_plane', 'cylinder_mantle_z']
+    projection_type: Literal['xy_plane', 'cylinder_mantle_y', 'cylinder_mantle_z']
     resolution: dict[str, int]
     pixel_noise: Literal['cylindrical'] | sc.Variable | None = None
     flip_x: bool = False
@@ -154,7 +154,7 @@ ReductionDim = NewType('ReductionDim', str | list[str] | None)
 # Projection type for geometric views
 ProjectionType = NewType(
     'ProjectionType',
-    str | None,  # Literal['xy_plane', 'cylinder_mantle_z'] | None
+    str | None,  # GeometricViewConfig.projection_type, or None
 )
 """Type of geometric projection to use, or None for logical view."""
 

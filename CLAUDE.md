@@ -54,10 +54,15 @@ Uses [Copier](https://copier.readthedocs.io/) with [Scipp template](https://gith
 
 ### Running Services Locally
 
-Services require Kafka (`docker-compose up kafka`). Use `--dev` for simplified topic structure.
+Services require Kafka (`docker-compose up kafka`), which the devcontainer does not have.
+Use `--dev` for simplified topic structure. The fakes always publish to the dev topic
+names, so consuming services need `--dev` too, or they subscribe to production topics
+and see nothing.
 
 Services: `fake_monitors`, `fake_detectors`, `fake_logdata`, `monitor_data`, `detector_data`, `data_reduction`, `timeseries`.
-Run as: `python -m ess.livedata.services.<name> --instrument dummy [--dev]`
+Run as: `python -m ess.livedata.services.<name> --instrument dummy [--dev]`, or the whole
+stack in one terminal with `esslivedata-dev <instrument>` (see the
+`ess.livedata.scripts.dev` docstring).
 
 Dashboard: `python -m ess.livedata.dashboard.reduction --instrument dummy`
 

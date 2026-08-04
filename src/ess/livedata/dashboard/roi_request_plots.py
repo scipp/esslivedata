@@ -107,7 +107,9 @@ class RectangleConverter:
         :
             Dictionary mapping box index to RectangleROI. Empty boxes are skipped.
         """
-        if not data or not data.get("x0"):
+        # Length, not truthiness: the browser syncs the columns back as numpy
+        # arrays, whose truth value raises for every length but one.
+        if len(data.get("x0", ())) == 0:
             return {}
 
         x0_list = data.get("x0", [])
@@ -229,7 +231,7 @@ class PolygonConverter:
         :
             Dictionary mapping polygon index to PolygonROI. Empty polygons are skipped.
         """
-        if not data or not data.get("xs"):
+        if len(data.get("xs", ())) == 0:
             return {}
 
         xs_list = data.get("xs", [])
