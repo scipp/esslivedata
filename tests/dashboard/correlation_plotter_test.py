@@ -23,7 +23,7 @@ from ess.livedata.dashboard.correlation_plotter import (
 )
 from ess.livedata.dashboard.extractors import FullHistoryExtractor
 from ess.livedata.dashboard.plot_params import PlotScaleParams, PlotScaleParams2d
-from ess.livedata.dashboard.plots import ImagePlotter, LinePlotter
+from ess.livedata.dashboard.plots import ImagePlotter, LinePlotter, TitleResolver
 from ess.livedata.dashboard.temporal_buffers import TemporalBuffer
 
 hv.extension('bokeh')
@@ -292,6 +292,118 @@ class TestCorrelationHistogramPlotter:
         )
 
         assert histogram_of(plotter)['values'].sum() == 30.0
+
+
+class TestHistogramValues:
+    """Exact bin edges, bin contents, units and labels of the rendered histogram.
+
+    The correlation join, the binning and the optional rate normalization all
+    produce a plausible-looking histogram when they are wrong.
+    """
+
+    def _compute_1d(
+        self, normalize: bool, values: list[float]
+    ) -> CorrelationHistogramPlotter:
+        """Histogram ``values`` sampled 50 ms after each of three axis readings."""
+        plotter = CorrelationHistogramPlotter(
+            axes=[AxisSpec(role=X_AXIS, name='position', bins=2)],
+            normalize=normalize,
+            renderer=_make_line_renderer(),
+        )
+        plotter.compute(
+            {
+                PRIMARY: {
+                    _make_result_key('detector'): make_source_data(
+                        times=[150, 250, 350], values=values
+                    )
+                },
+                X_AXIS: {
+                    _make_result_key('position'): make_axis_data(
+                        times=[100, 200, 300], values=[1.0, 2.0, 3.0]
+                    )
+                },
+            },
+            title_resolver=TitleResolver(output=lambda _: 'Total counts'),
+        )
+        return plotter
+
+    def test_bin_edges_and_contents_are_exact(self):
+        """Two bins spanning 1 m to 3 m, filled by the joined axis value."""
+        plotter = self._compute_1d(normalize=False, values=[10.0, 20.0, 30.0])
+
+        data = histogram_of(plotter)
+        np.testing.assert_allclose(data['position'], [1.0, 2.0, 3.0])
+        # 10 counts join to 1 m; 20 and 30 join to 2 m and 3 m, one bin.
+        np.testing.assert_array_equal(data['values'], [10.0, 50.0])
+
+    def test_axis_dimension_carries_name_unit_and_output_title(self):
+        plotter = self._compute_1d(normalize=False, values=[10.0, 20.0, 30.0])
+
+        (histogram,) = plotter.get_cached_state()
+        assert histogram.kdims[0].name == 'position'
+        assert histogram.kdims[0].unit == 'm'
+        assert histogram.vdims[0].label == 'Total counts'
+        assert histogram.vdims[0].unit == 'counts'
+
+    def test_per_second_normalization_divides_by_the_sample_interval(self):
+        """Counts become a rate over the interval to the next sample.
+
+        The trailing sample has no successor and takes the median interval.
+        Bins then average the rates they hold rather than summing them.
+        """
+        plotter = self._compute_1d(normalize=True, values=[10.0, 20.0, 30.0])
+
+        (histogram,) = plotter.get_cached_state()
+        # Samples are 100 ms apart: 10, 20, 30 counts are 100, 200, 300 counts/s,
+        # and the upper bin averages the latter two.
+        np.testing.assert_allclose(histogram.dimension_values(1), [100.0, 250.0])
+        assert histogram.vdims[0].unit == 'counts/s'
+
+    def test_2d_histogram_maps_axes_to_rows_and_columns(self):
+        """Y is the row axis and X the column axis; swapping them transposes.
+
+        Each of four points sits in its own cell, so a transposition shows up in
+        the values rather than only in the axis labels.
+        """
+        plotter = CorrelationHistogram2dPlotter(
+            CorrelationHistogram2dParams(
+                bins=Bin2dParams(
+                    x_axis_source='position',
+                    x_bins=2,
+                    y_axis_source='temperature',
+                    y_bins=2,
+                )
+            )
+        )
+        times = [100, 200, 300, 400]
+        plotter.compute(
+            {
+                PRIMARY: {
+                    _make_result_key('detector'): make_source_data(
+                        times=[t + 50 for t in times], values=[1.0, 2.0, 3.0, 4.0]
+                    )
+                },
+                X_AXIS: {
+                    _make_result_key('motor'): make_axis_data(
+                        times=times, values=[1.0, 2.0, 1.0, 2.0]
+                    )
+                },
+                Y_AXIS: {
+                    _make_result_key('sample'): make_axis_data(
+                        times=times, values=[10.0, 10.0, 20.0, 20.0], value_unit='K'
+                    )
+                },
+            }
+        )
+
+        (image,) = plotter.get_cached_state()
+        np.testing.assert_array_equal(
+            image.dimension_values(2, flat=False), [[1.0, 2.0], [3.0, 4.0]]
+        )
+        assert [(dim.label, dim.unit) for dim in image.kdims] == [
+            ('position', 'm'),
+            ('temperature', 'K'),
+        ]
 
 
 class TestDataPrecedingAxisHistory:

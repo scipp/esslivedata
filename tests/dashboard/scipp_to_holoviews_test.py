@@ -509,6 +509,22 @@ class TestConvertImage2d:
         assert result.kdims[0].name == 'x'
         assert result.kdims[1].name == 'y'
 
+    def test_units_and_name_reach_every_dimension(self):
+        # An Image drops the coords into a regular grid, so its units are the
+        # only remaining record of what the axes and the colorbar measure.
+        x_coord = sc.array(dims=['x'], values=[0, 1, 2], unit='m')
+        y_coord = sc.array(dims=['y'], values=[10, 20], unit='s')
+        values = sc.array(dims=['y', 'x'], values=[[1, 2, 3], [4, 5, 6]], unit='counts')
+        data = sc.DataArray(
+            data=values, coords={'x': x_coord, 'y': y_coord}, name='intensity'
+        )
+
+        result = scipp_to_holoviews.convert_image_2d(data)
+
+        assert [dim.unit for dim in result.kdims] == ['m', 's']
+        assert result.vdims[0].unit == 'counts'
+        assert result.vdims[0].label == 'intensity'
+
     def test_with_bin_edges(self):
         # Test with bin edges
         x_edges = sc.array(dims=['x'], values=[0, 1, 2, 3], unit='m')
