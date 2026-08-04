@@ -788,19 +788,16 @@ class TestNavigation:
         assert wizard.radio('Workflow').value == IMAGE_ID
         assert wizard.radio('Output').value == 'image'
 
-    def test_back_resets_the_plotter_choice_but_not_the_output_choice(
+    def test_back_keeps_the_plotter_choice_and_the_output_choice(
         self, open_wizard
     ) -> None:
-        # Entering the plotter step rebuilds its radio group and preselects the
-        # first offered plotter, so stepping back and forth drops a non-default
-        # choice; the workflow/output step keeps its widgets and its selection.
         wizard = open_wizard()
         wizard.click('Next')
         wizard.radio('Plotter Type').value = 'overlay_1d'
         wizard.click('Next')
 
         wizard.click('Back')
-        assert wizard.radio('Plotter Type').value == 'image'
+        assert wizard.radio('Plotter Type').value == 'overlay_1d'
         wizard.click('Back')
         assert wizard.radio('Workflow').value == IMAGE_ID
 
@@ -810,6 +807,7 @@ class TestNavigation:
         wizard = open_wizard()
         wizard.click('Next')
         assert 'image' in wizard.radio('Plotter Type').options.values()
+        wizard.radio('Plotter Type').value = 'overlay_1d'
 
         wizard.click('Back')
         wizard.radio('Group').value = MONITORS.name
@@ -819,6 +817,8 @@ class TestNavigation:
         offered = set(wizard.radio('Plotter Type').options.values())
         assert 'image' not in offered
         assert 'lines' in offered
+        # A choice made for the previous output does not outlive that output.
+        assert wizard.radio('Plotter Type').value != 'overlay_1d'
 
     def test_cancelling_yields_no_config(self, open_wizard) -> None:
         wizard = open_wizard()

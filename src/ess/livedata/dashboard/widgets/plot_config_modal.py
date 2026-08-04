@@ -704,6 +704,7 @@ class PlotterSelectionStep(WizardStep[OutputSelection | None, PlotterSelection])
         self._initial_config = initial_config
         self._instrument_config = instrument_config
         self._output_selection: OutputSelection | None = None
+        self._rendered_output: OutputSelection | None = None
         self._selected_plot_name: str | None = None
         self._radio_group: pn.widgets.RadioButtonGroup | None = None
         self._content_container = pn.Column(sizing_mode='stretch_width')
@@ -776,10 +777,18 @@ class PlotterSelectionStep(WizardStep[OutputSelection | None, PlotterSelection])
                 workflow_id=self._initial_config.workflow_id,
                 view_name=self._initial_config.view_name,
             )
-        self._update_plotter_selection()
+        # Rebuilding discards the user's plotter and axis choices, so rebuild only
+        # when the output they were derived from changed. Same guard as the
+        # configuration step, which recreates its panel only on a changed selection.
+        if (
+            self._output_selection is None
+            or self._output_selection != self._rendered_output
+        ):
+            self._update_plotter_selection()
 
     def _update_plotter_selection(self) -> None:
         """Update plotter selection based on workflow and output selection."""
+        self._rendered_output = self._output_selection
         self._content_container.clear()
 
         if self._output_selection is None:
