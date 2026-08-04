@@ -11,6 +11,7 @@ from typing import Any, Protocol, runtime_checkable
 
 from ess.livedata.config.stream import ChainPatchBinding, ContextBinding
 from ess.livedata.config.workflow_spec import (
+    NoParams,
     WorkflowConfig,
     WorkflowId,
     WorkflowSpec,
@@ -253,19 +254,19 @@ class WorkflowFactory(Mapping[WorkflowId, WorkflowSpec]):
             type_hints = typing.get_type_hints(factory, globalns=factory.__globals__)
             inferred_params = type_hints.get('params', None)
 
-            if spec.params is not None and inferred_params is not None:
-                # Spec params may be a subclass of the factory's declared type
-                # (e.g. dynamic subclasses produced by ``make_detector_view_params``).
-                if not issubclass(spec.params, inferred_params):
-                    raise TypeError(f"Params type mismatch for {workflow_id}")
-            elif spec.params is None and inferred_params is not None:
-                raise TypeError(
-                    f"Factory has params but spec has none for {workflow_id}"
-                )
-            elif spec.params is not None and inferred_params is None:
+            if spec.params is NoParams:
+                if inferred_params is not None:
+                    raise TypeError(
+                        f"Factory has params but spec has none for {workflow_id}"
+                    )
+            elif inferred_params is None:
                 raise TypeError(
                     f"Spec has params but factory has none for {workflow_id}"
                 )
+            # Spec params may be a subclass of the factory's declared type
+            # (e.g. dynamic subclasses produced by ``make_detector_view_params``).
+            elif not issubclass(spec.params, inferred_params):
+                raise TypeError(f"Params type mismatch for {workflow_id}")
 
             self._registrations[workflow_id] = dataclasses.replace(
                 self._registrations[workflow_id], factory=factory
@@ -352,15 +353,9 @@ class WorkflowFactory(Mapping[WorkflowId, WorkflowSpec]):
 
         reg = self._registrations[workflow_id]
         workflow_spec = reg.spec
-        if (model_cls := workflow_spec.params) is None:
-            if config.params:
-                raise ValueError(
-                    f"Workflow '{workflow_id}' does not require parameters, "
-                    f"but received: {config.params}"
-                )
-            workflow_params = None
-        else:
-            workflow_params = model_cls.model_validate(config.params)
+        # NoParams forbids extra fields, so params sent to a workflow that takes
+        # none are rejected here rather than silently dropped.
+        workflow_params = workflow_spec.params.model_validate(config.params)
 
         # Validate aux_sources configuration
         if workflow_spec.aux_sources is None:
@@ -394,7 +389,7 @@ class WorkflowFactory(Mapping[WorkflowId, WorkflowSpec]):
         kwargs = {}
         if 'source_name' in sig.parameters:
             kwargs['source_name'] = source_name
-        if workflow_params and 'params' in sig.parameters:
+        if 'params' in sig.parameters:
             kwargs['params'] = workflow_params
         if 'aux_source_names' in sig.parameters:
             kwargs['aux_source_names'] = aux_source_names or {}

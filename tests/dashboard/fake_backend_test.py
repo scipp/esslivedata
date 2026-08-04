@@ -108,7 +108,6 @@ def _spec(outputs: type[WorkflowOutputsBase], name: str) -> WorkflowSpec:
         version=1,
         title=name,
         description='',
-        params=None,
         outputs=outputs,
         group=REDUCTION,
         source_names=['source1'],

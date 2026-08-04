@@ -57,7 +57,7 @@ class WorkflowConfigurationAdapter(ConfigurationAdapter[pydantic.BaseModel]):
         """Map each param field name to the titles of the outputs it shapes."""
         return self._spec.get_param_output_titles()
 
-    def model_class(self) -> type[pydantic.BaseModel] | None:
+    def model_class(self) -> type[pydantic.BaseModel]:
         """Get workflow parameters model class."""
         return self._spec.params
 

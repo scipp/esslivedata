@@ -115,7 +115,6 @@ def _spec(*, source_names: list[str], device_outputs: dict[str, str]) -> Workflo
         version=1,
         title='WF',
         description='',
-        params=None,
         outputs=_ScalarOutputs,
         device_outputs=device_outputs,
         source_names=source_names,

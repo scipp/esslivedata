@@ -174,7 +174,7 @@ class ConfigurationWidget:
         except Exception as e:
             return ErrorWidget(str(e))
 
-        if model_class is None or not model_class.model_fields:
+        if not model_class.model_fields:
             return NoParamsWidget()
         return ModelWidget(
             model_class=model_class,

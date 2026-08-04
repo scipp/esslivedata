@@ -48,7 +48,6 @@ _WORKFLOW_REGISTRY = {
         version=1,
         title='Test Workflow',
         description='test',
-        params=None,
         outputs=_TestOutputs,
         group=REDUCTION,
     )

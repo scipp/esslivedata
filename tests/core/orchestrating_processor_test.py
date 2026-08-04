@@ -310,7 +310,6 @@ class TestEmptyBatchContextReplay:
             version=1,
             title='Replay probe',
             source_names=[CHOPPER_CASCADE_SOURCE],
-            params=None,
             outputs=_ReplayOutputs,
         )
         handle.attach_factory()(lambda: FakeProcessor())

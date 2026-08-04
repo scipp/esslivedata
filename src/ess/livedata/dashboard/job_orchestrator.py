@@ -294,19 +294,17 @@ class JobOrchestrator:
                 )
             else:
                 # Use defaults from spec, converting to dicts
-                params = {}
-                if spec.params is not None:
-                    try:
-                        params = spec.params().model_dump(mode='json')
-                    except pydantic.ValidationError:
-                        # Params model has required fields without defaults
-                        # These workflows don't use JobOrchestrator staging
-                        self._workflows[workflow_id] = WorkflowState()
-                        logger.debug(
-                            'Initialized workflow %s (params cannot be instantiated)',
-                            workflow_id,
-                        )
-                        continue
+                try:
+                    params = spec.params().model_dump(mode='json')
+                except pydantic.ValidationError:
+                    # Params model has required fields without defaults
+                    # These workflows don't use JobOrchestrator staging
+                    self._workflows[workflow_id] = WorkflowState()
+                    logger.debug(
+                        'Initialized workflow %s (params cannot be instantiated)',
+                        workflow_id,
+                    )
+                    continue
 
                 aux_source_names = {}
                 if spec.aux_sources is not None:
