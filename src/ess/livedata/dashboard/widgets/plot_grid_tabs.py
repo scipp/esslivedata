@@ -818,14 +818,6 @@ class PlotGridTabs:
                         )
                         continue
 
-                    if is_active:
-                        bounds = (
-                            state.plotter.time_bounds
-                            if state.plotter is not None
-                            else None
-                        )
-                        active_cell_bounds.setdefault(cell_id, {})[layer_id] = bounds
-
                     # Get or create session layer for version tracking
                     session_layer = self._session_layers.get(layer_id)
                     if session_layer is None:
@@ -847,6 +839,19 @@ class PlotGridTabs:
                     self._orchestrator.activate_layer(
                         layer_id, session_layer, is_active
                     )
+
+                    # Sample time bounds after activation, not before: the 0→1
+                    # transition above is what computes the layer's first frame,
+                    # and with it the bounds. Reading earlier would hand the
+                    # pill a pre-compute None on the very pass that reveals the
+                    # cell, blanking it until a later freshness-due poll.
+                    if is_active:
+                        bounds = (
+                            state.plotter.time_bounds
+                            if state.plotter is not None
+                            else None
+                        )
+                        active_cell_bounds.setdefault(cell_id, {})[layer_id] = bounds
 
                     # Push pending data to the browser. Runs after activate_layer
                     # so a tab-switch 0→1 build is sent on this same tick. Gated
@@ -916,10 +921,18 @@ class PlotGridTabs:
         # cadence -- ticking it every poll just animates aging with no new info.
         # The per-layer time/lag row only changes on a new frame, so it tracks
         # the data flush too.
+        #
+        # A rebuild is due as well: a rebuilt cell carries brand-new, blank
+        # panes, so without this it would show no age and no time range until
+        # the next frame or stall tick, however good the data behind it is.
         now_mono = time.monotonic()
         stalled = now_mono - self._last_freshness_update
-        freshness_due = flush_due or stalled >= _FRESHNESS_STALL_INTERVAL_S
-        if freshness_due:
+        rebuilt = bool(cells_to_rebuild)
+        freshness_due = flush_due or rebuilt or stalled >= _FRESHNESS_STALL_INTERVAL_S
+        # Only start the stall interval over when there was something to update:
+        # a pass over a hidden or empty grid would otherwise consume the very
+        # interval a rebuild landing just after it depends on.
+        if freshness_due and active_cell_bounds:
             self._last_freshness_update = now_mono
         for cell_id, per_layer in active_cell_bounds.items():
             cell_widget = self._cells.get(cell_id)
@@ -927,7 +940,7 @@ class PlotGridTabs:
                 continue
             if freshness_due:
                 cell_widget.update_freshness(per_layer)
-            if flush_due:
+            if flush_due or rebuilt:
                 for layer_id, bounds in per_layer.items():
                     cell_widget.update_layer_time(layer_id, bounds)
 

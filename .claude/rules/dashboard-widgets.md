@@ -103,6 +103,26 @@ UI, then copying the persisted `workflow_configs.yaml` (strip the runtime
 `current_job` key, keep `jobs`) and `plot_configs.yaml` from the config
 dir back into the fixture; `ui_config_fixtures_test.py` guards against drift.
 
+**Diagnosing a failure.** When a block driving a session raises, everything is printed
+to **stdout** — browser console tail, page state (active tab, dialog count and how many
+of them are visible, `lt-*` hook inventory), a base64 JPEG screenshot, and the
+dashboard's server log tail. Nothing is uploaded as a CI artifact, deliberately: the
+artifact endpoint is firewalled in the devcontainer, whereas stdout lands in the pytest
+failure report and in the run-level log zip, which is allowlisted and readable mid-run
+(`gh api repos/scipp/esslivedata/actions/runs/<id>/logs > run.zip`). Recover the
+screenshot with the `base64 -d` pipeline the log prints next to it.
+
+`dialogs` vs `dialogs_visible` is the first thing to read on a modal timeout: a dialog
+present but not visible means it rendered and was hidden, none at all means the click
+never reached its handler.
+
+One console line is a red herring: `pageerror: Cannot read properties of undefined
+(reading 'parent_style')` fires on **every** run, passing or failing. It is
+[bokeh#15274](https://github.com/bokeh/bokeh/issues/15274) — our plot grid is a
+`pn.GridSpec`, i.e. a Bokeh `GridBox`, and Panel emits a `children` change and the
+recomputed sizing props in one patch, which that view indexes inconsistently. Real bug
+(it drops the rest of the patch), but it is not the cause of any intermittent failure.
+
 **Ports.** `fake_dashboard(...)` without a port takes one the OS reports free — how the
 browser tests launch, so two checkouts (or a suite next to an interactive dashboard) can
 run at once. Do not hand a test a port literal; they collide silently across branches.
@@ -197,6 +217,18 @@ needed (lazy creation) or use `dynamic=True` containers.
 Note that `dynamic=True` only gates Bokeh model creation. Python-side periodic callbacks
 (e.g., `SessionUpdater` custom handlers) still run for all registered widgets regardless
 of which tab is visible. Use an `is_visible` predicate to skip refresh work for hidden tabs.
+
+### Markup panes built after page load
+
+Panel keeps a markup pane (`pn.pane.HTML`, `Markdown`, `Str`) behind
+`visibility: hidden` until every `<link>` stylesheet in it has fired `load`, and arms
+that reveal exactly once, while rendering. A pane built after page load first renders
+against `cdn.holoviz.org` URLs — its model is not in a document yet, so Panel falls back
+to the CDN — and Panel then swaps those links for the locally served copies. The load
+events the reveal waits on belong to the discarded links, so the pane can stay invisible
+for the rest of the session while its model, text and layout are all correct and
+live-updating (#1154, holoviz/panel#8696). `dashboard/design.py` overrides the latch for
+the whole app; a template built without `LivedataDesign` brings the bug back.
 
 ## Colors and styling
 

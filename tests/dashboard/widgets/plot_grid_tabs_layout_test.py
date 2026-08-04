@@ -372,6 +372,63 @@ class TestFreshnessIndicator:
         # The cell pill must still show with two layers.
         assert 'border-radius' in cell_widget.freshness_pane.object
 
+    def test_rebuilt_cell_refills_its_time_panes_on_the_same_poll(
+        self, plot_orchestrator, plot_data_service, plot_grid_tabs
+    ):
+        """A rebuild mints blank panes, so the poll that rebuilds must refill them.
+
+        Otherwise the cell shows no age and no time range until the next frame
+        or the stall tick, however good the data behind it is.
+        """
+        grid_id = plot_orchestrator.add_grid(title='Test', nrows=2, ncols=2)
+        layer_id = _inject_layer(
+            plot_orchestrator,
+            plot_data_service,
+            grid_id,
+            FakePlotter(cached_state=_make_layout(), time_bounds=_make_bounds(2.0)),
+        )
+        plot_grid_tabs._poll_for_plot_updates()
+        plot_grid_tabs.tabs.active = plot_grid_tabs._static_tabs_count
+        plot_grid_tabs._poll_for_plot_updates()
+
+        # A new plotter bumps the layer version, so the next poll rebuilds the
+        # cell -- without a new frame, which would have refreshed it anyway.
+        plot_data_service.job_started(
+            layer_id,
+            FakePlotter(cached_state=_make_layout(), time_bounds=_make_bounds(3.0)),
+        )
+        plot_data_service.data_arrived(layer_id)
+        plot_grid_tabs._poll_for_plot_updates()
+
+        (cell_widget,) = plot_grid_tabs._cells.values()
+        assert 'border-radius' in cell_widget.freshness_pane.object
+        assert 'Lag:' in cell_widget.layer_time_panes[layer_id].object
+
+    def test_poll_updating_nothing_does_not_consume_the_stall_interval(
+        self, plot_orchestrator, plot_data_service, plot_grid_tabs
+    ):
+        """The stall clock budgets the next update; it is not a poll counter.
+
+        Polls over a hidden grid update no cell. Restarting the interval on
+        them would make a cell revealed just afterwards wait a further full
+        interval before the stall path could fill its pill.
+        """
+        grid_id = plot_orchestrator.add_grid(title='Test', nrows=2, ncols=2)
+        _inject_layer(
+            plot_orchestrator,
+            plot_data_service,
+            grid_id,
+            FakePlotter(cached_state=_make_layout(), time_bounds=_make_bounds(2.0)),
+        )
+        # Leave a non-plot static tab active so the grid is hidden.
+        plot_grid_tabs.tabs.active = 0
+        stall_clock = plot_grid_tabs._last_freshness_update
+
+        plot_grid_tabs._poll_for_plot_updates()
+        plot_grid_tabs._poll_for_plot_updates()
+
+        assert plot_grid_tabs._last_freshness_update == stall_clock
+
     def test_hidden_grid_does_not_update_freshness(
         self, plot_orchestrator, plot_data_service, plot_grid_tabs
     ):

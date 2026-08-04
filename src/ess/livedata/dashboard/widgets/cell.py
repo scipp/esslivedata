@@ -29,7 +29,7 @@ from ..cell_autoscale import CellAutoscaleController, build_controller_from_laye
 from ..format_utils import extract_error_summary
 from ..frame_aspect import pane_sizing_mode
 from ..hover_suspend import make_hover_suspend_hook
-from ..plot_data_service import LayerState, LayerStateMachine, PlotDataService
+from ..plot_data_service import LayerSnapshot, LayerState, PlotDataService
 from ..plot_orchestrator import (
     CellGeometry,
     CellId,
@@ -318,9 +318,9 @@ class CellWidget:
             self._autoscale_controller.dispose()
             self._autoscale_controller = None
 
-    def _layer_states(self) -> dict[LayerId, LayerStateMachine]:
+    def _layer_states(self) -> dict[LayerId, LayerSnapshot]:
         """Get layer states from PlotDataService for all layers in the cell."""
-        result: dict[LayerId, LayerStateMachine] = {}
+        result: dict[LayerId, LayerSnapshot] = {}
         for layer in self._cell.layers:
             state = self._deps.plot_data_service.get(layer.layer_id)
             if state is None:
@@ -333,7 +333,7 @@ class CellWidget:
         return result
 
     def _freeze_pill_for_status(
-        self, layer_states: dict[LayerId, LayerStateMachine]
+        self, layer_states: dict[LayerId, LayerSnapshot]
     ) -> None:
         """Freeze the titlebar pill to a status pill when the cell is not live.
 
@@ -470,7 +470,7 @@ class CellWidget:
 
     def _build_layer_toolbars(
         self,
-        layer_states: dict[LayerId, LayerStateMachine],
+        layer_states: dict[LayerId, LayerSnapshot],
     ) -> list[pn.Row | pn.Column]:
         """
         Create per-layer info rows (title + time range) for the cell's layers.
@@ -528,7 +528,7 @@ class CellWidget:
 
     def _build_placeholder(
         self,
-        layer_states: dict[LayerId, LayerStateMachine],
+        layer_states: dict[LayerId, LayerSnapshot],
     ) -> pn.pane.Markdown:
         """
         Create placeholder content showing layer status.
