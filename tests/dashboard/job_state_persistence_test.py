@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: BSD-3-Clause
 # Copyright (c) 2025 Scipp contributors (https://github.com/scipp)
-"""Integration tests for job state persistence in JobOrchestrator."""
+"""Tests for job state persistence in JobOrchestrator."""
 
 from ess.livedata.config.workflow_spec import WorkflowId
 from ess.livedata.core.job import JobState, JobStatus
