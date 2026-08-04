@@ -64,6 +64,7 @@ from urllib.error import URLError
 
 from playwright.sync_api import (
     Browser,
+    Locator,
     Page,
     sync_playwright,
 )
@@ -82,6 +83,10 @@ SETTLE_MS = 5000
 # Override the Chromium binary when the installed playwright package does not
 # match the browsers available on disk (e.g. a preprovisioned container).
 _CHROMIUM_ENV = "PLAYWRIGHT_CHROMIUM_EXECUTABLE"
+# Per-attempt wait for a modal to appear after its trigger is clicked. The total
+# budget is this times the retry count; see Dashboard.open_modal for why it is
+# spent across several clicks rather than in one wait.
+MODAL_ATTEMPT_MS = 8000
 # Console lines kept per session. A dashboard session logs steadily, so the tail
 # is what matters and the cap keeps a long run from growing without bound.
 CONSOLE_LIMIT = 200
@@ -154,32 +159,52 @@ class Dashboard:
         self.page.get_by_text(name, exact=True).first.click()
         self.page.wait_for_timeout(SETTLE_MS)
 
-    def click(self, selector: str, *, retries: int = 3) -> None:
+    def click(self, target: str | Locator, *, retries: int = 3) -> None:
         """Click a stable ``lt-*`` selector, retrying if a rebuild detaches it.
 
         Staging/commit/stop rebuilds the affected workflow row, so a click can
         race the rebuild and hit a detached element. Re-locate and retry.
+
+        ``target`` may also be a ready-made locator, for a trigger that carries
+        no ``lt-*`` hook of its own (a layer-picker menu entry, say).
         """
         for attempt in range(retries):
             try:
-                self.page.locator(selector).first.click(timeout=4000)
+                locator = (
+                    self.page.locator(target).first
+                    if isinstance(target, str)
+                    else target
+                )
+                locator.click(timeout=4000)
                 return
             except PlaywrightTimeoutError:
                 if attempt == retries - 1:
                     raise
                 self.page.wait_for_timeout(1000)
 
-    def open_modal(self, trigger_selector: str, *, retries: int = 3):
+    def open_modal(self, trigger: str | Locator, *, retries: int = 3):
         """Click a trigger and wait for its modal (``[role=dialog]``) to show.
+
+        A click can land and still open nothing, without raising: it is
+        delivered for a Bokeh model the server has already discarded, or the
+        session's event loop is blocked long enough that the round-trip has
+        not been processed yet (#1174, #1185). So each attempt re-clicks
+        rather than spending the whole budget inside one wait -- a single long
+        wait rides out a stalled loop but never recovers a dropped click.
 
         Returns the dialog locator. Dismiss with ``page.keyboard.press("Escape")``
         (a ModalEscapeCloser widget makes Escape work from initial focus) or by
         clicking ``.pnx-dialog-close``.
         """
-        self.click(trigger_selector, retries=retries)
         dialog = self.page.locator("[role=dialog]").first
-        dialog.wait_for(state="visible", timeout=10000)
-        return dialog
+        for attempt in range(retries):
+            self.click(trigger, retries=retries)
+            try:
+                dialog.wait_for(state="visible", timeout=MODAL_ATTEMPT_MS)
+                return dialog
+            except PlaywrightTimeoutError:
+                if attempt == retries - 1:
+                    raise
 
     def screenshot(self, path: str | Path, *, full_page: bool = True) -> None:
         self.page.screenshot(path=str(path), full_page=full_page)
