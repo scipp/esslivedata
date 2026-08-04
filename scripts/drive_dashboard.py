@@ -170,17 +170,15 @@ class Dashboard:
         """
         for attempt in range(retries):
             try:
-                locator = (
-                    self.page.locator(target).first
-                    if isinstance(target, str)
-                    else target
-                )
-                locator.click(timeout=4000)
+                self._locate(target).click(timeout=4000)
                 return
             except PlaywrightTimeoutError:
                 if attempt == retries - 1:
                     raise
                 self.page.wait_for_timeout(1000)
+
+    def _locate(self, target: str | Locator) -> Locator:
+        return self.page.locator(target).first if isinstance(target, str) else target
 
     def open_modal(self, trigger: str | Locator, *, retries: int = 3):
         """Click a trigger and wait for its modal (``[role=dialog]``) to show.
@@ -188,23 +186,35 @@ class Dashboard:
         A click can land and still open nothing, without raising: it is
         delivered for a Bokeh model the server has already discarded, or the
         session's event loop is blocked long enough that the round-trip has
-        not been processed yet (#1174, #1185). So each attempt re-clicks
-        rather than spending the whole budget inside one wait -- a single long
-        wait rides out a stalled loop but never recovers a dropped click.
+        not been processed yet (#1174, #1185). Waiting longer recovers the
+        second; only another click recovers the first. So the budget is spent
+        across several waits, re-clicking between them.
+
+        A trigger the click consumes cannot be re-clicked, though -- a
+        layer-picker entry dismisses the menu it lives in -- and there the
+        click did land, so waiting is the only recovery. Hence the re-click is
+        conditional on the trigger still being there.
 
         Returns the dialog locator. Dismiss with ``page.keyboard.press("Escape")``
         (a ModalEscapeCloser widget makes Escape work from initial focus) or by
         clicking ``.pnx-dialog-close``.
         """
         dialog = self.page.locator("[role=dialog]").first
+        self.click(trigger, retries=retries)
         for attempt in range(retries):
-            self.click(trigger, retries=retries)
             try:
                 dialog.wait_for(state="visible", timeout=MODAL_ATTEMPT_MS)
                 return dialog
             except PlaywrightTimeoutError:
                 if attempt == retries - 1:
                     raise
+                try:
+                    if self._locate(trigger).is_visible():
+                        self._locate(trigger).click(timeout=4000)
+                except PlaywrightTimeoutError:
+                    # A re-click that cannot land is not the failure worth
+                    # reporting; let the next wait raise on the missing dialog.
+                    pass
 
     def screenshot(self, path: str | Path, *, full_page: bool = True) -> None:
         self.page.screenshot(path=str(path), full_page=full_page)
