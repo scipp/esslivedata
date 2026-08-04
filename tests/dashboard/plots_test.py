@@ -1601,6 +1601,37 @@ class TestRenderErrorPlaceholder:
         assert isinstance(text_element, hv.Text)
         assert 'Error' in str(text_element.data)
 
+    def test_rendered_plot_survives_error_frame_and_recovers(
+        self, data_key, poison_data
+    ):
+        """A rendered session shows the error, then data again.
+
+        The wedge lives in the rendered plot's frame pull (``get_plot_frame``
+        caches each frame into the DynamicMap): with a bare-Text placeholder
+        the error frame raised there, and the cell never updated again.
+        """
+        good = {
+            data_key: sc.DataArray(
+                sc.array(dims=['x'], values=[1.0, 2.0]),
+                coords={'x': sc.array(dims=['x'], values=[0.0, 1.0])},
+            )
+        }
+        plotter = plots.LinePlotter.from_params(PlotParams1d())
+        plotter.compute({'primary': good})
+        pipe = hv.streams.Pipe(data=plotter.get_cached_state())
+        dmap = plotter.create_presenter().present(pipe)
+        plot = render_to_bokeh(dmap)
+
+        plotter.compute({'primary': {data_key: poison_data}})
+        pipe.send(plotter.get_cached_state())
+        (error_frame,) = plot.current_frame
+        assert isinstance(error_frame, hv.Text)
+
+        plotter.compute({'primary': good})
+        pipe.send(plotter.get_cached_state())
+        (recovered_frame,) = plot.current_frame
+        assert isinstance(recovered_frame, hv.Curve)
+
 
 class TestOverlayUnitConsistency:
     """Layers sharing one figure must share one unit per axis.
