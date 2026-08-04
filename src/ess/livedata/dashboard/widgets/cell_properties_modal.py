@@ -191,7 +191,7 @@ class CellPropertiesModal:
         self, base_config: PlotConfig, view_name: str, plotter_name: str
     ) -> None:
         spec = self._plotting_controller.get_spec(plotter_name)
-        params = spec.params() if spec.params else None
+        params = spec.params()
         overlay_config = PlotConfig(
             data_sources={
                 PRIMARY: DataSourceConfig(
