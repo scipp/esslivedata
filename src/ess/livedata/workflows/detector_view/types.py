@@ -154,7 +154,7 @@ ReductionDim = NewType('ReductionDim', str | list[str] | None)
 # Projection type for geometric views
 ProjectionType = NewType(
     'ProjectionType',
-    str | None,  # Literal['xy_plane', 'cylinder_mantle_z'] | None
+    str | None,  # GeometricViewConfig.projection_type, or None
 )
 """Type of geometric projection to use, or None for logical view."""
 
