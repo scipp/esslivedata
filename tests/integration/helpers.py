@@ -18,8 +18,10 @@ logger = logging.getLogger(__name__)
 #: Time allowed for the broker to answer a metadata request before diagnostics
 #: give up. Diagnostics run on the failure path, where the broker being gone is
 #: one of the hypotheses, so the probe must not add a per-topic stall to every
-#: timeout.
-_BROKER_PROBE_TIMEOUT = 3.0
+#: timeout. A live local broker answers metadata requests in milliseconds; the
+#: helper unit tests exercise the timeout path without a broker and pay the
+#: full probe on every expected failure, so keep it short.
+_BROKER_PROBE_TIMEOUT = 0.5
 
 
 class WaitTimeout(Exception):
