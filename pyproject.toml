@@ -89,6 +89,7 @@ dashboard = [
 
 [project.scripts]
 ess-livedata-make-geometry-nexus = "ess.livedata.scripts.make_geometry_nexus:main"
+esslivedata-dev = "ess.livedata.scripts.dev:main"
 esslivedata-workflows = "ess.livedata.scripts.visualize_workflows:main"
 
 [project.urls]

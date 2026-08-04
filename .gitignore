@@ -51,3 +51,6 @@ docs/reports/
 *.zip
 *.sqw
 *.nxspe
+
+# Machine-local settings for the dev stack launcher (ess.livedata.scripts.dev)
+dev.toml
