@@ -53,8 +53,6 @@ register_monitor_workflow_specs(
 )
 
 # Register detector view spec.
-# Note: We don't use register_detector_view_specs here because dummy uses
-# DetectorLogicalView which doesn't follow the projection pattern.
 panel_0_view_handle = instrument.register_spec(
     group=DETECTORS,
     name='panel_0_xy',

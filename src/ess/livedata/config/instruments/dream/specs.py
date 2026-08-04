@@ -178,15 +178,6 @@ instrument.add_logical_view(
     reduction_dim='other',
 )
 
-# Mapping of detector names to their projection types
-_projections: dict[str, str] = {
-    'mantle_detector': 'cylinder_mantle_z',
-    'endcap_backward_detector': 'xy_plane',
-    'endcap_forward_detector': 'xy_plane',
-    'high_resolution_detector': 'xy_plane',
-    'sans_detector': 'xy_plane',
-}
-
 
 class DreamDetectorViewParams(DetectorViewParams):
     """DREAM-specific detector view parameters with chopper settings."""
@@ -200,7 +191,8 @@ class DreamDetectorViewParams(DetectorViewParams):
 
 # Register detector projection spec with DreamDetectorViewParams for TOF mode.
 # Replaces both the legacy DetectorProjection and the Sciline detector view
-# registrations.
+# registrations. Which projection each bank uses is declared once, on the
+# ``GeometricViewConfig`` entries in ``factories.py``.
 projection_handle = instrument.register_spec(
     group=DETECTORS,
     name='detector_projection',
@@ -210,7 +202,7 @@ projection_handle = instrument.register_spec(
         'Projection of detector banks onto 2D planes. '
         'Uses the appropriate projection for each detector.'
     ),
-    source_names=list(_projections.keys()),
+    source_names=detector_names,
     aux_sources=DetectorROIAuxSources(),
     params=DreamDetectorViewParams,
     outputs=DetectorViewOutputs,
