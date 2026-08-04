@@ -34,6 +34,7 @@ stream_mapping = {
         'magic',
         detector_names=detector_names,
         monitor_names=instrument.monitors,
+        log_names=list(instrument.f144_streams),
     ),
     StreamingEnv.PROD: StreamMapping(
         **make_common_stream_mapping_inputs(

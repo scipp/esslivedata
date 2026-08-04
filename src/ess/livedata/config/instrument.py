@@ -211,6 +211,22 @@ class Instrument:
                 f"{binding.stream_name!r}; declared streams: "
                 f"{sorted(self.streams)}"
             )
+        owner = next(
+            (
+                name
+                for name, device in self.devices.items()
+                if binding.stream_name in device.substream_names
+            ),
+            None,
+        )
+        if owner is not None:
+            raise ValueError(
+                f"ContextBinding references device substream "
+                f"{binding.stream_name!r}; bind the device {owner!r} instead. "
+                "DeviceSynthesizer merges the substreams into the device stream "
+                "and suppresses them, so a substream binding never becomes "
+                "available and its jobs stay gated forever."
+            )
         if _is_chain_patch(binding):
             self.chain_patch_path(binding)
 

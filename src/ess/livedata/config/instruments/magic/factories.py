@@ -14,19 +14,19 @@ from .views import DETECTOR_BANK_SIZES
 
 
 class DetectorARotationLog(ValueLog):
-    """Per-binding Sciline key for the ``magic_detector_a`` rotation f144 NXlog."""
+    """Per-binding Sciline key for the ``magic_detector_a`` rotation readback."""
 
 
 class DetectorBRotationLog(ValueLog):
-    """Per-binding Sciline key for the ``magic_detector_b`` rotation f144 NXlog."""
+    """Per-binding Sciline key for the ``magic_detector_b`` rotation readback."""
 
 
 #: Each bank hangs off its own rotation stage, so its placement is only known
 #: once the live motor readback arrives. Distinct ``ValueLog`` subclasses keep
 #: the two dynamic transforms distinguishable in Sciline.
 _rotation_logs = {
-    'magic_detector_a': ('detector_a_rotation/value', DetectorARotationLog),
-    'magic_detector_b': ('detector_b_rotation/value', DetectorBRotationLog),
+    'magic_detector_a': ('detector_a_rotation', DetectorARotationLog),
+    'magic_detector_b': ('detector_b_rotation', DetectorBRotationLog),
 }
 
 
