@@ -25,6 +25,7 @@ from .workflow_spec import (
     DETECTORS,
     REDUCTION,
     AuxSources,
+    NoParams,
     WorkflowGroup,
     WorkflowId,
     WorkflowSpec,
@@ -600,7 +601,7 @@ class Instrument:
         title: str,
         description: str = '',
         source_names: Sequence[str] | None = None,
-        params: type[Any] | None = None,
+        params: type[pydantic.BaseModel] = NoParams,
         aux_sources: AuxSources | None = None,
         outputs: type[Any],
         device_outputs: dict[str, str] | None = None,
@@ -635,8 +636,9 @@ class Instrument:
             Optional list of source names that the workflow can handle. This is used to
             create a workflow specification.
         params:
-            Optional Pydantic model class defining workflow parameters. Must be
-            explicit (not inferred from factory).
+            Pydantic model class defining workflow parameters. Must be explicit
+            (not inferred from factory). Defaults to :class:`NoParams` for
+            workflows that take no configuration.
         aux_sources:
             Optional declarative auxiliary source definitions. If provided,
             this will be used for validation and UI generation. The auxiliary source
@@ -764,11 +766,8 @@ class Instrument:
         )
 
         for reg in list(self.workflow_factory.registrations()):
-            params = reg.spec.params
-            if (
-                reg.factory is None
-                and params is not None
-                and issubclass(params, MonitorDataParamsBase)
+            if reg.factory is None and issubclass(
+                reg.spec.params, MonitorDataParamsBase
             ):
                 self.workflow_factory.attach_factory(reg.spec.get_id())(
                     create_monitor_workflow_factory

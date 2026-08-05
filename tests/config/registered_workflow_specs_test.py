@@ -46,22 +46,21 @@ def _collect_workflow_specs():
 
 @pytest.mark.parametrize(("instrument_name", "workflow_id"), _collect_workflow_specs())
 def test_workflow_spec_params_validation(instrument_name: str, workflow_id: WorkflowId):
-    """Test that spec.params is None or a valid Pydantic BaseModel class.
+    """Test that spec.params is a valid Pydantic BaseModel class.
 
-    Since params are now explicitly registered (not inferred from factory),
-    this validates they're properly set in the spec.
+    Since params are explicitly registered (not inferred from factory), this
+    validates they're properly set in the spec.
     """
     instrument = instrument_registry[instrument_name]
     spec = instrument.workflow_factory[workflow_id]
 
-    if spec.params is not None:
-        assert issubclass(spec.params, pydantic.BaseModel), (
-            f"spec.params for {workflow_id} should be a Pydantic BaseModel subclass, "
-            f"got {spec.params}"
-        )
-        # Verify we can instantiate with defaults
-        instance = spec.params()
-        assert isinstance(instance, pydantic.BaseModel)
+    assert issubclass(spec.params, pydantic.BaseModel), (
+        f"spec.params for {workflow_id} should be a Pydantic BaseModel subclass, "
+        f"got {spec.params}"
+    )
+    # Verify we can instantiate with defaults
+    instance = spec.params()
+    assert isinstance(instance, pydantic.BaseModel)
 
 
 @pytest.mark.parametrize(("instrument_name", "workflow_id"), _collect_workflow_specs())
@@ -127,9 +126,6 @@ def test_workflow_params_serialization_roundtrip(
     """
     instrument = instrument_registry[instrument_name]
     spec = instrument.workflow_factory[workflow_id]
-
-    if spec.params is None:
-        pytest.skip("Workflow has no parameters")
 
     # Create instance with defaults
     original = spec.params()
@@ -210,13 +206,10 @@ def test_workflow_config_widget_adapter_compatibility(
     # First set aux sources (get defaults if available, otherwise None)
     aux_dict = adapter.aux_sources.get_defaults() if adapter.aux_sources else None
     model_class = adapter.set_aux_sources(aux_dict)
-    if spec.params is not None:
-        assert model_class == spec.params
-        # Verify we can instantiate with defaults
-        instance = model_class()
-        assert isinstance(instance, pydantic.BaseModel)
-    else:
-        assert model_class is None
+    assert model_class == spec.params
+    # Verify we can instantiate with defaults
+    instance = model_class()
+    assert isinstance(instance, pydantic.BaseModel)
 
 
 def _collect_workflow_outputs():

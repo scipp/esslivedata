@@ -12,6 +12,7 @@ from ess.livedata.config.workflow_spec import (
     AuxInput,
     AuxSources,
     JobId,
+    NoParams,
     WorkflowConfig,
     WorkflowId,
     WorkflowSpec,
@@ -51,7 +52,6 @@ def workflow_spec(workflow_id):
         version=workflow_id.version,
         title="Pretty name",
         description="Test description",
-        params=None,
         group=REDUCTION,
     )
 
@@ -66,7 +66,6 @@ def workflow_spec_with_sources(workflow_id):
         title="test-workflow",
         description="Test",
         source_names=["source1", "source2"],
-        params=None,
         group=REDUCTION,
     )
 
@@ -183,7 +182,6 @@ class TestWorkflowFactory:
             title="test-workflow",
             description="Test",
             source_names=["source1"],
-            params=None,
             group=REDUCTION,
         )
 
@@ -264,6 +262,28 @@ class TestWorkflowFactory:
         with pytest.raises(ValidationError):
             factory.create(source_name="any-source", config=config)
 
+    def test_params_for_workflow_taking_none_are_rejected(
+        self, workflow_id, workflow_spec
+    ):
+        """A workflow with no params must reject params rather than drop them."""
+        factory = WorkflowFactory()
+        assert workflow_spec.params is NoParams
+
+        handle = factory.register_spec(workflow_spec)
+
+        @handle.attach_factory()
+        def factory_func():
+            return make_dummy_workflow()
+
+        config = WorkflowConfig(
+            identifier=workflow_id,
+            job_id=JobId(source_name="any-source", job_number=uuid.uuid4()),
+            params={"unexpected": 1},
+        )
+
+        with pytest.raises(ValidationError):
+            factory.create(source_name="any-source", config=config)
+
     def test_unknown_workflow_id_raises_key_error(self):
         factory = WorkflowFactory()
         non_existent_id = WorkflowId(
@@ -294,7 +314,6 @@ class TestWorkflowFactory:
             title=workflow_spec_with_sources.title,
             description=workflow_spec_with_sources.description,
             source_names=["allowed-source"],
-            params=None,
             group=REDUCTION,
         )
 
@@ -330,7 +349,6 @@ class TestWorkflowFactory:
             version=workflow_id1.version,
             title="workflow1",
             description="Test 1",
-            params=None,
             group=REDUCTION,
         )
         spec2 = WorkflowSpec(
@@ -339,7 +357,6 @@ class TestWorkflowFactory:
             version=workflow_id2.version,
             title="workflow2",
             description="Test 2",
-            params=None,
             group=REDUCTION,
         )
 
@@ -393,7 +410,6 @@ class TestWorkflowFactory:
             version=workflow_id1.version,
             title="V1",
             description="Test 1",
-            params=None,
             group=REDUCTION,
         )
         spec2 = WorkflowSpec(
@@ -402,7 +418,6 @@ class TestWorkflowFactory:
             version=workflow_id2.version,
             title="V2",
             description="Test 2",
-            params=None,
             group=REDUCTION,
         )
 
@@ -450,7 +465,6 @@ class TestWorkflowFactory:
             version=workflow_id.version,
             title="",
             description="Test",
-            params=None,
             group=REDUCTION,
         )
 
@@ -486,7 +500,6 @@ class TestWorkflowFactory:
             title="test-workflow",
             description="Test",
             source_names=sources,
-            params=None,
             group=REDUCTION,
         )
 
@@ -546,7 +559,6 @@ class TestWorkflowFactory:
             version=workflow_id.version,
             title="test-workflow",
             description="Test",
-            params=None,
             aux_sources=my_aux_sources,
             group=REDUCTION,
         )
@@ -579,7 +591,6 @@ class TestWorkflowFactory:
             version=workflow_id.version,
             title="test-workflow",
             description="Test",
-            params=None,
             group=REDUCTION,
         )
 
@@ -610,7 +621,6 @@ class TestWorkflowFactory:
             version=workflow_id.version,
             title="test-workflow",
             description="Test",
-            params=None,
             group=REDUCTION,
         )
 
@@ -646,7 +656,6 @@ class TestWorkflowFactory:
             version=workflow_id.version,
             title="test-workflow",
             description="Test",
-            params=None,
             aux_sources=my_aux_sources,
             group=REDUCTION,
         )
@@ -681,7 +690,6 @@ class TestTwoPhaseRegistration:
             version=workflow_id.version,
             title="test-workflow",
             description="Test",
-            params=None,
             group=REDUCTION,
         )
 
@@ -704,7 +712,6 @@ class TestTwoPhaseRegistration:
             version=workflow_id.version,
             title="test-workflow",
             description="Test",
-            params=None,
             group=REDUCTION,
         )
 
@@ -727,7 +734,6 @@ class TestTwoPhaseRegistration:
             version=workflow_id.version,
             title="test-workflow",
             description="Test",
-            params=None,
             group=REDUCTION,
         )
 
@@ -750,7 +756,6 @@ class TestTwoPhaseRegistration:
             version=workflow_id.version,
             title="test-workflow",
             description="Test",
-            params=None,
             group=REDUCTION,
         )
 
@@ -874,7 +879,6 @@ class TestTwoPhaseRegistration:
             version=workflow_id.version,
             title="test-workflow",
             description="Test",
-            params=None,  # Spec has no params
             group=REDUCTION,
         )
 
@@ -972,7 +976,6 @@ class TestContextKeyInjection:
             version=workflow_id.version,
             title='test-workflow',
             description='Test',
-            params=None,
             group=REDUCTION,
         )
         factory.register_spec(spec).attach_factory()(factory_func)
@@ -1025,7 +1028,6 @@ class TestSpecHandleAddContextBinding:
             title='test-workflow',
             description='Test',
             source_names=source_names,
-            params=None,
             group=REDUCTION,
         )
         handle = factory.register_spec(spec)

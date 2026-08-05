@@ -391,6 +391,19 @@ class DataKey(BaseModel, frozen=True):
     )
 
 
+class NoParams(BaseModel):
+    """
+    Params model for workflows that take no configuration.
+
+    Workflows always have a params model, so consumers never branch on its
+    absence; "takes no parameters" is expressed as a model with no fields.
+    Extra fields are rejected so that sending params to such a workflow is an
+    error rather than silently ignored.
+    """
+
+    model_config = ConfigDict(extra='forbid')
+
+
 class WorkflowSpec(BaseModel):
     """
     Model for workflow specification.
@@ -444,7 +457,13 @@ class WorkflowSpec(BaseModel):
             "backend rejects reset commands."
         ),
     )
-    params: type[BaseModel] | None = Field(description="Model for workflow param.")
+    params: type[BaseModel] = Field(
+        default=NoParams,
+        description=(
+            "Model for workflow params. Defaults to :class:`NoParams` for "
+            "workflows that take no configuration."
+        ),
+    )
     outputs: type[WorkflowOutputsBase] = Field(
         default=DefaultOutputs,
         description=(

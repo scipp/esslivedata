@@ -17,6 +17,7 @@ from ess.livedata.config.workflow_spec import (
     MONITORS,
     REDUCTION,
     JobId,
+    NoParams,
     WorkflowId,
     WorkflowOutputsBase,
 )
@@ -764,7 +765,7 @@ class TestInstrumentRegisterSpec:
         assert spec.group is REDUCTION  # default
         assert spec.description == ""  # default
         assert spec.source_names == []  # default
-        assert spec.params is None  # default
+        assert spec.params is NoParams  # default
         assert spec.aux_sources is None  # default
         assert spec.outputs is SimpleTestOutputs
 

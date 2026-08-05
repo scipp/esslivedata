@@ -254,7 +254,6 @@ def _make_workflow_spec(
         title=title,
         description=f"{title} description",
         source_names=source_names or [],
-        params=None,
         outputs=outputs,
         group=group,
     )

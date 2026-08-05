@@ -77,7 +77,6 @@ area_panel_view_handle = instrument.register_spec(
     title='Area Panel',
     description='Area detector image view',
     source_names=['area_panel'],
-    params=None,
     outputs=DetectorViewOutputs,
 )
 
@@ -89,5 +88,4 @@ total_counts_handle = instrument.register_spec(
     description='Dummy workflow that simply computes the total counts.',
     source_names=['panel_0'],
     outputs=TotalCountsOutputs,
-    params=None,
 )

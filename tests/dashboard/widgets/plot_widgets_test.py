@@ -151,7 +151,6 @@ class TestGetPlotCellDisplayInfo:
             title='Beam monitor data',
             description='D',
             outputs=CumulativeOutputs,
-            params=None,
             source_names=['src1'],
             group=REDUCTION,
         )
@@ -196,7 +195,6 @@ class TestGetPlotCellDisplayInfo:
             title='Beam monitor data',
             description='D',
             outputs=CurrentOutputs,
-            params=None,
             source_names=['src1'],
             group=REDUCTION,
         )
@@ -241,7 +239,6 @@ class TestPlotterTitleInDisplayInfo:
             title='Detector counts',
             description='D',
             outputs=self._ImageOutputs,
-            params=None,
             source_names=['src1'],
             group=REDUCTION,
         )
@@ -361,7 +358,6 @@ class TestDeriveCellTitle:
             title='Detector XY Projection',
             description='D',
             outputs=_XYOutputs,
-            params=None,
             source_names=['Front Right'],
             group=REDUCTION,
         )

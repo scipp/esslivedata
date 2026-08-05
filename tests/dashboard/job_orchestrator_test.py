@@ -116,7 +116,6 @@ def workflow_no_params() -> WorkflowSpec:
         title="Workflow Without Params",
         description="Test workflow without params",
         source_names=["det_1", "det_2"],
-        params=None,
         outputs=SimpleTestOutputs,
         group=REDUCTION,
     )
