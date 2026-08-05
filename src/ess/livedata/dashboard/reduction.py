@@ -57,7 +57,7 @@ hv.extension('bokeh')
 # registers hundreds of colormaps with matplotlib, each miss paying difflib
 # suggestion generation -- ~2.5 s of CPU. Lazily that lands on a session's
 # IOLoop during its first plot render, blocking every request for seconds
-# (#1185). Resolve one cmap now to pay it here, at process startup.
+# (holoviz/holoviews#6981). Resolve one cmap now to pay it here, at process startup.
 process_cmap('viridis')
 
 # Remove Bokeh logo from Layout toolbars by patching LayoutPlot.initialize_plot
