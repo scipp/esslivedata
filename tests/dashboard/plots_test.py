@@ -1568,6 +1568,71 @@ class TestPlotterOverlayMode:
         assert 'No data' in str(text_element.data)
 
 
+class TestRenderErrorPlaceholder:
+    """A failed render must not change the container type of the frame.
+
+    The session's DynamicMap holds one container type per plotter; a bare
+    error placeholder next to Overlay/Layout frames wedges it permanently and
+    the cell never updates again (#1193).
+    """
+
+    @pytest.fixture
+    def poison_data(self):
+        """Data a LinePlotter cannot render: a Curve needs 1-D input."""
+        return sc.DataArray(sc.array(dims=['x', 'y'], values=[[1.0], [2.0]]))
+
+    @pytest.mark.parametrize(
+        ('combine_mode', 'container'),
+        [('overlay', hv.Overlay), ('layout', hv.Layout)],
+    )
+    def test_error_placeholder_uses_same_container_as_data(
+        self, data_key, poison_data, combine_mode, container
+    ):
+        from ess.livedata.dashboard.plot_params import LayoutParams
+
+        params = PlotParams1d(layout=LayoutParams(combine_mode=combine_mode))
+        plotter = plots.LinePlotter.from_params(params)
+
+        plotter.compute({'primary': {data_key: poison_data}})
+        result = plotter.get_cached_state()
+
+        assert isinstance(result, container)
+        text_element = next(iter(result))
+        assert isinstance(text_element, hv.Text)
+        assert 'Error' in str(text_element.data)
+
+    def test_rendered_plot_survives_error_frame_and_recovers(
+        self, data_key, poison_data
+    ):
+        """A rendered session shows the error, then data again.
+
+        The wedge lives in the rendered plot's frame pull (``get_plot_frame``
+        caches each frame into the DynamicMap): with a bare-Text placeholder
+        the error frame raised there, and the cell never updated again.
+        """
+        good = {
+            data_key: sc.DataArray(
+                sc.array(dims=['x'], values=[1.0, 2.0]),
+                coords={'x': sc.array(dims=['x'], values=[0.0, 1.0])},
+            )
+        }
+        plotter = plots.LinePlotter.from_params(PlotParams1d())
+        plotter.compute({'primary': good})
+        pipe = hv.streams.Pipe(data=plotter.get_cached_state())
+        dmap = plotter.create_presenter().present(pipe)
+        plot = render_to_bokeh(dmap)
+
+        plotter.compute({'primary': {data_key: poison_data}})
+        pipe.send(plotter.get_cached_state())
+        (error_frame,) = plot.current_frame
+        assert isinstance(error_frame, hv.Text)
+
+        plotter.compute({'primary': good})
+        pipe.send(plotter.get_cached_state())
+        (recovered_frame,) = plot.current_frame
+        assert isinstance(recovered_frame, hv.Curve)
+
+
 class TestOverlayUnitConsistency:
     """Layers sharing one figure must share one unit per axis.
 

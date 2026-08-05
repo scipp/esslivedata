@@ -46,7 +46,10 @@ DATA_FINGERPRINT_JS = """() => {
     for (let i = 0; i < Math.min(column.length, 64); i++) {
       const v = column[i];
       if (typeof v === 'number' && Number.isFinite(v)) checksum += v;
-      else if (v && typeof v.length === 'number') sample(v);
+      // Strings also have a numeric length, but 'x'[0] === 'x', so recursing
+      // into one never terminates. A string column contributes via `length`.
+      else if (v && typeof v !== 'string' && typeof v.length === 'number')
+        sample(v);
     }
   };
   for (const doc of (window.Bokeh && Bokeh.documents) || []) {
@@ -85,11 +88,19 @@ def fingerprint(dash: Dashboard) -> dict:
 
 
 def assert_updating(dash: Dashboard, label: str) -> None:
-    """Assert the session's rendered data changes within the update window."""
+    """Assert the session's rendered data changes within the update window.
+
+    Polls rather than sleeping out the window: the fake backend emits at 1 Hz,
+    so a healthy session passes in about a second instead of always paying the
+    full window.
+    """
     before = fingerprint(dash)
-    dash.page.wait_for_timeout(UPDATE_WINDOW_MS)
-    after = fingerprint(dash)
-    assert after != before, f"{label} stopped receiving data updates: {before}"
+    wait_until(
+        dash,
+        lambda: fingerprint(dash) != before,
+        label=f"a data update ({label} stopped receiving data updates: {before})",
+        timeout_ms=UPDATE_WINDOW_MS,
+    )
 
 
 def wait_until(
