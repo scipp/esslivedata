@@ -69,6 +69,27 @@ panel_0_view_handle = instrument.register_spec(
     outputs=DetectorViewOutputs,
 )
 
+
+def _fold_into_layers(da: sc.DataArray, source_name: str) -> sc.DataArray:
+    """Fold the panel's rows into stacked layers, as a segmented detector has."""
+    return da.fold(dim='y', sizes={'layer': 4, 'y': -1})
+
+
+# A 3-D counterpart of the panel_0 view, so the dummy instrument covers the
+# plotters that only 3-D data selects (slicer, flatten).
+instrument.add_logical_view(
+    name='panel_0_layers',
+    title='Panel 0 Layers',
+    description=(
+        'Detector counts for the dummy "panel_0" logical detector with its rows '
+        'folded into four stacked layers.'
+    ),
+    source_names=['panel_0'],
+    transform=_fold_into_layers,
+    roi_support=False,
+    output_ndim=3,
+)
+
 # Register area detector view spec
 area_panel_view_handle = instrument.register_spec(
     group=DETECTORS,

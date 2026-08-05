@@ -6,7 +6,9 @@ This transport mimics a backend worker without Kafka. Commands the dashboard
 sends (``WorkflowConfig``, ``JobCommand``) are captured by an in-process
 :class:`FakeBackend`, which responds exactly as a real backend would: it
 acknowledges the command, reports the job as running, and emits periodic
-result data on the data stream.
+result data on the data stream. Stopping a job yields a terminal ``stopped``
+status, and :meth:`FakeBackend.fail_job` faults one into the ``error`` state,
+so the dashboard's non-live presentations are reachable too.
 
 Result data is synthesized from each workflow's output templates (the
 ``default_factory`` DataArrays declared on ``WorkflowSpec.outputs``). Because
@@ -92,30 +94,26 @@ def source_variant(source_name: str) -> float:
 def _synthesize_values(sizes: Sequence[int], update: int, variant: float) -> np.ndarray:
     """Generate plausible-looking data that varies over updates and sources.
 
-    A wiggling scalar (0-D) or a Gaussian bump (1-D and 2-D) plus mild noise.
-    Amplitude grows with the update count to mimic accumulating statistics;
-    ``variant`` shifts peak position, amplitude, and phase so distinct sources
-    look distinct.
+    A wiggling scalar (0-D) or a drifting Gaussian bump (any higher rank) plus
+    mild noise. Amplitude grows with the update count to mimic accumulating
+    statistics; ``variant`` shifts peak position, amplitude, and phase so
+    distinct sources look distinct. The bump is a product of per-axis
+    Gaussians, each drifting on its own quarter-turn of the same slow
+    oscillation, so every axis carries structure a plot can show.
     """
     rng = np.random.default_rng(seed=(update, int(variant * 1_000_000)))
     phase = 2.0 * np.pi * variant
     amplitude = 100.0 * (update + 1) * (0.6 + 0.8 * variant)
-    if len(sizes) == 0:
+    if not sizes:
         signal = np.asarray(50.0 + 50.0 * np.sin(0.5 * update + phase))
-    elif len(sizes) == 1:
-        (nx,) = sizes
-        x = np.linspace(0.0, 1.0, nx)
-        center = 0.25 + 0.5 * variant + 0.08 * np.sin(0.3 * update)
-        signal = amplitude * np.exp(-(((x - center) / 0.12) ** 2))
-    elif len(sizes) == 2:
-        nx, ny = sizes
-        x = np.linspace(0.0, 1.0, nx)[:, None]
-        y = np.linspace(0.0, 1.0, ny)[None, :]
-        cx = 0.5 + 0.25 * np.sin(0.3 * update + phase)
-        cy = 0.5 + 0.25 * np.cos(0.3 * update + phase)
-        signal = amplitude * np.exp(-((x - cx) ** 2 + (y - cy) ** 2) / (2 * 0.15**2))
     else:
-        signal = np.full(sizes, amplitude, dtype=float)
+        signal = np.full((1,) * len(sizes), amplitude)
+        for axis, size in enumerate(sizes):
+            shape = [1] * len(sizes)
+            shape[axis] = size
+            x = np.linspace(0.0, 1.0, size).reshape(shape)
+            center = 0.5 + 0.25 * np.sin(0.3 * update + phase + axis * 0.5 * np.pi)
+            signal = signal * np.exp(-(((x - center) / 0.15) ** 2))
     noise = rng.normal(scale=max(amplitude * 0.02, 1.0), size=tuple(sizes))
     return np.clip(signal + noise, a_min=0.0, a_max=None)
 
@@ -236,6 +234,12 @@ class _Job:
         self.start_time = Timestamp.now()
         self.rois: dict[str, sc.DataArray] = {}
         self.previous_emit = self.start_time
+        self.error_message: str | None = None
+
+    @property
+    def state(self) -> JobState:
+        """Wire-facing state, derived from health as the backend derives it."""
+        return JobState.active if self.error_message is None else JobState.error
 
     def output_templates(self) -> Mapping[str, sc.DataArray]:
         """Templates for every output field that declares one."""
@@ -296,9 +300,33 @@ class FakeBackend:
                 if str(job_id) == job_key:
                     job.rois[readback_key] = rois
 
+    def fail_job(self, job_id: JobId, message: str) -> None:
+        """Fault a running job, as a workflow raising in the backend does.
+
+        The job keeps its slot and reports :attr:`JobState.error` from then on,
+        but yields no more results: the backend drops results that carry an
+        error message.
+
+        Parameters
+        ----------
+        job_id:
+            Job to fault; must be running.
+        message:
+            Error message reported with the job's status.
+        """
+        with self._lock:
+            job = self._jobs.get(job_id)
+            if job is None:
+                raise KeyError(f"No running job {job_id}")
+            job.error_message = message
+
     def _control_job(self, command: JobCommand) -> None:
         if command.action is JobAction.stop and command.job_id is not None:
-            self._jobs.pop(command.job_id, None)
+            job = self._jobs.pop(command.job_id, None)
+            if job is not None:
+                # Terminal status ahead of the job's disappearance: the
+                # dashboard freezes the cell on it rather than aging it out.
+                self._control.append(self._status(job, JobState.stopped))
             self._ack(command.message_id, command.job_id.source_name)
 
     def _ack(self, message_id: str, device: str, error: str | None = None) -> None:
@@ -309,11 +337,12 @@ class FakeBackend:
         self._control.append(Message(stream=RESPONSES_STREAM_ID, value=ack))
 
     @staticmethod
-    def _status(job: _Job) -> Message:
+    def _status(job: _Job, state: JobState) -> Message:
         status = JobStatus(
             job_id=job.config.job_id,
             workflow_id=job.config.identifier,
-            state=JobState.active,
+            state=state,
+            error_message=job.error_message,
             start_time=job.start_time,
         )
         return Message(stream=STATUS_STREAM_ID, value=status)
@@ -322,7 +351,8 @@ class FakeBackend:
         """Return queued control messages plus due status and data updates.
 
         Each due cycle re-emits the job status, acting as a heartbeat so the
-        dashboard keeps the job ACTIVE rather than letting it go stale.
+        dashboard keeps the job ACTIVE rather than letting it go stale. A
+        faulted job keeps heartbeating its error state but produces no data.
         """
         now = time.monotonic()
         with self._lock:
@@ -330,7 +360,8 @@ class FakeBackend:
             self._control = []
             for job in self._jobs.values():
                 if now >= job.next_emit:
-                    messages = [*messages, self._status(job), *self._emit_data(job)]
+                    data = [] if job.error_message is not None else self._emit_data(job)
+                    messages = [*messages, self._status(job, job.state), *data]
                     job.next_emit = now + _UPDATE_PERIOD_SECONDS
         return messages
 

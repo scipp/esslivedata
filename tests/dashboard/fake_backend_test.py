@@ -62,6 +62,15 @@ class Outputs2D(WorkflowOutputsBase):
     )
 
 
+class Outputs3D(WorkflowOutputsBase):
+    volume: sc.DataArray = Field(
+        default_factory=lambda: sc.DataArray(
+            sc.zeros(dims=['z', 'y', 'x'], shape=[0, 0, 0], unit='counts')
+        ),
+        title='Volume',
+    )
+
+
 class OutputsTimeseries(WorkflowOutputsBase):
     reading: sc.DataArray = Field(
         default_factory=lambda: sc.DataArray(
@@ -138,6 +147,17 @@ class TestExpandTemplate:
     def test_two_dimensional(self) -> None:
         out = expand_template(Outputs2D().image, update=0, timestamp_ns=0)
         assert out.sizes == {'y': 64, 'x': 64}
+
+    def test_three_dimensional_varies_along_every_axis(self) -> None:
+        # The slicer steps through one dim at a time, so a volume that is flat
+        # along any axis would render as an unchanging image.
+        out = expand_template(Outputs3D().volume, update=0, timestamp_ns=0)
+        assert out.sizes == {'z': 64, 'y': 64, 'x': 64}
+        for dim in out.dims:
+            profile = out.data
+            for other in set(out.dims) - {dim}:
+                profile = profile.sum(other)
+            assert profile.max().value > 2.0 * profile.min().value
 
     def test_values_are_finite_and_nonnegative(self) -> None:
         out = expand_template(Outputs1D().histogram, update=2, timestamp_ns=0)
@@ -305,9 +325,77 @@ class TestFakeBackend:
 
         assert not [m for m in messages if m.stream.kind is StreamKind.LIVEDATA_DATA]
 
+    def test_stop_command_yields_terminal_stopped_status(self) -> None:
+        spec = _spec(Outputs1D, 'wf1d')
+        backend = FakeBackend(_registry(spec))
+        config = _config(spec)
+        backend.submit(config)
+        backend.poll()  # drain initial ack/status/data
+
+        backend.submit(
+            JobCommand(job_id=config.job_id, action=JobAction.stop, message_id='m2')
+        )
+        statuses = [m.value for m in backend.poll() if m.stream == STATUS_STREAM_ID]
+
+        assert len(statuses) == 1
+        assert statuses[0].job_id == config.job_id
+        assert statuses[0].state is JobState.stopped
+        # The status is terminal: the job is gone and never heartbeats again.
+        assert not backend.poll()
+
     def test_poll_is_empty_without_active_jobs(self) -> None:
         backend = FakeBackend({})
         assert backend.poll() == []
+
+
+class TestFailedJob:
+    """A faulted job mirrors a workflow raising in the backend."""
+
+    @pytest.fixture
+    def running(self, monkeypatch: pytest.MonkeyPatch) -> tuple[FakeBackend, JobId]:
+        """A running job, its ack/status/data already drained."""
+        # Zero update period makes every poll due, so each poll heartbeats.
+        monkeypatch.setattr(
+            'ess.livedata.dashboard.fake_backend._UPDATE_PERIOD_SECONDS', 0.0
+        )
+        spec = _spec(Outputs1D, 'wf1d')
+        backend = FakeBackend(_registry(spec))
+        config = _config(spec)
+        backend.submit(config)
+        backend.poll()
+        return backend, config.job_id
+
+    def test_reports_error_state_with_message(self, running) -> None:
+        backend, job_id = running
+        backend.fail_job(job_id, 'workflow blew up')
+
+        statuses = [m.value for m in backend.poll() if m.stream == STATUS_STREAM_ID]
+
+        assert len(statuses) == 1
+        assert statuses[0].state is JobState.error
+        assert statuses[0].error_message == 'workflow blew up'
+
+    def test_keeps_heartbeating_the_error(self, running) -> None:
+        backend, job_id = running
+        backend.fail_job(job_id, 'workflow blew up')
+
+        for _ in range(3):
+            statuses = [m.value for m in backend.poll() if m.stream == STATUS_STREAM_ID]
+            assert [s.state for s in statuses] == [JobState.error]
+
+    def test_stops_emitting_data(self, running) -> None:
+        backend, job_id = running
+        backend.fail_job(job_id, 'workflow blew up')
+
+        messages = backend.poll()
+
+        assert not [m for m in messages if m.stream.kind is StreamKind.LIVEDATA_DATA]
+
+    def test_unknown_job_is_rejected(self, running) -> None:
+        backend, _ = running
+        unknown = JobId(source_name='source1', job_number=uuid.uuid4())
+        with pytest.raises(KeyError, match='No running job'):
+            backend.fail_job(unknown, 'workflow blew up')
 
 
 _DETECTOR_SOURCE = 'panel_0'
