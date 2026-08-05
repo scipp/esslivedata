@@ -202,8 +202,8 @@ class CellWidget:
     """
     Per-session widget for a single plot cell.
 
-    Builds a Panel ``Column`` with a titlebar, a (toggleable) column of
-    per-layer toolbars, and a content area showing the composed plot or a
+    Builds a Panel ``Column`` with a titlebar, a column of per-layer toolbars
+    built on first reveal, and a content area showing the composed plot or a
     status placeholder. Owns the cell's autoscale controller and the panes
     updated in place by the poll loop (titlebar freshness pill, per-layer
     time-range labels).
@@ -369,13 +369,16 @@ class CellWidget:
         self._freeze_pill_for_status(layer_states)
 
         # Per-layer toolbars, wrapped in a column the titlebar toggle can hide.
-        layer_toolbars = self._build_layer_toolbars(layer_states)
+        # Populated only once revealed: a hidden Panel component still creates
+        # every one of its Bokeh models, and the toolbars are a quarter of a
+        # cell's model count while most cells are never expanded.
         layers_column = pn.Column(
-            *layer_toolbars,
             sizing_mode='stretch_width',
             margin=0,
             visible=self._toolbars_shown,
         )
+        if self._toolbars_shown:
+            layers_column[:] = self._build_layer_toolbars(layer_states)
         titlebar = self._build_titlebar(layers_column)
 
         # Create content area (placeholder or plot)
@@ -450,6 +453,8 @@ class CellWidget:
 
         def on_toggle_toolbars(visible: bool) -> None:
             self._toolbars_shown = visible
+            if visible and not layers_column.objects:
+                layers_column[:] = self._build_layer_toolbars(self._layer_states())
             layers_column.visible = visible
 
         geometry = cell.geometry
@@ -514,6 +519,10 @@ class CellWidget:
 
             time_pane = create_layer_time_pane()
             self._layer_time_panes[layer_id] = time_pane
+            # Seed from the layer's current bounds: toolbars revealed between
+            # frames would otherwise read blank until the next data flush.
+            if state.plotter is not None:
+                self.update_layer_time(layer_id, state.plotter.time_bounds)
 
             rows.append(
                 create_layer_info_row(

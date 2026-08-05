@@ -40,6 +40,7 @@ from ess.livedata.dashboard.widgets.styles import StatusPill
 from ess.livedata.dashboard.widgets.workflow_status_widget import (
     WorkflowStatusListWidget,
 )
+from tests.helpers.panel_ui import click_tool
 
 hv.extension('bokeh')
 
@@ -321,9 +322,12 @@ class TestFreshnessIndicator:
         _inject_layer(plot_orchestrator, plot_data_service, grid_id, plotter)
 
         # First poll adds the tab and builds the cell; activate then poll again
-        # so the freshness pane fills for the now-active grid.
+        # so the freshness pane fills for the now-active grid. The per-layer
+        # time panes exist only once their toolbars are revealed.
         plot_grid_tabs._poll_for_plot_updates()
         plot_grid_tabs.tabs.active = plot_grid_tabs._static_tabs_count
+        for cell_widget in plot_grid_tabs._cells.values():
+            click_tool(cell_widget.view, 'lt-tool-layer-details')
         plot_grid_tabs._poll_for_plot_updates()
 
         panes = [cw.freshness_pane for cw in plot_grid_tabs._cells.values()]
@@ -361,9 +365,12 @@ class TestFreshnessIndicator:
         )
 
         # First poll adds the tab and builds the cell; activate then poll again
-        # so the per-layer time panes fill for the now-active grid.
+        # so the per-layer time panes fill for the now-active grid. The panes
+        # exist only once their toolbars are revealed.
         plot_grid_tabs._poll_for_plot_updates()
         plot_grid_tabs.tabs.active = plot_grid_tabs._static_tabs_count
+        for cell_widget in plot_grid_tabs._cells.values():
+            click_tool(cell_widget.view, 'lt-tool-layer-details')
         plot_grid_tabs._poll_for_plot_updates()
 
         (cell_widget,) = plot_grid_tabs._cells.values()
@@ -375,10 +382,13 @@ class TestFreshnessIndicator:
     def test_rebuilt_cell_refills_its_time_panes_on_the_same_poll(
         self, plot_orchestrator, plot_data_service, plot_grid_tabs
     ):
-        """A rebuild mints blank panes, so the poll that rebuilds must refill them.
+        """A rebuilt cell must show its age and time range straight away.
 
-        Otherwise the cell shows no age and no time range until the next frame
-        or the stall tick, however good the data behind it is.
+        A rebuild mints blank panes, so the poll that rebuilds refills them (a
+        revealed cell's panes are additionally seeded from current bounds as
+        they are built). Without either, the cell shows no age and no time
+        range until the next frame or the stall tick, however good the data
+        behind it is.
         """
         grid_id = plot_orchestrator.add_grid(title='Test', nrows=2, ncols=2)
         layer_id = _inject_layer(
@@ -389,6 +399,8 @@ class TestFreshnessIndicator:
         )
         plot_grid_tabs._poll_for_plot_updates()
         plot_grid_tabs.tabs.active = plot_grid_tabs._static_tabs_count
+        for cell_widget in plot_grid_tabs._cells.values():
+            click_tool(cell_widget.view, 'lt-tool-layer-details')
         plot_grid_tabs._poll_for_plot_updates()
 
         # A new plotter bumps the layer version, so the next poll rebuilds the

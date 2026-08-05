@@ -17,6 +17,7 @@ from ess.livedata.dashboard.widgets.plot_grid_tabs import PlotGridTabs
 from ess.livedata.dashboard.widgets.workflow_status_widget import (
     WorkflowStatusListWidget,
 )
+from tests.helpers.panel_ui import click_tool
 
 hv.extension('bokeh')
 
@@ -1195,6 +1196,67 @@ def _add_static_cell(plot_orchestrator, grid_id, geometry, *, positions='10, 20'
     cell_id = plot_orchestrator.add_cell(grid_id, geometry)
     plot_orchestrator.add_layer(cell_id, config)
     return cell_id
+
+
+class TestLayerToolbars:
+    """Per-layer toolbars are built when first revealed, not when hidden.
+
+    A hidden Panel component still creates every one of its Bokeh models, and
+    the toolbars start collapsed, so building them eagerly charges every
+    session for detail most cells never show (#1198).
+    """
+
+    @staticmethod
+    def _geometry():
+        from ess.livedata.dashboard.plot_orchestrator import CellGeometry
+
+        return CellGeometry(row=0, col=0, row_span=1, col_span=1)
+
+    def _cell_widget(self, plot_orchestrator, plot_grid_tabs):
+        grid_id = plot_orchestrator.add_grid(title='G', nrows=2, ncols=2)
+        _add_static_cell(plot_orchestrator, grid_id, self._geometry())
+        _tick(plot_grid_tabs)
+        return next(iter(plot_grid_tabs._cells.values()))
+
+    def test_collapsed_cell_builds_no_layer_toolbars(
+        self, plot_orchestrator, plot_grid_tabs
+    ):
+        cell_widget = self._cell_widget(plot_orchestrator, plot_grid_tabs)
+
+        assert cell_widget.layer_time_panes == {}
+
+    def test_revealing_builds_them(self, plot_orchestrator, plot_grid_tabs):
+        cell_widget = self._cell_widget(plot_orchestrator, plot_grid_tabs)
+        click_tool(cell_widget.view, 'lt-tool-layer-details')
+
+        assert cell_widget.toolbars_shown
+        assert len(cell_widget.layer_time_panes) == 1
+
+    def test_hiding_and_revealing_again_keeps_one_set(
+        self, plot_orchestrator, plot_grid_tabs
+    ):
+        cell_widget = self._cell_widget(plot_orchestrator, plot_grid_tabs)
+        click_tool(cell_widget.view, 'lt-tool-layer-details')
+        panes = dict(cell_widget.layer_time_panes)
+        click_tool(cell_widget.view, 'lt-tool-layer-details')
+        click_tool(cell_widget.view, 'lt-tool-layer-details')
+
+        assert cell_widget.layer_time_panes == panes
+
+    def test_rebuild_preserves_revealed_toolbars(
+        self, plot_orchestrator, plot_grid_tabs
+    ):
+        cell_widget = self._cell_widget(plot_orchestrator, plot_grid_tabs)
+        cell_id = next(iter(plot_grid_tabs._cells))
+        click_tool(cell_widget.view, 'lt-tool-layer-details')
+
+        plot_orchestrator.set_cell_title(cell_id, 'renamed')
+        _tick(plot_grid_tabs)
+
+        rebuilt = plot_grid_tabs._cells[cell_id]
+        assert rebuilt is not cell_widget
+        assert rebuilt.toolbars_shown
+        assert len(rebuilt.layer_time_panes) == 1
 
 
 class TestCellReconcile:
