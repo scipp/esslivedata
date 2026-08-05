@@ -14,6 +14,7 @@ from ess.livedata.config.workflow_spec import (
     AuxSources,
     CumulativeOutput,
     JobId,
+    NoParams,
     OutputView,
     SeriesOutput,
     Temporality,
@@ -100,7 +101,6 @@ class TestWorkflowSpecAuxSources:
             version=1,
             title="Test Workflow",
             description="A test workflow",
-            params=None,
             outputs=SimpleTestOutputs,
             group=REDUCTION,
         )
@@ -125,7 +125,6 @@ class TestWorkflowSpecAuxSources:
             version=1,
             title="Test Workflow",
             description="A test workflow",
-            params=None,
             aux_sources=aux,
             outputs=SimpleTestOutputs,
             group=REDUCTION,
@@ -156,7 +155,6 @@ class TestWorkflowSpecOutputs:
             version=1,
             title="Test Workflow",
             description="A test workflow",
-            params=None,
             outputs=TestOutputs,
             group=REDUCTION,
         )
@@ -183,7 +181,6 @@ class TestWorkflowSpecOutputs:
             version=1,
             title="Test Workflow",
             description="A test workflow",
-            params=None,
             outputs=TestOutputs,
             group=REDUCTION,
         )
@@ -213,7 +210,6 @@ class TestWorkflowSpecOutputs:
             version=1,
             title="Test Workflow",
             description="A test workflow",
-            params=None,
             outputs=TestOutputs,
             group=REDUCTION,
         )
@@ -235,7 +231,6 @@ class TestWorkflowSpecOutputs:
             version=1,
             title="Test Workflow",
             description="A test workflow",
-            params=None,
             outputs=TestOutputs,
             group=REDUCTION,
         )
@@ -260,7 +255,6 @@ class TestWorkflowSpecOutputs:
             version=1,
             title="Test Workflow",
             description="A test workflow",
-            params=None,
             outputs=TestOutputs,
             group=REDUCTION,
         )
@@ -310,7 +304,7 @@ class _CouplingOutputs(WorkflowOutputsBase):
     total_in_range: sc.DataArray = Field(title='Total in range')
 
 
-def _coupling_spec(params: type[BaseModel] | None = _CouplingParams) -> WorkflowSpec:
+def _coupling_spec(params: type[BaseModel] = _CouplingParams) -> WorkflowSpec:
     return WorkflowSpec(
         instrument="test",
         name="test_workflow",
@@ -346,7 +340,9 @@ class TestParamOutputCoupling:
         assert _coupling_spec().get_output_param_titles('nonexistent') == []
 
     def test_get_output_param_titles_empty_without_params(self) -> None:
-        assert _coupling_spec(params=None).get_output_param_titles('histogram') == []
+        assert (
+            _coupling_spec(params=NoParams).get_output_param_titles('histogram') == []
+        )
 
     def test_get_output_param_titles_skips_absent_params(self) -> None:
         # An output may be shared with a params variant lacking some fields;
@@ -452,7 +448,6 @@ class TestWorkflowConfigFromParams:
         config = WorkflowConfig.from_params(
             workflow_id=sample_workflow_id,
             job_id=job_id,
-            params=None,
             aux_source_names=None,
         )
 
@@ -470,7 +465,6 @@ class TestWorkflowConfigFromParams:
         config = WorkflowConfig.from_params(
             workflow_id=sample_workflow_id,
             job_id=custom_job_id,
-            params=None,
         )
 
         assert config.job_id == custom_job_id
@@ -781,7 +775,6 @@ class TestFindTimeseriesOutputs:
             version=1,
             title='Test',
             description='Test',
-            params=None,
             outputs=TimeseriesOutputs,
             source_names=['source1', 'source2'],
             group=TIMESERIES,
@@ -810,7 +803,6 @@ class TestFindTimeseriesOutputs:
             version=1,
             title='Test',
             description='Test',
-            params=None,
             outputs=NonTimeseriesOutputs,
             source_names=['source1'],
             group=REDUCTION,
@@ -836,7 +828,6 @@ class TestFindTimeseriesOutputs:
             version=1,
             title='Test',
             description='Test',
-            params=None,
             outputs=NoTimeCoordOutputs,
             source_names=['source1'],
             group=REDUCTION,
@@ -860,7 +851,6 @@ class TestFindTimeseriesOutputs:
             version=1,
             title='Test',
             description='Test',
-            params=None,
             outputs=NoFactoryOutputs,
             source_names=['source1'],
             group=REDUCTION,
@@ -903,7 +893,6 @@ class TestFindTimeseriesOutputs:
             version=1,
             title='TS 1',
             description='Test',
-            params=None,
             outputs=TimeseriesOutputs,
             source_names=['src1'],
             group=TIMESERIES,
@@ -914,7 +903,6 @@ class TestFindTimeseriesOutputs:
             version=1,
             title='Det 1',
             description='Test',
-            params=None,
             outputs=NonTimeseriesOutputs,
             source_names=['src2'],
             group=REDUCTION,
@@ -944,7 +932,6 @@ class TestOutputViews:
             title='T',
             description='D',
             outputs=Outputs,
-            params=None,
             group=REDUCTION,
         )
         views = spec.get_output_views()
@@ -975,7 +962,6 @@ class TestOutputViews:
             title='T',
             description='D',
             outputs=Outputs,
-            params=None,
             group=REDUCTION,
         )
         views = spec.get_output_views()
@@ -993,7 +979,6 @@ class TestOutputViews:
             title='T',
             description='D',
             outputs=Outputs,
-            params=None,
             group=REDUCTION,
         )
         assert spec.get_output_view('nonexistent') is None
@@ -1027,7 +1012,6 @@ class TestOutputViews:
             title='T',
             description='D',
             outputs=Outputs,
-            params=None,
             group=REDUCTION,
         )
         template = spec.get_output_template('histogram')
@@ -1053,7 +1037,6 @@ class TestOutputViews:
                 title='T',
                 description='D',
                 outputs=Outputs,
-                params=None,
                 group=REDUCTION,
             )
 
@@ -1075,7 +1058,6 @@ class TestOutputViews:
             title='T',
             description='D',
             outputs=Outputs,
-            params=None,
             group=REDUCTION,
         )
         assert [v.title for v in spec.get_output_views()] == ['A', 'B']
@@ -1091,7 +1073,6 @@ class TestUnambiguousWindowing:
             version=1,
             title='T',
             description='D',
-            params=None,
             outputs=outputs,
             group=REDUCTION,
         )

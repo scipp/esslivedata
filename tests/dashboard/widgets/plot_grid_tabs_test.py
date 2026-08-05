@@ -1300,6 +1300,33 @@ class TestCellReconcile:
 
         assert plot_grid_tabs._current_modal is None
 
+    # Opening a Modal outside a served document warns; irrelevant here, since
+    # what is under test is the poll gate the open/close toggles.
+    @pytest.mark.filterwarnings('ignore:To use the Modal:UserWarning')
+    def test_cell_properties_modal_suspends_grid_rendering(
+        self, plot_orchestrator, plot_grid_tabs
+    ):
+        """The cell-properties modal must pause the poll like the config modal.
+
+        Its overlay hides the plots, so rendering behind it is wasted work on
+        the session's event loop -- which is also what the click that opens the
+        next modal has to queue behind (#1174).
+        """
+        grid_id = plot_orchestrator.add_grid(title='G', nrows=2, ncols=2)
+        cell_id = _add_static_cell(plot_orchestrator, grid_id, self._geometry())
+        _tick(plot_grid_tabs)
+        plot_grid_tabs.tabs.active = plot_grid_tabs._static_tabs_count
+        assert plot_grid_tabs._get_active_grid_id() == grid_id
+
+        plot_grid_tabs._show_cell_properties_modal(cell_id, 'G', has_user_title=False)
+        assert plot_grid_tabs._get_active_grid_id() is None
+
+        # Every close path routes through the modal's ``open`` watcher, so
+        # dismissing it must hand rendering back.
+        plot_grid_tabs._current_modal.modal.open = False
+        assert plot_grid_tabs._current_modal is None
+        assert plot_grid_tabs._get_active_grid_id() == grid_id
+
     def test_update_layer_config_rebuilds_cell(self, plot_orchestrator, plot_grid_tabs):
         grid_id = plot_orchestrator.add_grid(title='G', nrows=2, ncols=2)
         cell_id = _add_static_cell(plot_orchestrator, grid_id, self._geometry())

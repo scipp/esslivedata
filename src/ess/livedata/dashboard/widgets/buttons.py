@@ -200,6 +200,7 @@ def create_tool_button(
 def create_download_button(
     filename: str,
     callback: Callable[[], str],
+    css_classes: list[str] | None = None,
 ) -> pn.widgets.FileDownload:
     """
     Create a styled download button for exporting data.
@@ -210,6 +211,12 @@ def create_download_button(
         Default filename for the downloaded file.
     callback:
         Callback that returns the file content as a string.
+    css_classes:
+        Extra CSS classes for the button host element. Like
+        :func:`create_tool_button`, every button gets ``lt-tool`` and
+        ``lt-tool-download``; callers pass context (e.g. a grid slug) for finer
+        targeting. These classes have no associated style rules and are
+        visually inert.
 
     Returns
     -------
@@ -237,5 +244,6 @@ def create_download_button(
         sizing_mode='fixed',
         margin=0,
         embed=False,  # Generate content on click, not upfront
+        css_classes=['lt-tool', 'lt-tool-download', *(css_classes or [])],
         stylesheets=stylesheet,
     )

@@ -115,9 +115,7 @@ class ConfigurationAdapter[Model](ABC):
             if k in inputs and v in inputs[k].choices
         }
 
-    def set_aux_sources(
-        self, aux_source_names: dict[str, str] | None
-    ) -> type[Model] | None:
+    def set_aux_sources(self, aux_source_names: dict[str, str] | None) -> type[Model]:
         """Set auxiliary sources and return the parameter model class.
 
         Parameters
@@ -128,13 +126,14 @@ class ConfigurationAdapter[Model](ABC):
         Returns
         -------
         :
-            Pydantic model class for parameters, or None if no parameters.
+            Pydantic model class for parameters. A model with no fields means
+            the workflow or plotter takes no parameters.
         """
         self._cached_aux_sources = aux_source_names
         return self.model_class()
 
     @abstractmethod
-    def model_class(self) -> type[Model] | None:
+    def model_class(self) -> type[Model]:
         """
         Pydantic model class for parameters.
 
@@ -213,13 +212,8 @@ class ConfigurationAdapter[Model](ABC):
         if self._config_state is None:
             return {}
 
-        # Check compatibility with current model
-        model_class = self.model_class()
-        if model_class is None:
-            # No model defined, return params as-is
-            return self._config_state.params
-
         # Check if stored params have ANY overlap with current model fields
+        model_class = self.model_class()
         # If no field names match, the config is from an incompatible version
         stored_keys = set(self._config_state.params.keys())
         model_fields = set(model_class.model_fields.keys())

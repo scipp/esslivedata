@@ -2,6 +2,7 @@
 # Copyright (c) 2025 Scipp contributors (https://github.com/scipp)
 from __future__ import annotations
 
+import numpy as np
 import pytest
 import scipp as sc
 
@@ -660,6 +661,35 @@ class TestWindowAggregatingExtractor:
         # Should return the single frame
         expected = sc.array(dims=['x'], values=[5, 6], unit='counts')
         assert sc.allclose(result.data, expected)
+
+
+class TestWindowOverSilentSource:
+    """What a window reports once its source stops producing frames."""
+
+    @pytest.mark.xfail(
+        reason='#933: the window is anchored to the newest sample rather than to '
+        'now, so a monitor that has gone quiet keeps reporting its last frame as '
+        'the current window. The remedy may instead be producer-side (always emit '
+        'a frame), in which case this test moves rather than flips.',
+        strict=True,
+    )
+    def test_window_with_no_frames_in_it_aggregates_to_zero(self):
+        """A 1 s window over a monitor that stopped 10 s ago holds no counts.
+
+        The intensity the monitor saw in the last second is zero, and that is
+        what the displayed number has to be -- not the last non-empty frame,
+        which the plot presents as if it were current.
+        """
+        latest = np.datetime64('now', 'ns') - np.timedelta64(10, 's')
+        times = latest + np.arange(-4, 1) * np.timedelta64(1, 's')
+        data = sc.DataArray(
+            sc.array(dims=['time'], values=[5.0] * 5, unit='counts'),
+            coords={'time': sc.array(dims=['time'], values=times)},
+        )
+
+        result = WindowAggregatingExtractor(window_duration_seconds=1.0).extract(data)
+
+        assert result.value == 0.0
 
 
 class TestUpdateExtractorInterface:

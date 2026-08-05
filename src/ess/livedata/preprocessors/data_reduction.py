@@ -23,7 +23,9 @@ class ReductionPreprocessorFactory(JobBasedPreprocessorFactoryBase):
             case StreamKind.MONITOR_COUNTS:
                 return Cumulative(clear_on_get=True)
             case StreamKind.LOG | StreamKind.DEVICE:
-                return nxlog_for_stream(self._instrument.streams.get(key.name))
+                return nxlog_for_stream(
+                    self._instrument.streams.get(key.name), name=key.name
+                )
             case StreamKind.MONITOR_EVENTS:
                 return ToNXevent_data()
             case StreamKind.DETECTOR_EVENTS:

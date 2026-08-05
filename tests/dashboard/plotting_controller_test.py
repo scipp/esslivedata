@@ -77,7 +77,6 @@ class TestGetAvailablePlottersFromSpec:
             title='Test',
             description='Test',
             outputs=TestOutputs,
-            params=None,
             group=REDUCTION,
         )
 
@@ -110,7 +109,6 @@ class TestGetAvailablePlottersFromSpec:
             title='Test',
             description='Test',
             outputs=TestOutputs,
-            params=None,
             group=REDUCTION,
         )
 
@@ -135,7 +133,6 @@ class TestGetAvailablePlottersFromSpec:
             title='Test',
             description='Test',
             outputs=TestOutputs,
-            params=None,
             group=REDUCTION,
         )
 
@@ -170,7 +167,6 @@ class TestGetAvailableOverlays:
             title='Test',
             description='Test',
             outputs=TestOutputs,
-            params=None,
             group=REDUCTION,
         )
 
@@ -201,7 +197,6 @@ class TestGetAvailableOverlays:
             title='Test',
             description='Test',
             outputs=TestOutputs,
-            params=None,
             group=REDUCTION,
         )
 
@@ -242,7 +237,6 @@ class TestGetAvailableOverlays:
             title='Test',
             description='Test',
             outputs=TestOutputs,
-            params=None,
             group=REDUCTION,
         )
 
@@ -287,7 +281,6 @@ class TestGetAvailableOverlays:
             title='Test',
             description='Test',
             outputs=TestOutputs,
-            params=None,
             group=REDUCTION,
         )
 
@@ -344,7 +337,6 @@ class TestGetAvailableOverlays:
             title='Test',
             description='Test',
             outputs=TestOutputs,
-            params=None,
             group=REDUCTION,
         )
 
@@ -389,7 +381,6 @@ class TestGetAvailableOverlays:
             title='Test',
             description='Test',
             outputs=TestOutputs,
-            params=None,
             group=REDUCTION,
         )
 
@@ -429,7 +420,6 @@ class TestGetAvailableOverlays:
             title='Test',
             description='Test',
             outputs=TestOutputs,
-            params=None,
             group=REDUCTION,
         )
 
@@ -514,7 +504,6 @@ class TestHiddenWindowFields:
             title='T',
             description='D',
             outputs=outputs,
-            params=None,
             group=REDUCTION,
         )
 
@@ -634,7 +623,6 @@ class TestSinceStartAvailable:
             title='T',
             description='D',
             outputs=outputs,
-            params=None,
             group=REDUCTION,
         )
 
@@ -834,7 +822,6 @@ class TestWorkflowSpecFieldFor:
             title='T',
             description='D',
             outputs=Outputs,
-            params=None,
             group=REDUCTION,
         )
 
@@ -866,7 +853,6 @@ class TestWorkflowSpecFieldFor:
             title='T',
             description='D',
             outputs=BareOutputs,
-            params=None,
             group=REDUCTION,
         )
         # The auto-generated view maps `result` via since_start. Asking for

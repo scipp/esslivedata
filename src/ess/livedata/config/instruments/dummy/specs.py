@@ -53,8 +53,6 @@ register_monitor_workflow_specs(
 )
 
 # Register detector view spec.
-# Note: We don't use register_detector_view_specs here because dummy uses
-# DetectorLogicalView which doesn't follow the projection pattern.
 panel_0_view_handle = instrument.register_spec(
     group=DETECTORS,
     name='panel_0_xy',
@@ -100,7 +98,6 @@ area_panel_view_handle = instrument.register_spec(
     title='Area Panel',
     description='Area detector image view',
     source_names=['area_panel'],
-    params=None,
     outputs=DetectorViewOutputs,
 )
 
@@ -112,5 +109,4 @@ total_counts_handle = instrument.register_spec(
     description='Dummy workflow that simply computes the total counts.',
     source_names=['panel_0'],
     outputs=TotalCountsOutputs,
-    params=None,
 )

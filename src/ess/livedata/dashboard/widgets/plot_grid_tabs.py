@@ -276,7 +276,7 @@ class PlotGridTabs:
         # individual grid tabs. Panel components can only have one parent, so
         # adding the same container to multiple tabs would break rendering.
         self._modal_container = pn.Row(height=0, sizing_mode='stretch_width')
-        self._current_modal: PlotConfigModal | None = None
+        self._current_modal: PlotConfigModal | CellPropertiesModal | None = None
 
         # Create main widget - tabs with zero-height modal container
         # IMPORTANT: Create the widget once in __init__ (not in the panel property)
@@ -375,9 +375,9 @@ class PlotGridTabs:
         active tab index maps to a grid position. When a static tab is selected
         the result is negative, which the bounds check rejects.
 
-        Returns None when a config modal is open: the modal overlay obscures
-        the plots, so rendering would be wasted. Dirty flags are preserved and
-        the first poll after the modal closes pushes the latest cached state.
+        Returns None while any modal is open: the modal overlay obscures the
+        plots, so rendering would be wasted. Dirty flags are preserved and the
+        first poll after the modal closes pushes the latest cached state.
         """
         if self._current_modal is not None:
             return None
@@ -631,7 +631,7 @@ class PlotGridTabs:
             Whether ``current_title`` is user-defined; if not, the input starts
             empty so the placeholder hints at the derived fallback.
         """
-        modal = CellPropertiesModal(
+        self._current_modal = CellPropertiesModal(
             orchestrator=self._orchestrator,
             workflow_registry=self._workflow_registry,
             plotting_controller=self._plotting_controller,
@@ -642,8 +642,8 @@ class PlotGridTabs:
             on_close=self._cleanup_modal,
         )
         self._modal_container.clear()
-        self._modal_container.append(modal.modal)
-        modal.show()
+        self._modal_container.append(self._current_modal.modal)
+        self._current_modal.show()
 
     @staticmethod
     def _cell_signature(cell: PlotCell) -> tuple:

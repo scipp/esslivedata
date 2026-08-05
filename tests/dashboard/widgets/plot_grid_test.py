@@ -214,6 +214,20 @@ class TestPlotGridInitialization:
                     not button.disabled  # type: ignore[truthy-bool]
                 ), f"Cell ({row}, {col}) should be enabled"
 
+    def test_empty_cells_carry_position_hooks(
+        self, mock_callback: FakeCallback
+    ) -> None:
+        # Committed automation contract: the click-to-place gesture is addressed
+        # by grid position, and only ever lands on a cell that is still empty.
+        grid = PlotGrid(nrows=2, ncols=2, plot_request_callback=mock_callback)
+
+        for row in range(2):
+            for col in range(2):
+                button = get_cell_button(grid, row, col)
+                assert button is not None
+                assert 'lt-empty-cell' in button.css_classes
+                assert f'lt-empty-cell-r{row}c{col}' in button.css_classes
+
 
 class TestCellSelection:
     def test_single_cell_selection_triggers_callback(

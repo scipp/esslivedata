@@ -57,10 +57,18 @@ no text, `title`, or `aria-label` — leaving nothing semantic for browser autom
 `create_tool_button()` tags every button with **committed, visually-inert CSS classes**:
 
 - `lt-tool` on all tool buttons, plus `lt-tool-{icon_name}` (e.g. `lt-tool-settings`,
-  `lt-tool-player-play`, `lt-tool-x`).
+  `lt-tool-player-play`, `lt-tool-x`). `create_download_button()` follows the same
+  shape with a fixed `lt-tool-download`.
 - Callers pass `css_classes=[...]` for context. Workflow rows add `lt-wf-{workflow_id.name}`
   (the WorkflowId *name* slug, not the display title), so a workflow's gear is
   `.lt-wf-monitor_histogram.lt-tool-settings`.
+
+The empty cells of a plot grid are not tool buttons but are click targets — the
+two-click place gesture that opens the plot wizard — so they carry
+`lt-empty-cell` plus `lt-empty-cell-r{row}c{col}` (`plot_grid.py`). Empty and
+occupied cells are hooked apart on purpose: a selector placing a plot must be
+able to demand a cell that is still free, so an occupied cell's `lt-cell-*` hook
+never answers for one.
 
 `lt-wf-*` and `lt-grid-*` slug different things on purpose: a workflow has a stable
 *name* identity to slug (`workflow_status_widget.py`'s `_tool_css_class`), but a grid has
@@ -116,6 +124,14 @@ screenshot with the `base64 -d` pipeline the log prints next to it.
 present but not visible means it rendered and was hidden, none at all means the click
 never reached its handler.
 
+The server log tail is what distinguishes *why* it never reached the handler. Static
+assets are served off the same IOLoop as everything else, so their `tornado.access`
+timings measure how long that loop was blocked: a `GET /static/...` taking seconds
+means the click's round-trip was queued behind the session's periodic pass, not lost
+(#1185). Sub-millisecond serves with no post-click activity at all point at a dropped
+click instead. `Dashboard.open_modal` re-clicks rather than waiting once, because only
+one of those two recovers.
+
 One console line is a red herring: `pageerror: Cannot read properties of undefined
 (reading 'parent_style')` fires on **every** run, passing or failing. It is
 [bokeh#15274](https://github.com/bokeh/bokeh/issues/15274) — our plot grid is a
@@ -154,9 +170,10 @@ locators. With
 `dynamic=True` only the active tab's models exist, so a DOM/`lt-*` inventory reflects the
 *current* tab only — switch tabs before querying that tab's hooks.
 
-**Modals.** Settings (gear), cell edit (pencil), and workflow config open a `pn.Modal`
-rendered as `[role=dialog]` — use that as the open/visible signal (`Dashboard.open_modal`
-waits on it). Footer buttons are reachable by text (`Cancel`, `Update Plot`, `Back`). To
+**Modals.** Settings (gear), cell edit (pencil), workflow config, and the plot wizard
+an empty grid cell opens all render a `pn.Modal` as `[role=dialog]` — use that as the
+open/visible signal (`Dashboard.open_modal` waits on it). Footer buttons are reachable
+by text (`Cancel`, `Back`, `Next`, `Add Plot`, `Update Plot`). To
 dismiss, press **Escape** (a `ModalEscapeCloser` widget makes this work from initial
 focus) or click `.pnx-dialog-close`. Per-grid rows in **Manage Plots** carry
 `lt-grid-{title-slug}` (e.g. `.lt-grid-detectors.lt-tool-pencil`) — that pencil is the

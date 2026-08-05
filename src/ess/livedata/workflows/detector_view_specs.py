@@ -22,9 +22,7 @@ import scipp as sc
 
 from .. import parameter_models
 from ..config import models
-from ..config.instrument import Instrument
 from ..config.workflow_spec import (
-    DETECTORS,
     AuxSources,
     CumulativeOutput,
     JobId,
@@ -32,7 +30,6 @@ from ..config.workflow_spec import (
     WindowOutput,
     WorkflowOutputsBase,
 )
-from .workflow_factory import SpecHandle
 
 CoordinateMode = Literal['toa', 'wavelength']
 
@@ -477,9 +474,6 @@ def make_detector_view_params(
     return DetectorViewWithSpectrumParams
 
 
-ProjectionType = Literal["xy_plane", "cylinder_mantle_z"]
-
-
 class DetectorROIAuxSources(AuxSources):
     """Auxiliary source spec for ROI configuration in detector workflows.
 
@@ -526,109 +520,3 @@ class DetectorROIAuxSources(AuxSources):
             'roi_rectangle': f"{job_id}/roi_rectangle",
             'roi_polygon': f"{job_id}/roi_polygon",
         }
-
-
-def register_detector_view_spec(
-    *,
-    instrument: Instrument,
-    projection: ProjectionType | dict[str, ProjectionType],
-    source_names: list[str] | None = None,
-    spectrum_view: SpectrumViewSpec | None = None,
-) -> SpecHandle:
-    """
-    Register detector view specs for a given projection.
-
-    This is a lightweight helper that registers workflow specs without creating
-    the actual detector view objects.
-
-    Parameters
-    ----------
-    instrument:
-        Instrument to register specs with.
-    projection:
-        Projection type(s) to register. Either a single projection type applied to
-        all sources, or a dict mapping source names to projection types. When a dict
-        is provided, this creates a unified "Detector Projection" workflow that
-        uses different projections for different detector banks.
-    source_names:
-        List of detector source names. Required when projection is a single type.
-        When projection is a dict, defaults to the dict keys if not specified.
-    spectrum_view:
-        Optional spectrum-view configuration. When provided, the registered
-        params/outputs include the spectrum-specific rebin param and the
-        ``spectrum_view`` output field. The factory is still responsible for
-        wiring the transform into the Sciline workflow (pass ``spectrum_view`` on
-        the Sciline ``GeometricViewConfig`` / ``LogicalViewConfig`` when
-        constructing ``DetectorViewFactory``).
-
-    Returns
-    -------
-    :
-        A SpecHandle.
-
-    Example
-    -------
-    Single projection for all detectors:
-
-    .. code-block:: python
-
-        handle = register_detector_view_spec(
-            instrument=instrument,
-            projection='xy_plane',
-            source_names=['detector_0', 'detector_1'],
-        )
-
-    Mixed projections (unified workflow):
-
-    .. code-block:: python
-
-        handle = register_detector_view_spec(
-            instrument=instrument,
-            projection={
-                'mantle_detector': 'cylinder_mantle_z',
-                'endcap_backward_detector': 'xy_plane',
-                'endcap_forward_detector': 'xy_plane',
-            },
-        )
-    """
-    if isinstance(projection, dict):
-        # Mixed projections - create unified "Detector Projection" workflow
-        if source_names is None:
-            source_names = list(projection.keys())
-        name = "detector_projection"
-        title = "Detector Projection"
-        description = (
-            "Projection of detector banks onto 2D planes. "
-            "Uses the appropriate projection for each detector."
-        )
-    elif projection == "xy_plane":
-        if source_names is None:
-            raise ValueError("source_names is required when projection is a string")
-        name = "detector_xy_projection"
-        title = "Detector XY Projection"
-        description = "Projection of a detector bank onto an XY-plane."
-    elif projection == "cylinder_mantle_z":
-        if source_names is None:
-            raise ValueError("source_names is required when projection is a string")
-        name = "detector_cylinder_mantle_z"
-        title = "Detector Cylinder Mantle Z Projection"
-        description = (
-            "Projection of a detector bank onto a cylinder mantle along Z-axis."
-        )
-    else:
-        raise ValueError(f"Unsupported projection: {projection}")
-
-    handle = instrument.register_spec(
-        group=DETECTORS,
-        name=name,
-        version=1,
-        title=title,
-        description=description,
-        source_names=source_names,
-        aux_sources=DetectorROIAuxSources(),
-        params=make_detector_view_params(spectrum_view=spectrum_view),
-        outputs=make_detector_view_outputs(
-            roi_support=True, spectrum_view=spectrum_view
-        ),
-    )
-    return handle

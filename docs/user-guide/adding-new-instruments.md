@@ -474,37 +474,64 @@ instrument.add_logical_view(
 
 #### Geometric Projections (complex geometries)
 
-For detectors with complex 3D geometries, use helper functions to register projections:
+Detectors with complex 3D geometries are projected using their calibrated pixel
+positions. This follows the two-phase pattern: `specs.py` registers *that* there is a
+projection workflow, `factories.py` declares *which* projection each bank uses.
+
+In `specs.py`:
 
 ```python
-from ess.livedata.workflows.detector_view_specs import register_detector_view_spec
-
-# Single projection for all detectors
-xy_handle = register_detector_view_spec(
-    instrument=instrument,
-    projection='xy_plane',
-    source_names=['detector_0', 'detector_1'],
+from ess.livedata.config.workflow_spec import DETECTORS
+from ess.livedata.workflows.detector_view_specs import (
+    DetectorROIAuxSources,
+    DetectorViewOutputs,
+    DetectorViewParams,
 )
 
-# Mixed projections - different projection types per detector
-# Creates a unified "Detector Projection" workflow
-# source_names defaults to the dict keys
-projection_handle = register_detector_view_spec(
-    instrument=instrument,
-    projection={
-        'mantle_detector': 'cylinder_mantle_z',
-        'endcap_backward_detector': 'xy_plane',
-        'endcap_forward_detector': 'xy_plane',
-    },
+projection_handle = instrument.register_spec(
+    group=DETECTORS,
+    name='detector_projection',
+    version=1,
+    title='Detector Projection',
+    description='Projection of the detector banks onto 2D screens.',
+    source_names=detector_names,
+    aux_sources=DetectorROIAuxSources(),
+    params=DetectorViewParams,
+    outputs=DetectorViewOutputs,
 )
 ```
 
-Available projections:
-- `xy_plane`: 2D projection onto XY plane
-- `cylinder_mantle_z`: Cylindrical projection (for detectors like DREAM's mantle)
+In `factories.py`, one `GeometricViewConfig` per bank. Banks with different geometries
+can use different projections and still appear under a single workflow in the UI:
 
-When using a dict for `projection`, each detector can use a different projection type,
-but they will all appear under a single "Detector Projection" workflow in the UI.
+```python
+_view_config = {
+    'mantle_detector': GeometricViewConfig(
+        projection_type='cylinder_mantle_z',
+        resolution={'arc_length': 128, 'z': 128},
+        pixel_noise=sc.scalar(2.0, unit='mm'),
+    ),
+    'endcap_backward_detector': GeometricViewConfig(
+        projection_type='xy_plane',
+        resolution={'x': 128, 'y': 128},
+        pixel_noise=sc.scalar(2.0, unit='mm'),
+    ),
+}
+
+
+@projection_handle.attach_factory()
+def _projection_factory(source_name, params, aux_source_names):
+    factory = DetectorViewFactory(
+        data_source=NeXusDetectorSource(get_nexus_geometry_filename('myinst')),
+        view_config=_view_config,
+    )
+    return factory.make_workflow(source_name, params, aux_source_names)
+```
+
+Available projections (`ProjectionType` in `workflows/detector_view/types.py`):
+- `xy_plane`: projection onto the XY plane
+- `cylinder_mantle_z`: cylinder mantle about Z (e.g. DREAM's mantle)
+- `cylinder_mantle_y`: cylinder mantle about Y (e.g. MAGIC's banks)
 
 Geometric projections are towards the sample position (assumed at the origin).
 For more details see [ess.reduce.live.raw](https://scipp.github.io/essreduce/generated/modules/ess.reduce.live.raw.html).
@@ -512,7 +539,7 @@ For more details see [ess.reduce.live.raw](https://scipp.github.io/essreduce/gen
 ### Geometry Files
 
 Geometry files are needed when:
-- Using geometric projections (`xy_plane`, `cylinder_mantle_z`)
+- Using geometric projections (`xy_plane`, `cylinder_mantle_y`, `cylinder_mantle_z`)
 - Loading `detector_number` from NeXus (if not provided explicitly)
 
 If you configure `detector_number` explicitly via `configure_detector()`, no geometry file is needed.
