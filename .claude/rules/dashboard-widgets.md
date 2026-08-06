@@ -129,8 +129,7 @@ assets are served off the same IOLoop as everything else, so their `tornado.acce
 timings measure how long that loop was blocked: a `GET /static/...` taking seconds
 means the click's round-trip was queued behind the session's periodic pass, not lost
 (#1185). Sub-millisecond serves with no post-click activity at all point at a dropped
-click instead. `Dashboard.open_modal` re-clicks rather than waiting once, because only
-one of those two recovers.
+click instead.
 
 One console line is a red herring: `pageerror: Cannot read properties of undefined
 (reading 'parent_style')` fires on **every** run, passing or failing. It is

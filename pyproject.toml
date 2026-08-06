@@ -119,10 +119,6 @@ markers = [
 ]
 filterwarnings = [
   "error",
-  # A browser test whose modal only opened on a retry still passes, but must
-  # say so: the rate of these is the field measurement of #1185. Reported in
-  # the warnings summary instead of failing the run (drive_dashboard.py).
-  "default:modal opened only on attempt:UserWarning",
 ]
 pythonpath = "tests"
 
