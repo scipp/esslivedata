@@ -326,6 +326,14 @@ def test_multi_layer_cell_gear_picks_the_layer_to_configure():
         for entry in entries:
             wait_until(dash, entry.is_visible, label="layer menu entry")
 
+        # The dropdown's min-width rule targets the popup's actual DOM class
+        # (Bokeh's Dropdown menu is `bk-Menu`, not the lowercase `bk-menu` a
+        # stale selector would suggest); a mismatch silently drops the rule
+        # and wraps every entry across multiple lines.
+        menu_box = page.locator(".bk-Menu").bounding_box()
+        assert menu_box is not None
+        assert menu_box["width"] >= 200
+
         # Choosing one opens the config modal for that layer, not the cell's
         # first: the source selector is pre-filled with the chosen layer's
         # source. (The dialog's own inner_text is empty -- Panel renders each
