@@ -710,6 +710,12 @@ class CellWidget:
             # produces a single DynamicMap whose outputs are plain Overlays;
             # opts applied afterwards land on the OverlayPlot and persist.
             result = hv.Overlay(plots).collate()
+            # Sharing one figure also fuses the layers' update cost: a send on
+            # any one layer re-runs the OverlayPlot's range machinery over every
+            # subplot, so a layer's repaint grows with the number of layers in
+            # its cell. Only the data push stays proportional to the sender.
+            # `Plotter.applies_ranges` is what keeps that off the layers whose
+            # axes the cell writes itself.
 
         # Skip the cell-level hooks for a non-overlayable layer: a Layout's
         # sub-figures each carry their own SaveTool, and a Table's DataTable

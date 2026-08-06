@@ -8,7 +8,7 @@ workflow outputs, with per-shape colors based on ROI index.
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, ClassVar
 
 import holoviews as hv
 import pydantic
@@ -70,6 +70,8 @@ class RectanglesReadbackPlotter(Plotter):
     Takes ROI readback DataArrays with roi_index coordinate and renders
     rectangles with per-shape colors based on the ROI index.
     """
+
+    IS_ANNOTATION: ClassVar[bool] = True
 
     def __init__(self, params: RectanglesReadbackParams) -> None:
         super().__init__()
@@ -179,6 +181,8 @@ class PolygonsReadbackPlotter(Plotter):
     Takes ROI readback DataArrays with roi_index coordinate and renders
     polygons with per-shape colors based on the ROI index.
     """
+
+    IS_ANNOTATION: ClassVar[bool] = True
 
     def __init__(self, params: PolygonsReadbackParams) -> None:
         super().__init__()

@@ -463,6 +463,12 @@ def format_time_info(bounds: TimeBounds) -> str:
     return f'{format_time_ns_local(bounds.min_end)} (Lag: {lag_s:.1f}s)'
 
 
+def _is_element_opt(opt: hv.Options) -> bool:
+    """Whether ``opt`` targets an Element rather than a container."""
+    element = getattr(hv, opt.key.split('.')[0], None)
+    return isinstance(element, type) and issubclass(element, hv.Element)
+
+
 class Plotter:
     """
     Base class for plots that support autoscaling.
@@ -473,6 +479,14 @@ class Plotter:
 
     AUTOSCALE_AXES: ClassVar[frozenset[Axis]] = frozenset()
     """Per-axis autoscale capability. Override per subclass."""
+
+    IS_ANNOTATION: ClassVar[bool] = False
+    """Whether this layer is drawn in another layer's coordinate space.
+
+    ROI overlays are annotations: they are composed on top of the layer that
+    determines the figure's bounds, so they never need bounds of their own. See
+    :attr:`applies_ranges`.
+    """
 
     _autoscale_axes_override: frozenset[Axis] | None = None
 
@@ -742,7 +756,7 @@ class Plotter:
         # Computed outside the try so a render failure still stamps the bounds
         # of the data that was received.
         self._time_bounds = _compute_time_bounds(data)
-        self._set_cached_state(result.opts(*self.style_opts()))
+        self._set_cached_state(result.opts(*self._frame_opts()))
 
     def _build_result(
         self,
@@ -918,6 +932,54 @@ class Plotter:
         return [
             hv.opts.Overlay(shared_axes=True, title=''),
             hv.opts.Layout(shared_axes=False),
+        ]
+
+    @property
+    def applies_ranges(self) -> bool:
+        """Whether HoloViews must compute this layer's axis bounds from its data.
+
+        False lets :meth:`_frame_opts` hand HoloViews ``apply_ranges=False``,
+        which skips computing bounds, deriving extents and writing the Bokeh
+        ranges on every frame -- a third of a 1D layer's repaint. That work is
+        per element, so it is not a fixed cost per layer: it grows both with the
+        elements a layer draws (a multi-source selection overlays one per
+        source) and with the number of layers sharing the cell's figure, whose
+        range updates are fused (see ``widgets/cell.py``). It is safe in two
+        cases, and this property is the single place that decides:
+
+        - the cell's :class:`~.cell_autoscale.CellAutoscaleController` writes
+          both numeric axes itself on every render, i.e. ``AUTOSCALE_AXES``
+          covers x and y (see :attr:`autoscale_axes` for the per-instance
+          narrowing) *and* the layer renders into one figure whose handles the
+          controller can reach -- a layout-mode plotter draws one figure per
+          element, which is also what makes it non-overlayable, and
+          ``RangeHandles`` writes through a single figure's ``x_range`` /
+          ``y_range``, so nothing would set the bounds;
+        - the layer is an annotation drawn in another layer's coordinate space
+          and so never determines the bounds (:attr:`IS_ANNOTATION`), which is
+          what HoloViews does for its own annotation plotters.
+
+        A plotter owning a figure whose axes nobody writes -- ``BarsPlotter``,
+        ``TablePlotter``, ``SlicerPlotter`` (which autoscales only the color
+        axis) -- keeps HoloViews' computation, so the default is the safe one:
+        a new plotter misses the saving rather than rendering on empty bounds.
+        """
+        writes_both_axes = {'x', 'y'} <= self.autoscale_axes and self.is_overlayable
+        return not (self.IS_ANNOTATION or writes_both_axes)
+
+    def _frame_opts(self) -> list[hv.Options]:
+        """:meth:`style_opts`, plus the range opt-out where it applies.
+
+        The opt-out goes on the leaf element opts only. Ranges are a property of
+        the elements, so opting the container out measures the same as not doing
+        it, and ``LayoutPlot`` has no ``apply_ranges`` parameter at all -- adding
+        it there raises.
+        """
+        opts = self.style_opts()
+        if self.applies_ranges:
+            return opts
+        return [
+            opt(apply_ranges=False) if _is_element_opt(opt) else opt for opt in opts
         ]
 
     def plot(
