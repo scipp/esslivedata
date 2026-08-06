@@ -99,7 +99,7 @@ def create_overlay_add_button(
     stylesheets = create_tool_button_stylesheet(button_color, hover_color)
     stylesheets.append(
         """
-        .bk-menu {
+        .bk-Menu {
             min-width: 200px !important;
             right: 0 !important;
             left: auto !important;
@@ -342,7 +342,7 @@ def _create_configure_button_or_menu(
     stylesheets = create_tool_button_stylesheet(button_color, hover_color)
     stylesheets.append(
         """
-        .bk-menu {
+        .bk-Menu {
             min-width: 200px !important;
             right: 0 !important;
             left: auto !important;
