@@ -12,14 +12,14 @@ in the correct session context.
 from __future__ import annotations
 
 import time
-from collections.abc import Callable, Iterable, Iterator
-from contextlib import contextmanager, nullcontext
+from collections.abc import Callable, Iterable
 from functools import partial
 from typing import TYPE_CHECKING
 
 import panel as pn
 import structlog
 
+from .batched_update import batched_update
 from .notification_queue import NotificationEvent, NotificationQueue
 from .notifications import show_notification
 from .session_registry import SessionId, SessionRegistry
@@ -341,7 +341,7 @@ class SessionUpdater:
         if not notifications and not handlers:
             return
 
-        with self._batched_update():
+        with batched_update():
             self._show_notifications(notifications)
             for handler in handlers:
                 try:
@@ -365,26 +365,6 @@ class SessionUpdater:
                 "Error in has_work predicate for session %s", self._session_id
             )
             return True
-
-    @contextmanager
-    def _batched_update(self) -> Iterator[None]:
-        """Batch UI updates using hold + freeze.
-
-        ``pn.io.hold()`` batches document change events so they are dispatched
-        to the browser in one WebSocket flush, avoiding staggered rendering.
-
-        ``doc.models.freeze()`` batches Bokeh model-graph recomputation.
-        Without it, each operation that mutates the model graph (pipe.send,
-        layout child changes) triggers a full BFS traversal of every model in
-        the document via ``_pop_freeze`` → ``recompute`` → ``collect_models``,
-        at O(M) cost. The outer freeze keeps the counter above zero so that
-        inner freeze/unfreeze cycles (e.g. HoloViews ``hold_render``) are
-        no-ops, collapsing N recomputes into 1.
-        """
-        doc = pn.state.curdoc
-        freeze = doc.models.freeze() if doc is not None else nullcontext()
-        with pn.io.hold(), freeze:
-            yield
 
     def _poll_notifications(self) -> list[NotificationEvent]:
         """Poll NotificationQueue for new events."""
