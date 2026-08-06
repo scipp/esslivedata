@@ -54,6 +54,19 @@ ANNOUNCEMENTS_URL = (
 pn.extension('holoviews', 'modal', notifications=True, template='material')
 hv.extension('bokeh')
 
+# HoloViews defaults its Bokeh renderer to `webgl=True`, which sets
+# `output_backend='webgl'` on every figure. That gives each plot a second, WebGL
+# canvas: Bokeh then resizes, scissors and clears it before every paint
+# (`prepare_webgl`) and blits it over the 2D canvas afterwards (`blit_webgl` ->
+# a full-canvas `drawImage`), per plot, per frame. WebGL only accelerates marker
+# and line glyphs at glyph counts we never reach -- our views are histogrammed
+# images and short curves, and images have no WebGL path at all -- so the round
+# trip is pure overhead. Dropping it cuts the browser's main-thread time on a
+# 12-cell grid by ~3x in steady state and roughly halves the block on a tab
+# switch. Individual figures can still opt in via
+# `backend_opts={'plot.output_backend': 'webgl'}`.
+hv.renderer('bokeh').webgl = False
+
 # HoloViews registers `apply_nodata` as a data-mode compositor for Image, Raster,
 # QuadMesh and ImageStack, implementing the `nodata` plot option: an integer
 # sentinel value is rewritten to NaN, which draws transparent. It cannot fire here
