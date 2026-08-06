@@ -53,7 +53,13 @@ def test_wait_until_ready_reports_a_dead_server_instead_of_waiting_it_out(tmp_pa
             stdout=logf,
             stderr=subprocess.STDOUT,
         )
-    proc.wait(timeout=10)
+    try:
+        proc.wait(timeout=10)
+    except subprocess.TimeoutExpired:
+        # A child left unreaped surfaces as a ResourceWarning in whatever test
+        # is running when its Popen is collected, never in this one.
+        drive_dashboard._terminate(proc)
+        raise
 
     started = time.monotonic()
     with pytest.raises(RuntimeError, match="exited with code 3") as exc_info:
