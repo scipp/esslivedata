@@ -12,13 +12,13 @@ from __future__ import annotations
 
 import time
 from collections.abc import Callable, Mapping, Sequence
-from contextlib import nullcontext
 
 import panel as pn
 import structlog
 
 from ess.livedata.config.workflow_spec import WorkflowId, WorkflowSpec
 
+from ..batched_update import batched_update
 from ..notifications import show_error
 from ..plot_data_service import PlotDataService
 from ..plot_orchestrator import (
@@ -118,16 +118,14 @@ class _BatchedTabs(pn.Tabs):
     ``_apply_update`` calls) that independently serializes PATCH-DOC
     messages and recomputes the Bokeh model graph for each step.
 
-    Wrapping the cascade in ``pn.io.hold()`` + ``doc.models.freeze()``
-    collapses N dispatches/recomputes into 1 each.
+    Wrapping the cascade in :func:`batched_update` collapses N
+    dispatches/recomputes into 1 each.
 
     See https://github.com/holoviz/panel/issues/8461.
     """
 
     def _update_active(self, *events) -> None:
-        doc = pn.state.curdoc
-        freeze = doc.models.freeze() if doc is not None else nullcontext()
-        with pn.io.hold(), freeze:
+        with batched_update():
             super()._update_active(*events)
 
 

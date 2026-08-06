@@ -36,7 +36,7 @@ def refresh(self):
 
 **Key principles**:
 - Widgets detect changes via version counters on shared state, not via push callbacks
-- All widget updates run inside `SessionUpdater._batched_update()` for efficient recomputation
+- All widget updates run inside `batched_update()` for efficient recomputation
 - Widget event handlers should only call methods on shared components, never rebuild directly
 
 ## Icons
