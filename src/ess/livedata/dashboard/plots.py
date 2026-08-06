@@ -940,8 +940,12 @@ class Plotter:
 
         False lets :meth:`_frame_opts` hand HoloViews ``apply_ranges=False``,
         which skips computing bounds, deriving extents and writing the Bokeh
-        ranges on every frame -- a third of a 1D layer's repaint. It is safe in
-        two cases, and this property is the single place that decides:
+        ranges on every frame -- a third of a 1D layer's repaint. That work is
+        per element, so it is not a fixed cost per layer: it grows both with the
+        elements a layer draws (a multi-source selection overlays one per
+        source) and with the number of layers sharing the cell's figure, whose
+        range updates are fused (see ``widgets/cell.py``). It is safe in two
+        cases, and this property is the single place that decides:
 
         - the cell's :class:`~.cell_autoscale.CellAutoscaleController` writes
           both numeric axes itself on every render, i.e. ``AUTOSCALE_AXES``
