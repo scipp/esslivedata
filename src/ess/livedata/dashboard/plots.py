@@ -633,6 +633,12 @@ class Plotter:
         calculation should properly adjust the color limits. Since zeros can never
         be included we want to adjust to the lowest positive value.
 
+        Masking values for display belongs here rather than in HoloViews. Its
+        `nodata` plot option is inert -- ``reduction`` unregisters the compositor
+        implementing it, and that registry is global, so it cannot be turned back
+        on for a single plot. A frame masked here is computed once and shared by
+        every session, instead of being re-derived per session on every render.
+
         Parameters
         ----------
         data:
