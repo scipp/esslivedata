@@ -33,6 +33,9 @@ def batched_update() -> Iterator[None]:
     Nesting is a no-op: an inner batch is already covered by the outer one.
     """
     doc = pn.state.curdoc
+    # The freeze is the inner context so that it recomputes before the hold
+    # dispatches: a model added during the pass must be attached to the document
+    # by the time the queued events are serialized.
     with pn.io.hold(), _frozen_models(doc):
         yield
 
