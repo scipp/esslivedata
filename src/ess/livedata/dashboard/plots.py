@@ -339,15 +339,16 @@ class DefaultPresenter(PresenterBase):
     def present(self, pipe: hv.streams.Pipe) -> hv.DynamicMap:
         """Create a DynamicMap that passes through pre-computed elements.
 
-        Static styling is applied once on the DynamicMap (see
-        :meth:`Plotter.style_opts`) rather than per element on every tick.
+        The elements arrive already styled from :meth:`Plotter.compute`. Styling
+        must not be applied here: ``DynamicMap.opts`` is not a one-off, it wraps
+        the map in a ``Dynamic`` operation that re-applies the options to every
+        frame, in every session, on the shared IOLoop.
         """
 
         def passthrough(data):
             return data
 
-        dmap = hv.DynamicMap(passthrough, streams=[pipe], cache_size=1)
-        return dmap.opts(*self._plotter.style_opts())
+        return hv.DynamicMap(passthrough, streams=[pipe], cache_size=1)
 
 
 class StaticPresenter(PresenterBase):
@@ -735,7 +736,7 @@ class Plotter:
         # Computed outside the try so a render failure still stamps the bounds
         # of the data that was received.
         self._time_bounds = _compute_time_bounds(data)
-        self._set_cached_state(result)
+        self._set_cached_state(result.opts(*self.style_opts()))
 
     def _build_result(
         self,
@@ -896,12 +897,14 @@ class Plotter:
         return iter(self._range_targets.items())
 
     def style_opts(self) -> list[hv.Options]:
-        """Static HoloViews opts applied once on the presenter's DynamicMap.
+        """Static HoloViews opts, declared once and applied to each computed frame.
 
-        Hoisting styling here keeps ``compute()`` a pure data->element transform:
-        the per-tick build emits bare elements and styling is declared once at
-        render time, rather than minting an entry in the process-global option
-        store for every element on every tick. Subclasses extend this with opts
+        Declaring them here keeps the per-tick build free of styling decisions:
+        :meth:`compute` applies this list to the finished frame in a single call,
+        so options are never re-assembled per element. Applying them once per
+        frame on the shared compute path also keeps them off the per-session
+        render path, where HoloViews would re-apply them per frame per session
+        (see :meth:`DefaultPresenter.present`). Subclasses extend this with opts
         for their leaf element types; the base provides the container-level opts.
         """
         # title='' stops Bokeh promoting a single overlaid element's label to the
