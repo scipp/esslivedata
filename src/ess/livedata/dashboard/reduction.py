@@ -53,11 +53,12 @@ ANNOUNCEMENTS_URL = (
 pn.extension('holoviews', 'modal', notifications=True, template='material')
 hv.extension('bokeh')
 
-# The first colormap resolution walks every provider, and colorcet's import
-# registers hundreds of colormaps with matplotlib, each miss paying difflib
-# suggestion generation -- ~2.5 s of CPU. Lazily that lands on a session's
-# IOLoop during its first plot render, blocking every request for seconds
-# (holoviz/holoviews#6981). Resolve one cmap now to pay it here, at process startup.
+# Resolving a colormap imports colorcet, which registers hundreds of colormaps with
+# matplotlib. Left lazy, that lands on a session's IOLoop during its first plot render
+# and blocks every request behind it. Pay it here, at startup, where blocking is free.
+# Costs ~70 ms; with matplotlib < 3.11.2 it is ~2.8 s, since each registration paid
+# difflib "did you mean" generation (matplotlib#32172). The warmup is worth keeping
+# independent of that fix -- remove it only if first-render profiling says otherwise.
 process_cmap('viridis')
 
 # Remove Bokeh logo from Layout toolbars by patching LayoutPlot.initialize_plot
