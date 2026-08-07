@@ -58,13 +58,18 @@ hv.extension('bokeh')
 # `output_backend='webgl'` on every figure. That gives each plot a second, WebGL
 # canvas: Bokeh then resizes, scissors and clears it before every paint
 # (`prepare_webgl`) and blits it over the 2D canvas afterwards (`blit_webgl` ->
-# a full-canvas `drawImage`), per plot, per frame. WebGL only accelerates marker
-# and line glyphs at glyph counts we never reach -- our views are histogrammed
-# images and short curves, and images have no WebGL path at all -- so the round
-# trip is pure overhead. Dropping it cuts the browser's main-thread time on a
-# 12-cell grid by ~3x in steady state and roughly halves the block on a tab
-# switch. Individual figures can still opt in via
-# `backend_opts={'plot.output_backend': 'webgl'}`.
+# a full-canvas `drawImage`), per plot, per renderer, per frame. Because that
+# canvas is shared by the whole page, resizing it to each plot's frame
+# reallocates its drawing buffer whenever neighbouring cells differ in size,
+# which ours do. The cost is therefore fixed per figure, whatever it draws,
+# while the saving scales with content -- and our content stays below where the
+# GL path starts to pay: curves are a few hundred points against a break-even
+# near 30k, and detector images are mostly 320^2 or smaller. Bokeh does have a
+# WebGL path for images, it simply does not earn the round trip at these sizes.
+# Dropping it cuts the browser's main-thread time on a 12-cell grid by ~3x in
+# steady state and roughly halves the block on a tab switch. Individual figures
+# can still opt in via `backend_opts={'plot.output_backend': 'webgl'}`; see
+# #1218 for where that might be worth doing.
 hv.renderer('bokeh').webgl = False
 
 # HoloViews registers `apply_nodata` as a data-mode compositor for Image, Raster,
