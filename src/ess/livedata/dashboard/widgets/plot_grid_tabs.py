@@ -327,11 +327,18 @@ class PlotGridTabs:
         def grid_callback(geometry: CellGeometry) -> None:
             self._on_plot_requested(grid_id, geometry)
 
+        def occupied_geometries() -> tuple[CellGeometry, ...]:
+            config = self._orchestrator.peek_grid(grid_id)
+            if config is None:
+                return ()
+            return tuple(cell.geometry for cell in config.cells.values())
+
         # Create PlotGrid widget with grid-specific callback
         plot_grid = PlotGrid(
             nrows=grid_config.nrows,
             ncols=grid_config.ncols,
             plot_request_callback=grid_callback,
+            occupied_geometries=occupied_geometries,
         )
 
         # Store widget reference

@@ -1362,6 +1362,24 @@ class TestCellReconcile:
 
         assert plot_grid_tabs._current_modal is None
 
+    def test_empty_cell_click_racing_cross_session_add_opens_no_modal(
+        self, plot_orchestrator, plot_grid_tabs
+    ):
+        """A cell added by another session occupies topology before this
+        session's poll inserts its widget; the still-rendered empty cell must
+        swallow the two-click gesture instead of opening the wizard on a
+        region that cannot be filled (#1219)."""
+        grid_id = plot_orchestrator.add_grid(title='G', nrows=2, ncols=2)
+        _tick(plot_grid_tabs)
+        _add_static_cell(plot_orchestrator, grid_id, self._geometry())
+
+        plot_grid = plot_grid_tabs._grid_widgets[grid_id]
+        button = plot_grid.panel[0, 0][0]
+        button.param.trigger('clicks')
+        button.param.trigger('clicks')
+
+        assert plot_grid_tabs._current_modal is None
+
     # Opening a Modal outside a served document warns; irrelevant here, since
     # what is under test is the poll gate the open/close toggles.
     @pytest.mark.filterwarnings('ignore:To use the Modal:UserWarning')

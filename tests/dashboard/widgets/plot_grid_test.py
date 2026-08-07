@@ -5,7 +5,28 @@ import numpy as np
 import panel as pn
 import pytest
 
+from ess.livedata.dashboard.plot_orchestrator import CellGeometry
 from ess.livedata.dashboard.widgets.plot_grid import PlotGrid
+
+
+def make_grid(
+    nrows: int,
+    ncols: int,
+    callback: 'FakeCallback',
+    topology: list[CellGeometry],
+) -> PlotGrid:
+    """PlotGrid consulting ``topology`` for occupancy, as PlotGridTabs wires it.
+
+    ``topology`` stands in for the orchestrator's grid config, the authority
+    on which positions are occupied; ``insert_plot_from_callback`` appends to
+    it before inserting, mirroring add_cell-then-insert in production.
+    """
+    return PlotGrid(
+        nrows=nrows,
+        ncols=ncols,
+        plot_request_callback=callback,
+        occupied_geometries=lambda: topology,
+    )
 
 
 class FakeCallback:
@@ -138,13 +159,17 @@ def count_occupied_cells(grid: PlotGrid) -> int:
 
 
 def insert_plot_from_callback(
-    grid: PlotGrid, callback: FakeCallback, plot: hv.DynamicMap
+    grid: PlotGrid,
+    callback: FakeCallback,
+    plot: hv.DynamicMap,
+    topology: list[CellGeometry],
 ) -> None:
     """
     Insert a plot at the region captured by the callback.
 
-    This mimics the workflow used by PlotGridTabs: reading the region
-    from the callback arguments and calling insert_widget_at with a plot widget.
+    This mimics the workflow used by PlotGridTabs: the region enters topology
+    (``add_cell``) and the widget is inserted at it. The close button removes
+    both again, like a topology removal followed by the widget sweep.
 
     Parameters
     ----------
@@ -154,6 +179,8 @@ def insert_plot_from_callback(
         The FakeCallback that captured the region arguments.
     plot:
         The HoloViews DynamicMap to insert.
+    topology:
+        The occupancy list the grid consults (see ``make_grid``).
     """
     # Get region from last callback invocation
     try:
@@ -174,6 +201,7 @@ def insert_plot_from_callback(
     )
 
     def on_close() -> None:
+        topology.remove(geometry)
         grid.remove_widget_at(geometry)
 
     close_button = create_tool_button(
@@ -190,20 +218,21 @@ def insert_plot_from_callback(
         styles={'position': 'relative'},
     )
 
-    # Insert widget at the position
+    # Region enters topology first, then the widget is inserted at it.
+    topology.append(geometry)
     grid.insert_widget_at(geometry, widget)
 
 
 class TestPlotGridInitialization:
     def test_grid_has_panel_property(self, mock_callback: FakeCallback) -> None:
-        grid = PlotGrid(nrows=2, ncols=2, plot_request_callback=mock_callback)
+        grid = make_grid(2, 2, mock_callback, [])
         assert grid.panel is not None
         assert isinstance(grid.panel, pn.GridSpec)
 
     def test_grid_starts_with_empty_clickable_cells(
         self, mock_callback: FakeCallback
     ) -> None:
-        grid = PlotGrid(nrows=2, ncols=2, plot_request_callback=mock_callback)
+        grid = make_grid(2, 2, mock_callback, [])
 
         # All cells should have clickable buttons
         for row in range(2):
@@ -219,7 +248,7 @@ class TestPlotGridInitialization:
     ) -> None:
         # Committed automation contract: the click-to-place gesture is addressed
         # by grid position, and only ever lands on a cell that is still empty.
-        grid = PlotGrid(nrows=2, ncols=2, plot_request_callback=mock_callback)
+        grid = make_grid(2, 2, mock_callback, [])
 
         for row in range(2):
             for col in range(2):
@@ -233,7 +262,8 @@ class TestCellSelection:
     def test_single_cell_selection_triggers_callback(
         self, mock_callback: FakeCallback, mock_plot: hv.DynamicMap
     ) -> None:
-        grid = PlotGrid(nrows=3, ncols=3, plot_request_callback=mock_callback)
+        topology: list[CellGeometry] = []
+        grid = make_grid(3, 3, mock_callback, topology)
 
         # First click should not trigger callback
         simulate_click(grid, 1, 1)
@@ -244,7 +274,7 @@ class TestCellSelection:
         mock_callback.assert_called_once()
 
         # Complete the deferred insertion
-        insert_plot_from_callback(grid, mock_callback, mock_plot)
+        insert_plot_from_callback(grid, mock_callback, mock_plot, topology)
 
         # Cell should now contain a plot
         assert is_cell_occupied(grid, 1, 1)
@@ -252,7 +282,8 @@ class TestCellSelection:
     def test_rectangular_region_selection(
         self, mock_callback: FakeCallback, mock_plot: hv.DynamicMap
     ) -> None:
-        grid = PlotGrid(nrows=4, ncols=4, plot_request_callback=mock_callback)
+        topology: list[CellGeometry] = []
+        grid = make_grid(4, 4, mock_callback, topology)
 
         # Click two corners of a region
         simulate_click(grid, 0, 0)
@@ -261,7 +292,7 @@ class TestCellSelection:
         mock_callback.assert_called_once()
 
         # Complete the deferred insertion
-        insert_plot_from_callback(grid, mock_callback, mock_plot)
+        insert_plot_from_callback(grid, mock_callback, mock_plot, topology)
 
         # All cells in the 2x3 region should be occupied
         assert is_cell_occupied(grid, 0, 0)
@@ -278,13 +309,14 @@ class TestCellSelection:
     def test_selection_works_regardless_of_click_order(
         self, mock_callback: FakeCallback, mock_plot: hv.DynamicMap
     ) -> None:
-        grid = PlotGrid(nrows=4, ncols=4, plot_request_callback=mock_callback)
+        topology: list[CellGeometry] = []
+        grid = make_grid(4, 4, mock_callback, topology)
 
         # Click bottom-right first, then top-left
         simulate_click(grid, 2, 2)
         simulate_click(grid, 1, 1)
 
-        insert_plot_from_callback(grid, mock_callback, mock_plot)
+        insert_plot_from_callback(grid, mock_callback, mock_plot, topology)
 
         # Should still create a 2x2 region
         assert is_cell_occupied(grid, 1, 1)
@@ -295,7 +327,7 @@ class TestCellSelection:
     def test_first_click_changes_cell_appearance(
         self, mock_callback: FakeCallback
     ) -> None:
-        grid = PlotGrid(nrows=3, ncols=3, plot_request_callback=mock_callback)
+        grid = make_grid(3, 3, mock_callback, [])
 
         # Get initial button state
         button_before = get_cell_button(grid, 0, 0)
@@ -317,17 +349,18 @@ class TestPlotInsertion:
     def test_multiple_plots_can_be_inserted(
         self, mock_callback: FakeCallback, mock_plot: hv.DynamicMap
     ) -> None:
-        grid = PlotGrid(nrows=3, ncols=3, plot_request_callback=mock_callback)
+        topology: list[CellGeometry] = []
+        grid = make_grid(3, 3, mock_callback, topology)
 
         # Insert first plot
         simulate_click(grid, 0, 0)
         simulate_click(grid, 0, 0)
-        insert_plot_from_callback(grid, mock_callback, mock_plot)
+        insert_plot_from_callback(grid, mock_callback, mock_plot, topology)
 
         # Insert second plot
         simulate_click(grid, 2, 2)
         simulate_click(grid, 2, 2)
-        insert_plot_from_callback(grid, mock_callback, mock_plot)
+        insert_plot_from_callback(grid, mock_callback, mock_plot, topology)
 
         # Both cells should be occupied
         assert is_cell_occupied(grid, 0, 0)
@@ -336,11 +369,12 @@ class TestPlotInsertion:
     def test_inserted_plot_has_close_button(
         self, mock_callback: FakeCallback, mock_plot: hv.DynamicMap
     ) -> None:
-        grid = PlotGrid(nrows=3, ncols=3, plot_request_callback=mock_callback)
+        topology: list[CellGeometry] = []
+        grid = make_grid(3, 3, mock_callback, topology)
 
         simulate_click(grid, 1, 1)
         simulate_click(grid, 1, 1)
-        insert_plot_from_callback(grid, mock_callback, mock_plot)
+        insert_plot_from_callback(grid, mock_callback, mock_plot, topology)
 
         # Should be able to find a close button
         close_button = find_close_button(grid, 1, 1)
@@ -351,12 +385,13 @@ class TestPlotRemoval:
     def test_clicking_close_button_removes_plot(
         self, mock_callback: FakeCallback, mock_plot: hv.DynamicMap
     ) -> None:
-        grid = PlotGrid(nrows=3, ncols=3, plot_request_callback=mock_callback)
+        topology: list[CellGeometry] = []
+        grid = make_grid(3, 3, mock_callback, topology)
 
         # Insert plot
         simulate_click(grid, 0, 0)
         simulate_click(grid, 1, 1)
-        insert_plot_from_callback(grid, mock_callback, mock_plot)
+        insert_plot_from_callback(grid, mock_callback, mock_plot, topology)
 
         # Verify plot is there
         assert is_cell_occupied(grid, 0, 0)
@@ -375,12 +410,13 @@ class TestPlotRemoval:
     def test_removed_cells_become_selectable_again(
         self, mock_callback: FakeCallback, mock_plot: hv.DynamicMap
     ) -> None:
-        grid = PlotGrid(nrows=3, ncols=3, plot_request_callback=mock_callback)
+        topology: list[CellGeometry] = []
+        grid = make_grid(3, 3, mock_callback, topology)
 
         # Insert and remove plot
         simulate_click(grid, 1, 1)
         simulate_click(grid, 1, 1)
-        insert_plot_from_callback(grid, mock_callback, mock_plot)
+        insert_plot_from_callback(grid, mock_callback, mock_plot, topology)
 
         close_button = find_close_button(grid, 1, 1)
         assert close_button is not None
@@ -394,7 +430,7 @@ class TestPlotRemoval:
 
         assert mock_callback.call_count == 1
 
-        insert_plot_from_callback(grid, mock_callback, mock_plot)
+        insert_plot_from_callback(grid, mock_callback, mock_plot, topology)
         assert is_cell_occupied(grid, 1, 1)
 
 
@@ -402,12 +438,13 @@ class TestOverlapPrevention:
     def test_cannot_select_overlapping_region(
         self, mock_callback: FakeCallback, mock_plot: hv.DynamicMap
     ) -> None:
-        grid = PlotGrid(nrows=4, ncols=4, plot_request_callback=mock_callback)
+        topology: list[CellGeometry] = []
+        grid = make_grid(4, 4, mock_callback, topology)
 
         # Insert plot at (1, 1) to (2, 2)
         simulate_click(grid, 1, 1)
         simulate_click(grid, 2, 2)
-        insert_plot_from_callback(grid, mock_callback, mock_plot)
+        insert_plot_from_callback(grid, mock_callback, mock_plot, topology)
 
         # Start new selection at (0, 0)
         simulate_click(grid, 0, 0)
@@ -420,12 +457,13 @@ class TestOverlapPrevention:
     def test_non_overlapping_regions_can_be_selected(
         self, mock_callback: FakeCallback, mock_plot: hv.DynamicMap
     ) -> None:
-        grid = PlotGrid(nrows=4, ncols=4, plot_request_callback=mock_callback)
+        topology: list[CellGeometry] = []
+        grid = make_grid(4, 4, mock_callback, topology)
 
         # Insert plot at (1, 1) to (2, 2)
         simulate_click(grid, 1, 1)
         simulate_click(grid, 2, 2)
-        insert_plot_from_callback(grid, mock_callback, mock_plot)
+        insert_plot_from_callback(grid, mock_callback, mock_plot, topology)
 
         mock_callback.reset()
 
@@ -434,19 +472,57 @@ class TestOverlapPrevention:
         simulate_click(grid, 0, 0)
         mock_callback.assert_called_once()
 
-        insert_plot_from_callback(grid, mock_callback, mock_plot)
+        insert_plot_from_callback(grid, mock_callback, mock_plot, topology)
         assert is_cell_occupied(grid, 0, 0)
+
+
+class TestTopologyOccupancy:
+    """Occupancy comes from topology, not inserted widgets (#1219).
+
+    A position occupied in topology can still render an empty-cell button in
+    this session (another session added the cell between polls). Such
+    positions must not accept clicks nor count as available.
+    """
+
+    def test_click_on_stale_empty_cell_is_ignored(
+        self, mock_callback: FakeCallback
+    ) -> None:
+        topology: list[CellGeometry] = []
+        grid = make_grid(2, 2, mock_callback, topology)
+        topology.append(CellGeometry(row=0, col=0, row_span=1, col_span=1))
+
+        # The button still renders (no widget was inserted), but clicks on it
+        # must neither start a selection nor request a plot.
+        simulate_click(grid, 0, 0)
+        simulate_click(grid, 0, 0)
+
+        mock_callback.assert_not_called()
+
+    def test_region_turning_occupied_mid_selection_is_not_requested(
+        self, mock_callback: FakeCallback
+    ) -> None:
+        topology: list[CellGeometry] = []
+        grid = make_grid(3, 3, mock_callback, topology)
+
+        simulate_click(grid, 0, 0)
+        # Another session takes (1, 1) while the selection is in progress; the
+        # styling pass already ran, so the second-click button is still live.
+        topology.append(CellGeometry(row=1, col=1, row_span=1, col_span=1))
+        simulate_click(grid, 2, 2)
+
+        mock_callback.assert_not_called()
 
 
 class TestErrorHandling:
     def test_insert_without_callback_shows_no_error(
         self, mock_callback: FakeCallback, mock_plot: hv.DynamicMap
     ) -> None:
-        grid = PlotGrid(nrows=3, ncols=3, plot_request_callback=mock_callback)
+        topology: list[CellGeometry] = []
+        grid = make_grid(3, 3, mock_callback, topology)
 
         # Try to insert without making a selection (callback wasn't invoked)
         # This should handle gracefully (no crash)
-        insert_plot_from_callback(grid, mock_callback, mock_plot)
+        insert_plot_from_callback(grid, mock_callback, mock_plot, topology)
 
         # No cells should be occupied
         assert not is_cell_occupied(grid, 0, 0)
@@ -454,7 +530,7 @@ class TestErrorHandling:
 
     def test_callback_error_prevents_plot_insertion(self) -> None:
         error_callback = FakeCallback(side_effect=ValueError('Test error'))
-        grid = PlotGrid(nrows=3, ncols=3, plot_request_callback=error_callback)
+        grid = make_grid(3, 3, error_callback, [])
 
         simulate_click(grid, 0, 0)
 

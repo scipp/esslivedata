@@ -2,7 +2,7 @@
 # Copyright (c) 2025 Scipp contributors (https://github.com/scipp)
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Callable, Iterable
 from dataclasses import dataclass
 from typing import Any
 
@@ -208,6 +208,11 @@ class PlotGrid:
     plot_request_callback:
         Callback invoked when a region is selected with the cell geometry.
         This callback will be called asynchronously and should not return a value.
+    occupied_geometries:
+        Returns the cell geometries topology currently holds for this grid.
+        Topology is the authority on occupancy: this session's widgets can lag
+        it (another session may have added a cell between polls), so occupancy
+        must not be derived from inserted widgets (#1219).
     """
 
     def __init__(
@@ -215,10 +220,12 @@ class PlotGrid:
         nrows: int,
         ncols: int,
         plot_request_callback: Callable[[CellGeometry], None],
+        occupied_geometries: Callable[[], Iterable[CellGeometry]],
     ) -> None:
         self._nrows = nrows
         self._ncols = ncols
         self._plot_request_callback = plot_request_callback
+        self._occupied_geometries = occupied_geometries
 
         # State tracking
         self._occupied_cells: dict[CellGeometry, pn.Column] = {}
@@ -290,6 +297,12 @@ class PlotGrid:
 
     def _on_cell_click(self, row: int, col: int) -> None:
         """Handle cell click for region selection."""
+        if self._is_cell_occupied(row, col):
+            # An empty-cell button can sit over an occupied position while
+            # this session's widgets lag topology (another session added a
+            # cell between polls). Ignore the click rather than offer a
+            # region that cannot be filled.
+            return
         if self._first_click is None:
             # First click - start selection
             self._first_click = (row, col)
@@ -310,6 +323,12 @@ class PlotGrid:
             # Clear selection highlight
             self._clear_selection()
 
+            # The disabled styling of invalid cells normally prevents this
+            # click, but topology can change between the styling pass and the
+            # click landing.
+            if not self._is_region_available(row_start, col_start, row_end, col_end):
+                return
+
             # Request plot from callback, passing cell geometry
             geometry = CellGeometry(
                 row=row_start, col=col_start, row_span=row_span, col_span=col_span
@@ -317,24 +336,20 @@ class PlotGrid:
             self._plot_request_callback(geometry)
 
     def _is_cell_occupied(self, row: int, col: int) -> bool:
-        """Check if a specific cell is occupied by a plot."""
-        for geometry in self._occupied_cells:
-            if (
-                geometry.row <= row < geometry.row + geometry.row_span
-                and geometry.col <= col < geometry.col + geometry.col_span
-            ):
-                return True
-        return False
+        """Check if topology holds a cell covering this grid slot."""
+        return not self._is_region_available(row, col, row, col)
 
     def _is_region_available(
         self, row_start: int, col_start: int, row_end: int, col_end: int
     ) -> bool:
-        """Check if an entire region is available for plot insertion."""
-        for row in range(row_start, row_end + 1):
-            for col in range(col_start, col_end + 1):
-                if self._is_cell_occupied(row, col):
-                    return False
-        return True
+        """Check if topology holds no cell overlapping the region."""
+        region = CellGeometry(
+            row=row_start,
+            col=col_start,
+            row_span=row_end - row_start + 1,
+            col_span=col_end - col_start + 1,
+        )
+        return not any(g.overlaps(region) for g in self._occupied_geometries())
 
     def _refresh_all_cells(self) -> None:
         """Refresh all empty cells based on current selection state."""
