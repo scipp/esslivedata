@@ -481,6 +481,25 @@ class PlotGridTabs:
                     # Grid was re-enabled or is new — create fresh tab
                     self._add_grid_tab(grid_id, grid_config)
 
+    def _add_plot(
+        self, grid_id: GridId, geometry: CellGeometry, plot_config: PlotConfig
+    ) -> None:
+        """Commit a configured plot to the orchestrator, surfacing races."""
+        try:
+            cell_id = self._orchestrator.add_cell(grid_id, geometry)
+            self._orchestrator.add_layer(cell_id, plot_config)
+        except KeyError:
+            # The grid vanished while the modal was open (removed or
+            # replaced by another session).
+            show_error('Cannot add plot: the grid was removed.')
+        except ValueError:
+            # The position is occupied in topology but rendered as an empty
+            # cell: another session placed a plot while the modal was open,
+            # or this grid's widgets were not built yet (hidden grids defer
+            # cell builds, so occupancy lags topology until the reveal pass
+            # inserts the widgets).
+            show_error('Cannot add plot: that position is already occupied.')
+
     def _on_plot_requested(self, grid_id: GridId, geometry: CellGeometry) -> None:
         """
         Handle plot request from PlotGrid.
@@ -495,18 +514,9 @@ class PlotGridTabs:
         geometry
             Cell geometry of the selected region.
         """
-
-        def on_success(plot_config: PlotConfig) -> None:
-            """Handle successful plot configuration."""
-            try:
-                cell_id = self._orchestrator.add_cell(grid_id, geometry)
-                self._orchestrator.add_layer(cell_id, plot_config)
-            except KeyError:
-                # The grid vanished while the modal was open (removed or
-                # replaced by another session).
-                show_error('Cannot add plot: the grid was removed.')
-
-        self._show_config_modal(on_success=on_success)
+        self._show_config_modal(
+            on_success=lambda cfg: self._add_plot(grid_id, geometry, cfg)
+        )
 
     def _on_reconfigure_layer(self, layer_id: LayerId) -> None:
         """
@@ -735,10 +745,15 @@ class PlotGridTabs:
         A hidden grid therefore does no display work at all between switches --
         not even on the periodic full pass. Its layers are deactivated
         (``activate_layer(..., False)``), so unless another session is viewing
-        them they do not even compute, though their buffers keep filling; this
-        pass only keeps their structure reconciled. What the user sees on
-        returning to the tab is the latest state, computed on the switch, not a
-        five-second-old rendering.
+        them they do not even compute, though their buffers keep filling. Its
+        cell widgets are rebuilt only while another session holds a viewer
+        token on them: then the plotters have computed state and the build is
+        a real plot pre-warming this session's tab switch. With no viewers the
+        build would be a placeholder that the reveal's 0->1 activation bumps
+        and discards, so it is skipped; the stale signature/version records
+        make the reveal pass build the cell once (#1216). What the user sees
+        on returning to the tab is the latest state, computed on the switch,
+        not a five-second-old rendering.
         """
         # Snapshot before reading any layer state, and record it only once the
         # pass completes (below). The ingestion thread bumps this counter while
@@ -797,10 +812,10 @@ class PlotGridTabs:
                 # title). Plotter swaps keep the layer ids and are handled by
                 # the per-layer version path below.
                 signature = self._cell_signature(cell)
-                if cell_id not in self._cells or signature != self._cell_signatures.get(
-                    cell_id
-                ):
-                    cells_to_rebuild[cell_id] = (cell, plot_grid, grid_id)
+                rebuild = (
+                    cell_id not in self._cells
+                    or signature != self._cell_signatures.get(cell_id)
+                )
 
                 for layer in cell.layers:
                     layer_id = layer.layer_id
@@ -824,11 +839,11 @@ class PlotGridTabs:
                         )
                         self._session_layers[layer_id] = session_layer
                         # New layer → rebuild cell
-                        cells_to_rebuild[cell_id] = (cell, plot_grid, grid_id)
+                        rebuild = True
                     else:
                         # Check for version changes (plotter changes increment version)
                         if state.version != session_layer.last_seen_version:
-                            cells_to_rebuild[cell_id] = (cell, plot_grid, grid_id)
+                            rebuild = True
                             versions_to_apply[layer_id] = state.version
 
                     # Drive the layer compute gate: on 0→1 the orchestrator
@@ -857,6 +872,25 @@ class PlotGridTabs:
                     # no-op anyway unless the presenter has a pending update.
                     if is_active and flush_due:
                         session_layer.update_pipe()
+
+                # A hidden grid's cell is rebuilt only when the build will
+                # survive its reveal: with a viewer token held by another
+                # session the plotters have computed state and the build is a
+                # real plot pre-warming this session's tab switch. With no
+                # viewers it would be a placeholder that the reveal's 0→1
+                # activation bumps and discards (#1216). Skipping leaves the
+                # signature/version records stale, so the reveal pass (or a
+                # viewer appearing) triggers the rebuild again. Checked after
+                # the activate_layer calls above so this session's own
+                # released tokens do not count.
+                if rebuild and (
+                    is_active
+                    or any(
+                        self._plot_data_service.has_viewers(layer.layer_id)
+                        for layer in cell.layers
+                    )
+                ):
+                    cells_to_rebuild[cell_id] = (cell, plot_grid, grid_id)
 
         # Clean up orphaned session layers (removed from orchestrator). Per-cell
         # widget state (freshness/time panes, autoscale) is swept on cell rebuild
@@ -888,19 +922,12 @@ class PlotGridTabs:
                 plot_grid.remove_widget_at(cell_widget.geometry)
             cell_widget.dispose()
 
-        # Rebuild affected cells.
-        # Defer insertion to allow Bokeh to process any pending model updates
-        # from pipe.send() calls above. Without deferral, widget removal can
-        # race with DynamicMap updates, causing KeyError when Panel tries to
-        # access removed models. The guard skips the insert if the cell was
-        # removed before the deferred callback runs.
+        # Rebuild affected cells. Built and inserted synchronously: the pass
+        # holds the document lock, so a pn.state.execute here would run inline
+        # anyway rather than defer.
         for cell_id, (cell, plot_grid, grid_id) in cells_to_rebuild.items():
             view = self._build_cell(cell_id, cell).view
-            pn.state.execute(
-                lambda g=cell.geometry, w=view, pg=plot_grid, cid=cell_id: (
-                    pg.insert_widget_at(g, w) if cid in self._cells else None
-                )
-            )
+            plot_grid.insert_widget_at(cell.geometry, view)
             # Record signature/grid and bump versions only after a successful
             # rebuild — if _build_cell raised, the stale records make the next
             # poll retry.
