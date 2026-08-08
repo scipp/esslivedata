@@ -139,6 +139,57 @@ disappear, they become documented steps of the apply stage):
 Any criterion missed → stop, keep phases 0–1, record the reason in this
 document.
 
+## Test-suite impact and cleanup
+
+The proposal's testing claim deserves the same scrutiny as its code claim,
+so here is what the suite looks like on each side of phase 2.
+
+**Today** (~2100 lines across `plot_grid_tabs_test.py` and
+`plot_grid_tabs_layout_test.py`):
+
+- Every test pays the full integration price, including pure policy
+  questions ("is this cell rebuilt when X changes?"): an eleven-fixture
+  service chain (`DataService` → `StreamManager` → `PlottingController` →
+  `PlotOrchestrator` → … → `PlotGridTabs`), a Bokeh/HoloViews extension
+  load, and eight ad-hoc fake classes, several redefined per test class.
+- The `_tick` helper runs the pass only when `_has_pending_work` fires, so
+  every behavioral test silently doubles as a guard on the mirrored
+  predicate — deliberate and valuable today, but it means test *intent*
+  (policy? mechanism? predicate?) is not readable from the test, and tests
+  for documented predicate holes must bypass the helper and call the pass
+  directly.
+
+**After phase 2**, tests separate along the same seam as the code:
+
+- **Policy tests become plain-data tests of `desired()`**: construct
+  topology, layer snapshots, and session view as literals; compare the
+  returned plans. No fixtures, no Panel import, table-driven; a fake
+  plotter reduces to a sentinel object compared by identity. This absorbs
+  the bulk of the rebuild/visibility scenarios — including the #1216/#1220
+  gate scenarios, which today each need the full stack.
+- **Differ tests are a small fixed set** for the generic rules (build,
+  rebuild on changed inputs, dispose, deferred no-op, failed build leaves
+  the applied record unchanged → retry). Written once; future policy work
+  never touches them.
+- **Integration tests remain for what is genuinely integration** — tab-strip
+  reconcile and focus, widget insertion/disposal, toolbars, overlay
+  composition, teardown — but stop re-litigating policy through the UI, so
+  they shrink in count while keeping the eleven-fixture chain they
+  legitimately need.
+- **The predicate guard collapses to one property**: work is pending iff
+  input stamps differ from the applied stamp — testable directly, retiring
+  both `_tick`'s dual role and the direct-call escape hatch.
+
+**Sequencing.** During the spike, none of this happens: criterion 3 freezes
+the existing tests as the equivalence oracle. The reorganization is a
+follow-up after acceptance, and a characterization test is retired only when
+a named `desired()`/differ pair replaces it.
+
+**Cleanup worth doing regardless of the go/no-go** (fits phase 0): move the
+eight ad-hoc fakes into shared test helpers, and hoist the fixture chain
+into a `conftest.py` so the phase-0 characterization tests do not copy it a
+third time. Neither depends on the rewrite.
+
 ## Phase 3 — fold in flush and freshness (optional)
 
 Model the data flush as part of the desired state ("grid G should display
