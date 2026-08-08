@@ -415,8 +415,11 @@ migration plan's answer is to enumerate them as explicit invariants first
 **What it buys.** Not user-visible performance — the #1220 point fix already
 banks that. It buys the *absence of a defect class* (stale bookkeeping,
 mirror drift, policy-composition surprises), locality of review (policy
-changes become diffs to a pure function), and much cheaper testing. The value
-is therefore proportional to how often this area will change.
+changes become diffs to a pure function), and much cheaper testing — policy
+tests drop the full service stack for plain data (the migration plan's
+test-suite section details what shrinks, what stays, and what can be cleaned
+up either way). The value is therefore proportional to how often this area
+will change.
 
 **When it is not worth it.** If the plot-grid UI is essentially
 feature-complete — no new visibility/materialization policies expected — the
