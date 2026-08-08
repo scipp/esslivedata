@@ -55,15 +55,21 @@ to this module needs.
 
 ## Phase 1 — occupancy from topology (#1219, structural half)
 
-`PlotGrid` stops deriving free positions from inserted widgets. Instead the
-reconciler hands it the occupied geometry set from the topology snapshot on
-each pass (or `PlotGrid` receives a callable). `_occupied_cells` shrinks to
-"which widget sits at which geometry" (needed for removal/replacement), and
-`_is_region_available` consults the topology-derived set.
+**Status: in flight as [#1221](https://github.com/scipp/esslivedata/pull/1221).**
+
+`PlotGrid` stops deriving free positions from inserted widgets. Instead it
+receives a callable returning the grid's topology geometries (wired to the
+orchestrator by `PlotGridTabs`), and the second click of the selection
+gesture re-validates the region before opening the wizard. `_occupied_cells`
+shrinks to "which widget sits at which geometry" (needed for
+removal/replacement) and no longer feeds selection decisions.
 
 Small, local, already agreed as the right fix in #1219. Kills the
-offered-then-refused wizard path entirely — including the cross-session race
-the `ValueError` handler now merely reports politely.
+stale-display path (empty cells offered over positions topology holds). One
+residue is unavoidable by construction: two sessions can still complete the
+wizard *simultaneously* on the same genuinely-free region, so the loser hits
+the overlap `ValueError` — #1220's error handler stays necessary as the last
+line of defence, and no occupancy model removes it.
 
 ## Phase 2 — `desired()` + differ for structure and materialization
 
