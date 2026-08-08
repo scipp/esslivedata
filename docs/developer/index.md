@@ -22,4 +22,5 @@ design/orchestrator-flow
 design/rate-aware-batcher
 design/stream-keying
 adr/index
+proposals/declarative-session-reconciler
 ```
