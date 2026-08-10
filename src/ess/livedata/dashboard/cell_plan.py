@@ -21,7 +21,7 @@ from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 
 from .plot_data_service import LayerId, LayerSnapshot
-from .plot_orchestrator import (
+from .plot_topology import (
     CellGeometry,
     CellId,
     GridId,
@@ -79,11 +79,7 @@ def cell_build_inputs(
     layers = []
     for layer in cell.layers:
         snapshot = layer_snapshot(layer.layer_id)
-        has_plot = (
-            snapshot is not None
-            and snapshot.plotter is not None
-            and snapshot.plotter.has_cached_state()
-        )
+        has_plot = snapshot is not None and snapshot.has_displayable_plot()
         layers.append(
             LayerBuildInput(
                 layer_id=layer.layer_id, snapshot=snapshot, has_plot=has_plot
@@ -96,16 +92,15 @@ def cell_build_inputs(
 
 @dataclass(frozen=True, slots=True)
 class CellPlan:
-    """Target state of one cell, from one session's point of view.
+    """Target state of one materialized cell, from one session's point of view.
 
-    ``materialize`` says whether this session should hold a built widget for
-    the cell; ``inputs`` is what that widget must be built from. A cell that
-    is desired but not materialized is *deferred*: any number of input changes
-    while deferred coalesce into zero builds.
+    ``inputs`` is what the session's widget for the cell must be built from.
+    A cell present in topology but absent from the plans is *deferred*: any
+    number of input changes while deferred coalesce into zero builds, and its
+    inputs are not even sampled.
     """
 
     grid_id: GridId
-    materialize: bool
     inputs: CellBuildInputs
 
 
@@ -126,13 +121,14 @@ def desired_cells(
     view: SessionView,
     watched: Callable[[LayerId], bool],
 ) -> dict[CellId, CellPlan]:
-    """Compute the target widget tree for one session.
+    """Compute the cells one session should hold built widgets for.
 
-    Cells of disabled grids are omitted: they are not part of the desired
-    tree, but their already-built widgets survive (the differ disposes only
-    cells that left the topology, so a re-enable finds them intact).
+    Cells of disabled grids and *deferred* cells are omitted: they are not
+    part of the target tree, but their already-built widgets survive (the
+    applier disposes only cells that left the topology, so a re-enable or
+    reveal finds them intact).
 
-    A cell is materialized when its grid is the one this session displays, or
+    A cell is in the plans when its grid is the one this session displays, or
     when any of its layers is watched (holds a viewer token — in practice
     another session's, since the caller releases this session's tokens on
     hidden layers before asking). A watched layer's plot is computed centrally
@@ -143,20 +139,23 @@ def desired_cells(
     Parameters
     ----------
     grids:
-        Topology snapshot, all grids.
+        Topology view of the grids this session holds tab widgets for
+        (enabled or disabled); the caller narrows the full topology, so a
+        grid whose tab does not exist yet has no plans until the tab
+        reconcile creates it.
     layer_snapshot:
         Accessor for per-layer lifecycle snapshots
         (:meth:`PlotDataService.get`).
     view:
         This session's view state.
     watched:
-        Whether any session holds a viewer token on a layer
-        (:meth:`PlotDataService.has_viewers`).
+        Whether any session holds a viewer token on a layer (the caller's
+        one-shot read of :meth:`PlotDataService.viewed_layers`).
 
     Returns
     -------
     :
-        Target plan per cell, insertion-ordered by grid then cell.
+        Plan per materialized cell, insertion-ordered by grid then cell.
     """
     plans: dict[CellId, CellPlan] = {}
     for grid_id, grid in grids.items():
@@ -169,12 +168,10 @@ def desired_cells(
             # empty state defensively.
             if not cell.layers:
                 continue
-            materialize = is_active or any(
-                watched(layer.layer_id) for layer in cell.layers
-            )
+            if not (is_active or any(watched(layer.layer_id) for layer in cell.layers)):
+                continue
             plans[cell_id] = CellPlan(
                 grid_id=grid_id,
-                materialize=materialize,
                 inputs=cell_build_inputs(cell, layer_snapshot),
             )
     return plans

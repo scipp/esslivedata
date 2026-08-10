@@ -73,7 +73,7 @@ class TestMaterialization:
             SessionView(active_grid_id=grid_id),
             watched=lambda _: False,
         )
-        assert plans[cell_id].materialize
+        assert cell_id in plans
         assert plans[cell_id].grid_id == grid_id
 
     def test_hidden_unwatched_cell_is_deferred(self):
@@ -86,7 +86,7 @@ class TestMaterialization:
             SessionView(active_grid_id=None),
             watched=lambda _: False,
         )
-        assert not plans[cell_id].materialize
+        assert cell_id not in plans
 
     def test_hidden_watched_cell_is_materialized(self):
         """Pre-warm: another session's viewer keeps the plot computed, so the
@@ -99,7 +99,7 @@ class TestMaterialization:
             SessionView(active_grid_id=None),
             watched=lambda lid: lid == layer_id,
         )
-        assert plans[cell_id].materialize
+        assert cell_id in plans
 
     def test_modal_defers_like_a_hidden_tab(self):
         """An open modal reports no active grid; unwatched cells defer."""
@@ -111,7 +111,7 @@ class TestMaterialization:
             SessionView(active_grid_id=None),
             watched=lambda _: False,
         )
-        assert not plans[cell_id].materialize
+        assert cell_id not in plans
 
     def test_multi_layer_cell_materializes_if_any_layer_watched(self):
         grid_id = _grid_id()
@@ -124,7 +124,7 @@ class TestMaterialization:
             SessionView(active_grid_id=None),
             watched=lambda lid: lid == watched_layer,
         )
-        assert plans[cell_id].materialize
+        assert cell_id in plans
 
 
 class TestTopologyFiltering:
@@ -220,12 +220,22 @@ class TestBuildInputs:
 
 
 def test_module_stays_pure():
-    """The policy module must not import any UI framework (see its docstring)."""
-    import inspect
+    """The policy module must not load any UI framework (see its docstring).
 
-    import ess.livedata.dashboard.cell_plan as cell_plan
+    Runs in a subprocess: in-process the check is worthless, since the test
+    session has long imported Panel and HoloViews. Transitive imports count —
+    that is the realistic way purity would be lost.
+    """
+    import subprocess
+    import sys
 
-    source = inspect.getsource(cell_plan)
-    for framework in ('panel', 'holoviews', 'bokeh'):
-        assert f'import {framework}' not in source
-        assert f'from {framework}' not in source
+    script = (
+        "import sys;"
+        "import ess.livedata.dashboard.cell_plan;"
+        "leaked = sorted("
+        "    m for m in sys.modules"
+        "    if m.split('.')[0] in ('panel', 'holoviews', 'bokeh')"
+        ");"
+        "assert not leaked, f'cell_plan pulled in UI frameworks: {leaked}'"
+    )
+    subprocess.run([sys.executable, '-c', script], check=True)  # noqa: S603

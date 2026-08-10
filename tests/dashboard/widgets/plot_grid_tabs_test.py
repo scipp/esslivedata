@@ -1214,8 +1214,50 @@ class TestCellReconcile:
 
         plot_orchestrator.set_grid_enabled(grid_id, enabled=True)
         _tick(plot_grid_tabs)
-        # Still present after re-enable (rebuilt from a fresh session layer).
         assert cell_id in plot_grid_tabs._cells
+
+    def test_reenabled_grid_keeps_receiving_data(
+        self,
+        plot_orchestrator,
+        plot_grid_tabs,
+        plot_data_service,
+        job_orchestrator,
+        data_service,
+        workflow_id,
+    ):
+        """Disable must keep the SessionLayer the kept widget renders through:
+        deleting it would bind the widget to a dead pipe with no build input
+        changing to force a rebuild, freezing the cell's plot forever."""
+        job_orchestrator.commit_workflow(workflow_id)
+        grid_id = plot_orchestrator.add_grid(title='G', nrows=2, ncols=2)
+        geometry = CellGeometry(row=0, col=0, row_span=1, col_span=1)
+        cell_id = _add_workflow_cell(plot_orchestrator, grid_id, geometry, workflow_id)
+        _publish_layer_data(data_service, workflow_id)
+        plot_orchestrator.flush_frames()
+        _tick(plot_grid_tabs)
+        plot_grid_tabs.tabs.active = plot_grid_tabs._static_tabs_count
+        layer_id = plot_orchestrator.get_cell(cell_id).layers[0].layer_id
+        widget = plot_grid_tabs._cells[cell_id]
+        components = plot_grid_tabs._session_layers[layer_id].components
+
+        plot_orchestrator.set_grid_enabled(grid_id, enabled=False)
+        _tick(plot_grid_tabs)
+        # Token released (no compute while hidden), but the render state the
+        # kept widget is bound to survives.
+        assert not plot_data_service.has_viewers(layer_id)
+        assert plot_grid_tabs._session_layers[layer_id].components is components
+
+        plot_orchestrator.set_grid_enabled(grid_id, enabled=True)
+        _tick(plot_grid_tabs)
+        assert plot_grid_tabs._cells[cell_id] is widget
+
+        # New data must still reach the widget's pipe.
+        _publish_layer_data(data_service, workflow_id)
+        plot_orchestrator.flush_frames()
+        presenter = plot_grid_tabs._session_layers[layer_id].components.presenter
+        assert presenter.has_pending_update()
+        _tick(plot_grid_tabs)
+        assert not presenter.has_pending_update()
 
     def test_cell_edit_does_not_churn_tabs(self, plot_orchestrator, plot_grid_tabs):
         """Cell-level changes bump the topology version but must not tear down

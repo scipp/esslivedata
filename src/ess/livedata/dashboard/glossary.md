@@ -107,12 +107,13 @@ From coarse to fine: **grid → cell → layer → plotter → presenter → fig
 - **CellPlan / desired cells** — the target widget tree of one session's
   reconcile pass: `desired_cells` (`dashboard/cell_plan.py`) is a pure
   function from topology, layer snapshots, and the session view to one plan
-  per cell. Policy changes go here; the differ/applier in `plot_grid_tabs.py`
-  is fixed mechanism.
-- **Materialize / deferred** — a plan's verdict on whether the session should
-  hold a built widget for a cell. A *deferred* cell (hidden grid, nobody
-  watching) absorbs any number of input changes with zero builds; it is built
-  exactly once on reveal or when a watcher appears.
+  per *materialized* cell. Policy changes go here; the differ/applier in
+  `plot_grid_tabs.py` is fixed mechanism.
+- **Materialize / deferred** — whether a session should hold a built widget
+  for a cell. Materialized cells appear in the plans; a *deferred* cell
+  (hidden grid, nobody watching) is absent from them and absorbs any number
+  of input changes with zero builds — it is built exactly once on reveal or
+  when a watcher appears (the latter bounded by the 5 s full pass).
 - **Build inputs** — `CellBuildInputs`: geometry, user title, and per-layer
   (snapshot, has-plot) a widget was built from, recorded on the widget. The
   differ rebuilds exactly when the current inputs no longer compare equal —
