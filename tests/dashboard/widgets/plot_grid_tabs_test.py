@@ -6,112 +6,23 @@ import pytest
 
 from ess.livedata.config.workflow_spec import WorkflowId
 from ess.livedata.dashboard.data_service import DataService
-from ess.livedata.dashboard.job_service import JobService
 from ess.livedata.dashboard.notification_queue import NotificationQueue
-from ess.livedata.dashboard.plot_data_service import PlotDataService
 from ess.livedata.dashboard.plot_orchestrator import (
     CellGeometry,
     CellId,
     GridId,
     PlotOrchestrator,
 )
-from ess.livedata.dashboard.plotting_controller import PlottingController
 from ess.livedata.dashboard.session_registry import SessionId, SessionRegistry
 from ess.livedata.dashboard.session_updater import SessionUpdater
-from ess.livedata.dashboard.stream_manager import StreamManager
 from ess.livedata.dashboard.widgets.plot_grid_tabs import PlotGridTabs
 from ess.livedata.dashboard.widgets.workflow_status_widget import (
     WorkflowStatusListWidget,
 )
 from tests.helpers.panel_ui import click_tool
+from tests.helpers.plot_fakes import CurvePresenter, FakePlotter, ViewerToken
 
 hv.extension('bokeh')
-
-
-@pytest.fixture
-def data_service():
-    """Create a DataService for testing."""
-    return DataService()
-
-
-@pytest.fixture
-def job_service():
-    """Create a JobService for testing."""
-    return JobService()
-
-
-@pytest.fixture
-def stream_manager(data_service):
-    """Create a StreamManager for testing."""
-    return StreamManager(data_service=data_service)
-
-
-@pytest.fixture
-def plotting_controller(stream_manager):
-    """Create a PlottingController for testing."""
-    return PlottingController(
-        stream_manager=stream_manager,
-    )
-
-
-@pytest.fixture
-def plot_orchestrator(
-    plotting_controller, job_orchestrator, data_service, plot_data_service
-):
-    """Create a PlotOrchestrator for testing."""
-    return PlotOrchestrator(
-        plotting_controller=plotting_controller,
-        job_orchestrator=job_orchestrator,
-        data_service=data_service,
-        instrument='dummy',
-        plot_data_service=plot_data_service,
-    )
-
-
-@pytest.fixture
-def workflow_status_widget(job_orchestrator, job_service):
-    """Create a WorkflowStatusListWidget for testing."""
-    return WorkflowStatusListWidget(
-        orchestrator=job_orchestrator,
-        job_service=job_service,
-    )
-
-
-@pytest.fixture
-def plot_data_service():
-    """Create a PlotDataService for testing."""
-    return PlotDataService()
-
-
-@pytest.fixture
-def session_updater():
-    """Create a SessionUpdater for testing."""
-    registry = SessionRegistry()
-    return SessionUpdater(
-        session_id=SessionId('test-session'),
-        session_registry=registry,
-        notification_queue=NotificationQueue(),
-    )
-
-
-@pytest.fixture
-def plot_grid_tabs(
-    plot_orchestrator,
-    workflow_registry,
-    plotting_controller,
-    workflow_status_widget,
-    plot_data_service,
-    session_updater,
-):
-    """Create a PlotGridTabs widget for testing."""
-    return PlotGridTabs(
-        plot_orchestrator=plot_orchestrator,
-        workflow_registry=workflow_registry,
-        plotting_controller=plotting_controller,
-        workflow_status_widget=workflow_status_widget,
-        plot_data_service=plot_data_service,
-        session_updater=session_updater,
-    )
 
 
 def _tick(*widgets: PlotGridTabs) -> None:
@@ -657,47 +568,13 @@ class TestPollForPlotUpdates:
         """
         from uuid import uuid4
 
-        import holoviews as hv
-
         from ess.livedata.dashboard.plot_data_service import LayerId
-        from ess.livedata.dashboard.plots import PresenterBase
         from ess.livedata.dashboard.session_layer import SessionLayer
-
-        # Create fake plotters
-        class FakePlotter:
-            def __init__(self, name):
-                self.name = name
-                self._cached_state = None
-                self._presenters = []
-
-            def compute(self, data):
-                self._cached_state = data
-                for p in self._presenters:
-                    p._mark_dirty()
-
-            def get_cached_state(self):
-                return self._cached_state
-
-            def has_cached_state(self):
-                return self._cached_state is not None
-
-            def create_presenter(self, *, owner=None):
-                presenter = FakePresenter(self, owner=owner)
-                self._presenters.append(presenter)
-                return presenter
-
-            def mark_presenters_dirty(self):
-                for p in self._presenters:
-                    p._mark_dirty()
-
-        class FakePresenter(PresenterBase):
-            def present(self, pipe):
-                return hv.DynamicMap(lambda data: hv.Curve([]), streams=[pipe])
 
         layer_id = LayerId(uuid4())
 
         # Setup initial state: plotter A with data
-        plotter_a = FakePlotter('A')
+        plotter_a = FakePlotter(name='A', presenter_cls=CurvePresenter)
         plotter_a.compute({'value': 1})
         plot_data_service.job_started(layer_id, plotter_a)
         plot_data_service.data_arrived(layer_id)
@@ -716,7 +593,7 @@ class TestPollForPlotUpdates:
         assert session_layer.components.is_valid_for(plotter_a)
 
         # Simulate workflow restart: job_started with new plotter B
-        plotter_b = FakePlotter('B')
+        plotter_b = FakePlotter(name='B', presenter_cls=CurvePresenter)
         plotter_b.compute({'value': 2})
         plot_data_service.job_started(layer_id, plotter_b)
         plot_data_service.data_arrived(layer_id)
@@ -741,43 +618,11 @@ class TestPollForPlotUpdates:
         """Test that components are preserved when version hasn't changed."""
         from uuid import uuid4
 
-        import holoviews as hv
-
         from ess.livedata.dashboard.plot_data_service import LayerId
-        from ess.livedata.dashboard.plots import PresenterBase
         from ess.livedata.dashboard.session_layer import SessionLayer
 
-        class FakePlotter:
-            def __init__(self):
-                self._cached_state = None
-                self._presenters = []
-
-            def compute(self, data):
-                self._cached_state = data
-                for p in self._presenters:
-                    p._mark_dirty()
-
-            def get_cached_state(self):
-                return self._cached_state
-
-            def has_cached_state(self):
-                return self._cached_state is not None
-
-            def create_presenter(self, *, owner=None):
-                presenter = FakePresenter(self, owner=owner)
-                self._presenters.append(presenter)
-                return presenter
-
-            def mark_presenters_dirty(self):
-                for p in self._presenters:
-                    p._mark_dirty()
-
-        class FakePresenter(PresenterBase):
-            def present(self, pipe):
-                return hv.DynamicMap(lambda data: hv.Curve([]), streams=[pipe])
-
         layer_id = LayerId(uuid4())
-        plotter = FakePlotter()
+        plotter = FakePlotter(presenter_cls=CurvePresenter)
         plotter.compute({'value': 1})
 
         plot_data_service.job_started(layer_id, plotter)
@@ -824,8 +669,6 @@ class TestComposeMixedLayers:
             PlotConfig,
         )
         from ess.livedata.dashboard.plot_params import TimeWindowParams
-        from ess.livedata.dashboard.plots import PresenterBase
-        from ess.livedata.dashboard.range_hook import Axis
         from ess.livedata.dashboard.session_layer import SessionLayer
         from ess.livedata.dashboard.static_plots import (
             LinesCoordinates,
@@ -833,38 +676,6 @@ class TestComposeMixedLayers:
             VLinesParams,
         )
         from ess.livedata.dashboard.widgets.plot_grid_tabs import CellId
-
-        class _DynamicPresenter(PresenterBase):
-            def present(self, pipe):
-                return hv.DynamicMap(lambda data: hv.Curve([]), streams=[pipe])
-
-        class _DynamicPlotter:
-            AUTOSCALE_AXES: frozenset[Axis] = frozenset({'x', 'y'})
-
-            def __init__(self):
-                self._cached_state = None
-                self._presenters = []
-
-            @property
-            def autoscale_axes(self):
-                return self.AUTOSCALE_AXES
-
-            def compute(self, data):
-                self._cached_state = data
-
-            def get_cached_state(self):
-                return self._cached_state
-
-            def has_cached_state(self):
-                return self._cached_state is not None
-
-            def create_presenter(self):
-                presenter = _DynamicPresenter(self)
-                self._presenters.append(presenter)
-                return presenter
-
-            def iter_range_targets(self):
-                return iter(())
 
         wf = WorkflowId(instrument='test', name='wf', version=1)
         geo = CellGeometry(row=0, col=0, row_span=1, col_span=1)
@@ -893,7 +704,7 @@ class TestComposeMixedLayers:
         static_layer = Layer(layer_id=LayerId(uuid4()), config=static_config)
         cell = PlotCell(geometry=geo, layers=[dynamic_layer, static_layer])
 
-        dynamic_plotter = _DynamicPlotter()
+        dynamic_plotter = FakePlotter(presenter_cls=CurvePresenter)
         dynamic_plotter.compute(hv.Curve([1, 2, 3]))
         static_plotter = LinesPlotter.vlines(
             VLinesParams(geometry=LinesCoordinates(positions='10, 20'))
@@ -1609,10 +1420,7 @@ class TestHiddenGridRebuildGate:
         cell_id = _add_static_cell(plot_orchestrator, grid_id, self._geometry())
         layer_id = plot_orchestrator.get_cell(cell_id).layers[0].layer_id
 
-        class _OtherSessionViewer:
-            pass
-
-        token = _OtherSessionViewer()
+        token = ViewerToken()
         plot_data_service.set_active(layer_id, token, True)
         _tick(plot_grid_tabs)
 
@@ -1837,35 +1645,7 @@ class TestDisposeSeversPipeSubscribers:
             PlotConfig,
         )
         from ess.livedata.dashboard.plot_params import TimeWindowParams
-        from ess.livedata.dashboard.plots import PresenterBase
         from ess.livedata.dashboard.session_layer import SessionLayer
-
-        class _Presenter(PresenterBase):
-            def present(self, pipe):
-                return hv.DynamicMap(lambda data: hv.Curve([]), streams=[pipe])
-
-        class _Plotter:
-            def __init__(self):
-                self._cached_state = None
-
-            @property
-            def autoscale_axes(self):
-                return frozenset({'x', 'y'})
-
-            def compute(self, data):
-                self._cached_state = data
-
-            def get_cached_state(self):
-                return self._cached_state
-
-            def has_cached_state(self):
-                return self._cached_state is not None
-
-            def create_presenter(self):
-                return _Presenter(self)
-
-            def iter_range_targets(self):
-                return iter(())
 
         wf = WorkflowId(instrument='test', name='wf', version=1)
         config = PlotConfig(
@@ -1882,7 +1662,7 @@ class TestDisposeSeversPipeSubscribers:
             geometry=CellGeometry(row=0, col=0, row_span=1, col_span=1),
             layers=[layer],
         )
-        plotter = _Plotter()
+        plotter = FakePlotter(presenter_cls=CurvePresenter)
         plotter.compute(hv.Curve([1, 2, 3]))
         plot_data_service.job_started(layer.layer_id, plotter)
         plot_data_service.data_arrived(layer.layer_id)
