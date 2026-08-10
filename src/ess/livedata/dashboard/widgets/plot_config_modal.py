@@ -622,16 +622,20 @@ class WorkflowAndOutputSelectionStep(WizardStep[None, OutputSelection]):
         )
 
         # Workflow and output columns below
+        # The columns must not stretch vertically: Panel infers a layout's
+        # sizing_mode from its children, so a 'stretch_both' child propagates up
+        # through the wizard's scrolling body, which then has no height to
+        # stretch into and collapses, hiding this step's widgets entirely.
         workflow_col = pn.Column(
             pn.pane.Markdown("**Workflow**"),
             self._workflow_container,
-            sizing_mode='stretch_both',
+            sizing_mode='stretch_width',
         )
 
         output_col = pn.Column(
             pn.pane.Markdown("**Output**"),
             self._output_container,
-            sizing_mode='stretch_both',
+            sizing_mode='stretch_width',
         )
 
         two_columns = pn.Row(workflow_col, output_col, sizing_mode='stretch_width')
