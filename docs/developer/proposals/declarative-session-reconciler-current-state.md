@@ -135,6 +135,33 @@ wizard race needs it regardless), and derive occupancy from topology (the
 structural half — phase 1 of the migration plan, in flight as
 [#1221](https://github.com/scipp/esslivedata/pull/1221)).
 
+## Defect walkthrough: #1224
+
+Found while measuring the #1220 fix; a teardown leak, not a decision bug —
+see the proposal's ["where the pattern
+stops"](declarative-session-reconciler.md) for why the reconciler would not
+have prevented it. `CellWidget.dispose()` released only the autoscale
+controller; nothing severed the subscription the widget's
+`pn.pane.HoloViews` registers on the layer's `hv.streams.Pipe` when it
+renders, and `PlotGrid.insert_widget_at` writes the replacement into the
+`GridSpec` slot without Panel running the displaced pane's cleanup. From then
+on every `SessionLayer.update_pipe` drives the dead plot alongside the live
+one — ~85 % of a poll pass is `update_pipe`, so each leak costs roughly one
+extra live layer, forever. Hidden grids are immune (an unrendered widget
+never subscribes), which is why the leak needed a rebuild landing on a
+*visible* grid — a job restart, plotter swap, or title change — and why no
+page-load measurement could see it.
+
+Point fix in [#1226](https://github.com/scipp/esslivedata/pull/1226):
+`dispose()` keeps a handle on the pane and runs the rendered plots'
+`Plot.cleanup()`. One subtlety worth keeping in view: holoviews wraps
+plot-refresh subscribers weakly and treats them all as reapable, so
+`Plot.cleanup()` severs *every* such subscriber on the touched streams, not
+only its own. That is safe only because a layer's pipe is per session and
+per cell, and `_build_cell` disposes the displaced widget before the
+replacement renders — an ordering invariant any rewrite of the apply step
+must carry over.
+
 ## Five representations of "is anyone looking"
 
 | # | Mechanism | Scope | Where |
@@ -164,7 +191,8 @@ and the proposal does not claim otherwise:
   freezes. Both respond to measured failures, referenced in code comments.
 - **Teardown is two-tier** (shared-state release safe on any thread; widget
   disposal marshalled to the session loop) because sessions die in two ways
-  (clean disconnect vs. reaper).
+  (clean disconnect vs. reaper). The *inventory* of what disposal must
+  release is however hand-maintained, and #1224 was a hole in it.
 - The **wake-before-load guard**, the **modal container parenting rules**,
   and the markup-pane reveal workaround each encode a real framework trap.
 
