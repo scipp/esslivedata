@@ -1647,6 +1647,44 @@ class TestHiddenGridRebuildGate:
         assert plot_grid_tabs._cells[cell_id] is not widget
 
 
+class TestRevealOrdering:
+    """A revealed grid is populated before Panel materializes its models.
+
+    ``dynamic=True`` builds the tab's Bokeh models from whatever the grid holds
+    at the moment of the switch. A grid whose cells were deferred while hidden
+    holds only ``PlotGrid``'s empty-cell placeholders, so building the cells
+    after the switch materializes those placeholders, patches them away again,
+    and shows the user "Click to add plot" over occupied positions in between.
+    """
+
+    def test_cells_are_built_before_the_tab_materializes(
+        self, plot_orchestrator, plot_grid_tabs
+    ):
+        from ess.livedata.dashboard.plot_orchestrator import CellGeometry
+
+        grid_id = plot_orchestrator.add_grid(title='G', nrows=2, ncols=2)
+        cell_id = _add_static_cell(
+            plot_orchestrator,
+            grid_id,
+            CellGeometry(row=0, col=0, row_span=1, col_span=1),
+        )
+        _tick(plot_grid_tabs)
+        assert cell_id not in plot_grid_tabs._cells
+
+        # Panel materializes the tab on the ``objects`` trigger inside
+        # ``_update_active``, so this records the grid's content at exactly the
+        # point the models are built from it.
+        built_when_materialized: list[bool] = []
+        plot_grid_tabs.tabs.param.watch(
+            lambda _: built_when_materialized.append(cell_id in plot_grid_tabs._cells),
+            'objects',
+        )
+
+        plot_grid_tabs.tabs.active = plot_grid_tabs._static_tabs_count
+
+        assert built_when_materialized == [True]
+
+
 class TestWakeGateContract:
     """Contract of ``_has_pending_work``, the gate registered with SessionUpdater.
 

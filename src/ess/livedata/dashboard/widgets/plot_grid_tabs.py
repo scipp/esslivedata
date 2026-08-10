@@ -122,10 +122,26 @@ class _BatchedTabs(pn.Tabs):
     dispatches/recomputes into 1 each.
 
     See https://github.com/holoviz/panel/issues/8461.
+
+    ``on_activate`` is the hook for populating the tab about to be revealed. It
+    runs *before* the cascade, which is the only point where a change to the
+    tab's content still lands in the same materialization: Panel registers
+    ``_update_active`` in its own constructor, so any ``active`` watcher added
+    afterwards necessarily runs once the models already exist and can only
+    patch them a second time.
     """
+
+    # Declared so param treats the assignment as a known attribute rather than
+    # warning about setting a non-parameter on a Parameterized.
+    on_activate: Callable[[], None] | None = None
 
     def _update_active(self, *events) -> None:
         with batched_update():
+            if self.on_activate is not None and any(
+                event.name == 'dynamic' or (self.dynamic and event.name == 'active')
+                for event in events
+            ):
+                self.on_activate()
             super()._update_active(*events)
 
 
@@ -299,6 +315,10 @@ class PlotGridTabs:
         # the first poll). Mirrors WorkflowStatusWidget's init-to-current pattern.
         self._reconcile_topology()
         self._last_topology_version = self._orchestrator.topology_version()
+
+        # Wired only now: during the construction above a tab switch cannot
+        # happen, and the pass the hook runs expects a fully built instance.
+        self._tabs.on_activate = self._prebuild_revealed_grid
 
         # Register the poll pass; the predicate lets wake ticks skip it (and
         # the batched hold+freeze) when nothing visible changed.
@@ -686,6 +706,43 @@ class PlotGridTabs:
             previous.dispose()
         return cell_widget
 
+    def _prebuild_revealed_grid(self) -> None:
+        """Populate a grid tab before its Bokeh models are materialized.
+
+        Hidden grids defer their cell builds (see
+        :meth:`_poll_for_plot_updates`), so at the moment a grid tab is
+        revealed its ``PlotGrid`` still holds nothing but the empty-cell
+        placeholders it was created with. Materializing that state and building
+        the cells afterwards costs a throwaway round of placeholder models —
+        constructed, serialized, laid out by the browser, then discarded — and
+        shows the user a grid of "Click to add plot" buttons over positions that
+        are in fact occupied.
+
+        Running the pass here instead puts the cells in the grid first, so the
+        materialization that follows is of the real content and the whole reveal
+        is a single patch.
+
+        The topology reconcile is skipped: it may append to or pop from the tabs
+        we are currently inside a watcher of, and the tab structure is by
+        definition current at this point. A topology change pending from another
+        session is picked up by the tick :meth:`_on_active_tab_changed`
+        requests.
+
+        Failures are logged and swallowed: this runs on the tab-switch path,
+        which nothing else guards, and letting the exception escape would abort
+        the materialization that follows and leave the tab blank for the rest of
+        the session. Swallowing it degrades to the deferred build -- the tick
+        :meth:`_on_active_tab_changed` requests runs the same pass, guarded by
+        :class:`SessionUpdater`.
+        """
+        grid_id = self._get_active_grid_id()
+        if grid_id is None or grid_id == self._last_active_grid_id:
+            return
+        try:
+            self._poll_for_plot_updates(reconcile_topology=False)
+        except Exception:
+            logger.exception("Failed to pre-build revealed grid %s", grid_id)
+
     def _on_active_tab_changed(self, event) -> None:
         # Full tick: a tab switch changes what is visible without changing any
         # shared state, so handlers that skipped work while their tab was
@@ -722,7 +779,7 @@ class PlotGridTabs:
             and active_grid_id in self._cell_grid.values()
         )
 
-    def _poll_for_plot_updates(self) -> None:
+    def _poll_for_plot_updates(self, *, reconcile_topology: bool = True) -> None:
         """
         Reconcile topology and push plot-data updates for this session.
 
@@ -754,6 +811,17 @@ class PlotGridTabs:
         make the reveal pass build the cell once (#1216). What the user sees
         on returning to the tab is the latest state, computed on the switch,
         not a five-second-old rendering.
+
+        That reveal pass is :meth:`_prebuild_revealed_grid`, which runs ahead of
+        the tab's materialization rather than after it, so the deferred cells
+        are in the grid before its models are built.
+
+        Parameters
+        ----------
+        reconcile_topology:
+            Whether to rebuild the grid tabs on a topology-version change. False
+            from the reveal hook, which is already inside the tab machinery; the
+            version stays unrecorded so the next tick reconciles.
         """
         # Snapshot before reading any layer state, and record it only once the
         # pass completes (below). The ingestion thread bumps this counter while
@@ -767,7 +835,7 @@ class PlotGridTabs:
         # Reconcile grid tabs only when the shared topology changed. Runs on
         # this session's thread and document lock, not pushed cross-session.
         version = self._orchestrator.topology_version()
-        if version != self._last_topology_version:
+        if reconcile_topology and version != self._last_topology_version:
             self._last_topology_version = version
             self._reconcile_topology()
             self._grid_manager.on_topology_changed()
