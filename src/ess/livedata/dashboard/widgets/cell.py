@@ -314,25 +314,31 @@ class CellWidget:
         Breaks the autoscale controller → Bokeh-tool → on_change-callback →
         controller reference cycle, and unsubscribes the plot pane's rendered
         plots from the layers' ``hv.streams.Pipe``. The pipe half is essential
-        when a cell is rebuilt while its grid is visible: replacing the widget
-        in the ``GridSpec`` slot does not run Panel's pane cleanup, so without
-        the explicit sever the discarded plot keeps rendering every pipe
-        update for the rest of the session (#1224).
+        when a cell is rebuilt while its grid is visible: ``GridSpec`` never
+        cleans up removed children (holoviz/panel#8710), so without the
+        explicit sever the discarded plot keeps rendering every pipe update
+        for the rest of the session (#1224).
 
         ``Plot.cleanup`` severs *every* weakly-wrapped plot-refresh subscriber
-        on the streams it touches, not only its own (holoviews treats them all
-        as reapable). That is safe here because a layer's pipe is per session
-        and per cell, and a rebuild disposes the displaced widget before the
-        replacement renders — the two plots never hold live subscriptions
-        concurrently.
+        on the streams it touches, not only its own — its owner filter is
+        defeated upstream (holoviz/holoviews#6988). That is safe here because
+        a layer's pipe is per session and per cell, and a rebuild disposes the
+        displaced widget before the replacement renders — the two plots never
+        hold live subscriptions concurrently. Any change to teardown must keep
+        that order (sever first, render the replacement after) until #6988 is
+        fixed.
         """
         if self._autoscale_controller is not None:
             self._autoscale_controller.dispose()
             self._autoscale_controller = None
         if self._plot_pane is not None:
-            # No public teardown API on the pane; this mirrors the pipe half
-            # of pn.pane.HoloViews._cleanup, which Panel only runs from a
-            # document root we no longer have.
+            # TODO(holoviz/panel#8710): delete this block once the minimum
+            # panel version cleans up displaced GridSpec children itself, and
+            # re-point the subscriber-count regression tests at
+            # PlotGrid.insert_widget_at/remove_widget_at, which then carry the
+            # cleanup. Until then: no public teardown API on the pane; this
+            # mirrors the pipe half of pn.pane.HoloViews._cleanup, which Panel
+            # only runs from a document root we never held.
             for plot, _ in self._plot_pane._plots.values():
                 if plot is not None:
                     plot.cleanup()
