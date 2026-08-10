@@ -131,12 +131,20 @@ means the click's round-trip was queued behind the session's periodic pass, not 
 (#1185). Sub-millisecond serves with no post-click activity at all point at a dropped
 click instead.
 
-One console line is a red herring: `pageerror: Cannot read properties of undefined
-(reading 'parent_style')` fires on **every** run, passing or failing. It is
+One console line is usually a red herring: `pageerror: Cannot read properties of
+undefined (reading 'parent_style')`. It is
 [bokeh#15274](https://github.com/bokeh/bokeh/issues/15274) — our plot grid is a
 `pn.GridSpec`, i.e. a Bokeh `GridBox`, and Panel emits a `children` change and the
 recomputed sizing props in one patch, which that view indexes inconsistently. Real bug
 (it drops the rest of the patch), but it is not the cause of any intermittent failure.
+
+What triggers it is patching a *materialized* grid's children. Revealing a plot-grid
+tab used to do that on every switch — the tab materialized the empty-cell
+placeholders, then the cells replaced them — so the line fired on every run. Cells
+are now built before the tab materializes (`_prebuild_revealed_grid`), and a reveal
+no longer produces it. Treat it as expected only where children really do change
+under a rendered grid (adding or removing a cell on the visible tab); on a plain tab
+switch it now means something changed, so investigate rather than dismiss it.
 
 **Ports.** `fake_dashboard(...)` without a port takes one the OS reports free — how the
 browser tests launch, so two checkouts (or a suite next to an interactive dashboard) can
