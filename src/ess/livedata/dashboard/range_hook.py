@@ -45,9 +45,9 @@ def _ordered_write(
     first; otherwise write the low first. This guards renders that run outside
     a document hold, where each set dispatches its own PATCH-DOC and a stale
     intermediate could momentarily invert the range. Per-tick autoscale writes
-    do run under ``session_updater._batched_update`` (``pn.io.hold`` +
-    ``doc.models.freeze``), which collapses both sets into one frame, so the
-    ordering is belt-and-suspenders there rather than load-bearing.
+    do run under ``batched_update`` (``pn.io.hold`` + a model-graph freeze),
+    which collapses both sets into one frame, so the ordering is
+    belt-and-suspenders there rather than load-bearing.
 
     On a datetime axis the float targets are epoch *nanoseconds* by contract
     (see ``plots._finite_min_max``); they are cast back to ``np.datetime64[ns]``

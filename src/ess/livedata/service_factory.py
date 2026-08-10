@@ -7,7 +7,7 @@ import logging
 import sys
 from collections.abc import Callable
 from contextlib import ExitStack
-from typing import Any, Generic, NoReturn, TypeVar
+from typing import Any, NoReturn
 
 import structlog
 
@@ -44,10 +44,6 @@ from .logging_config import configure_logging
 
 logger = structlog.get_logger(__name__)
 
-Traw = TypeVar("Traw")
-Tin = TypeVar("Tin")
-Tout = TypeVar("Tout")
-
 
 _INNER_BATCHER_FACTORIES: dict[str, Callable[[float], MessageBatcher]] = {
     'simple': SimpleMessageBatcher,
@@ -55,7 +51,7 @@ _INNER_BATCHER_FACTORIES: dict[str, Callable[[float], MessageBatcher]] = {
 }
 
 
-class DataServiceBuilder(Generic[Traw, Tin, Tout]):
+class DataServiceBuilder[Traw, Tin, Tout]:
     def __init__(
         self,
         *,

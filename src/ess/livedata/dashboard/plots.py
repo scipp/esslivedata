@@ -11,6 +11,12 @@ from typing import Any, ClassVar
 
 import holoviews as hv
 import numpy as np
+
+# holoviews imports pandas lazily during rendering (e.g. the masked-type check
+# in its isfinite). If that first import races another thread's pandas import,
+# the render fails on a partially initialized module (#1192). Import eagerly,
+# before any render thread exists.
+import pandas  # noqa: F401
 import scipp as sc
 from bokeh.models import TeeHead
 from holoviews.core.util import range_pad
@@ -333,15 +339,16 @@ class DefaultPresenter(PresenterBase):
     def present(self, pipe: hv.streams.Pipe) -> hv.DynamicMap:
         """Create a DynamicMap that passes through pre-computed elements.
 
-        Static styling is applied once on the DynamicMap (see
-        :meth:`Plotter.style_opts`) rather than per element on every tick.
+        The elements arrive already styled from :meth:`Plotter.compute`. Styling
+        must not be applied here: ``DynamicMap.opts`` is not a one-off, it wraps
+        the map in a ``Dynamic`` operation that re-applies the options to every
+        frame, in every session, on the shared IOLoop.
         """
 
         def passthrough(data):
             return data
 
-        dmap = hv.DynamicMap(passthrough, streams=[pipe], cache_size=1)
-        return dmap.opts(*self._plotter.style_opts())
+        return hv.DynamicMap(passthrough, streams=[pipe], cache_size=1)
 
 
 class StaticPresenter(PresenterBase):
@@ -456,6 +463,12 @@ def format_time_info(bounds: TimeBounds) -> str:
     return f'{format_time_ns_local(bounds.min_end)} (Lag: {lag_s:.1f}s)'
 
 
+def _is_element_opt(opt: hv.Options) -> bool:
+    """Whether ``opt`` targets an Element rather than a container."""
+    element = getattr(hv, opt.key.split('.')[0], None)
+    return isinstance(element, type) and issubclass(element, hv.Element)
+
+
 class Plotter:
     """
     Base class for plots that support autoscaling.
@@ -466,6 +479,14 @@ class Plotter:
 
     AUTOSCALE_AXES: ClassVar[frozenset[Axis]] = frozenset()
     """Per-axis autoscale capability. Override per subclass."""
+
+    IS_ANNOTATION: ClassVar[bool] = False
+    """Whether this layer is drawn in another layer's coordinate space.
+
+    ROI overlays are annotations: they are composed on top of the layer that
+    determines the figure's bounds, so they never need bounds of their own. See
+    :attr:`applies_ranges`.
+    """
 
     _autoscale_axes_override: frozenset[Axis] | None = None
 
@@ -626,6 +647,12 @@ class Plotter:
         calculation should properly adjust the color limits. Since zeros can never
         be included we want to adjust to the lowest positive value.
 
+        Masking values for display belongs here rather than in HoloViews. Its
+        `nodata` plot option is inert -- ``reduction`` unregisters the compositor
+        implementing it, and that registry is global, so it cannot be turned back
+        on for a single plot. A frame masked here is computed once and shared by
+        every session, instead of being re-derived per session on every render.
+
         Parameters
         ----------
         data:
@@ -722,16 +749,14 @@ class Plotter:
             result = self._build_result(data, resolver, **kwargs)
         except Exception as e:
             self._range_targets = {}
-            result = hv.Text(0.5, 0.5, f"Error: {e}").opts(
-                text_align='center', text_baseline='middle', responsive=True
-            )
+            result = self._error_placeholder(f"Error: {e}")
 
         # Time bounds drive the cell titlebar's freshness indicator; they are
         # kept off the plot title to avoid minting an OptionTree entry per tick.
         # Computed outside the try so a render failure still stamps the bounds
         # of the data that was received.
         self._time_bounds = _compute_time_bounds(data)
-        self._set_cached_state(result)
+        self._set_cached_state(result.opts(*self._frame_opts()))
 
     def _build_result(
         self,
@@ -784,6 +809,27 @@ class Plotter:
                 )
             ]
 
+        return self._combine(plots)
+
+    def _error_placeholder(self, message: str) -> hv.Element:
+        """Stand-in frame for a failed render.
+
+        Must share the container type of the plotter's data frames: the
+        session's DynamicMap holds one type per plotter, and a mismatched
+        frame wedges it permanently (#1193). Plotters whose
+        :meth:`_build_result` emits a different frame type override this to
+        match.
+        """
+        return self._combine(
+            [
+                hv.Text(0.5, 0.5, message).opts(
+                    text_align='center', text_baseline='middle', responsive=True
+                )
+            ]
+        )
+
+    def _combine(self, plots: list[hv.Element]) -> hv.Overlay | hv.Layout:
+        """Combine elements into the container type every frame must share."""
         if self.layout_params.combine_mode == 'overlay':
             return hv.Overlay(plots)
         # Always a Layout in layout mode, even for a single dataset, so that
@@ -871,12 +917,14 @@ class Plotter:
         return iter(self._range_targets.items())
 
     def style_opts(self) -> list[hv.Options]:
-        """Static HoloViews opts applied once on the presenter's DynamicMap.
+        """Static HoloViews opts, declared once and applied to each computed frame.
 
-        Hoisting styling here keeps ``compute()`` a pure data->element transform:
-        the per-tick build emits bare elements and styling is declared once at
-        render time, rather than minting an entry in the process-global option
-        store for every element on every tick. Subclasses extend this with opts
+        Declaring them here keeps the per-tick build free of styling decisions:
+        :meth:`compute` applies this list to the finished frame in a single call,
+        so options are never re-assembled per element. Applying them once per
+        frame on the shared compute path also keeps them off the per-session
+        render path, where HoloViews would re-apply them per frame per session
+        (see :meth:`DefaultPresenter.present`). Subclasses extend this with opts
         for their leaf element types; the base provides the container-level opts.
         """
         # title='' stops Bokeh promoting a single overlaid element's label to the
@@ -884,6 +932,54 @@ class Plotter:
         return [
             hv.opts.Overlay(shared_axes=True, title=''),
             hv.opts.Layout(shared_axes=False),
+        ]
+
+    @property
+    def applies_ranges(self) -> bool:
+        """Whether HoloViews must compute this layer's axis bounds from its data.
+
+        False lets :meth:`_frame_opts` hand HoloViews ``apply_ranges=False``,
+        which skips computing bounds, deriving extents and writing the Bokeh
+        ranges on every frame -- a third of a 1D layer's repaint. That work is
+        per element, so it is not a fixed cost per layer: it grows both with the
+        elements a layer draws (a multi-source selection overlays one per
+        source) and with the number of layers sharing the cell's figure, whose
+        range updates are fused (see ``widgets/cell.py``). It is safe in two
+        cases, and this property is the single place that decides:
+
+        - the cell's :class:`~.cell_autoscale.CellAutoscaleController` writes
+          both numeric axes itself on every render, i.e. ``AUTOSCALE_AXES``
+          covers x and y (see :attr:`autoscale_axes` for the per-instance
+          narrowing) *and* the layer renders into one figure whose handles the
+          controller can reach -- a layout-mode plotter draws one figure per
+          element, which is also what makes it non-overlayable, and
+          ``RangeHandles`` writes through a single figure's ``x_range`` /
+          ``y_range``, so nothing would set the bounds;
+        - the layer is an annotation drawn in another layer's coordinate space
+          and so never determines the bounds (:attr:`IS_ANNOTATION`), which is
+          what HoloViews does for its own annotation plotters.
+
+        A plotter owning a figure whose axes nobody writes -- ``BarsPlotter``,
+        ``TablePlotter``, ``SlicerPlotter`` (which autoscales only the color
+        axis) -- keeps HoloViews' computation, so the default is the safe one:
+        a new plotter misses the saving rather than rendering on empty bounds.
+        """
+        writes_both_axes = {'x', 'y'} <= self.autoscale_axes and self.is_overlayable
+        return not (self.IS_ANNOTATION or writes_both_axes)
+
+    def _frame_opts(self) -> list[hv.Options]:
+        """:meth:`style_opts`, plus the range opt-out where it applies.
+
+        The opt-out goes on the leaf element opts only. Ranges are a property of
+        the elements, so opting the container out measures the same as not doing
+        it, and ``LayoutPlot`` has no ``apply_ranges`` parameter at all -- adding
+        it there raises.
+        """
+        opts = self.style_opts()
+        if self.applies_ranges:
+            return opts
+        return [
+            opt(apply_ranges=False) if _is_element_opt(opt) else opt for opt in opts
         ]
 
     def plot(

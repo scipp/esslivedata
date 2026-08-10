@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: BSD-3-Clause
 # Copyright (c) 2023 Scipp contributors (https://github.com/scipp)
 from dataclasses import dataclass
-from typing import NewType, TypeVar
+from typing import NewType
 
 import pandas as pd
 from environments import BenchmarkResultFilePath, BenchmarkRootDir
@@ -9,10 +9,8 @@ from runner import BenchmarkReport
 
 ResultPath = BenchmarkResultFilePath
 
-T = TypeVar("T")
 
-
-def _extract_only_if_one(values: list[T], target_name: str) -> T | None:
+def _extract_only_if_one[T](values: list[T], target_name: str) -> T | None:
     if len(cands := set(values)) > 1:
         raise ValueError(f"More than 1 {target_name} found in the list.")
     elif len(cands) == 0:
@@ -25,7 +23,7 @@ def _extract_unit(units: list[str | None]) -> str | None:
     return _extract_only_if_one([unit for unit in units if unit is not None], "unit")
 
 
-def _extract_dtype(values: list[T]) -> type[T] | str | None:
+def _extract_dtype[T](values: list[T]) -> type[T] | str | None:
     none_type = type(None)
     cands = [valt for val in values if (valt := type(val)) is not none_type]
     if (extracted := _extract_only_if_one(cands, "type")) is str:
@@ -47,10 +45,7 @@ def _reconstruct(contents: dict | list | tuple, target_type: type, strict: bool)
         return contents
 
 
-D = TypeVar("D")
-
-
-def reconstruct_nested_dataclass(
+def reconstruct_nested_dataclass[D](
     contents: dict, root_type: type[D], type_strict: bool = True
 ) -> D:
     """Reconstructs dataclass object from a dictionary.

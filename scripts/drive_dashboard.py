@@ -27,6 +27,13 @@ Two ways to use it:
       # launch fake backend + fixture, screenshot the Detectors grid, tear down
       python scripts/drive_dashboard.py --launch --tab Detectors --screenshot out.png
 
+When a block driving a :class:`Dashboard` raises, everything known about the
+session is printed to stdout: the browser console tail, the page state (active
+tab, dialogs, ``lt-*`` hooks), a base64 PNG screenshot, and the dashboard's own
+log tail. An intermittent failure is over by the time it is known to be one, so
+it has to be captured as it happens -- and on stdout, where pytest folds it into
+the failure report and the run-level log carries it out of CI.
+
 The ``lt-*`` classes are the stable automation contract (see the rule file).
 Plain Playwright CSS locators pierce the dashboard's open shadow DOM, so
 ``page.locator(".lt-tool-settings")`` works -- but **descendant combinators do
@@ -38,6 +45,7 @@ descendant one (``.lt-wf-total_counts .lt-tool-player-stop`` matches nothing).
 from __future__ import annotations
 
 import argparse
+import base64
 import json
 import os
 import shutil
@@ -47,6 +55,8 @@ import sys
 import tempfile
 import time
 import urllib.request
+from collections import deque
+from collections.abc import Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
@@ -54,6 +64,7 @@ from urllib.error import URLError
 
 from playwright.sync_api import (
     Browser,
+    Locator,
     Page,
     sync_playwright,
 )
@@ -72,6 +83,19 @@ SETTLE_MS = 5000
 # Override the Chromium binary when the installed playwright package does not
 # match the browsers available on disk (e.g. a preprovisioned container).
 _CHROMIUM_ENV = "PLAYWRIGHT_CHROMIUM_EXECUTABLE"
+# Wait for a modal to appear after its trigger is clicked. Generous against a
+# loaded runner: the click's round-trip queues behind the session's periodic
+# pass, and the worst open measured under full CPU saturation is ~2 s.
+MODAL_WAIT_MS = 10000
+# Console lines kept per session. A dashboard session logs steadily, so the tail
+# is what matters and the cap keeps a long run from growing without bound.
+CONSOLE_LIMIT = 200
+# Server log lines printed when a driven session fails.
+SERVER_LOG_TAIL = 60
+# Base64 wraps at this width so no single log line grows unbounded. Failure
+# screenshots stay PNG: they are inlined into the log, and a dashboard is flat
+# colour and text, which PNG encodes smaller than even a lossy JPEG.
+BASE64_WIDTH = 120
 
 
 def _launch_browser(playwright) -> Browser:
@@ -79,20 +103,18 @@ def _launch_browser(playwright) -> Browser:
     return playwright.chromium.launch(executable_path=executable or None)
 
 
-def _open_session(browser: Browser, url: str, settle_ms: int) -> Page:
-    """One dashboard session: an isolated context, loaded and settled."""
-    context = browser.new_context(viewport={"width": 1600, "height": 1000})
-    page = context.new_page()
-    page.goto(url, wait_until="networkidle")
-    page.wait_for_timeout(settle_ms)
-    return page
-
-
 class Dashboard:
     """Thin Playwright wrapper exposing the dashboard's stable automation hooks."""
 
     def __init__(self, page: Page):
         self.page = page
+        # A click that reaches a widget whose JS never acted on it looks like a
+        # success from Python: the element was there, the click landed, nothing
+        # happened. The browser console is the only place that leaves a trace,
+        # so collect it from construction rather than from first failure.
+        self.console: deque[str] = deque(maxlen=CONSOLE_LIMIT)
+        page.on("console", lambda msg: self.console.append(f"{msg.type}: {msg.text}"))
+        page.on("pageerror", lambda err: self.console.append(f"pageerror: {err}"))
 
     @classmethod
     @contextmanager
@@ -101,7 +123,8 @@ class Dashboard:
         with sync_playwright() as p:
             browser = _launch_browser(p)
             try:
-                yield cls(_open_session(browser, url, settle_ms))
+                with _sessions(browser, url, 1, settle_ms) as dashboards:
+                    yield dashboards[0]
             finally:
                 browser.close()
 
@@ -122,7 +145,8 @@ class Dashboard:
         with sync_playwright() as p:
             browser = _launch_browser(p)
             try:
-                yield [cls(_open_session(browser, url, settle_ms)) for _ in range(n)]
+                with _sessions(browser, url, n, settle_ms) as dashboards:
+                    yield dashboards
             finally:
                 browser.close()
 
@@ -135,31 +159,37 @@ class Dashboard:
         self.page.get_by_text(name, exact=True).first.click()
         self.page.wait_for_timeout(SETTLE_MS)
 
-    def click(self, selector: str, *, retries: int = 3) -> None:
+    def click(self, target: str | Locator, *, retries: int = 3) -> None:
         """Click a stable ``lt-*`` selector, retrying if a rebuild detaches it.
 
         Staging/commit/stop rebuilds the affected workflow row, so a click can
         race the rebuild and hit a detached element. Re-locate and retry.
+
+        ``target`` may also be a ready-made locator, for a trigger that carries
+        no ``lt-*`` hook of its own (a layer-picker menu entry, say).
         """
         for attempt in range(retries):
             try:
-                self.page.locator(selector).first.click(timeout=4000)
+                self._locate(target).click(timeout=4000)
                 return
             except PlaywrightTimeoutError:
                 if attempt == retries - 1:
                     raise
                 self.page.wait_for_timeout(1000)
 
-    def open_modal(self, trigger_selector: str, *, retries: int = 3):
+    def _locate(self, target: str | Locator) -> Locator:
+        return self.page.locator(target).first if isinstance(target, str) else target
+
+    def open_modal(self, trigger: str | Locator, *, retries: int = 3) -> Locator:
         """Click a trigger and wait for its modal (``[role=dialog]``) to show.
 
         Returns the dialog locator. Dismiss with ``page.keyboard.press("Escape")``
         (a ModalEscapeCloser widget makes Escape work from initial focus) or by
         clicking ``.pnx-dialog-close``.
         """
-        self.click(trigger_selector, retries=retries)
         dialog = self.page.locator("[role=dialog]").first
-        dialog.wait_for(state="visible", timeout=10000)
+        self.click(trigger, retries=retries)
+        dialog.wait_for(state="visible", timeout=MODAL_WAIT_MS)
         return dialog
 
     def screenshot(self, path: str | Path, *, full_page: bool = True) -> None:
@@ -185,6 +215,87 @@ class Dashboard:
             }"""
         )
         return {"tabs": self.tab_names(), "lt_hooks": dict(sorted(hooks.items()))}
+
+
+def _open_session(browser: Browser, url: str, settle_ms: int) -> Dashboard:
+    """One dashboard session: an isolated context, loaded and settled."""
+    context = browser.new_context(viewport={"width": 1600, "height": 1000})
+    dash = Dashboard(context.new_page())
+    dash.page.goto(url, wait_until="networkidle")
+    dash.page.wait_for_timeout(settle_ms)
+    return dash
+
+
+@contextmanager
+def _sessions(
+    browser: Browser, url: str, count: int, settle_ms: int
+) -> Iterator[list[Dashboard]]:
+    """Open ``count`` sessions, dumping diagnostics if the caller's block raises."""
+    dashboards = [_open_session(browser, url, settle_ms) for _ in range(count)]
+    try:
+        yield dashboards
+    except BaseException:
+        _dump_diagnostics(dashboards)
+        raise
+
+
+def _dump_diagnostics(dashboards: list[Dashboard]) -> None:
+    """Print everything known about each session at the moment it failed.
+
+    Everything goes to stdout, including the screenshot, because that is the
+    one channel that reaches whoever is reading. pytest folds captured output
+    into the failure report, and the run-level log zip is downloadable while
+    the run is still going; CI artifacts are not reachable from every
+    environment we debug from, and an upload that silently matches no files
+    looks exactly like a run that captured nothing.
+
+    Every capture is guarded: this runs while an exception propagates, and a
+    diagnostic that raised would replace the failure it exists to explain.
+    """
+    for index, dash in enumerate(dashboards):
+        for line in dash.console:
+            print(f"[browser-console {index}] {line}")
+        try:
+            print(f"[browser-state {index}] {_page_state(dash)}")
+        except Exception as exc:
+            print(f"[browser-state {index}] unavailable: {exc}")
+        try:
+            shot = dash.page.screenshot(full_page=True)
+        except Exception as exc:
+            print(f"[browser-screenshot {index}] unavailable: {exc}")
+            continue
+        encoded = base64.b64encode(shot).decode()
+        # The note carries a different tag to the payload it describes, so that
+        # the command it quotes does not also match the line quoting it.
+        print(
+            f"[browser-diagnostics] session {index} screenshot: {len(shot)} bytes "
+            f"of png as base64; decode with: grep -o "
+            f"'\\[browser-screenshot {index}\\] .*' log | sed 's/.*\\] //' "
+            f"| tr -d '\\n' | base64 -d > shot.png"
+        )
+        for start in range(0, len(encoded), BASE64_WIDTH):
+            chunk = encoded[start : start + BASE64_WIDTH]
+            print(f"[browser-screenshot {index}] {chunk}")
+
+
+def _page_state(dash: Dashboard) -> dict:
+    """What the page held when it failed: the tab shown, dialogs, and hooks.
+
+    A driven step fails because something it addressed was absent, stale, or
+    never rendered, so the answer is nearly always in one of these three: which
+    tab is actually up, whether a modal exists in the DOM but never became
+    visible (as opposed to never being created), and which ``lt-*`` hooks are
+    present to be clicked.
+    """
+    dialogs = dash.page.locator("[role=dialog]")
+    count = dialogs.count()
+    return {
+        "url": dash.page.url,
+        "active_tab": dash.page.locator(".bk-tab.bk-active").first.inner_text().strip(),
+        "dialogs": count,
+        "dialogs_visible": sum(dialogs.nth(i).is_visible() for i in range(count)),
+        **dash.inventory(),
+    }
 
 
 def _port_in_use(port: int) -> bool:
@@ -213,6 +324,23 @@ def _free_port() -> int:
 
 def _log_tail(log: Path, lines: int = 15) -> str:
     return "\n".join(log.read_text().splitlines()[-lines:])
+
+
+def _terminate(proc: subprocess.Popen, *, timeout_s: float = 10.0) -> None:
+    """Stop a launched dashboard and reap it.
+
+    Reaping matters on the kill path too: a child that was never waited on is
+    still running when its ``Popen`` is garbage-collected, and the
+    ``ResourceWarning`` that ``__del__`` then raises surfaces as an unraisable
+    exception in whichever test happens to be running at the time -- a failure
+    with no relation to the code under test.
+    """
+    proc.terminate()
+    try:
+        proc.wait(timeout=timeout_s)
+    except subprocess.TimeoutExpired:
+        proc.kill()
+        proc.wait()
 
 
 def _wait_until_ready(
@@ -318,12 +446,13 @@ def _fake_dashboard(instrument: str, port: int | None = None):
             try:
                 _wait_until_ready(f"http://localhost:{port}", log, proc)
                 yield FakeDashboard(url=f"http://localhost:{port}", log=log)
+            except BaseException:
+                # A browser-side symptom usually has a server-side cause, and
+                # the log dies with the temporary directory below.
+                print(f"[dashboard-log tail]\n{_log_tail(log, SERVER_LOG_TAIL)}")
+                raise
             finally:
-                proc.terminate()
-                try:
-                    proc.wait(timeout=10)
-                except subprocess.TimeoutExpired:
-                    proc.kill()
+                _terminate(proc)
 
 
 def main() -> None:

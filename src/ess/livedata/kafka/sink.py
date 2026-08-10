@@ -4,7 +4,7 @@ import time
 from collections.abc import Callable
 from dataclasses import dataclass, replace
 from types import TracebackType
-from typing import Any, Generic, Protocol, TypeVar
+from typing import Any, Protocol
 
 import confluent_kafka as kafka
 import scipp as sc
@@ -15,9 +15,6 @@ from ..core.message import Message, MessageSink
 from .errors import is_fatal
 
 logger = structlog.get_logger(__name__)
-
-
-T = TypeVar("T")
 
 
 class SerializationError(Exception):
@@ -38,7 +35,7 @@ class SerializedMessage:
     value: bytes
 
 
-class MessageSerializer(Protocol, Generic[T]):
+class MessageSerializer[T](Protocol):
     """
     Protocol for converting a domain :class:`Message` into a :class:`SerializedMessage`.
 
@@ -50,7 +47,7 @@ class MessageSerializer(Protocol, Generic[T]):
     def serialize(self, message: Message[T]) -> SerializedMessage: ...
 
 
-class KafkaSink(MessageSink[T]):
+class KafkaSink[T](MessageSink[T]):
     """
     Publishes :class:`Message` instances to Kafka.
 
@@ -176,7 +173,7 @@ class KafkaSink(MessageSink[T]):
         self.close()
 
 
-class UnrollingSinkAdapter(MessageSink[T | sc.DataGroup[T]]):
+class UnrollingSinkAdapter[T](MessageSink[T | sc.DataGroup[T]]):
     def __init__(self, sink: MessageSink[T]):
         self._sink = sink
 

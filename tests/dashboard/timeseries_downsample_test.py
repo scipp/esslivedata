@@ -27,6 +27,64 @@ def _make_timeseries(n: int, period_s: float = 1.0) -> sc.DataArray:
     )
 
 
+def _make_sawtooth(n_teeth: int, tooth_samples: int) -> sc.DataArray:
+    """1 Hz cumulative counter reset to zero every ``tooth_samples`` samples.
+
+    The shape a NICOS scan produces (ADR 0006: move, reset, count, repeat). Each
+    tooth's height is the counts collected at that scan point, which is the
+    number the plot is read for.
+    """
+    values = np.tile(np.arange(tooth_samples, dtype=np.float64), n_teeth)
+    times_ns = (np.arange(values.size, dtype=np.int64) * int(1e9)).astype(
+        'datetime64[ns]'
+    )
+    return sc.DataArray(
+        data=sc.array(dims=['time'], values=values, unit='counts'),
+        coords={'time': sc.array(dims=['time'], values=times_ns)},
+    )
+
+
+class TestCumulativeSawtooth:
+    """Peak preservation for a counter that resets, as opposed to one that rises.
+
+    Keeping the last sample of each bucket is the bucket maximum only while the
+    signal is monotonic. Across a reset it is an arbitrary point on the tooth.
+    """
+
+    def test_monotonic_ramp_is_reduced_to_the_bucket_maxima(self):
+        data = _make_timeseries(120)
+
+        result = downsample_timeseries(
+            data,
+            fine_period_seconds=1.0,
+            recent_seconds=0.0,
+            coarse_period_seconds=10.0,
+        )
+
+        # Coarse buckets are 10 s wide and anchored to the epoch, so the sample
+        # they keep is the one at 9 s, 19 s, ... -- the maximum of each bucket.
+        np.testing.assert_array_equal(result.values[:11], np.arange(9.0, 110.0, 10.0))
+
+    @pytest.mark.xfail(
+        reason='#1153: the coarse band keeps the last sample of each bucket, which '
+        'across a reset is an arbitrary point on the tooth rather than its peak',
+        strict=True,
+    )
+    def test_every_tooth_peak_survives_the_coarse_band(self):
+        n_teeth = 5
+        data = _make_sawtooth(n_teeth=n_teeth, tooth_samples=24)
+
+        result = downsample_timeseries(
+            data,
+            fine_period_seconds=1.0,
+            recent_seconds=0.0,
+            coarse_period_seconds=10.0,
+        )
+
+        peak = data.values.max()
+        assert np.count_nonzero(result.values == peak) == n_teeth
+
+
 class TestDownsampleTimeseries:
     def test_no_downsampling_when_buffer_shorter_than_recent(self):
         data = _make_timeseries(60)  # 1 min at 1 Hz

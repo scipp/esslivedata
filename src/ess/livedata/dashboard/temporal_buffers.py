@@ -6,11 +6,8 @@ from __future__ import annotations
 
 import math
 from abc import ABC, abstractmethod
-from typing import Generic, TypeVar
 
 import scipp as sc
-
-T = TypeVar('T')
 
 
 def _variable_nbytes(var: sc.Variable) -> int:
@@ -22,7 +19,7 @@ def _variable_nbytes(var: sc.Variable) -> int:
     return var.values.nbytes * (2 if var.variances is not None else 1)
 
 
-class BufferProtocol(ABC, Generic[T]):
+class BufferProtocol[T](ABC):
     """Common interface for all buffer types."""
 
     @abstractmethod
@@ -89,7 +86,7 @@ class BufferProtocol(ABC, Generic[T]):
         """
 
 
-class SingleValueBuffer(BufferProtocol[T]):
+class SingleValueBuffer[T](BufferProtocol[T]):
     """
     Buffer that stores only the latest value.
 

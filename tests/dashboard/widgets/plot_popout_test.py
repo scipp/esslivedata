@@ -18,11 +18,7 @@ import scipp as sc
 
 from ess.livedata.config.workflow_spec import DataKey, WorkflowId
 from ess.livedata.dashboard.data_roles import PRIMARY
-from ess.livedata.dashboard.data_service import DataService
 from ess.livedata.dashboard.frame_clock import FrameClock
-from ess.livedata.dashboard.job_service import JobService
-from ess.livedata.dashboard.notification_queue import NotificationQueue
-from ess.livedata.dashboard.plot_data_service import PlotDataService
 from ess.livedata.dashboard.plot_orchestrator import (
     CellGeometry,
     DataSourceConfig,
@@ -31,16 +27,8 @@ from ess.livedata.dashboard.plot_orchestrator import (
 )
 from ess.livedata.dashboard.plot_params import PlotParams1d
 from ess.livedata.dashboard.plots import LinePlotter
-from ess.livedata.dashboard.plotting_controller import PlottingController
 from ess.livedata.dashboard.session_layer import SessionLayer
-from ess.livedata.dashboard.session_registry import SessionId, SessionRegistry
-from ess.livedata.dashboard.session_updater import SessionUpdater
 from ess.livedata.dashboard.static_plots import LinesCoordinates, VLinesParams
-from ess.livedata.dashboard.stream_manager import StreamManager
-from ess.livedata.dashboard.widgets.plot_grid_tabs import PlotGridTabs
-from ess.livedata.dashboard.widgets.workflow_status_widget import (
-    WorkflowStatusListWidget,
-)
 
 hv.extension('bokeh')
 
@@ -48,21 +36,6 @@ _WORKFLOW = WorkflowId(instrument='test', name='wf', version=1)
 _GEOMETRY = CellGeometry(row=0, col=0, row_span=1, col_span=1)
 # Tooltip of the controller's one-shot Fit tool, its handle in a Bokeh toolbar.
 _FIT = 'Fit ranges to current data'
-
-
-@pytest.fixture
-def plot_data_service():
-    return PlotDataService()
-
-
-@pytest.fixture
-def data_service():
-    return DataService()
-
-
-@pytest.fixture
-def job_service():
-    return JobService()
 
 
 @pytest.fixture
@@ -77,40 +50,17 @@ def frame_clock():
 
 
 @pytest.fixture
-def plot_orchestrator(job_orchestrator, data_service, plot_data_service, frame_clock):
-    stream_manager = StreamManager(data_service=data_service)
+def plot_orchestrator(
+    plotting_controller, job_orchestrator, data_service, plot_data_service, frame_clock
+):
+    """The shared fixture, with the frame clock exposed to the test."""
     return PlotOrchestrator(
-        plotting_controller=PlottingController(stream_manager=stream_manager),
+        plotting_controller=plotting_controller,
         job_orchestrator=job_orchestrator,
         data_service=data_service,
         instrument='dummy',
         plot_data_service=plot_data_service,
         frame_clock=frame_clock,
-    )
-
-
-@pytest.fixture
-def plot_grid_tabs(
-    plot_orchestrator,
-    workflow_registry,
-    plot_data_service,
-    job_orchestrator,
-    job_service,
-):
-    stream_manager = StreamManager(data_service=DataService())
-    return PlotGridTabs(
-        plot_orchestrator=plot_orchestrator,
-        workflow_registry=workflow_registry,
-        plotting_controller=PlottingController(stream_manager=stream_manager),
-        workflow_status_widget=WorkflowStatusListWidget(
-            orchestrator=job_orchestrator, job_service=job_service
-        ),
-        plot_data_service=plot_data_service,
-        session_updater=SessionUpdater(
-            session_id=SessionId('test'),
-            session_registry=SessionRegistry(),
-            notification_queue=NotificationQueue(),
-        ),
     )
 
 
@@ -175,12 +125,27 @@ def _add_line_cell(
     plot_data_service.data_arrived(layer_id)
 
     state = plot_data_service.get(layer_id)
-    session_layer = SessionLayer(layer_id=layer_id, last_seen_version=state.version)
+    session_layer = SessionLayer(layer_id=layer_id)
     session_layer.ensure_components(state)
     plot_grid_tabs._session_layers[layer_id] = session_layer
 
-    plot_grid_tabs._poll_for_plot_updates()
+    _show_grid(plot_grid_tabs, grid_id)
     return cell_id
+
+
+def _show_grid(plot_grid_tabs, grid_id) -> None:
+    """Make a grid's tab the visible one, building its cells.
+
+    A session materializes cells only for the grid it displays, so a test
+    wanting a built widget has to show its tab; the first pass is what creates
+    that tab in the first place.
+    """
+    plot_grid_tabs._poll_for_plot_updates()
+    tabbed = plot_grid_tabs._tabbed_grid_ids()
+    plot_grid_tabs.tabs.active = plot_grid_tabs._static_tabs_count + tabbed.index(
+        grid_id
+    )
+    plot_grid_tabs._poll_for_plot_updates()
 
 
 @pytest.fixture
@@ -259,7 +224,7 @@ class TestPopoutRendersTheCellsPlotAgain:
         plot_grid_tabs._show_popout(line_cell)
 
         window = _open_windows(plot_grid_tabs)[0]
-        assert _rendered_plot(window) is cell_widget.composed.plot
+        assert _rendered_plot(window) is cell_widget._plot
 
     def test_both_toolbars_get_the_same_autoscale_tools(
         self, plot_grid_tabs, line_cell
@@ -269,10 +234,10 @@ class TestPopoutRendersTheCellsPlotAgain:
         Both toolbars get the *same* tool models: that identity is what makes
         a toggle flipped in the window show as flipped in the cell.
         """
-        composed = plot_grid_tabs._cells[line_cell].composed
+        plot = plot_grid_tabs._cells[line_cell]._plot
 
-        cell_tools = _autoscale_tools(_render(composed.plot))
-        popout_tools = _autoscale_tools(_render(composed.plot))
+        cell_tools = _autoscale_tools(_render(plot))
+        popout_tools = _autoscale_tools(_render(plot))
 
         assert _FIT in cell_tools
         assert cell_tools.keys() > {_FIT}  # at least one axis toggle too
@@ -281,9 +246,9 @@ class TestPopoutRendersTheCellsPlotAgain:
     def test_toggling_autoscale_in_one_view_shows_in_the_other(
         self, plot_grid_tabs, line_cell
     ):
-        composed = plot_grid_tabs._cells[line_cell].composed
-        cell_tools = _autoscale_tools(_render(composed.plot))
-        popout_tools = _autoscale_tools(_render(composed.plot))
+        plot = plot_grid_tabs._cells[line_cell]._plot
+        cell_tools = _autoscale_tools(_render(plot))
+        popout_tools = _autoscale_tools(_render(plot))
         toggle = next(name for name in cell_tools if name != _FIT)
         assert popout_tools[toggle].active
 
@@ -300,8 +265,8 @@ class TestPopoutRendersTheCellsPlotAgain:
         as a single flag would let the first figure consume it and leave the
         second showing a stale range.
         """
-        composed = plot_grid_tabs._cells[line_cell].composed
-        figures = [_render(composed.plot).state for _ in range(2)]
+        plot = plot_grid_tabs._cells[line_cell]._plot
+        figures = [_render(plot).state for _ in range(2)]
         tools = _autoscale_tools_of(figures[0])
         for name, tool in tools.items():
             if name != _FIT:
@@ -323,7 +288,7 @@ class TestPopoutRendersTheCellsPlotAgain:
         plot_grid_tabs._show_popout(line_cell)
 
         pipe = session_layer.components.pipe
-        assert pipe in cell_widget.composed.plot.streams
+        assert pipe in cell_widget._plot.streams
         assert pipe in _rendered_plot(_open_windows(plot_grid_tabs)[0]).streams
 
 
@@ -421,7 +386,7 @@ class TestPopoutLifecycle:
         plot_grid_tabs._show_popout(line_cell)
 
         plot_orchestrator.set_grid_enabled(
-            plot_grid_tabs._cell_grid[line_cell], enabled=False
+            plot_grid_tabs._cells[line_cell].grid_id, enabled=False
         )
         _tick(plot_grid_tabs)
 
@@ -468,7 +433,7 @@ class TestPopoutLifecycle:
         grid_id = plot_orchestrator.add_grid(title='G', nrows=1, ncols=1)
         cell_id = plot_orchestrator.add_cell(grid_id, _GEOMETRY)
         plot_orchestrator.add_layer(cell_id, _line_config())
-        plot_grid_tabs._poll_for_plot_updates()
+        _show_grid(plot_grid_tabs, grid_id)
         assert not plot_grid_tabs._cells[cell_id].has_plot
 
         plot_grid_tabs._show_popout(cell_id)
@@ -560,6 +525,21 @@ class TestPopoutKeepsItsCellLive:
             plot_grid_tabs, plot_orchestrator, plot_data_service, line_cell
         )
 
+    def test_rebuild_keeps_a_minimized_window_minimized(
+        self, plot_grid_tabs, plot_orchestrator, line_cell
+    ):
+        """Reopening normalized would pop every parked window open on a job
+        restart, letting rebuilds defeat the minimize-to-sleep handle."""
+        plot_grid_tabs._show_popout(line_cell)
+        _open_windows(plot_grid_tabs)[0].status = 'minimized'
+
+        plot_orchestrator.set_cell_title(line_cell, 'Renamed')
+        _tick(plot_grid_tabs)
+
+        (window,) = _open_windows(plot_grid_tabs)
+        assert window.name == 'Renamed'
+        assert window.status == 'minimized'
+
     def test_minimized_window_still_survives_a_cell_rebuild(
         self, plot_grid_tabs, plot_orchestrator, plot_data_service, line_cell
     ):
@@ -643,7 +623,7 @@ def _new_frame(frame_clock, plot_grid_tabs, cell_id) -> None:
     What the ingestion thread does at the end of a burst, and what a live
     pop-out on a hidden tab must still react to.
     """
-    frame_clock.commit(plot_grid_tabs._cell_grid[cell_id])
+    frame_clock.commit(plot_grid_tabs._cells[cell_id].grid_id)
 
 
 def _layer_is_active(plot_grid_tabs, plot_orchestrator, plot_data_service, cell_id):
@@ -653,7 +633,7 @@ def _layer_is_active(plot_grid_tabs, plot_orchestrator, plot_data_service, cell_
     lose it, which is exactly what would freeze a pop-out.
     """
     layer_id = plot_orchestrator.get_cell(cell_id).layers[0].layer_id
-    return plot_data_service.get(layer_id).has_viewers
+    return plot_data_service.has_viewers(layer_id)
 
 
 class TestPerGridFrameFlush:
@@ -736,11 +716,7 @@ class TestPerGridFrameFlush:
 
 def _show_grid_tab(plot_grid_tabs, cell_id) -> None:
     """Make the tab of the grid holding a cell the visible one."""
-    grid_id = plot_grid_tabs._cell_grid[cell_id]
-    tabbed = plot_grid_tabs._tabbed_grid_ids()
-    plot_grid_tabs.tabs.active = plot_grid_tabs._static_tabs_count + tabbed.index(
-        grid_id
-    )
+    _show_grid(plot_grid_tabs, plot_grid_tabs._cells[cell_id].grid_id)
 
 
 def _build_layer(plot_orchestrator, plot_data_service, cell_id) -> None:
@@ -785,7 +761,7 @@ class TestPopoutButton:
         grid_id = plot_orchestrator.add_grid(title='G', nrows=1, ncols=1)
         cell_id = plot_orchestrator.add_cell(grid_id, _GEOMETRY)
         plot_orchestrator.add_layer(cell_id, _line_config())
-        plot_grid_tabs._poll_for_plot_updates()
+        _show_grid(plot_grid_tabs, grid_id)
 
         assert _popout_button(plot_grid_tabs._cells[cell_id]).disabled
 
@@ -819,9 +795,57 @@ class TestStaticOnlyCell:
         grid_id = plot_orchestrator.add_grid(title='G', nrows=1, ncols=1)
         cell_id = plot_orchestrator.add_cell(grid_id, _GEOMETRY)
         plot_orchestrator.add_layer(cell_id, _static_config())
-        plot_grid_tabs._poll_for_plot_updates()
+        _show_grid(plot_grid_tabs, grid_id)
 
         plot_grid_tabs._show_popout(cell_id)
 
         assert len(_open_windows(plot_grid_tabs)) == 1
         assert plot_grid_tabs._cells[cell_id].autoscale_controller is None
+
+
+class TestClosingAWindowKeepsTheCellRendering:
+    """Tearing down one view of a cell tears down every view of it.
+
+    ``Plot.cleanup`` drops *all* weakly-held plot-refresh subscribers on the
+    streams it touches, not just its own (holoviews#6988), so removing a
+    pop-out window unsubscribes the grid cell's plot along with the window's.
+    Rebuilding the cell is what puts a live plot back; without it the cell
+    would sit frozen for the rest of the session, showing data that looks
+    current.
+    """
+
+    def test_cell_plot_stays_subscribed_after_its_window_closes(
+        self, plot_grid_tabs, line_cell
+    ):
+        pipe = _pipe(plot_grid_tabs)
+        plot_grid_tabs._cells[line_cell].view.get_root()
+        subscribed = len(pipe.subscribers)
+
+        plot_grid_tabs._show_popout(line_cell)
+        _open_windows(plot_grid_tabs)[0].get_root()
+        _open_windows(plot_grid_tabs)[0].status = 'closed'
+        plot_grid_tabs._cells[line_cell].view.get_root()
+
+        assert len(pipe.subscribers) == subscribed
+
+    def test_closing_a_window_rebuilds_the_cell(self, plot_grid_tabs, line_cell):
+        """The visible half of the sever repair, stated directly."""
+        plot_grid_tabs._show_popout(line_cell)
+        before = plot_grid_tabs._cells[line_cell]
+
+        _open_windows(plot_grid_tabs)[0].status = 'closed'
+
+        assert plot_grid_tabs._cells[line_cell] is not before
+
+    def test_a_windowless_cell_is_left_alone(self, plot_grid_tabs, line_cell):
+        """No window, no sever, no rebuild -- an idle pass costs nothing."""
+        before = plot_grid_tabs._cells[line_cell]
+
+        plot_grid_tabs._close_popout(line_cell)
+
+        assert plot_grid_tabs._cells[line_cell] is before
+
+
+def _pipe(plot_grid_tabs):
+    """The one session layer's data pipe, which every view subscribes to."""
+    return next(iter(plot_grid_tabs._session_layers.values())).components.pipe

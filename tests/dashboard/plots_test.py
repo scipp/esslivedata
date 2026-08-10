@@ -13,6 +13,7 @@ from holoviews.plotting.bokeh import BokehRenderer
 from ess.livedata.config.workflow_spec import DataKey, WorkflowId
 from ess.livedata.core.timestamp import Timestamp
 from ess.livedata.dashboard import plots
+from ess.livedata.dashboard.extractors import WindowAggregatingExtractor
 from ess.livedata.dashboard.plot_params import (
     ErrorDisplay,
     Line1dParams,
@@ -22,12 +23,15 @@ from ess.livedata.dashboard.plot_params import (
     PlotParams3d,
     PlotScale,
     PlotScaleParams2d,
+    RateNormalizationParams,
+    WindowAggregation,
 )
 from ess.livedata.dashboard.slicer_plotter import (
     SlicerPlotter,
     SlicerPresenter,
     SlicerState,
 )
+from ess.livedata.dashboard.temporal_buffers import TemporalBuffer
 
 hv.extension('bokeh')
 
@@ -55,17 +59,22 @@ def coordinates_2d():
     return {'x': x, 'y': y}
 
 
-@pytest.fixture
-def data_key():
-    """Create a test DataKey."""
+def make_data_key(source_name: str, output_name: str = 'test_result') -> DataKey:
+    """Create a DataKey for a named source of the shared test workflow."""
     workflow_id = WorkflowId(
         instrument='test_instrument',
         name='test_workflow',
         version=1,
     )
     return DataKey(
-        workflow_id=workflow_id, source_name='test_source', output_name='test_result'
+        workflow_id=workflow_id, source_name=source_name, output_name=output_name
     )
+
+
+@pytest.fixture
+def data_key():
+    """Create a test DataKey."""
+    return make_data_key('test_source')
 
 
 @pytest.fixture(params=['linear', 'log'])
@@ -128,6 +137,26 @@ def present_figure(plotter, data_dict):
     presenter = plotter.create_presenter()
     pipe = hv.streams.Pipe(data=plotter.get_cached_state())
     return render_to_bokeh(presenter.present(pipe)).state
+
+
+def single_layer(plotter) -> hv.Element:
+    """The one element of a plotter's cached single-layer Overlay."""
+    (layer,) = plotter.get_cached_state()
+    return layer
+
+
+def present_figure_with_cell_hooks(plotter, data_dict):
+    """Render a plotter the way a grid cell does: present, then attach hooks.
+
+    ``CellWidget`` attaches its own hooks (SaveTool filename, hover suspend,
+    autoscale) with a further ``.opts()`` call on whatever the presenter
+    returned, so every presenter's output must survive that.
+    """
+    plotter.compute({'primary': data_dict})
+    presenter = plotter.create_presenter()
+    pipe = hv.streams.Pipe(data=plotter.get_cached_state())
+    composed = presenter.present(pipe).opts(hooks=[lambda plot, element: None])
+    return render_to_bokeh(composed).state
 
 
 class TestTitleResolver:
@@ -200,6 +229,12 @@ class TestImagePlotter:
                 "ignore", "All-NaN slice encountered", RuntimeWarning
             )
             render_to_bokeh(hv_element)
+
+    def test_renders_with_cell_hooks(
+        self, image_plotter, constant_nonzero_data, data_key
+    ):
+        """Cell-attached hooks must not break the presenter's DynamicMap."""
+        present_figure_with_cell_hooks(image_plotter, {data_key: constant_nonzero_data})
 
     def test_plot_with_constant_nonzero_values_does_not_raise(
         self, image_plotter, constant_nonzero_data, data_key
@@ -350,6 +385,77 @@ class TestImagePlotter:
         assert mappers
         assert mappers[0].low == 2.0
         assert mappers[0].high == 9.0
+
+
+class TestImagePlotterRenderedValues:
+    """Exact pixel values, extents, units and labels of the rendered image.
+
+    An image that is transposed, flipped or plotted over the wrong extent still
+    renders, and looks like a plausible detector view.
+    """
+
+    @pytest.fixture
+    def counts_image(self) -> sc.DataArray:
+        """2x3 counts over 1 m wide x-bins and 2 mm high y-bins."""
+        return sc.DataArray(
+            sc.array(
+                dims=['y', 'x'],
+                values=[[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]],
+                unit='counts',
+            ),
+            coords={
+                'x': sc.array(dims=['x'], values=[0.0, 1.0, 2.0, 3.0], unit='m'),
+                'y': sc.array(dims=['y'], values=[0.0, 2.0, 4.0], unit='mm'),
+            },
+        )
+
+    def test_pixels_keep_their_row_and_column(self, counts_image, data_key):
+        """Row 0 of the array is the lowest y, and pixels sit at bin centres."""
+        image = plots.ImagePlotter.from_params(PlotParams2d()).plot(
+            counts_image, data_key
+        )
+
+        np.testing.assert_array_equal(
+            image.dimension_values(2, flat=False), [[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]]
+        )
+        np.testing.assert_array_equal(image.data['x'], [0.5, 1.5, 2.5])
+        np.testing.assert_array_equal(image.data['y'], [1.0, 3.0])
+
+    def test_extent_and_units_describe_the_binned_axes(self, counts_image, data_key):
+        """The extent comes from the edges themselves, not from padded centres."""
+        image = plots.ImagePlotter.from_params(PlotParams2d()).plot(
+            counts_image, data_key, output_display_name='Intensity'
+        )
+
+        assert image.bounds.lbrt() == (0.0, 0.0, 3.0, 4.0)
+        assert [dim.unit for dim in image.kdims] == ['m', 'mm']
+        assert image.vdims[0].label == 'Intensity'
+        assert image.vdims[0].unit == 'counts'
+
+    def test_log_scale_hides_nonpositive_pixels_and_brackets_the_rest(self, data_key):
+        """Zero and negative pixels become NaN (transparent) on a log color scale.
+
+        Left in, they would take the lowest color of the map and read as low
+        intensity. The color range must then bracket only the positive pixels.
+        """
+        params = PlotParams2d()
+        params.plot_scale.color_scale = PlotScale.log
+        plotter = plots.ImagePlotter.from_params(params)
+        data = sc.DataArray(
+            sc.array(dims=['y', 'x'], values=[[0.0, 2.0], [-1.0, 8.0]], unit='counts'),
+            coords={
+                'x': sc.array(dims=['x'], values=[0.0, 1.0], unit='m'),
+                'y': sc.array(dims=['y'], values=[0.0, 1.0], unit='m'),
+            },
+        )
+
+        image = plotter.plot(data, data_key)
+
+        np.testing.assert_array_equal(
+            image.dimension_values(2, flat=False),
+            [[np.nan, 2.0], [np.nan, 8.0]],
+        )
+        np.testing.assert_allclose(plotter.get_range_targets(data_key)['c'], (2.0, 8.0))
 
 
 class TestPlotScaleParams2dManualLimits:
@@ -806,6 +912,101 @@ class TestLinePlotter:
         assert result.vdims[0].label == 'values'
 
 
+class TestLinePlotterRenderedValues:
+    """Exact values, coordinates, units and labels of the rendered 1-D element.
+
+    Type-level checks cannot see a curve drawn from the wrong array, at shifted
+    coordinates, or annotated with a unit it was not computed in.
+    """
+
+    @pytest.fixture
+    def binned_counts(self) -> sc.DataArray:
+        """Three 10 ms bins whose variances are exact squares."""
+        return sc.DataArray(
+            sc.array(
+                dims=['tof'],
+                values=[1.0, 2.0, 3.0],
+                variances=[0.04, 0.09, 0.16],
+                unit='counts',
+            ),
+            coords={
+                'tof': sc.array(dims=['tof'], values=[0.0, 10.0, 20.0, 30.0], unit='ms')
+            },
+        )
+
+    def test_curve_carries_input_values_at_input_coords(self, data_key):
+        data = sc.DataArray(
+            sc.array(dims=['tof'], values=[1.5, 2.5, 3.5], unit='counts'),
+            coords={
+                'tof': sc.array(dims=['tof'], values=[10.0, 20.0, 30.0], unit='ms')
+            },
+        )
+        plotter = plots.LinePlotter.from_params(PlotParams1d())
+        resolver = plots.TitleResolver(
+            output=lambda _: 'Intensity', dim={'tof': 'Time-of-flight'}.get
+        )
+
+        plotter.compute({'primary': {data_key: data}}, title_resolver=resolver)
+
+        curve = single_layer(plotter)
+        np.testing.assert_array_equal(curve.dimension_values(0), [10.0, 20.0, 30.0])
+        np.testing.assert_array_equal(curve.dimension_values(1), [1.5, 2.5, 3.5])
+        assert curve.kdims[0].label == 'Time-of-flight'
+        assert curve.kdims[0].unit == 'ms'
+        assert curve.vdims[0].label == 'Intensity'
+        assert curve.vdims[0].unit == 'counts'
+
+    def test_histogram_mode_keeps_bin_edges(self, binned_counts, data_key):
+        params = PlotParams1d(
+            line=Line1dParams(mode=Line1dRenderMode.histogram, errors=ErrorDisplay.none)
+        )
+        element = plots.LinePlotter.from_params(params).plot(binned_counts, data_key)
+
+        # The element stores the N+1 edges and reports the N bin centres.
+        np.testing.assert_array_equal(element.data['tof'], [0.0, 10.0, 20.0, 30.0])
+        np.testing.assert_array_equal(element.dimension_values(0), [5.0, 15.0, 25.0])
+        np.testing.assert_array_equal(element.dimension_values(1), [1.0, 2.0, 3.0])
+
+    def test_line_mode_moves_bin_contents_to_the_bin_centres(
+        self, binned_counts, data_key
+    ):
+        """Binned data drawn as a line sits at the centres, never at the edges.
+
+        Reusing the edges would shift every point half a bin to the left.
+        """
+        params = PlotParams1d(
+            line=Line1dParams(mode=Line1dRenderMode.line, errors=ErrorDisplay.none)
+        )
+        curve = plots.LinePlotter.from_params(params).plot(binned_counts, data_key)
+
+        np.testing.assert_array_equal(curve.dimension_values(0), [5.0, 15.0, 25.0])
+        np.testing.assert_array_equal(curve.dimension_values(1), [1.0, 2.0, 3.0])
+
+    def test_error_bars_carry_standard_deviations_not_variances(
+        self, binned_counts, data_key
+    ):
+        params = PlotParams1d(
+            line=Line1dParams(mode=Line1dRenderMode.line, errors=ErrorDisplay.bars)
+        )
+        _, errors = plots.LinePlotter.from_params(params).plot(binned_counts, data_key)
+
+        np.testing.assert_allclose(errors.dimension_values(2), [0.2, 0.3, 0.4])
+
+    def test_histogram_error_bars_sit_at_the_bin_centres(self, binned_counts, data_key):
+        """Whiskers annotate bins, so they take the N centres, not the N+1 edges."""
+        params = PlotParams1d(
+            line=Line1dParams(mode=Line1dRenderMode.histogram, errors=ErrorDisplay.bars)
+        )
+        histogram, errors = plots.LinePlotter.from_params(params).plot(
+            binned_counts, data_key
+        )
+
+        np.testing.assert_array_equal(histogram.data['tof'], [0.0, 10.0, 20.0, 30.0])
+        np.testing.assert_array_equal(errors.dimension_values(0), [5.0, 15.0, 25.0])
+        np.testing.assert_array_equal(errors.dimension_values(1), [1.0, 2.0, 3.0])
+        np.testing.assert_allclose(errors.dimension_values(2), [0.2, 0.3, 0.4])
+
+
 class TestSlicerPlotter:
     """Tests for SlicerPlotter two-stage architecture.
 
@@ -1090,6 +1291,12 @@ class TestSlicerPlotter:
         result = dmap['slice', 'z', z_value, y_value, x_value]
         assert isinstance(result, hv.Image)
 
+    def test_presenter_dmap_renders_with_cell_hooks(
+        self, slicer_plotter, data_3d, data_key
+    ):
+        """Cell-attached hooks must not break the slicer's kdim-driven DynamicMap."""
+        present_figure_with_cell_hooks(slicer_plotter, {data_key: data_3d})
+
     # === Edge coordinate tests ===
 
     def test_edge_coordinates_in_presenter(self, slicer_plotter, data_key):
@@ -1359,6 +1566,138 @@ class TestPlotterOverlayMode:
         text_element = next(iter(result))
         assert isinstance(text_element, hv.Text)
         assert 'No data' in str(text_element.data)
+
+
+class TestRenderErrorPlaceholder:
+    """A failed render must not change the container type of the frame.
+
+    The session's DynamicMap holds one container type per plotter; a bare
+    error placeholder next to Overlay/Layout frames wedges it permanently and
+    the cell never updates again (#1193).
+    """
+
+    @pytest.fixture
+    def poison_data(self):
+        """Data a LinePlotter cannot render: a Curve needs 1-D input."""
+        return sc.DataArray(sc.array(dims=['x', 'y'], values=[[1.0], [2.0]]))
+
+    @pytest.mark.parametrize(
+        ('combine_mode', 'container'),
+        [('overlay', hv.Overlay), ('layout', hv.Layout)],
+    )
+    def test_error_placeholder_uses_same_container_as_data(
+        self, data_key, poison_data, combine_mode, container
+    ):
+        from ess.livedata.dashboard.plot_params import LayoutParams
+
+        params = PlotParams1d(layout=LayoutParams(combine_mode=combine_mode))
+        plotter = plots.LinePlotter.from_params(params)
+
+        plotter.compute({'primary': {data_key: poison_data}})
+        result = plotter.get_cached_state()
+
+        assert isinstance(result, container)
+        text_element = next(iter(result))
+        assert isinstance(text_element, hv.Text)
+        assert 'Error' in str(text_element.data)
+
+    def test_rendered_plot_survives_error_frame_and_recovers(
+        self, data_key, poison_data
+    ):
+        """A rendered session shows the error, then data again.
+
+        The wedge lives in the rendered plot's frame pull (``get_plot_frame``
+        caches each frame into the DynamicMap): with a bare-Text placeholder
+        the error frame raised there, and the cell never updated again.
+        """
+        good = {
+            data_key: sc.DataArray(
+                sc.array(dims=['x'], values=[1.0, 2.0]),
+                coords={'x': sc.array(dims=['x'], values=[0.0, 1.0])},
+            )
+        }
+        plotter = plots.LinePlotter.from_params(PlotParams1d())
+        plotter.compute({'primary': good})
+        pipe = hv.streams.Pipe(data=plotter.get_cached_state())
+        dmap = plotter.create_presenter().present(pipe)
+        plot = render_to_bokeh(dmap)
+
+        plotter.compute({'primary': {data_key: poison_data}})
+        pipe.send(plotter.get_cached_state())
+        (error_frame,) = plot.current_frame
+        assert isinstance(error_frame, hv.Text)
+
+        plotter.compute({'primary': good})
+        pipe.send(plotter.get_cached_state())
+        (recovered_frame,) = plot.current_frame
+        assert isinstance(recovered_frame, hv.Curve)
+
+
+class TestOverlayUnitConsistency:
+    """Layers sharing one figure must share one unit per axis.
+
+    Bokeh labels an axis from the first layer alone. A layer computed in another
+    unit is then drawn unscaled against a label that does not describe it: on a
+    ``ms`` axis an identical ``ns`` spectrum collapses onto the origin, with
+    nothing on the plot to say so.
+    """
+
+    def _overlay(self, first: sc.DataArray, second: sc.DataArray) -> hv.Overlay:
+        plotter = plots.LinePlotter.from_params(PlotParams1d())
+        plotter.compute(
+            {
+                'primary': {
+                    make_data_key('monitor0'): first,
+                    make_data_key('monitor1'): second,
+                }
+            }
+        )
+        return plotter.get_cached_state()
+
+    @pytest.mark.xfail(
+        reason='#870: coordinate units are never reconciled across layers. A fix '
+        'that converts to a common unit flips this test; one that rejects the '
+        'mismatch outright must replace it.',
+        strict=True,
+    )
+    def test_layers_share_one_coordinate_unit(self):
+        """Two spectra covering the same 20 ms, one of them expressed in ns."""
+        overlay = self._overlay(
+            sc.DataArray(
+                sc.array(dims=['tof'], values=[1.0, 2.0], unit='counts'),
+                coords={
+                    'tof': sc.array(dims=['tof'], values=[0.0, 10.0, 20.0], unit='ms')
+                },
+            ),
+            sc.DataArray(
+                sc.array(dims=['tof'], values=[3.0, 4.0], unit='counts'),
+                coords={
+                    'tof': sc.array(dims=['tof'], values=[0.0, 1.0e7, 2.0e7], unit='ns')
+                },
+            ),
+        )
+
+        assert len({element.kdims[0].unit for element in overlay}) == 1
+
+    @pytest.mark.xfail(
+        reason='#870: value units are never reconciled across layers, so a '
+        'counts/s layer is drawn unscaled against a counts axis.',
+        strict=True,
+    )
+    def test_layers_share_one_value_unit(self):
+        coord = sc.array(dims=['tof'], values=[0.0, 10.0, 20.0], unit='ms')
+        overlay = self._overlay(
+            sc.DataArray(
+                sc.array(dims=['tof'], values=[1.0, 2.0], unit='counts'),
+                coords={'tof': coord},
+            ),
+            sc.DataArray(
+                sc.array(dims=['tof'], values=[3.0, 4.0], unit='counts/s'),
+                coords={'tof': coord},
+            ),
+        )
+
+        assert len({element.vdims[0].unit for element in overlay}) == 1
 
 
 class TestBarsPlotter:
@@ -2238,6 +2577,45 @@ class TestOverlay1DPlotter:
             assert isinstance(elem, hv.Curve)
 
 
+class TestOverlay1DPlotterRenderedValues:
+    """Each slice must carry its own row of the 2-D input.
+
+    Slicing the wrong axis, or off by one, produces an overlay of the right
+    shape holding another ROI's spectrum.
+    """
+
+    def test_each_slice_carries_its_own_row(self, data_key):
+        data = sc.DataArray(
+            sc.array(
+                dims=['roi', 'x'],
+                values=[[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]],
+                unit='counts',
+            ),
+            coords={
+                'roi': sc.array(dims=['roi'], values=[0, 1], unit=None),
+                'x': sc.array(dims=['x'], values=[10.0, 20.0, 30.0], unit='m'),
+            },
+        )
+        plotter = plots.Overlay1DPlotter.from_params(PlotParams1d())
+
+        overlay = plotter.plot(data, data_key, output_display_name='Intensity')
+
+        by_label = {element.label: element for element in overlay}
+        np.testing.assert_array_equal(
+            by_label['roi=0'].dimension_values(1), [1.0, 2.0, 3.0]
+        )
+        np.testing.assert_array_equal(
+            by_label['roi=1'].dimension_values(1), [4.0, 5.0, 6.0]
+        )
+        for element in overlay:
+            np.testing.assert_array_equal(
+                element.dimension_values(0), [10.0, 20.0, 30.0]
+            )
+            assert element.kdims[0].unit == 'm'
+            assert element.vdims[0].unit == 'counts'
+            assert element.vdims[0].label == 'Intensity'
+
+
 class TestLagIndicator:
     """Tests for lag indicator functionality in plotters."""
 
@@ -2819,42 +3197,76 @@ class TestRateNormalizationIntegration:
         )
 
     def test_line_plotter_normalizes_when_enabled(self, counts_1d, data_key):
-        """LinePlotter with normalize_to_rate=True produces counts/s output."""
-        from ess.livedata.dashboard.plot_params import RateNormalizationParams
-
+        """Rendered y values are the counts divided by the 5 s duration."""
         params = PlotParams1d(
             rate=RateNormalizationParams(normalize_to_rate=True),
         )
         plotter = plots.LinePlotter.from_params(params)
         plotter.compute({'primary': {data_key: counts_1d}})
-        result = plotter.get_cached_state()
-        # Should render without error
-        assert result is not None
+        curve = single_layer(plotter)
+        np.testing.assert_allclose(curve.dimension_values(1), [2.0, 4.0, 10.0])
+        assert curve.vdims[0].unit == 'counts/s'
 
     def test_line_plotter_does_not_normalize_when_disabled(self, counts_1d, data_key):
-        """LinePlotter with default params does not normalize."""
-        params = PlotParams1d()
-        plotter = plots.LinePlotter.from_params(params)
+        """LinePlotter with default params displays the raw counts."""
+        plotter = plots.LinePlotter.from_params(PlotParams1d())
         plotter.compute({'primary': {data_key: counts_1d}})
-        result = plotter.get_cached_state()
-        assert result is not None
+        curve = single_layer(plotter)
+        np.testing.assert_array_equal(curve.dimension_values(1), [10.0, 20.0, 50.0])
+        assert curve.vdims[0].unit == 'counts'
 
     def test_image_plotter_normalizes_when_enabled(self, counts_2d, data_key):
-        """ImagePlotter with normalize_to_rate=True produces counts/s output."""
-        from ess.livedata.dashboard.plot_params import RateNormalizationParams
-
+        """Every pixel is divided by the 5 s duration."""
         params = PlotParams2d(
             rate=RateNormalizationParams(normalize_to_rate=True),
         )
         plotter = plots.ImagePlotter.from_params(params)
         plotter.compute({'primary': {data_key: counts_2d}})
-        result = plotter.get_cached_state()
-        assert result is not None
+        image = single_layer(plotter)
+        np.testing.assert_allclose(
+            image.dimension_values(2, flat=False), [[2.0, 4.0], [6.0, 8.0]]
+        )
+        assert image.vdims[0].unit == 'counts/s'
+
+    def test_window_aggregated_counts_become_a_rate(self, data_key):
+        """Windowed counts normalize by the window the extractor stamped.
+
+        Rate normalization divides by ``start_time``/``end_time``, which the raw
+        per-frame stream does not carry as a window. The extractor mints the pair
+        from the slice it summed; without it the toggle is silently inoperative
+        on everything reduced through a window (issue #844).
+        """
+        buffer = TemporalBuffer()
+        for frame in range(4):
+            opened = 1_000_000_000 + frame * 1_000_000_000
+            buffer.add(
+                sc.DataArray(
+                    sc.array(dims=['x'], values=[10.0, 20.0], unit='counts'),
+                    coords={
+                        'x': sc.array(dims=['x'], values=[0.0, 1.0, 2.0], unit='m'),
+                        'start_time': sc.scalar(opened, unit='ns'),
+                        'time': sc.scalar(opened + 1_000_000_000, unit='ns'),
+                    },
+                )
+            )
+        extractor = WindowAggregatingExtractor(
+            window_duration_seconds=4.0, aggregation=WindowAggregation.nansum
+        )
+        params = PlotParams1d(
+            rate=RateNormalizationParams(normalize_to_rate=True),
+            line=Line1dParams(mode=Line1dRenderMode.histogram),
+        )
+        plotter = plots.LinePlotter.from_params(params)
+
+        plotter.compute({'primary': {data_key: extractor.extract(buffer.get())}})
+
+        # 4 frames of (10, 20) counts summed over a 4 s window.
+        histogram = single_layer(plotter)
+        np.testing.assert_allclose(histogram.dimension_values(1), [10.0, 20.0])
+        assert histogram.vdims[0].unit == 'counts/s'
 
     def test_slicer_plotter_normalizes_when_enabled(self, data_key):
         """SlicerPlotter with normalize_to_rate=True normalizes 3D data."""
-        from ess.livedata.dashboard.plot_params import RateNormalizationParams
-
         time_coords = _make_time_coords(duration_s=5.0)
         data_3d = sc.DataArray(
             sc.full(dims=['z', 'y', 'x'], shape=[3, 4, 5], value=50.0, unit='counts'),

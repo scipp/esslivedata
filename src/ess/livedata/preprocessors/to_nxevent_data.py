@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 from dataclasses import dataclass
-from typing import TypeVar
 
 import numpy as np
 import scipp as sc
@@ -70,9 +69,6 @@ class DetectorEvents(MonitorEvents):
         )
 
 
-Events = TypeVar('Events', DetectorEvents, MonitorEvents)
-
-
 class _ScippBackedBuffer:
     """A growable buffer backed by a scipp Variable.
 
@@ -128,7 +124,9 @@ class _WeightsBuffer:
         return self._var['event', :n]
 
 
-class ToNXevent_data(Accumulator[Events, sc.DataArray]):
+class ToNXevent_data[Events: (DetectorEvents, MonitorEvents)](
+    Accumulator[Events, sc.DataArray]
+):
     def __init__(self):
         self._chunks: list[Events] = []
         self._timestamps: list[int] = []

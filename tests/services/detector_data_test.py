@@ -44,10 +44,13 @@ detector_source_name = {
     'bifrost': 'unified_detector',
     'loki': 'loki_detector_0',
     'nmx': 'detector_panel_0',
+    'beer': 'beer_detector_s2',
 }
 
 
-@pytest.mark.parametrize("instrument", ['bifrost', 'dummy', 'dream', 'loki', 'nmx'])
+@pytest.mark.parametrize(
+    "instrument", ['beer', 'bifrost', 'dummy', 'dream', 'loki', 'nmx']
+)
 def test_can_configure_and_stop_detector_workflow(
     instrument: str,
     caplog: pytest.LogCaptureFixture,
@@ -194,6 +197,43 @@ def test_loki_cumulative_resets_when_detector_carriage_moves() -> None:
     # The pre-move 5000 counts are discarded: cumulative restarts from the move.
     assert cumulative.nansum().value == 1000
     assert sc.allclose(cumulative.data, current.data)
+
+
+def test_magic_projection_stays_gated_until_rotation_readback_arrives() -> None:
+    """MAGIC's banks ride rotation stages, so the projection waits for the readback.
+
+    The binding names the merged ``detector_a_rotation`` device stream, which the
+    synthesizer emits only once all three substreams have been seen -- exactly what
+    the dev fake log producer publishes.
+    """
+    app = make_detector_app('magic')
+    sink = app.sink
+    service = app.service
+    workflow_id, _ = _get_workflow_from_registry('magic', name='detector_projection')
+
+    source_name = 'magic_detector_a'
+    app.publish_config_message(
+        workflow_spec.WorkflowConfig(
+            identifier=workflow_id, job_id=_job_id(source_name)
+        )
+    )
+    service.step()
+
+    # Without the rotation context the job is gated: events accumulate, nothing is
+    # published.
+    app.publish_events(size=1000, time=1)
+    service.step()
+    assert len(sink.messages) == 0
+
+    for substream, value in (
+        ('detector_a_rotation/target_value', 0.0),
+        ('detector_a_rotation/idle_flag', 1.0),
+        ('detector_a_rotation/value', 0.0),
+    ):
+        app.publish_log_message(source_name=substream, time=2, value=value)
+    app.publish_events(size=1000, time=3)
+    service.step()
+    assert len(sink.messages) > 0
 
 
 def test_service_can_recover_after_bad_workflow_id_was_set(

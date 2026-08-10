@@ -3,7 +3,7 @@ _commit: 7e41523
 _src_path: gh:scipp/copier_template
 description: Live data reduction visualisation framework for ESS.
 max_python: '3.13'
-min_python: '3.11'
+min_python: '3.12'
 namespace_package: ess
 nightly_deps: scipp,sciline,essreduce
 orgname: scipp

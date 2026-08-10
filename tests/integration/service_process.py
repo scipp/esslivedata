@@ -13,6 +13,13 @@ from typing import Any, Self
 
 logger = logging.getLogger(__name__)
 
+#: Time allowed for a service to report readiness. Generous because a Kafka
+#: consumer may spend up to ``kafka.consumer._LEADER_TIMEOUT`` (30 s) waiting
+#: for partition leadership to settle before it can consume at all. Startup
+#: normally takes a fraction of this; the wait ends as soon as the service is
+#: ready, so a large value costs nothing in the healthy case.
+READINESS_TIMEOUT = 60.0
+
 
 class ServiceProcess:
     """
@@ -37,7 +44,8 @@ class ServiceProcess:
         when ALL messages have appeared in the output. Defaults to waiting for
         "Service started". For services with Kafka consumers, consider also
         waiting for "kafka_consumer_ready" to ensure functional
-        readiness.
+        readiness. Pass an empty list for a process that logs no readiness
+        message and whose readiness the caller establishes itself.
     **kwargs:
         Service-specific arguments passed as command-line flags
         (e.g., instrument='dummy', dev=True becomes --instrument dummy --dev)
@@ -60,7 +68,9 @@ class ServiceProcess:
     ):
         self.service_module = service_module
         self.log_level = log_level
-        self.readiness_messages = readiness_messages or ['Service started']
+        self.readiness_messages = (
+            ['Service started'] if readiness_messages is None else readiness_messages
+        )
         self.kwargs = kwargs
         self.process: subprocess.Popen | None = None
         self._stdout_lines: list[str] = []
@@ -130,17 +140,25 @@ class ServiceProcess:
         self._stdout_thread.start()
         self._stderr_thread.start()
 
-    def _wait_for_service_ready(self, startup_delay: float) -> None:
+    def _wait_for_service_ready(self, readiness_timeout: float) -> None:
         """
         Wait for the service to report readiness or crash during startup.
 
         Checks for all configured readiness messages. Services are considered
         ready only when ALL messages have appeared in the output.
+
+        Raises
+        ------
+        RuntimeError:
+            If the service exits, or does not report readiness within
+            ``readiness_timeout``. A service that has not reported readiness
+            cannot be assumed to consume anything, so proceeding would turn a
+            startup failure into an unrelated timeout further down the test.
         """
         start_time = time.time()
         missing_messages = set(self.readiness_messages)
 
-        while time.time() - start_time < startup_delay:
+        while time.time() - start_time < readiness_timeout:
             if self.process.poll() is not None:
                 self._stop_event.set()
                 if self._stdout_thread:
@@ -176,12 +194,12 @@ class ServiceProcess:
             time.sleep(0.01)
 
         if missing_messages:
-            logger.warning(
-                "Service %s: did not see all readiness messages within %.1fs, "
-                "but process is still running. Missing: %s",
-                self.service_module,
-                startup_delay,
-                missing_messages,
+            raise RuntimeError(
+                f"Service {self.service_module} did not report readiness within "
+                f"{readiness_timeout:.1f}s (process still running). Missing: "
+                f"{sorted(missing_messages)}\n"
+                f"STDOUT: {self.get_stdout()}\n"
+                f"STDERR: {self.get_stderr()}"
             )
 
         logger.info(
@@ -191,17 +209,22 @@ class ServiceProcess:
             time.time() - start_time,
         )
 
-    def start(self, startup_delay: float = 2.0) -> None:
+    def start(self, readiness_timeout: float = READINESS_TIMEOUT) -> None:
         """
-        Start the service subprocess.
+        Start the service subprocess and wait until it reports readiness.
 
         Parameters
         ----------
-        startup_delay:
-            Time to wait after starting the service for it to initialize (seconds)
+        readiness_timeout:
+            Maximum time to wait for the readiness messages (seconds)
         """
         args = self._build_command_args()
         logger.info("Starting service: %s with args: %s", self.service_module, args)
+
+        # Readiness is detected by matching captured output, so a restarted
+        # process must not inherit the previous run's readiness messages.
+        self._stdout_lines.clear()
+        self._stderr_lines.clear()
 
         self.process = subprocess.Popen(  # noqa: S603
             args,
@@ -212,7 +235,13 @@ class ServiceProcess:
         )
 
         self._start_output_threads()
-        self._wait_for_service_ready(startup_delay)
+        try:
+            self._wait_for_service_ready(readiness_timeout)
+        except RuntimeError:
+            # Nothing has taken ownership of the process yet, so a service that
+            # never became ready would otherwise outlive the test run.
+            self.stop()
+            raise
 
     def stop(self, timeout: float = 10.0) -> None:
         """
@@ -332,7 +361,7 @@ class ServiceGroup:
     def __init__(self, services: dict[str, ServiceProcess]):
         self.services = services
 
-    def start_all(self, startup_delay: float = 2.0) -> None:
+    def start_all(self, readiness_timeout: float = READINESS_TIMEOUT) -> None:
         """
         Start all services in the group.
 
@@ -341,14 +370,14 @@ class ServiceGroup:
 
         Parameters
         ----------
-        startup_delay:
-            Time to wait after starting each service (seconds)
+        readiness_timeout:
+            Maximum time to wait for each service to report readiness (seconds)
         """
         # Use ExitStack to track started services for automatic cleanup on failure
         with ExitStack() as stack:
             for name, service in self.services.items():
                 logger.info("Starting service group member: %s", name)
-                service.start(startup_delay=startup_delay)
+                service.start(readiness_timeout=readiness_timeout)
                 # Register cleanup in case a later service fails to start
                 stack.callback(service.stop)
             # All services started successfully, don't clean up

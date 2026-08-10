@@ -103,6 +103,5 @@ orca_view_handle = instrument.register_spec(
     title='Orca Detector',
     description='512x512 image downsampled from full resolution',
     source_names=['orca_detector'],
-    params=None,
     outputs=DetectorViewOutputs,
 )

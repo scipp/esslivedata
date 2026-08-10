@@ -4,107 +4,25 @@ import holoviews as hv
 import panel as pn
 import pytest
 
+from ess.livedata.config.workflow_spec import WorkflowId
 from ess.livedata.dashboard.data_service import DataService
-from ess.livedata.dashboard.job_service import JobService
 from ess.livedata.dashboard.notification_queue import NotificationQueue
-from ess.livedata.dashboard.plot_data_service import PlotDataService
-from ess.livedata.dashboard.plot_orchestrator import PlotOrchestrator
-from ess.livedata.dashboard.plotting_controller import PlottingController
+from ess.livedata.dashboard.plot_orchestrator import (
+    CellGeometry,
+    CellId,
+    GridId,
+    PlotOrchestrator,
+)
 from ess.livedata.dashboard.session_registry import SessionId, SessionRegistry
 from ess.livedata.dashboard.session_updater import SessionUpdater
-from ess.livedata.dashboard.stream_manager import StreamManager
 from ess.livedata.dashboard.widgets.plot_grid_tabs import PlotGridTabs
 from ess.livedata.dashboard.widgets.workflow_status_widget import (
     WorkflowStatusListWidget,
 )
+from tests.helpers.panel_ui import click_tool
+from tests.helpers.plot_fakes import CurvePresenter, FakePlotter, ViewerToken
 
 hv.extension('bokeh')
-
-
-@pytest.fixture
-def data_service():
-    """Create a DataService for testing."""
-    return DataService()
-
-
-@pytest.fixture
-def job_service():
-    """Create a JobService for testing."""
-    return JobService()
-
-
-@pytest.fixture
-def stream_manager(data_service):
-    """Create a StreamManager for testing."""
-    return StreamManager(data_service=data_service)
-
-
-@pytest.fixture
-def plotting_controller(stream_manager):
-    """Create a PlottingController for testing."""
-    return PlottingController(
-        stream_manager=stream_manager,
-    )
-
-
-@pytest.fixture
-def plot_orchestrator(
-    plotting_controller, job_orchestrator, data_service, plot_data_service
-):
-    """Create a PlotOrchestrator for testing."""
-    return PlotOrchestrator(
-        plotting_controller=plotting_controller,
-        job_orchestrator=job_orchestrator,
-        data_service=data_service,
-        instrument='dummy',
-        plot_data_service=plot_data_service,
-    )
-
-
-@pytest.fixture
-def workflow_status_widget(job_orchestrator, job_service):
-    """Create a WorkflowStatusListWidget for testing."""
-    return WorkflowStatusListWidget(
-        orchestrator=job_orchestrator,
-        job_service=job_service,
-    )
-
-
-@pytest.fixture
-def plot_data_service():
-    """Create a PlotDataService for testing."""
-    return PlotDataService()
-
-
-@pytest.fixture
-def session_updater():
-    """Create a SessionUpdater for testing."""
-    registry = SessionRegistry()
-    return SessionUpdater(
-        session_id=SessionId('test-session'),
-        session_registry=registry,
-        notification_queue=NotificationQueue(),
-    )
-
-
-@pytest.fixture
-def plot_grid_tabs(
-    plot_orchestrator,
-    workflow_registry,
-    plotting_controller,
-    workflow_status_widget,
-    plot_data_service,
-    session_updater,
-):
-    """Create a PlotGridTabs widget for testing."""
-    return PlotGridTabs(
-        plot_orchestrator=plot_orchestrator,
-        workflow_registry=workflow_registry,
-        plotting_controller=plotting_controller,
-        workflow_status_widget=workflow_status_widget,
-        plot_data_service=plot_data_service,
-        session_updater=session_updater,
-    )
 
 
 def _tick(*widgets: PlotGridTabs) -> None:
@@ -419,8 +337,7 @@ def _register_active_layer(plot_orchestrator, plot_data_service, plot_grid_tabs)
 
     layer_id = LayerId(uuid4())
     plot_data_service.job_started(layer_id, object())
-    state = plot_data_service.get(layer_id)
-    session_layer = SessionLayer(layer_id=layer_id, last_seen_version=state.version)
+    session_layer = SessionLayer(layer_id=layer_id)
     plot_grid_tabs._session_layers[layer_id] = session_layer
     plot_orchestrator.activate_layer(layer_id, session_layer, True)
     return layer_id
@@ -438,11 +355,11 @@ class TestShutdown:
         layer_id = _register_active_layer(
             plot_orchestrator, plot_data_service, plot_grid_tabs
         )
-        assert plot_data_service.get(layer_id).has_viewers
+        assert plot_data_service.has_viewers(layer_id)
 
         plot_grid_tabs.sever()
 
-        assert not plot_data_service.get(layer_id).has_viewers
+        assert not plot_data_service.has_viewers(layer_id)
         assert plot_grid_tabs._session_layers == {}
 
     def test_sever_is_idempotent(self, plot_grid_tabs):
@@ -527,7 +444,7 @@ class TestReaperTeardown:
         )
         # Hold an active viewer token so we can observe tier-2 release it.
         layer_id = _register_active_layer(plot_orchestrator, plot_data_service, widget)
-        assert plot_data_service.get(layer_id).has_viewers
+        assert plot_data_service.has_viewers(layer_id)
 
         cleaned = registry.cleanup_stale_sessions()
 
@@ -535,7 +452,7 @@ class TestReaperTeardown:
         # Tier 2 ran inline on the reaper thread: the session's viewer token was
         # released and its session-layer records cleared. There is no lifecycle
         # subscription to sever under polling.
-        assert not plot_data_service.get(layer_id).has_viewers
+        assert not plot_data_service.has_viewers(layer_id)
         assert widget._session_layers == {}
         # Tier 1 was NOT run on the reaper thread: the periodic callback is not
         # stopped here, it is scheduled onto the session's IOLoop instead.
@@ -650,47 +567,13 @@ class TestPollForPlotUpdates:
         """
         from uuid import uuid4
 
-        import holoviews as hv
-
         from ess.livedata.dashboard.plot_data_service import LayerId
-        from ess.livedata.dashboard.plots import PresenterBase
         from ess.livedata.dashboard.session_layer import SessionLayer
-
-        # Create fake plotters
-        class FakePlotter:
-            def __init__(self, name):
-                self.name = name
-                self._cached_state = None
-                self._presenters = []
-
-            def compute(self, data):
-                self._cached_state = data
-                for p in self._presenters:
-                    p._mark_dirty()
-
-            def get_cached_state(self):
-                return self._cached_state
-
-            def has_cached_state(self):
-                return self._cached_state is not None
-
-            def create_presenter(self, *, owner=None):
-                presenter = FakePresenter(self, owner=owner)
-                self._presenters.append(presenter)
-                return presenter
-
-            def mark_presenters_dirty(self):
-                for p in self._presenters:
-                    p._mark_dirty()
-
-        class FakePresenter(PresenterBase):
-            def present(self, pipe):
-                return hv.DynamicMap(lambda data: hv.Curve([]), streams=[pipe])
 
         layer_id = LayerId(uuid4())
 
         # Setup initial state: plotter A with data
-        plotter_a = FakePlotter('A')
+        plotter_a = FakePlotter(name='A', presenter_cls=CurvePresenter)
         plotter_a.compute({'value': 1})
         plot_data_service.job_started(layer_id, plotter_a)
         plot_data_service.data_arrived(layer_id)
@@ -699,9 +582,7 @@ class TestPollForPlotUpdates:
         initial_version = state.version
 
         # Create session layer with components for plotter A
-        session_layer = SessionLayer(
-            layer_id=layer_id, last_seen_version=initial_version
-        )
+        session_layer = SessionLayer(layer_id=layer_id)
         session_layer.ensure_components(state)
 
         assert session_layer.components is not None
@@ -709,7 +590,7 @@ class TestPollForPlotUpdates:
         assert session_layer.components.is_valid_for(plotter_a)
 
         # Simulate workflow restart: job_started with new plotter B
-        plotter_b = FakePlotter('B')
+        plotter_b = FakePlotter(name='B', presenter_cls=CurvePresenter)
         plotter_b.compute({'value': 2})
         plot_data_service.job_started(layer_id, plotter_b)
         plot_data_service.data_arrived(layer_id)
@@ -718,11 +599,9 @@ class TestPollForPlotUpdates:
 
         # Version must have changed (this is the key invariant)
         assert new_state.version != initial_version
-        assert new_state.version != session_layer.last_seen_version
 
         # Simulate what _poll_for_plot_updates does:
-        # It detects version change and triggers rebuild via ensure_components
-        session_layer.last_seen_version = new_state.version
+        # It detects plotter change and triggers rebuild via ensure_components
         session_layer.ensure_components(new_state)
 
         # Components should be recreated for the new plotter
@@ -734,43 +613,11 @@ class TestPollForPlotUpdates:
         """Test that components are preserved when version hasn't changed."""
         from uuid import uuid4
 
-        import holoviews as hv
-
         from ess.livedata.dashboard.plot_data_service import LayerId
-        from ess.livedata.dashboard.plots import PresenterBase
         from ess.livedata.dashboard.session_layer import SessionLayer
 
-        class FakePlotter:
-            def __init__(self):
-                self._cached_state = None
-                self._presenters = []
-
-            def compute(self, data):
-                self._cached_state = data
-                for p in self._presenters:
-                    p._mark_dirty()
-
-            def get_cached_state(self):
-                return self._cached_state
-
-            def has_cached_state(self):
-                return self._cached_state is not None
-
-            def create_presenter(self, *, owner=None):
-                presenter = FakePresenter(self, owner=owner)
-                self._presenters.append(presenter)
-                return presenter
-
-            def mark_presenters_dirty(self):
-                for p in self._presenters:
-                    p._mark_dirty()
-
-        class FakePresenter(PresenterBase):
-            def present(self, pipe):
-                return hv.DynamicMap(lambda data: hv.Curve([]), streams=[pipe])
-
         layer_id = LayerId(uuid4())
-        plotter = FakePlotter()
+        plotter = FakePlotter(presenter_cls=CurvePresenter)
         plotter.compute({'value': 1})
 
         plot_data_service.job_started(layer_id, plotter)
@@ -778,12 +625,12 @@ class TestPollForPlotUpdates:
 
         state = plot_data_service.get(layer_id)
 
-        session_layer = SessionLayer(layer_id=layer_id, last_seen_version=state.version)
+        session_layer = SessionLayer(layer_id=layer_id)
         session_layer.ensure_components(state)
         original_components = session_layer.components
 
-        # Simulate polling with no version change
-        # (same state, version matches last_seen_version)
+        # Simulate polling with no plotter change
+        # (same plotter, components are preserved)
         session_layer.ensure_components(state)
 
         # Components should be preserved
@@ -794,7 +641,7 @@ class TestComposeMixedLayers:
     """Composition of cells mixing dynamic and static (overlay) layers."""
 
     def test_static_layer_does_not_break_autoscale_controller(
-        self, plot_grid_tabs, plot_data_service
+        self, plot_grid_tabs, plot_data_service, plot_orchestrator
     ):
         """A static overlay layer must not be fed to the autoscale controller.
 
@@ -817,8 +664,6 @@ class TestComposeMixedLayers:
             PlotConfig,
         )
         from ess.livedata.dashboard.plot_params import TimeWindowParams
-        from ess.livedata.dashboard.plots import PresenterBase
-        from ess.livedata.dashboard.range_hook import Axis
         from ess.livedata.dashboard.session_layer import SessionLayer
         from ess.livedata.dashboard.static_plots import (
             LinesCoordinates,
@@ -826,38 +671,6 @@ class TestComposeMixedLayers:
             VLinesParams,
         )
         from ess.livedata.dashboard.widgets.plot_grid_tabs import CellId
-
-        class _DynamicPresenter(PresenterBase):
-            def present(self, pipe):
-                return hv.DynamicMap(lambda data: hv.Curve([]), streams=[pipe])
-
-        class _DynamicPlotter:
-            AUTOSCALE_AXES: frozenset[Axis] = frozenset({'x', 'y'})
-
-            def __init__(self):
-                self._cached_state = None
-                self._presenters = []
-
-            @property
-            def autoscale_axes(self):
-                return self.AUTOSCALE_AXES
-
-            def compute(self, data):
-                self._cached_state = data
-
-            def get_cached_state(self):
-                return self._cached_state
-
-            def has_cached_state(self):
-                return self._cached_state is not None
-
-            def create_presenter(self):
-                presenter = _DynamicPresenter(self)
-                self._presenters.append(presenter)
-                return presenter
-
-            def iter_range_targets(self):
-                return iter(())
 
         wf = WorkflowId(instrument='test', name='wf', version=1)
         geo = CellGeometry(row=0, col=0, row_span=1, col_span=1)
@@ -886,7 +699,7 @@ class TestComposeMixedLayers:
         static_layer = Layer(layer_id=LayerId(uuid4()), config=static_config)
         cell = PlotCell(geometry=geo, layers=[dynamic_layer, static_layer])
 
-        dynamic_plotter = _DynamicPlotter()
+        dynamic_plotter = FakePlotter(presenter_cls=CurvePresenter)
         dynamic_plotter.compute(hv.Curve([1, 2, 3]))
         static_plotter = LinesPlotter.vlines(
             VLinesParams(geometry=LinesCoordinates(positions='10, 20'))
@@ -900,14 +713,13 @@ class TestComposeMixedLayers:
             plot_data_service.job_started(layer.layer_id, plotter)
             plot_data_service.data_arrived(layer.layer_id)
             state = plot_data_service.get(layer.layer_id)
-            session_layer = SessionLayer(
-                layer_id=layer.layer_id, last_seen_version=state.version
-            )
+            session_layer = SessionLayer(layer_id=layer.layer_id)
             session_layer.ensure_components(state)
             plot_grid_tabs._session_layers[layer.layer_id] = session_layer
 
         cell_id = CellId(uuid4())
-        cell_widget = plot_grid_tabs._build_cell(cell_id, cell)
+        grid_id = plot_orchestrator.add_grid(title='Test', nrows=1, ncols=1)
+        cell_widget = plot_grid_tabs._build_cell(cell_id, cell, grid_id)
 
         assert cell_widget.has_plot
         # The dynamic layer still drives autoscale; controller was built.
@@ -969,15 +781,13 @@ class TestComposeTableLayer:
         plot_data_service.job_started(layer.layer_id, plotter)
         plot_data_service.data_arrived(layer.layer_id)
         state = plot_data_service.get(layer.layer_id)
-        session_layer = SessionLayer(
-            layer_id=layer.layer_id, last_seen_version=state.version
-        )
+        session_layer = SessionLayer(layer_id=layer.layer_id)
         session_layer.ensure_components(state)
         plot_grid_tabs._session_layers[layer.layer_id] = session_layer
         return layer
 
     def test_single_table_layer_is_not_a_layout(
-        self, plot_grid_tabs, plot_data_service
+        self, plot_grid_tabs, plot_data_service, plot_orchestrator
     ):
         from uuid import uuid4
 
@@ -993,10 +803,11 @@ class TestComposeTableLayer:
             geometry=CellGeometry(row=0, col=0, row_span=1, col_span=1),
             layers=[layer],
         )
-        cell_widget = plot_grid_tabs._build_cell(CellId(uuid4()), cell)
+        grid_id = plot_orchestrator.add_grid(title='Test', nrows=1, ncols=1)
+        cell_widget = plot_grid_tabs._build_cell(CellId(uuid4()), cell, grid_id)
 
         assert cell_widget.has_plot
-        assert not isinstance(cell_widget.composed.plot, hv.Layout)
+        assert not isinstance(cell_widget._plot, hv.Layout)
 
 
 class TestDisabledGridTabs:
@@ -1065,7 +876,7 @@ class TestDisabledGridTabs:
         # Simulate a session layer that was created while the grid was active
         fake_layer_id = LayerId(uuid4())
         plot_grid_tabs._session_layers[fake_layer_id] = SessionLayer(
-            layer_id=fake_layer_id, last_seen_version=0
+            layer_id=fake_layer_id
         )
 
         # Disable the grid — poll should not visit it, so session layer
@@ -1170,18 +981,14 @@ class TestDisabledGridTabs:
         assert plot_grid_tabs.tabs._names[static:] == ['B']
 
 
-def _add_static_cell(plot_orchestrator, grid_id, geometry, *, positions='10, 20'):
-    """Add a cell with a single static (no-workflow) vlines layer.
-
-    Static overlays compute from params alone, so they let cell-reconcile tests
-    run without workflow data.
-    """
+def _static_plot_config(positions='10, 20'):
+    """A static (no-workflow) vlines plot config, computed from params alone."""
     from ess.livedata.config.workflow_spec import WorkflowId
     from ess.livedata.dashboard.data_roles import PRIMARY
     from ess.livedata.dashboard.plot_orchestrator import DataSourceConfig, PlotConfig
     from ess.livedata.dashboard.static_plots import LinesCoordinates, VLinesParams
 
-    config = PlotConfig(
+    return PlotConfig(
         data_sources={
             PRIMARY: DataSourceConfig(
                 workflow_id=WorkflowId(instrument='test', name='wf', version=1),
@@ -1192,9 +999,147 @@ def _add_static_cell(plot_orchestrator, grid_id, geometry, *, positions='10, 20'
         plot_name='vlines',
         params=VLinesParams(geometry=LinesCoordinates(positions=positions)),
     )
+
+
+def _add_static_cell(plot_orchestrator, grid_id, geometry, *, positions='10, 20'):
+    """Add a cell with a single static (no-workflow) vlines layer.
+
+    Static overlays compute from params alone, so they let cell-reconcile tests
+    run without workflow data.
+    """
     cell_id = plot_orchestrator.add_cell(grid_id, geometry)
-    plot_orchestrator.add_layer(cell_id, config)
+    plot_orchestrator.add_layer(cell_id, _static_plot_config(positions))
     return cell_id
+
+
+# Source and output of the workflow-backed layer below. Shared so the layer's
+# subscription and the published data agree on the DataKey -- a mismatch would
+# leave the layer without data, silently defeating tests that need it to
+# compute.
+_WORKFLOW_SOURCE = 'source1'
+_WORKFLOW_VIEW = 'result'
+
+
+def _workflow_plot_config(workflow_id: WorkflowId, *, view: str = _WORKFLOW_VIEW):
+    """A workflow-backed lines plot config subscribing to ``view``."""
+    from ess.livedata.dashboard.data_roles import PRIMARY
+    from ess.livedata.dashboard.plot_orchestrator import DataSourceConfig, PlotConfig
+    from ess.livedata.dashboard.plotter_registry import plotter_registry
+
+    return PlotConfig(
+        data_sources={
+            PRIMARY: DataSourceConfig(
+                workflow_id=workflow_id,
+                source_names=[_WORKFLOW_SOURCE],
+                view_name=view,
+            )
+        },
+        plot_name='lines',
+        params=plotter_registry.get_spec('lines').params(),
+    )
+
+
+def _add_workflow_cell(
+    plot_orchestrator: PlotOrchestrator,
+    grid_id: GridId,
+    geometry: CellGeometry,
+    workflow_id: WorkflowId,
+) -> CellId:
+    """Add a cell with a single workflow-backed lines layer.
+
+    Unlike a static overlay, such a layer computes only once data has been
+    pulled through its subscription, so it stays un-READY until the first
+    viewer activates it.
+    """
+    cell_id = plot_orchestrator.add_cell(grid_id, geometry)
+    plot_orchestrator.add_layer(cell_id, _workflow_plot_config(workflow_id))
+    return cell_id
+
+
+def _publish_layer_data(
+    data_service: DataService,
+    workflow_id: WorkflowId,
+    *,
+    view: str = _WORKFLOW_VIEW,
+) -> None:
+    """Publish one result on the key a ``_add_workflow_cell`` layer subscribes to."""
+    import scipp as sc
+
+    from ess.livedata.config.workflow_spec import DataKey
+
+    key = DataKey(
+        workflow_id=workflow_id,
+        source_name=_WORKFLOW_SOURCE,
+        output_name=view,
+    )
+    data_service[key] = sc.DataArray(
+        sc.array(dims=['x'], values=[1.0, 2.0, 3.0]),
+        coords={'x': sc.array(dims=['x'], values=[0.0, 1.0, 2.0])},
+    )
+
+
+class TestLayerToolbars:
+    """Per-layer toolbars are built when first revealed, not when hidden.
+
+    A hidden Panel component still creates every one of its Bokeh models, and
+    the toolbars start collapsed, so building them eagerly charges every
+    session for detail most cells never show (#1198).
+    """
+
+    @staticmethod
+    def _geometry():
+        from ess.livedata.dashboard.plot_orchestrator import CellGeometry
+
+        return CellGeometry(row=0, col=0, row_span=1, col_span=1)
+
+    def _cell_widget(self, plot_orchestrator, plot_grid_tabs):
+        grid_id = plot_orchestrator.add_grid(title='G', nrows=2, ncols=2)
+        _add_static_cell(plot_orchestrator, grid_id, self._geometry())
+        _tick(plot_grid_tabs)
+        # Reveal the grid so its cell is built (the switch runs the pass
+        # synchronously in tests).
+        plot_grid_tabs.tabs.active = plot_grid_tabs._static_tabs_count
+        return next(iter(plot_grid_tabs._cells.values()))
+
+    def test_collapsed_cell_builds_no_layer_toolbars(
+        self, plot_orchestrator, plot_grid_tabs
+    ):
+        cell_widget = self._cell_widget(plot_orchestrator, plot_grid_tabs)
+
+        assert cell_widget.layer_time_panes == {}
+
+    def test_revealing_builds_them(self, plot_orchestrator, plot_grid_tabs):
+        cell_widget = self._cell_widget(plot_orchestrator, plot_grid_tabs)
+        click_tool(cell_widget.view, 'lt-tool-layer-details')
+
+        assert cell_widget.toolbars_shown
+        assert len(cell_widget.layer_time_panes) == 1
+
+    def test_hiding_and_revealing_again_keeps_one_set(
+        self, plot_orchestrator, plot_grid_tabs
+    ):
+        cell_widget = self._cell_widget(plot_orchestrator, plot_grid_tabs)
+        click_tool(cell_widget.view, 'lt-tool-layer-details')
+        panes = dict(cell_widget.layer_time_panes)
+        click_tool(cell_widget.view, 'lt-tool-layer-details')
+        click_tool(cell_widget.view, 'lt-tool-layer-details')
+
+        assert cell_widget.layer_time_panes == panes
+
+    def test_rebuild_preserves_revealed_toolbars(
+        self, plot_orchestrator, plot_grid_tabs
+    ):
+        cell_widget = self._cell_widget(plot_orchestrator, plot_grid_tabs)
+        cell_id = next(iter(plot_grid_tabs._cells))
+        click_tool(cell_widget.view, 'lt-tool-layer-details')
+
+        plot_orchestrator.set_cell_title(cell_id, 'renamed')
+        _tick(plot_grid_tabs)
+
+        rebuilt = plot_grid_tabs._cells[cell_id]
+        assert rebuilt is not cell_widget
+        assert rebuilt.toolbars_shown
+        assert len(rebuilt.layer_time_panes) == 1
 
 
 class TestCellReconcile:
@@ -1208,8 +1153,12 @@ class TestCellReconcile:
 
         return CellGeometry(row=0, col=0, row_span=1, col_span=1)
 
-    def test_new_cell_built_on_poll(self, plot_orchestrator, plot_grid_tabs):
+    def test_new_cell_on_active_grid_built_on_poll(
+        self, plot_orchestrator, plot_grid_tabs
+    ):
         grid_id = plot_orchestrator.add_grid(title='G', nrows=2, ncols=2)
+        _tick(plot_grid_tabs)
+        plot_grid_tabs.tabs.active = plot_grid_tabs._static_tabs_count
         cell_id = _add_static_cell(plot_orchestrator, grid_id, self._geometry())
 
         assert cell_id not in plot_grid_tabs._cells
@@ -1222,6 +1171,7 @@ class TestCellReconcile:
         grid_id = plot_orchestrator.add_grid(title='G', nrows=2, ncols=2)
         cell_id = _add_static_cell(plot_orchestrator, grid_id, self._geometry())
         _tick(plot_grid_tabs)
+        plot_grid_tabs.tabs.active = plot_grid_tabs._static_tabs_count
         assert cell_id in plot_grid_tabs._cells
         layer_id = plot_orchestrator.get_cell(cell_id).layers[0].layer_id
 
@@ -1230,13 +1180,12 @@ class TestCellReconcile:
         _tick(plot_grid_tabs)
 
         assert cell_id not in plot_grid_tabs._cells
-        assert cell_id not in plot_grid_tabs._cell_grid
-        assert cell_id not in plot_grid_tabs._cell_signatures
 
     def test_set_cell_title_rebuilds_cell(self, plot_orchestrator, plot_grid_tabs):
         grid_id = plot_orchestrator.add_grid(title='G', nrows=2, ncols=2)
         cell_id = _add_static_cell(plot_orchestrator, grid_id, self._geometry())
         _tick(plot_grid_tabs)
+        plot_grid_tabs.tabs.active = plot_grid_tabs._static_tabs_count
         widget_before = plot_grid_tabs._cells[cell_id]
 
         plot_orchestrator.set_cell_title(cell_id, 'Renamed')
@@ -1254,6 +1203,7 @@ class TestCellReconcile:
         grid_id = plot_orchestrator.add_grid(title='G', nrows=2, ncols=2)
         cell_id = _add_static_cell(plot_orchestrator, grid_id, self._geometry())
         _tick(plot_grid_tabs)
+        plot_grid_tabs.tabs.active = plot_grid_tabs._static_tabs_count
         widget = plot_grid_tabs._cells[cell_id]
 
         plot_orchestrator.set_grid_enabled(grid_id, enabled=False)
@@ -1264,8 +1214,50 @@ class TestCellReconcile:
 
         plot_orchestrator.set_grid_enabled(grid_id, enabled=True)
         _tick(plot_grid_tabs)
-        # Still present after re-enable (rebuilt from a fresh session layer).
         assert cell_id in plot_grid_tabs._cells
+
+    def test_reenabled_grid_keeps_receiving_data(
+        self,
+        plot_orchestrator,
+        plot_grid_tabs,
+        plot_data_service,
+        job_orchestrator,
+        data_service,
+        workflow_id,
+    ):
+        """Disable must keep the SessionLayer the kept widget renders through:
+        deleting it would bind the widget to a dead pipe with no build input
+        changing to force a rebuild, freezing the cell's plot forever."""
+        job_orchestrator.commit_workflow(workflow_id)
+        grid_id = plot_orchestrator.add_grid(title='G', nrows=2, ncols=2)
+        geometry = CellGeometry(row=0, col=0, row_span=1, col_span=1)
+        cell_id = _add_workflow_cell(plot_orchestrator, grid_id, geometry, workflow_id)
+        _publish_layer_data(data_service, workflow_id)
+        plot_orchestrator.flush_frames()
+        _tick(plot_grid_tabs)
+        plot_grid_tabs.tabs.active = plot_grid_tabs._static_tabs_count
+        layer_id = plot_orchestrator.get_cell(cell_id).layers[0].layer_id
+        widget = plot_grid_tabs._cells[cell_id]
+        components = plot_grid_tabs._session_layers[layer_id].components
+
+        plot_orchestrator.set_grid_enabled(grid_id, enabled=False)
+        _tick(plot_grid_tabs)
+        # Token released (no compute while hidden), but the render state the
+        # kept widget is bound to survives.
+        assert not plot_data_service.has_viewers(layer_id)
+        assert plot_grid_tabs._session_layers[layer_id].components is components
+
+        plot_orchestrator.set_grid_enabled(grid_id, enabled=True)
+        _tick(plot_grid_tabs)
+        assert plot_grid_tabs._cells[cell_id] is widget
+
+        # New data must still reach the widget's pipe.
+        _publish_layer_data(data_service, workflow_id)
+        plot_orchestrator.flush_frames()
+        presenter = plot_grid_tabs._session_layers[layer_id].components.presenter
+        assert presenter.has_pending_update()
+        _tick(plot_grid_tabs)
+        assert not presenter.has_pending_update()
 
     def test_cell_edit_does_not_churn_tabs(self, plot_orchestrator, plot_grid_tabs):
         """Cell-level changes bump the topology version but must not tear down
@@ -1275,6 +1267,7 @@ class TestCellReconcile:
         grid_id = plot_orchestrator.add_grid(title='G', nrows=2, ncols=2)
         cell_id = _add_static_cell(plot_orchestrator, grid_id, self._geometry())
         _tick(plot_grid_tabs)
+        plot_grid_tabs.tabs.active = plot_grid_tabs._static_tabs_count
 
         events: list = []
         plot_grid_tabs.tabs.param.watch(events.append, 'objects')
@@ -1300,10 +1293,70 @@ class TestCellReconcile:
 
         assert plot_grid_tabs._current_modal is None
 
+    def test_empty_cell_click_racing_cross_session_add_opens_no_modal(
+        self, plot_orchestrator, plot_grid_tabs
+    ):
+        """A cell added by another session occupies topology before this
+        session's poll inserts its widget; the still-rendered empty cell must
+        swallow the two-click gesture instead of opening the wizard on a
+        region that cannot be filled (#1219)."""
+        grid_id = plot_orchestrator.add_grid(title='G', nrows=2, ncols=2)
+        _tick(plot_grid_tabs)
+        _add_static_cell(plot_orchestrator, grid_id, self._geometry())
+
+        plot_grid = plot_grid_tabs._grid_widgets[grid_id]
+        button = plot_grid.panel[0, 0][0]
+        button.param.trigger('clicks')
+        button.param.trigger('clicks')
+
+        assert plot_grid_tabs._current_modal is None
+
+    def test_add_plot_on_occupied_position_shows_error_not_raise(
+        self, plot_orchestrator, plot_grid_tabs
+    ):
+        """Completing the wizard for a position topology already holds must
+        show an error, not raise. Occupancy now comes from topology, so the
+        grid does not offer such a region; what survives is two sessions in the
+        wizard on the same free region at once (#1219)."""
+        grid_id = plot_orchestrator.add_grid(title='G', nrows=2, ncols=2)
+        _add_static_cell(plot_orchestrator, grid_id, self._geometry())
+
+        plot_grid_tabs._add_plot(grid_id, self._geometry(), _static_plot_config())
+
+        assert len(plot_orchestrator.peek_grid(grid_id).cells) == 1
+
+    # Opening a Modal outside a served document warns; irrelevant here, since
+    # what is under test is the poll gate the open/close toggles.
+    @pytest.mark.filterwarnings('ignore:To use the Modal:UserWarning')
+    def test_cell_properties_modal_suspends_grid_rendering(
+        self, plot_orchestrator, plot_grid_tabs
+    ):
+        """The cell-properties modal must pause the poll like the config modal.
+
+        Its overlay hides the plots, so rendering behind it is wasted work on
+        the session's event loop -- which is also what the click that opens the
+        next modal has to queue behind (#1174).
+        """
+        grid_id = plot_orchestrator.add_grid(title='G', nrows=2, ncols=2)
+        cell_id = _add_static_cell(plot_orchestrator, grid_id, self._geometry())
+        _tick(plot_grid_tabs)
+        plot_grid_tabs.tabs.active = plot_grid_tabs._static_tabs_count
+        assert plot_grid_tabs._get_active_grid_id() == grid_id
+
+        plot_grid_tabs._show_cell_properties_modal(cell_id, 'G', has_user_title=False)
+        assert plot_grid_tabs._get_active_grid_id() is None
+
+        # Every close path routes through the modal's ``open`` watcher, so
+        # dismissing it must hand rendering back.
+        plot_grid_tabs._current_modal.modal.open = False
+        assert plot_grid_tabs._current_modal is None
+        assert plot_grid_tabs._get_active_grid_id() == grid_id
+
     def test_update_layer_config_rebuilds_cell(self, plot_orchestrator, plot_grid_tabs):
         grid_id = plot_orchestrator.add_grid(title='G', nrows=2, ncols=2)
         cell_id = _add_static_cell(plot_orchestrator, grid_id, self._geometry())
         _tick(plot_grid_tabs)
+        plot_grid_tabs.tabs.active = plot_grid_tabs._static_tabs_count
         widget_before = plot_grid_tabs._cells[cell_id]
         layer_id = plot_orchestrator.get_cell(cell_id).layers[0].layer_id
 
@@ -1331,6 +1384,173 @@ class TestCellReconcile:
 
         # Reconfigure mints a fresh LayerId -> signature changed -> rebuilt.
         assert plot_grid_tabs._cells[cell_id] is not widget_before
+
+
+class TestHiddenGridRebuildGate:
+    """Hidden grids build cell widgets only when the build survives the reveal.
+
+    With no viewer in any session the build would be a placeholder that the
+    reveal's 0->1 activation bumps and discards, so it is skipped; another
+    session's viewer token makes it a real plot that pre-warms this session's
+    tab switch (#1216).
+    """
+
+    @staticmethod
+    def _geometry():
+        from ess.livedata.dashboard.plot_orchestrator import CellGeometry
+
+        return CellGeometry(row=0, col=0, row_span=1, col_span=1)
+
+    def test_unviewed_hidden_cell_is_not_built(self, plot_orchestrator, plot_grid_tabs):
+        grid_id = plot_orchestrator.add_grid(title='G', nrows=2, ncols=2)
+        cell_id = _add_static_cell(plot_orchestrator, grid_id, self._geometry())
+
+        _tick(plot_grid_tabs)
+
+        assert cell_id not in plot_grid_tabs._cells
+
+    def test_reveal_builds_the_deferred_cell(self, plot_orchestrator, plot_grid_tabs):
+        grid_id = plot_orchestrator.add_grid(title='G', nrows=2, ncols=2)
+        cell_id = _add_static_cell(plot_orchestrator, grid_id, self._geometry())
+        _tick(plot_grid_tabs)
+
+        # The switch runs the pass synchronously in tests (no document).
+        plot_grid_tabs.tabs.active = plot_grid_tabs._static_tabs_count
+
+        assert cell_id in plot_grid_tabs._cells
+
+    def test_reveal_builds_the_deferred_cell_only_once(
+        self,
+        plot_orchestrator,
+        plot_grid_tabs,
+        job_orchestrator,
+        data_service,
+        workflow_id,
+    ):
+        """The reveal's 0->1 activation bumps the layer version mid-pass.
+
+        Recording the version the scan read (before the bump) would rebuild the
+        cell again on the very next pass, discarding a widget that has already
+        been rendered -- whose plot then stays subscribed to the layer pipe,
+        doubling the grid's render cost for the rest of the session.
+
+        Needs a workflow-backed layer: a static overlay is already READY while
+        hidden, so its activation bumps nothing.
+        """
+        job_orchestrator.commit_workflow(workflow_id)
+        grid_id = plot_orchestrator.add_grid(title='G', nrows=2, ncols=2)
+        cell_id = _add_workflow_cell(
+            plot_orchestrator, grid_id, self._geometry(), workflow_id
+        )
+        # Data arrives while no session views the layer: the flush skips it, so
+        # it is still WAITING_FOR_DATA when the tab is revealed.
+        _publish_layer_data(data_service, workflow_id)
+        plot_orchestrator.flush_frames()
+        _tick(plot_grid_tabs)
+
+        plot_grid_tabs.tabs.active = plot_grid_tabs._static_tabs_count
+        widget = plot_grid_tabs._cells[cell_id]
+
+        _tick(plot_grid_tabs)
+
+        assert plot_grid_tabs._cells[cell_id] is widget
+
+    def test_cell_viewed_by_another_session_is_built_while_hidden(
+        self, plot_orchestrator, plot_grid_tabs, plot_data_service
+    ):
+        grid_id = plot_orchestrator.add_grid(title='G', nrows=2, ncols=2)
+        cell_id = _add_static_cell(plot_orchestrator, grid_id, self._geometry())
+        layer_id = plot_orchestrator.get_cell(cell_id).layers[0].layer_id
+
+        token = ViewerToken()
+        plot_data_service.set_active(layer_id, token, True)
+        _tick(plot_grid_tabs)
+
+        assert cell_id in plot_grid_tabs._cells
+
+    def test_bump_while_hidden_defers_rebuild_to_reveal(
+        self, plot_orchestrator, plot_grid_tabs
+    ):
+        grid_id = plot_orchestrator.add_grid(title='G', nrows=2, ncols=2)
+        cell_id = _add_static_cell(plot_orchestrator, grid_id, self._geometry())
+        _tick(plot_grid_tabs)
+        static = plot_grid_tabs._static_tabs_count
+        plot_grid_tabs.tabs.active = static
+        widget = plot_grid_tabs._cells[cell_id]
+        plot_grid_tabs.tabs.active = 0
+
+        plot_orchestrator.set_cell_title(cell_id, 'Renamed')
+        _tick(plot_grid_tabs)
+        assert plot_grid_tabs._cells[cell_id] is widget
+
+        plot_grid_tabs.tabs.active = static
+        assert plot_grid_tabs._cells[cell_id] is not widget
+
+    def test_plotter_swap_while_hidden_defers_rebuild_to_reveal(
+        self,
+        plot_orchestrator,
+        plot_grid_tabs,
+        plot_data_service,
+        plotting_controller,
+    ):
+        from ess.livedata.dashboard.static_plots import LinesCoordinates, VLinesParams
+
+        grid_id = plot_orchestrator.add_grid(title='G', nrows=2, ncols=2)
+        cell_id = _add_static_cell(plot_orchestrator, grid_id, self._geometry())
+        layer_id = plot_orchestrator.get_cell(cell_id).layers[0].layer_id
+        _tick(plot_grid_tabs)
+        static = plot_grid_tabs._static_tabs_count
+        plot_grid_tabs.tabs.active = static
+        widget = plot_grid_tabs._cells[cell_id]
+        plot_grid_tabs.tabs.active = 0
+
+        plotter = plotting_controller.create_plotter(
+            'vlines', params=VLinesParams(geometry=LinesCoordinates(positions='30'))
+        )
+        plot_data_service.job_started(layer_id, plotter)
+        _tick(plot_grid_tabs)
+        assert plot_grid_tabs._cells[cell_id] is widget
+
+        plot_grid_tabs.tabs.active = static
+        assert plot_grid_tabs._cells[cell_id] is not widget
+
+
+class TestRevealOrdering:
+    """A revealed grid is populated before Panel materializes its models.
+
+    ``dynamic=True`` builds the tab's Bokeh models from whatever the grid holds
+    at the moment of the switch. A grid whose cells were deferred while hidden
+    holds only ``PlotGrid``'s empty-cell placeholders, so building the cells
+    after the switch materializes those placeholders, patches them away again,
+    and shows the user "Click to add plot" over occupied positions in between.
+    """
+
+    def test_cells_are_built_before_the_tab_materializes(
+        self, plot_orchestrator, plot_grid_tabs
+    ):
+        from ess.livedata.dashboard.plot_orchestrator import CellGeometry
+
+        grid_id = plot_orchestrator.add_grid(title='G', nrows=2, ncols=2)
+        cell_id = _add_static_cell(
+            plot_orchestrator,
+            grid_id,
+            CellGeometry(row=0, col=0, row_span=1, col_span=1),
+        )
+        _tick(plot_grid_tabs)
+        assert cell_id not in plot_grid_tabs._cells
+
+        # Panel materializes the tab on the ``objects`` trigger inside
+        # ``_update_active``, so this records the grid's content at exactly the
+        # point the models are built from it.
+        built_when_materialized: list[bool] = []
+        plot_grid_tabs.tabs.param.watch(
+            lambda _: built_when_materialized.append(cell_id in plot_grid_tabs._cells),
+            'objects',
+        )
+
+        plot_grid_tabs.tabs.active = plot_grid_tabs._static_tabs_count
+
+        assert built_when_materialized == [True]
 
 
 class TestWakeGateContract:
@@ -1401,10 +1621,7 @@ class TestWakeGateContract:
             plot_grid_tabs._last_topology_version
         )
         assert (
-            plot_grid_tabs._live_generations(
-                plot_grid_tabs._last_active_grid_id,
-                plot_grid_tabs._popouts.live_cells(),
-            )
+            plot_grid_tabs._live_generations(plot_grid_tabs._last_active_grid_id)
             == plot_grid_tabs._last_generations
         )
 
@@ -1449,3 +1666,632 @@ class TestWakeGateContract:
         assert plot_grid_tabs._has_pending_work()
         _tick(plot_grid_tabs)
         assert not plot_grid_tabs._has_pending_work()
+
+    def test_stall_term_quiet_with_no_cells_on_active_grid(
+        self, plot_orchestrator, plot_grid_tabs
+    ):
+        """An elapsed stall interval alone must not arm the gate on a grid with
+        no built cells: there is no pill to age, so waking every session's
+        empty tab on the stall cadence would be pure overhead."""
+        from ess.livedata.dashboard.widgets.plot_grid_tabs import (
+            _FRESHNESS_STALL_INTERVAL_S,
+        )
+
+        plot_orchestrator.add_grid(title='Empty', nrows=2, ncols=2)
+        _tick(plot_grid_tabs)
+        plot_grid_tabs.tabs.active = 2
+        assert not plot_grid_tabs._has_pending_work()
+
+        plot_grid_tabs._last_freshness_update -= _FRESHNESS_STALL_INTERVAL_S
+
+        assert not plot_grid_tabs._has_pending_work()
+
+
+class TestDisposeSeversPipeSubscribers:
+    """#1224: a rebuilt or removed cell's rendered plot must unsubscribe from
+    the layer pipes. GridSpec slot replacement does not run Panel's pane
+    cleanup, so a leaked subscriber renders the layer once more on every pipe
+    update, for the rest of the session."""
+
+    @staticmethod
+    def _add_dynamic_layer_cell(plot_grid_tabs, plot_data_service):
+        """Register a one-layer dynamic cell with live session components."""
+        from uuid import uuid4
+
+        from ess.livedata.dashboard.data_roles import PRIMARY
+        from ess.livedata.dashboard.plot_data_service import LayerId
+        from ess.livedata.dashboard.plot_orchestrator import (
+            DataSourceConfig,
+            Layer,
+            PlotCell,
+            PlotConfig,
+        )
+        from ess.livedata.dashboard.plot_params import TimeWindowParams
+        from ess.livedata.dashboard.session_layer import SessionLayer
+
+        wf = WorkflowId(instrument='test', name='wf', version=1)
+        config = PlotConfig(
+            data_sources={
+                PRIMARY: DataSourceConfig(
+                    workflow_id=wf, source_names=['s1'], view_name='result'
+                )
+            },
+            plot_name='lines',
+            params=TimeWindowParams(),
+        )
+        layer = Layer(layer_id=LayerId(uuid4()), config=config)
+        cell = PlotCell(
+            geometry=CellGeometry(row=0, col=0, row_span=1, col_span=1),
+            layers=[layer],
+        )
+        plotter = FakePlotter(presenter_cls=CurvePresenter)
+        plotter.compute(hv.Curve([1, 2, 3]))
+        plot_data_service.job_started(layer.layer_id, plotter)
+        plot_data_service.data_arrived(layer.layer_id)
+        state = plot_data_service.get(layer.layer_id)
+        session_layer = SessionLayer(layer_id=layer.layer_id)
+        session_layer.ensure_components(state)
+        plot_grid_tabs._session_layers[layer.layer_id] = session_layer
+        return cell, session_layer.components.pipe
+
+    def test_dispose_unsubscribes_rendered_plot(
+        self, plot_grid_tabs, plot_data_service, plot_orchestrator
+    ):
+        from uuid import uuid4
+
+        cell, pipe = self._add_dynamic_layer_cell(plot_grid_tabs, plot_data_service)
+        baseline = len(pipe.subscribers)
+        grid_id = plot_orchestrator.add_grid(title='Test', nrows=1, ncols=1)
+        widget = plot_grid_tabs._build_cell(CellId(uuid4()), cell, grid_id)
+        widget.view.get_root()
+        assert len(pipe.subscribers) > baseline
+
+        widget.dispose()
+
+        assert len(pipe.subscribers) == baseline
+
+    def test_rebuild_while_rendered_does_not_accumulate_subscribers(
+        self, plot_grid_tabs, plot_data_service, plot_orchestrator
+    ):
+        from uuid import uuid4
+
+        cell, pipe = self._add_dynamic_layer_cell(plot_grid_tabs, plot_data_service)
+        cell_id = CellId(uuid4())
+        grid_id = plot_orchestrator.add_grid(title='Test', nrows=1, ncols=1)
+        first = plot_grid_tabs._build_cell(cell_id, cell, grid_id)
+        first.view.get_root()
+        settled = len(pipe.subscribers)
+
+        second = plot_grid_tabs._build_cell(cell_id, cell, grid_id)
+        second.view.get_root()
+
+        assert len(pipe.subscribers) == settled
+
+    # -- Poll-driven variants: the tests above drive _build_cell directly;
+    # these route through _poll_for_plot_updates, covering the sweep's and the
+    # reconcile's own dispose ordering.
+
+    @staticmethod
+    def _revealed_workflow_cell(
+        plot_orchestrator,
+        plot_grid_tabs,
+        job_orchestrator,
+        data_service,
+        workflow_id,
+        *,
+        second_view: str | None = None,
+    ) -> CellId:
+        """Build (via the poll) an active-grid workflow cell with computed data."""
+        job_orchestrator.commit_workflow(workflow_id)
+        grid_id = plot_orchestrator.add_grid(title='G', nrows=2, ncols=2)
+        geometry = CellGeometry(row=0, col=0, row_span=1, col_span=1)
+        cell_id = _add_workflow_cell(plot_orchestrator, grid_id, geometry, workflow_id)
+        if second_view is not None:
+            plot_orchestrator.add_layer(
+                cell_id, _workflow_plot_config(workflow_id, view=second_view)
+            )
+            _publish_layer_data(data_service, workflow_id, view=second_view)
+        _publish_layer_data(data_service, workflow_id)
+        plot_orchestrator.flush_frames()
+        _tick(plot_grid_tabs)
+        # The reveal's 0->1 activation computes the layers, so the build
+        # creates real session components (and their pipes).
+        plot_grid_tabs.tabs.active = plot_grid_tabs._static_tabs_count
+        assert plot_grid_tabs._cells[cell_id].has_plot
+        return cell_id
+
+    def _layer_pipes(self, plot_orchestrator, plot_grid_tabs, cell_id: CellId):
+        return [
+            plot_grid_tabs._session_layers[layer.layer_id].components.pipe
+            for layer in plot_orchestrator.get_cell(cell_id).layers
+        ]
+
+    def test_title_change_rebuild_via_poll_keeps_subscriber_count_flat(
+        self,
+        plot_orchestrator,
+        plot_grid_tabs,
+        job_orchestrator,
+        data_service,
+        workflow_id,
+    ):
+        cell_id = self._revealed_workflow_cell(
+            plot_orchestrator,
+            plot_grid_tabs,
+            job_orchestrator,
+            data_service,
+            workflow_id,
+        )
+        (pipe,) = self._layer_pipes(plot_orchestrator, plot_grid_tabs, cell_id)
+        plot_grid_tabs._cells[cell_id].view.get_root()
+        settled = len(pipe.subscribers)
+
+        plot_orchestrator.set_cell_title(cell_id, 'Renamed')
+        _tick(plot_grid_tabs)
+        plot_grid_tabs._cells[cell_id].view.get_root()
+
+        assert len(pipe.subscribers) == settled
+
+    def test_cell_removal_via_sweep_severs_subscribers(
+        self,
+        plot_orchestrator,
+        plot_grid_tabs,
+        job_orchestrator,
+        data_service,
+        workflow_id,
+    ):
+        cell_id = self._revealed_workflow_cell(
+            plot_orchestrator,
+            plot_grid_tabs,
+            job_orchestrator,
+            data_service,
+            workflow_id,
+        )
+        (pipe,) = self._layer_pipes(plot_orchestrator, plot_grid_tabs, cell_id)
+        baseline = len(pipe.subscribers)
+        plot_grid_tabs._cells[cell_id].view.get_root()
+        assert len(pipe.subscribers) > baseline
+
+        plot_orchestrator.remove_cell(cell_id)
+        _tick(plot_grid_tabs)
+
+        assert cell_id not in plot_grid_tabs._cells
+        assert len(pipe.subscribers) == baseline
+
+    def test_two_layer_rebuild_via_poll_keeps_both_pipes_flat(
+        self,
+        plot_orchestrator,
+        plot_grid_tabs,
+        job_orchestrator,
+        data_service,
+        workflow_id,
+    ):
+        cell_id = self._revealed_workflow_cell(
+            plot_orchestrator,
+            plot_grid_tabs,
+            job_orchestrator,
+            data_service,
+            workflow_id,
+            second_view='result2',
+        )
+        pipes = self._layer_pipes(plot_orchestrator, plot_grid_tabs, cell_id)
+        assert len(pipes) == 2
+        plot_grid_tabs._cells[cell_id].view.get_root()
+        settled = [len(pipe.subscribers) for pipe in pipes]
+
+        plot_orchestrator.set_cell_title(cell_id, 'Renamed')
+        _tick(plot_grid_tabs)
+        plot_grid_tabs._cells[cell_id].view.get_root()
+
+        assert [len(pipe.subscribers) for pipe in pipes] == settled
+
+
+@pytest.fixture
+def deferred_tick_tabs(
+    plot_orchestrator,
+    workflow_registry,
+    plotting_controller,
+    workflow_status_widget,
+    plot_data_service,
+):
+    """PlotGridTabs whose requested ticks are deferred, as with a real document.
+
+    The default fixture's updater has no document, so the full tick a tab
+    switch requests runs synchronously inside the ``active`` assignment,
+    closing the window between the reveal prebuild and the next tick. A fake
+    document captures the scheduled tick instead, so tests can observe what
+    the prebuild pass alone did and did not do.
+    """
+    updater = SessionUpdater(
+        session_id=SessionId('deferred-session'),
+        session_registry=SessionRegistry(),
+        notification_queue=NotificationQueue(),
+        document=_FakeDocument(),
+    )
+    return PlotGridTabs(
+        plot_orchestrator=plot_orchestrator,
+        workflow_registry=workflow_registry,
+        plotting_controller=plotting_controller,
+        workflow_status_widget=workflow_status_widget,
+        plot_data_service=plot_data_service,
+        session_updater=updater,
+    )
+
+
+def _inject_plotter_cell(
+    plot_orchestrator: PlotOrchestrator,
+    plot_data_service,
+    grid_id: GridId,
+    plotter,
+) -> CellId:
+    """Write a cell+layer straight into topology and register the plotter.
+
+    Bypasses workflow subscriptions so the test controls the plotter (and its
+    presenter) directly. The orchestrator's layer mappings are left untouched,
+    so activation pulls are no-ops and the plotter's cached state is what the
+    cell build composes.
+    """
+    from uuid import uuid4
+
+    from ess.livedata.dashboard.data_roles import PRIMARY
+    from ess.livedata.dashboard.plot_data_service import LayerId
+    from ess.livedata.dashboard.plot_orchestrator import (
+        DataSourceConfig,
+        Layer,
+        PlotCell,
+        PlotConfig,
+    )
+    from tests.helpers.plot_fakes import EmptyParams
+
+    layer_id = LayerId(uuid4())
+    cell_id = CellId(uuid4())
+    config = PlotConfig(
+        data_sources={
+            PRIMARY: DataSourceConfig(
+                workflow_id=WorkflowId(instrument='test', name='wf', version=1),
+                source_names=['src'],
+                view_name='result',
+            )
+        },
+        plot_name='image',
+        params=EmptyParams(),
+    )
+    cell = PlotCell(
+        geometry=CellGeometry(row=0, col=0, row_span=1, col_span=1),
+        layers=[Layer(layer_id=layer_id, config=config)],
+    )
+    plot_orchestrator.peek_grid(grid_id).cells[cell_id] = cell
+    plot_data_service.job_started(layer_id, plotter)
+    plot_data_service.data_arrived(layer_id)
+    return cell_id
+
+
+class TestFlushGating:
+    """The data push (``update_pipe``) is gated on a committed frame or a tab
+    switch; presenter dirty flags alone must not trigger it, so a burst's
+    layers repaint in one frame instead of staggered across poll ticks."""
+
+    @pytest.fixture
+    def flushed_layer(
+        self,
+        plot_orchestrator,
+        plot_grid_tabs,
+        job_orchestrator,
+        data_service,
+        workflow_id,
+    ):
+        """Active-grid workflow cell with one frame flushed and consumed.
+
+        Returns ``(layer_id, presenter)`` with the presenter's pending update
+        consumed and the gate quiet.
+        """
+        job_orchestrator.commit_workflow(workflow_id)
+        grid_id = plot_orchestrator.add_grid(title='G', nrows=2, ncols=2)
+        geometry = CellGeometry(row=0, col=0, row_span=1, col_span=1)
+        cell_id = _add_workflow_cell(plot_orchestrator, grid_id, geometry, workflow_id)
+        _publish_layer_data(data_service, workflow_id)
+        plot_orchestrator.flush_frames()
+        _tick(plot_grid_tabs)
+        plot_grid_tabs.tabs.active = plot_grid_tabs._static_tabs_count
+        layer_id = plot_orchestrator.get_cell(cell_id).layers[0].layer_id
+        presenter = plot_grid_tabs._session_layers[layer_id].components.presenter
+
+        # Commit a frame while visible and let the gated pass flush it.
+        _publish_layer_data(data_service, workflow_id)
+        plot_orchestrator.flush_frames()
+        assert presenter.has_pending_update()
+        _tick(plot_grid_tabs)
+        assert not presenter.has_pending_update()
+        return layer_id, presenter
+
+    def test_unchanged_generation_skips_update_pipe(
+        self, plot_grid_tabs, plot_data_service, flushed_layer
+    ):
+        layer_id, presenter = flushed_layer
+
+        # Dirty presenter without a frame commit: exactly what a compute does,
+        # minus the frame clock. The predicate is deliberately quiet here, so
+        # drive the pass directly.
+        plot_data_service.get(layer_id).plotter.mark_presenters_dirty()
+        assert not plot_grid_tabs._has_pending_work()
+        plot_grid_tabs._poll_for_plot_updates()
+
+        assert presenter.has_pending_update()
+
+    def test_tab_switch_flushes_without_generation_change(
+        self, plot_grid_tabs, plot_data_service, flushed_layer
+    ):
+        layer_id, presenter = flushed_layer
+        plot_data_service.get(layer_id).plotter.mark_presenters_dirty()
+
+        # Away: the hidden grid's pending update is kept, not dropped.
+        plot_grid_tabs.tabs.active = 0
+        assert presenter.has_pending_update()
+
+        # Back: the switch flushes the cached state with no new frame involved.
+        plot_grid_tabs.tabs.active = plot_grid_tabs._static_tabs_count
+        assert not presenter.has_pending_update()
+
+    def test_tab_switch_flush_does_not_suppress_next_frame(
+        self,
+        plot_grid_tabs,
+        plot_data_service,
+        plot_orchestrator,
+        data_service,
+        workflow_id,
+        flushed_layer,
+    ):
+        layer_id, presenter = flushed_layer
+        plot_data_service.get(layer_id).plotter.mark_presenters_dirty()
+        plot_grid_tabs.tabs.active = 0
+        plot_grid_tabs.tabs.active = plot_grid_tabs._static_tabs_count
+        assert not presenter.has_pending_update()
+
+        _publish_layer_data(data_service, workflow_id)
+        plot_orchestrator.flush_frames()
+        assert presenter.has_pending_update()
+        _tick(plot_grid_tabs)
+
+        assert not presenter.has_pending_update()
+
+    def test_one_burst_one_pass_flushes_all_layers(
+        self,
+        plot_orchestrator,
+        plot_grid_tabs,
+        job_orchestrator,
+        data_service,
+        workflow_id,
+    ):
+        job_orchestrator.commit_workflow(workflow_id)
+        grid_id = plot_orchestrator.add_grid(title='G', nrows=2, ncols=2)
+        cell_ids = [
+            _add_workflow_cell(
+                plot_orchestrator,
+                grid_id,
+                CellGeometry(row=0, col=col, row_span=1, col_span=1),
+                workflow_id,
+            )
+            for col in (0, 1)
+        ]
+        _publish_layer_data(data_service, workflow_id)
+        plot_orchestrator.flush_frames()
+        _tick(plot_grid_tabs)
+        plot_grid_tabs.tabs.active = plot_grid_tabs._static_tabs_count
+        presenters = [
+            plot_grid_tabs._session_layers[
+                plot_orchestrator.get_cell(cell_id).layers[0].layer_id
+            ].components.presenter
+            for cell_id in cell_ids
+        ]
+
+        # Both layers subscribe to the same key: one publish is one burst,
+        # flushed as one committed frame.
+        _publish_layer_data(data_service, workflow_id)
+        plot_orchestrator.flush_frames()
+        assert all(p.has_pending_update() for p in presenters)
+        _tick(plot_grid_tabs)
+
+        assert not any(p.has_pending_update() for p in presenters)
+
+
+class TestOrphanSweep:
+    """The poll's sweep of cells that vanished from topology."""
+
+    @staticmethod
+    def _geometry():
+        return CellGeometry(row=0, col=0, row_span=1, col_span=1)
+
+    def _revealed_static_cell(self, plot_orchestrator, plot_grid_tabs):
+        grid_id = plot_orchestrator.add_grid(title='G', nrows=2, ncols=2)
+        cell_id = _add_static_cell(plot_orchestrator, grid_id, self._geometry())
+        _tick(plot_grid_tabs)
+        plot_grid_tabs.tabs.active = plot_grid_tabs._static_tabs_count
+        layer_id = plot_orchestrator.get_cell(cell_id).layers[0].layer_id
+        return grid_id, cell_id, layer_id
+
+    def test_removed_cell_releases_viewer_and_session_records(
+        self, plot_orchestrator, plot_grid_tabs, plot_data_service
+    ):
+        """Removing a cell ends this session's viewer interest in its layer.
+
+        Note the orchestrator's own cleanup (``PlotDataService.remove``)
+        already dropped the viewers entry before any poll runs; the sweep
+        then clears the session-layer record and disposes the widget.
+        """
+        _grid_id, cell_id, layer_id = self._revealed_static_cell(
+            plot_orchestrator, plot_grid_tabs
+        )
+        assert plot_data_service.has_viewers(layer_id)
+
+        plot_orchestrator.remove_cell(cell_id)
+        # Dropped by remove_cell's cleanup, not the (yet-to-run) sweep.
+        assert not plot_data_service.has_viewers(layer_id)
+        _tick(plot_grid_tabs)
+
+        assert not plot_data_service.has_viewers(layer_id)
+        assert layer_id not in plot_grid_tabs._session_layers
+        assert cell_id not in plot_grid_tabs._cells
+
+    def test_sweep_deactivates_layer_that_left_topology(
+        self, plot_orchestrator, plot_grid_tabs, plot_data_service
+    ):
+        """The sweep itself releases the session's token, not just its dicts.
+
+        Removing the cell behind the orchestrator's back leaves the
+        PlotDataService viewer entry intact, so what ends the interest here is
+        the orphan sweep's ``activate_layer(..., False)``. No version moves,
+        so the pass is driven directly.
+        """
+        grid_id, cell_id, layer_id = self._revealed_static_cell(
+            plot_orchestrator, plot_grid_tabs
+        )
+        assert plot_data_service.has_viewers(layer_id)
+
+        del plot_orchestrator.peek_grid(grid_id).cells[cell_id]
+        assert plot_data_service.has_viewers(layer_id)
+        plot_grid_tabs._poll_for_plot_updates()
+
+        assert not plot_data_service.has_viewers(layer_id)
+        assert layer_id not in plot_grid_tabs._session_layers
+        assert cell_id not in plot_grid_tabs._cells
+
+    def test_grid_removal_sweeps_and_disposes_cells(
+        self, plot_orchestrator, plot_grid_tabs
+    ):
+        """Removing a whole grid sweeps its cells although their grid widget
+        is already gone (the ``plot_grid is None`` branch)."""
+        grid_id, cell_id, layer_id = self._revealed_static_cell(
+            plot_orchestrator, plot_grid_tabs
+        )
+
+        plot_orchestrator.remove_grid(grid_id)
+        _tick(plot_grid_tabs)
+
+        assert cell_id not in plot_grid_tabs._cells
+        assert grid_id not in plot_grid_tabs._grid_widgets
+        assert layer_id not in plot_grid_tabs._session_layers
+        assert len(plot_grid_tabs.tabs) == 2
+
+
+class _FlakyPresenterPlotter(FakePlotter):
+    """create_presenter raises on the first call, succeeds afterwards."""
+
+    def __init__(self, **kwargs) -> None:
+        super().__init__(**kwargs)
+        self.remaining_failures = 1
+
+    def create_presenter(self, *, owner=None):
+        if self.remaining_failures:
+            self.remaining_failures -= 1
+            raise RuntimeError('injected presenter failure')
+        return super().create_presenter(owner=owner)
+
+
+class TestRevealPass:
+    """Semantics of the pass run by ``_prebuild_revealed_grid``."""
+
+    def test_reveal_defers_topology_reconcile_to_next_tick(
+        self, plot_orchestrator, deferred_tick_tabs
+    ):
+        """The reveal pass must not touch the tab strip it runs inside of;
+        leaving the topology version unrecorded hands the reconcile to the
+        next tick."""
+        plot_orchestrator.add_grid(title='First', nrows=2, ncols=2)
+        _tick(deferred_tick_tabs)
+        static = deferred_tick_tabs._static_tabs_count
+        plot_orchestrator.add_grid(title='Second', nrows=2, ncols=2)
+
+        deferred_tick_tabs.tabs.active = static
+
+        assert 'Second' not in deferred_tick_tabs.tabs._names
+        assert deferred_tick_tabs._has_pending_work()
+        _tick(deferred_tick_tabs)
+        assert 'Second' in deferred_tick_tabs.tabs._names
+
+    def test_prebuild_failure_is_swallowed_and_deferred_build_retries(
+        self, plot_orchestrator, plot_data_service, deferred_tick_tabs
+    ):
+        """A failing cell build must not abort the reveal (the tab would stay
+        blank for the session); the stale records make the next tick retry."""
+        plotter = _FlakyPresenterPlotter(cached_state=hv.Curve([1, 2, 3]))
+        grid_id = plot_orchestrator.add_grid(title='G', nrows=2, ncols=2)
+        cell_id = _inject_plotter_cell(
+            plot_orchestrator, plot_data_service, grid_id, plotter
+        )
+        _tick(deferred_tick_tabs)
+        assert cell_id not in deferred_tick_tabs._cells
+
+        # No exception escapes the reveal; the cell stays unbuilt.
+        deferred_tick_tabs.tabs.active = deferred_tick_tabs._static_tabs_count
+        assert cell_id not in deferred_tick_tabs._cells
+
+        # The aborted pass never recorded its gate state, so the next tick
+        # runs and the build succeeds.
+        assert deferred_tick_tabs._has_pending_work()
+        _tick(deferred_tick_tabs)
+        assert cell_id in deferred_tick_tabs._cells
+        assert deferred_tick_tabs._cells[cell_id].has_plot
+
+
+class _MidPassBumpPlotter(FakePlotter):
+    """create_presenter bumps another layer's version once, mid-pass.
+
+    Simulates the ingestion thread landing a lifecycle transition while the
+    poll pass is between its version snapshot and its cell builds.
+    """
+
+    def __init__(self, service, victim_layer_id, **kwargs) -> None:
+        super().__init__(**kwargs)
+        self._service = service
+        self._victim = victim_layer_id
+        self._bumped = False
+
+    def create_presenter(self, *, owner=None):
+        if not self._bumped:
+            self._bumped = True
+            self._service.job_started(
+                self._victim, FakePlotter(cached_state=hv.Curve([0]))
+            )
+        return super().create_presenter(owner=owner)
+
+
+class TestLateVersionRecording:
+    """The pass records the layer version it snapshotted at its start, so a
+    bump landing mid-pass leaves the gate armed for a settling second pass."""
+
+    def test_mid_pass_version_bump_is_not_absorbed(
+        self, plot_orchestrator, plot_data_service, deferred_tick_tabs
+    ):
+        from uuid import uuid4
+
+        from ess.livedata.dashboard.plot_data_service import LayerId
+
+        victim_layer = LayerId(uuid4())
+        plotter = _MidPassBumpPlotter(
+            plot_data_service, victim_layer, cached_state=hv.Curve([1, 2, 3])
+        )
+        grid_id = plot_orchestrator.add_grid(title='G', nrows=2, ncols=2)
+        cell_id = _inject_plotter_cell(
+            plot_orchestrator, plot_data_service, grid_id, plotter
+        )
+        _tick(deferred_tick_tabs)
+
+        # The reveal pass builds the cell; the bump lands during the build.
+        deferred_tick_tabs.tabs.active = deferred_tick_tabs._static_tabs_count
+        assert cell_id in deferred_tick_tabs._cells
+
+        # Only the layer-version term is armed: topology and the active-grid
+        # frame generation were recorded by the completed pass.
+        assert plot_orchestrator.topology_version() == (
+            deferred_tick_tabs._last_topology_version
+        )
+        assert (
+            deferred_tick_tabs._live_generations(
+                deferred_tick_tabs._last_active_grid_id
+            )
+            == deferred_tick_tabs._last_generations
+        )
+        assert plot_data_service.version != deferred_tick_tabs._last_layer_version
+        assert deferred_tick_tabs._has_pending_work()
+
+        _tick(deferred_tick_tabs)
+        assert not deferred_tick_tabs._has_pending_work()

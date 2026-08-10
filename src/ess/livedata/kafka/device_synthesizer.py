@@ -20,7 +20,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
-from typing import Generic, Literal, TypeVar
+from typing import Literal
 
 import structlog
 
@@ -32,14 +32,13 @@ from ..preprocessors.accumulators import LogData
 logger = structlog.get_logger(__name__)
 
 _Role = Literal['value', 'target', 'idle']
-_V = TypeVar('_V', float, bool)
 
 
 @dataclass
-class _Substream(Generic[_V]):
+class _Substream[V: (float, bool)]:
     """Last-seen value and timestamp for one device substream."""
 
-    value: _V
+    value: V
     time: Timestamp
 
 

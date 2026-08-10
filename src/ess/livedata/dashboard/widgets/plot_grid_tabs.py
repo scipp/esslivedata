@@ -6,19 +6,56 @@ PlotGridTabs - Tabbed interface for managing multiple plot grids.
 Provides a Panel Tabs widget that displays multiple PlotGrid instances,
 kept in sync with PlotOrchestrator by polling its topology version on each
 session's own periodic tick (see ``PlotOrchestrator`` "Threading").
+
+Framework-trap invariants
+-------------------------
+Each item below encodes a measured Panel/Bokeh failure mode. They are easy to
+drop in a refactor and hard or impossible to cover with unit tests, so any
+change to this module must re-check the list; the inline ``IMPORTANT:``
+comments at the enforcement sites carry the details.
+
+- **Lazy tabs**: ``dynamic=True`` on the Tabs widget is what keeps hidden
+  grids from materializing Bokeh models; without it any content change
+  freezes the UI for seconds (enforced in ``__init__``).
+- **Batching**: every update touching more than one widget runs inside
+  ``batched_update()`` / ``pn.io.hold()`` — the poll pass via
+  ``SessionUpdater``, tab switches via ``_BatchedTabs``, tab rebuilds via
+  ``_reconcile_grid_tabs``.
+- **Modal container parenting**: the modal container is created once, lives
+  at the top level wrapping the Tabs (never per tab — Panel components have
+  one parent), and the outer Column is created once in ``__init__`` so the
+  container's parent is stable across ``panel`` accesses.
+- **Reveal ordering**: a revealed tab's cells are built *before* Panel
+  materializes the tab's models (``_BatchedTabs.on_activate`` →
+  ``_prebuild_revealed_grid``); building after costs a throwaway round of
+  placeholder models and repaints.
+- **Disposal ordering and completeness**: ``CellWidget.dispose()`` must
+  break the Bokeh toolbar reference cycles and sever the rendered plots'
+  pipe subscriptions, and must run *before* the replacement widget renders —
+  holoviews severs all weak plot-refresh subscribers on the touched streams,
+  so ordering carries the correctness (#1224, enforced in ``_build_cell``).
+- **Wake-before-load guard**: ``SessionUpdater`` defers wake registration
+  until the browser session is loaded; ticking earlier touches a document
+  with no websocket.
+- **Markup-pane reveal**: markup panes built after page load stay invisible
+  without the ``LivedataDesign`` stylesheet-latch override (#1154,
+  ``dashboard/design.py``); this module's freshness pills and time labels
+  rely on it.
 """
 
 from __future__ import annotations
 
 import time
-from collections.abc import Callable, Mapping
-from contextlib import nullcontext
+from collections.abc import Callable, Mapping, Sequence
+from typing import NamedTuple
 
 import panel as pn
 import structlog
 
 from ess.livedata.config.workflow_spec import WorkflowId, WorkflowSpec
 
+from ..batched_update import batched_update
+from ..cell_plan import SessionView, cell_build_inputs, desired_cells
 from ..notifications import show_error
 from ..plot_data_service import PlotDataService
 from ..plot_orchestrator import (
@@ -36,6 +73,7 @@ from ..session_layer import SessionLayer
 from ..session_updater import SessionUpdater
 from .cell import CellDeps, CellWidget
 from .cell_properties_modal import CellPropertiesModal
+from .icons import get_icon_data_uri
 from .modal_escape_closer import ModalEscapeCloser
 from .plot_config_modal import PlotConfigModal
 from .plot_grid import PlotGrid
@@ -55,6 +93,75 @@ logger = structlog.get_logger(__name__)
 _FRESHNESS_STALL_INTERVAL_S = 2.0
 
 
+class _PassStamps(NamedTuple):
+    """Versioned inputs of one reconcile pass, compared for equality only.
+
+    Read as one value at gate time (:meth:`PlotGridTabs._input_stamps`) and
+    recorded field-by-field as the pass completes each concern; named fields
+    keep the two sites from pairing values positionally.
+    """
+
+    topology_version: int | None
+    layer_version: int
+    active_grid_id: GridId | None
+    generations: Mapping[GridId | None, int]
+
+
+def _static_tab_stylesheet(icons: Sequence[str]) -> str:
+    """CSS distinguishing the fixed leading tabs from the plot-grid tabs.
+
+    Bokeh renders a tab label as plain text, so an icon cannot be part of the
+    title; it is painted on a ``::before`` pseudo-element selected by tab
+    position (the static tabs are always the first ones). ``mask-image`` rather
+    than ``background-image`` makes the icon take the tab's ``currentColor``, so
+    it follows the label through the active/inactive color change for free.
+
+    Parameters
+    ----------
+    icons:
+        Icon name per static tab, in tab order.
+    """
+    masks = '\n'.join(
+        f"""
+        .bk-tab:nth-child({position})::before {{
+            mask-image: url("{uri}");
+            -webkit-mask-image: url("{uri}");
+        }}"""
+        for position, uri in enumerate(
+            (get_icon_data_uri(icon, color=None) for icon in icons), start=1
+        )
+    )
+    return f"""
+        .bk-tab:nth-child(-n+{len(icons)}) {{
+            font-weight: bold;
+        }}
+        .bk-tab:nth-child(-n+{len(icons)})::before {{
+            content: '';
+            display: inline-block;
+            width: 1.15em;
+            height: 1.15em;
+            margin-right: 0.4em;
+            vertical-align: -0.22em;
+            background-color: currentColor;
+            mask-size: contain;
+            mask-repeat: no-repeat;
+            mask-position: center;
+            -webkit-mask-size: contain;
+            -webkit-mask-repeat: no-repeat;
+            -webkit-mask-position: center;
+        }}
+        {masks}
+        .bk-tab {{
+            border-bottom: 1px solid {Colors.TAB_BORDER} !important;
+        }}
+        .bk-tab.bk-active {{
+            background-color: {Colors.TAB_ACTIVE_BG} !important;
+            border: 1px solid {Colors.TAB_BORDER} !important;
+            border-bottom: none !important;
+        }}
+        """
+
+
 class _BatchedTabs(pn.Tabs):
     """Tabs subclass that batches Bokeh model updates on tab switch.
 
@@ -63,16 +170,30 @@ class _BatchedTabs(pn.Tabs):
     ``_apply_update`` calls) that independently serializes PATCH-DOC
     messages and recomputes the Bokeh model graph for each step.
 
-    Wrapping the cascade in ``pn.io.hold()`` + ``doc.models.freeze()``
-    collapses N dispatches/recomputes into 1 each.
+    Wrapping the cascade in :func:`batched_update` collapses N
+    dispatches/recomputes into 1 each.
 
     See https://github.com/holoviz/panel/issues/8461.
+
+    ``on_activate`` is the hook for populating the tab about to be revealed. It
+    runs *before* the cascade, which is the only point where a change to the
+    tab's content still lands in the same materialization: Panel registers
+    ``_update_active`` in its own constructor, so any ``active`` watcher added
+    afterwards necessarily runs once the models already exist and can only
+    patch them a second time.
     """
 
+    # Declared so param treats the assignment as a known attribute rather than
+    # warning about setting a non-parameter on a Parameterized.
+    on_activate: Callable[[], None] | None = None
+
     def _update_active(self, *events) -> None:
-        doc = pn.state.curdoc
-        freeze = doc.models.freeze() if doc is not None else nullcontext()
-        with pn.io.hold(), freeze:
+        with batched_update():
+            if self.on_activate is not None and any(
+                event.name == 'dynamic' or (self.dynamic and event.name == 'active')
+                for event in events
+            ):
+                self.on_activate()
             super()._update_active(*events)
 
 
@@ -120,7 +241,6 @@ class PlotGridTabs:
         self._workflow_registry = dict(workflow_registry)
         self._plotting_controller = plotting_controller
         self._plot_data_service = plot_data_service
-        self._session_updater = session_updater
 
         # Track grid widgets (insertion order determines tab position)
         self._grid_widgets: dict[GridId, PlotGrid] = {}
@@ -130,20 +250,17 @@ class PlotGridTabs:
         # plots (shared via CellDeps).
         self._session_layers: dict[LayerId, SessionLayer] = {}
 
-        # Per-session cell widgets, keyed by CellId. Each owns its titlebar,
+        # Per-session cell widgets, keyed by CellId — the applied state the
+        # differ compares plans against. Each widget owns its titlebar,
         # per-layer toolbars, content, autoscale controller, and the panes
-        # updated in place by the poll loop (freshness pill, layer time labels).
-        # Rebuilt on cell/layer changes; disposed when the cell goes away.
+        # updated in place by the poll loop (freshness pill, layer time
+        # labels), and records the grid it lives in and the build inputs it
+        # was constructed from. Rebuilt when the current inputs differ;
+        # disposed when the cell leaves the topology.
         self._cells: dict[CellId, CellWidget] = {}
 
-        # Topology-version polling state. ``_last_topology_version`` gates the
-        # tab reconcile; ``_cell_signatures`` detects per-cell composition
-        # changes (layer add/remove/reconfigure, title) each tick;
-        # ``_cell_grid`` records which grid each built cell lives in, so a cell
-        # that vanished from topology can still be removed from its grid widget.
+        # Topology-version stamp gating the tab reconcile.
         self._last_topology_version: int | None = None
-        self._cell_signatures: dict[CellId, tuple] = {}
-        self._cell_grid: dict[CellId, GridId] = {}
         # Tab-level fingerprint of the topology (grid ids, titles, enabled, in
         # order). Cell/layer changes bump the topology version too, but must
         # not tear down and re-append the Tabs entries (Bokeh model churn and
@@ -155,8 +272,10 @@ class PlotGridTabs:
 
         # Gate state for coalescing plot-data flushes (see _poll_for_plot_updates).
         # The data push runs only when a new data-burst frame is ready or the
-        # visible tab changed. Keyed by grid: the visible one, plus any grid
-        # holding a popped-out cell. Empty forces a flush on the first poll.
+        # visible tab changed. Keyed by grid, because this session may render
+        # more than one at a time: the visible grid, plus the grid of every
+        # cell held live by a pop-out window. Empty forces a flush on the
+        # first poll.
         self._last_generations: dict[GridId | None, int] = {}
         self._last_active_grid_id: GridId | None = None
         # Aggregate PlotDataService version observed by the last completed poll
@@ -185,21 +304,29 @@ class PlotGridTabs:
         # Floating pop-out windows, one per cell at most. Kept out of
         # ``_current_modal``: that field gates the poll loop's data flush, and
         # a pop-out must keep updating.
-        #
-        # Working a window's controls changes what this session shows without
-        # moving any shared state, so it is invisible to ``_has_pending_work``
-        # and asks for a full tick of its own, exactly as a tab switch does.
         self._popouts = PlotPopoutManager(
-            on_visibility_change=lambda: self._session_updater.request_tick(full=True)
+            on_window_change=self._on_popout_window_change
         )
 
-        # Determine number of static tabs for stylesheet
-        static_tab_count = 3 if system_status_widget else 2
-
-        # Build nth-child selectors for static tabs
-        static_tab_selectors = ',\n                '.join(
-            f'.bk-tab:nth-child({i})' for i in range(1, static_tab_count + 1)
+        # The manager reports locally-initiated grid creations so this session
+        # (only) focuses the new tab on its next poll; other sessions merely
+        # gain the tab.
+        self._grid_manager = PlotGridManager(
+            orchestrator=plot_orchestrator,
+            workflow_registry=workflow_registry,
+            on_local_grid_created=self._on_local_grid_created,
         )
+
+        # Fixed tabs, in order, ahead of the variable number of grid tabs. Each
+        # carries an icon so the two groups are distinguishable at a glance;
+        # grid tabs deliberately carry none, making a bare label the mark of a
+        # user-created grid.
+        static_tabs = [('Workflows', 'workflow', workflow_status_widget.panel())]
+        if system_status_widget is not None:
+            static_tabs.append(
+                ('System Status', 'activity', system_status_widget.panel())
+            )
+        static_tabs.append(('Manage Plots', 'layout-grid', self._grid_manager.panel))
 
         # Main tabs widget.
         # IMPORTANT: dynamic=True is critical for performance. Without it, Panel
@@ -212,21 +339,7 @@ class PlotGridTabs:
         self._tabs = _BatchedTabs(
             sizing_mode='stretch_both',
             dynamic=True,
-            stylesheets=[
-                f"""
-                {static_tab_selectors} {{
-                    font-weight: bold;
-                }}
-                .bk-tab {{
-                    border-bottom: 1px solid {Colors.TAB_BORDER} !important;
-                }}
-                .bk-tab.bk-active {{
-                    background-color: {Colors.TAB_ACTIVE_BG} !important;
-                    border: 1px solid {Colors.TAB_BORDER} !important;
-                    border-bottom: none !important;
-                }}
-                """
-            ],
+            stylesheets=[_static_tab_stylesheet([icon for _, icon, _ in static_tabs])],
         )
 
         # Modal container for plot configuration
@@ -237,7 +350,7 @@ class PlotGridTabs:
         # individual grid tabs. Panel components can only have one parent, so
         # adding the same container to multiple tabs would break rendering.
         self._modal_container = pn.Row(height=0, sizing_mode='stretch_width')
-        self._current_modal: PlotConfigModal | None = None
+        self._current_modal: PlotConfigModal | CellPropertiesModal | None = None
 
         # Create main widget - tabs with zero-height modal container
         # IMPORTANT: Create the widget once in __init__ (not in the panel property)
@@ -252,22 +365,8 @@ class PlotGridTabs:
             sizing_mode='stretch_both',
         )
 
-        # Add Workflows tab (always first)
-        self._tabs.append(('Workflows', workflow_status_widget.panel()))
-
-        # Add System Status tab (second, if widget provided)
-        if system_status_widget is not None:
-            self._tabs.append(('System Status', system_status_widget.panel()))
-
-        # Add Manage tab. The manager reports locally-initiated grid creations
-        # so this session (only) focuses the new tab on its next poll; other
-        # sessions merely gain the tab.
-        self._grid_manager = PlotGridManager(
-            orchestrator=plot_orchestrator,
-            workflow_registry=workflow_registry,
-            on_local_grid_created=self._on_local_grid_created,
-        )
-        self._tabs.append(('Manage Plots', self._grid_manager.panel))
+        for title, _, panel in static_tabs:
+            self._tabs.append((title, panel))
 
         # Store static tabs count for use as offset in grid tab index calculations
         self._static_tabs_count = len(self._tabs)
@@ -278,6 +377,10 @@ class PlotGridTabs:
         self._reconcile_topology()
         self._last_topology_version = self._orchestrator.topology_version()
 
+        # Wired only now: during the construction above a tab switch cannot
+        # happen, and the pass the hook runs expects a fully built instance.
+        self._tabs.on_activate = self._prebuild_revealed_grid
+
         # Register the poll pass; the predicate lets wake ticks skip it (and
         # the batched hold+freeze) when nothing visible changed.
         session_updater.register_custom_handler(
@@ -286,6 +389,7 @@ class PlotGridTabs:
         # A tab switch changes what the poll pass must flush but bumps no
         # shared version, so request an immediate in-session tick rather than
         # waiting for the housekeeping cadence.
+        self._session_updater = session_updater
         self._tabs.param.watch(self._on_active_tab_changed, 'active')
 
         # Two-tier teardown, run on both the clean disconnect
@@ -304,11 +408,18 @@ class PlotGridTabs:
         def grid_callback(geometry: CellGeometry) -> None:
             self._on_plot_requested(grid_id, geometry)
 
+        def occupied_geometries() -> tuple[CellGeometry, ...]:
+            config = self._orchestrator.peek_grid(grid_id)
+            if config is None:
+                return ()
+            return tuple(cell.geometry for cell in config.cells.values())
+
         # Create PlotGrid widget with grid-specific callback
         plot_grid = PlotGrid(
             nrows=grid_config.nrows,
             ncols=grid_config.ncols,
             plot_request_callback=grid_callback,
+            occupied_geometries=occupied_geometries,
         )
 
         # Store widget reference
@@ -350,9 +461,9 @@ class PlotGridTabs:
         active tab index maps to a grid position. When a static tab is selected
         the result is negative, which the bounds check rejects.
 
-        Returns None when a config modal is open: the modal overlay obscures
-        the plots, so rendering would be wasted. Dirty flags are preserved and
-        the first poll after the modal closes pushes the latest cached state.
+        Returns None while any modal is open: the modal overlay obscures the
+        plots, so rendering would be wasted. Dirty flags are preserved and the
+        first poll after the modal closes pushes the latest cached state.
         """
         if self._current_modal is not None:
             return None
@@ -392,8 +503,6 @@ class PlotGridTabs:
             for grid_id, config in all_grids.items()
         )
         if composition != self._tab_composition:
-            self._tab_composition = composition
-
             # Capture the active tab by identity before the rebuild reorders
             # tabs.
             active_before = self._tabs.active
@@ -418,6 +527,11 @@ class PlotGridTabs:
                     )
                 # else: the active grid was removed; leave Bokeh's clamped
                 # value.
+
+            # Recorded only after the rebuild succeeded: an exception above
+            # leaves the memo stale, so the retried pass rebuilds the tabs
+            # instead of skipping a half-applied composition.
+            self._tab_composition = composition
 
         # A locally-created grid overrides the restore and focuses its tab.
         # Cleared unconditionally: if the grid vanished again before this poll,
@@ -458,6 +572,25 @@ class PlotGridTabs:
                     # Grid was re-enabled or is new — create fresh tab
                     self._add_grid_tab(grid_id, grid_config)
 
+    def _add_plot(
+        self, grid_id: GridId, geometry: CellGeometry, plot_config: PlotConfig
+    ) -> None:
+        """Commit a configured plot to the orchestrator, surfacing races."""
+        try:
+            cell_id = self._orchestrator.add_cell(grid_id, geometry)
+            self._orchestrator.add_layer(cell_id, plot_config)
+        except KeyError:
+            # The grid vanished while the modal was open (removed or
+            # replaced by another session).
+            show_error('Cannot add plot: the grid was removed.')
+        except ValueError:
+            # The position was free when the wizard opened and is occupied now.
+            # ``PlotGrid`` reads occupancy from topology, so it no longer offers
+            # a region topology already holds; what remains is two sessions in
+            # the wizard on the same free region at once, which no occupancy
+            # check can prevent -- whoever commits second lands here.
+            show_error('Cannot add plot: that position is already occupied.')
+
     def _on_plot_requested(self, grid_id: GridId, geometry: CellGeometry) -> None:
         """
         Handle plot request from PlotGrid.
@@ -472,18 +605,9 @@ class PlotGridTabs:
         geometry
             Cell geometry of the selected region.
         """
-
-        def on_success(plot_config: PlotConfig) -> None:
-            """Handle successful plot configuration."""
-            try:
-                cell_id = self._orchestrator.add_cell(grid_id, geometry)
-                self._orchestrator.add_layer(cell_id, plot_config)
-            except KeyError:
-                # The grid vanished while the modal was open (removed or
-                # replaced by another session).
-                show_error('Cannot add plot: the grid was removed.')
-
-        self._show_config_modal(on_success=on_success)
+        self._show_config_modal(
+            on_success=lambda cfg: self._add_plot(grid_id, geometry, cfg)
+        )
 
     def _on_reconfigure_layer(self, layer_id: LayerId) -> None:
         """
@@ -606,7 +730,7 @@ class PlotGridTabs:
             Whether ``current_title`` is user-defined; if not, the input starts
             empty so the placeholder hints at the derived fallback.
         """
-        modal = CellPropertiesModal(
+        self._current_modal = CellPropertiesModal(
             orchestrator=self._orchestrator,
             workflow_registry=self._workflow_registry,
             plotting_controller=self._plotting_controller,
@@ -617,58 +741,139 @@ class PlotGridTabs:
             on_close=self._cleanup_modal,
         )
         self._modal_container.clear()
-        self._modal_container.append(modal.modal)
-        modal.show()
+        self._modal_container.append(self._current_modal.modal)
+        self._current_modal.show()
 
     def _show_popout(self, cell_id: CellId) -> None:
-        """Open the cell's plot in a floating window (see ``plot_popout``)."""
+        """Open the cell's plot in a floating window (see ``plot_popout``).
+
+        Needs no repair pass of its own: the extra pane simply subscribes to
+        the layer pipes the cell already renders from, and the button that got
+        us here lives in a titlebar, so the cell is on the visible tab and
+        already live.
+        """
         cell_widget = self._cells.get(cell_id)
         if cell_widget is not None:
             self._popouts.open(cell_id, cell_widget)
 
-    @staticmethod
-    def _cell_signature(cell: PlotCell) -> tuple:
-        """Composition fingerprint of a cell: geometry, title, and layer ids.
+    def _on_popout_window_change(self, cell_id: CellId, status: str) -> None:
+        """Handle a pop-out window's own controls: close, minimize, restore.
 
-        Changes when a layer is added, removed, or reconfigured
-        (``update_layer_config`` mints a fresh ``LayerId``) or the user title
-        changes -- exactly the transitions that require rebuilding the cell
-        widget. Plotter swaps within a layer keep the same ``LayerId`` and are
-        picked up by the per-layer ``state.version`` path instead.
+        None of these move shared state, so no version-gated predicate can see
+        them; ask for a pass explicitly, exactly as a tab switch does. A
+        restored window that did not get one would sit frozen at whatever it
+        showed when it was minimized until the next unconditional full pass.
         """
-        return (
-            cell.geometry,
-            cell.user_title,
-            tuple(layer.layer_id for layer in cell.layers),
-        )
+        if status == 'closed':
+            self._close_popout(cell_id)
+        self._session_updater.request_tick(full=True)
 
-    def _build_cell(self, cell_id: CellId, cell: PlotCell) -> CellWidget:
+    def _close_popout(self, cell_id: CellId) -> None:
+        """Close a cell's pop-out window and re-render the cell behind it.
+
+        Removing the window runs Panel's pane cleanup, which unsubscribes
+        *every* plot on the cell's layer pipes -- the grid cell's included,
+        because HoloViews' owner filter is defeated upstream (holoviews#6988,
+        see :meth:`CellWidget.dispose`). Rebuilding the cell is what puts a
+        live plot back in the grid; there is no finer-grained sever available.
+
+        A cell with no widget, or one that left the topology, needs no repair:
+        the sweep disposes it on this same pass.
+        """
+        if self._popouts.status_of(cell_id) is None:
+            return
+        self._popouts.close(cell_id)
+        cell_widget = self._cells.get(cell_id)
+        if cell_widget is None:
+            return
+        grid_config = self._orchestrator.peek_grid(cell_widget.grid_id)
+        if grid_config is None or cell_id not in grid_config.cells:
+            return
+        self._insert_cell(cell_id, grid_config.cells[cell_id], cell_widget.grid_id)
+
+    def _insert_cell(self, cell_id: CellId, cell: PlotCell, grid_id: GridId) -> None:
+        """Build a cell's widget and place it in its grid."""
+        widget = self._build_cell(cell_id, cell, grid_id)
+        self._grid_widgets[grid_id].insert_widget_at(cell.geometry, widget.view)
+
+    def _build_cell(
+        self, cell_id: CellId, cell: PlotCell, grid_id: GridId
+    ) -> CellWidget:
         """Build (or rebuild) the session widget for a cell.
 
-        Preserves the per-layer toolbar visibility toggle across rebuilds and
-        disposes the previous widget's autoscale controller (breaking its
-        on_change reference cycle) once the replacement is in place.
+        Samples the build inputs immediately before constructing the widget
+        and records them on it: a lifecycle transition landing mid-build then
+        shows up as an input difference on the next pass instead of being
+        absorbed unrendered. Preserves the per-layer toolbar visibility toggle
+        across rebuilds and disposes the displaced widget (breaking its
+        autoscale reference cycle and severing its pipe subscriptions) before
+        the replacement renders — ordering #1224 relies on.
+
+        A pop-out window renders the displaced widget's pane, so it is rebuilt
+        on the new widget rather than left behind. Reopening rather than
+        closing keeps the window following its cell: a rebuild is triggered by
+        things the user did elsewhere (a rename, a job restart), and having the
+        floating view vanish in response would look like a crash. The status
+        carries over, so a minimized window stays minimized -- and its cell
+        asleep -- instead of popping open. Its position and size do not.
         """
         previous = self._cells.get(cell_id)
         toolbars_visible = previous.toolbars_shown if previous is not None else False
-        # A pop-out renders the old composition's DynamicMaps, which the rebuild
-        # replaces, so it has to be rebuilt too. Reopening rather than closing
-        # keeps the window following its cell: a rebuild is triggered by things
-        # the user did elsewhere (a rename, a job restart), and having the
-        # floating view vanish in response would look like a crash. Carrying
-        # the status over keeps a minimized window minimized -- and its cell
-        # asleep -- rather than popping every parked window open.
         popout_status = self._popouts.status_of(cell_id)
         self._popouts.close(cell_id)
         cell_widget = CellWidget(
-            cell_id, cell, self._cell_deps, toolbars_visible=toolbars_visible
+            cell_id,
+            cell,
+            self._cell_deps,
+            toolbars_visible=toolbars_visible,
+            grid_id=grid_id,
+            build_inputs=cell_build_inputs(cell, self._plot_data_service.get),
         )
         self._cells[cell_id] = cell_widget
         if previous is not None:
             previous.dispose()
+        # After the sever above, never before: the reopened window's pane
+        # subscribes to the same pipes the disposal clears.
         if popout_status is not None:
             self._popouts.open(cell_id, cell_widget, status=popout_status)
         return cell_widget
+
+    def _prebuild_revealed_grid(self) -> None:
+        """Populate a grid tab before its Bokeh models are materialized.
+
+        Hidden grids defer their cell builds (see
+        :meth:`_poll_for_plot_updates`), so at the moment a grid tab is
+        revealed its ``PlotGrid`` still holds nothing but the empty-cell
+        placeholders it was created with. Materializing that state and building
+        the cells afterwards costs a throwaway round of placeholder models —
+        constructed, serialized, laid out by the browser, then discarded — and
+        shows the user a grid of "Click to add plot" buttons over positions that
+        are in fact occupied.
+
+        Running the pass here instead puts the cells in the grid first, so the
+        materialization that follows is of the real content and the whole reveal
+        is a single patch.
+
+        The topology reconcile is skipped: it may append to or pop from the tabs
+        we are currently inside a watcher of, and the tab structure is by
+        definition current at this point. A topology change pending from another
+        session is picked up by the tick :meth:`_on_active_tab_changed`
+        requests.
+
+        Failures are logged and swallowed: this runs on the tab-switch path,
+        which nothing else guards, and letting the exception escape would abort
+        the materialization that follows and leave the tab blank for the rest of
+        the session. Swallowing it degrades to the deferred build -- the tick
+        :meth:`_on_active_tab_changed` requests runs the same pass, guarded by
+        :class:`SessionUpdater`.
+        """
+        grid_id = self._get_active_grid_id()
+        if grid_id is None or grid_id == self._last_active_grid_id:
+            return
+        try:
+            self._poll_for_plot_updates(reconcile_topology=False)
+        except Exception:
+            logger.exception("Failed to pre-build revealed grid %s", grid_id)
 
     def _on_active_tab_changed(self, event) -> None:
         # Full tick: a tab switch changes what is visible without changing any
@@ -678,33 +883,51 @@ class PlotGridTabs:
         # shown.
         self._session_updater.request_tick(full=True)
 
+    def _input_stamps(self) -> _PassStamps:
+        """The pass's input versions and view, as one comparable stamp.
+
+        The stamp components are exactly the values the pass records when it
+        completes — an input added to the pass must join :class:`_PassStamps`,
+        this read, and the end-of-pass recording, and nothing else.
+
+        Two pass inputs are deliberately *not* stamped, so a change in them
+        alone waits for the 5 s unconditional full pass: another session's
+        viewer tokens (``has_viewers`` — bounds how long a hidden cell's
+        pre-warm build lags the watcher's appearance) and a plotter gaining
+        cached state without a lifecycle transition (``has_plot`` for STOPPED
+        retained data — in practice revealed by the same pass that computes
+        it). Both are cheap no-ops when nothing else changed.
+        """
+        active_grid_id = self._get_active_grid_id()
+        return _PassStamps(
+            topology_version=self._orchestrator.topology_version(),
+            layer_version=self._plot_data_service.version,
+            active_grid_id=active_grid_id,
+            generations=self._live_generations(active_grid_id),
+        )
+
     def _live_generations(
-        self, active_grid_id: GridId | None, popout_cells: frozenset[CellId]
+        self, active_grid_id: GridId | None
     ) -> dict[GridId | None, int]:
-        """Frame generations of the grids this session is currently rendering.
+        """Frame generations of the grids this session currently renders.
 
-        The visible grid, plus the grid of every cell whose pop-out is on
-        screen: a pop-out floats above whatever tab is shown, so its cell goes
-        on rendering wherever it sits. Scoping generations per grid keeps data
-        arriving for a grid nobody here is looking at from waking this session.
-        With no pop-out showing this is the visible grid alone, leaving the gate
-        exactly as it was -- which is also what a minimized pop-out gets, since
-        ``live_cells`` reports what renders, not what exists.
-
-        Read by both :meth:`_has_pending_work` and the pass it gates, which
-        have to agree on what counts as live: a predicate blind to a grid the
-        pass would flush leaves that pop-out frozen until the next full pass.
+        The visible grid, plus the grid of every cell whose pop-out window is
+        on screen: a pop-out floats above whatever tab is shown, so its cell
+        goes on rendering wherever it sits. Scoping generations per grid keeps
+        data arriving for a grid nobody here is looking at from waking this
+        session; with no pop-out showing, this is the visible grid alone and
+        the gate is exactly what it was before pop-outs existed.
 
         The clock is per grid, so a pop-out buys wakes for every frame of the
         grid behind it -- committed whenever any session keeps any of that
-        grid's cells computing -- not just for its own cell. The extra passes
-        are cheap (nothing pending, nothing flushed) and bounded by the frame
-        rate; a per-cell clock is not worth carrying for that.
+        grid's cells computing -- not just for its own cell. Those extra
+        passes flush nothing and are bounded by the frame rate; a per-cell
+        clock is not worth carrying for that.
         """
         live_grids = {active_grid_id} | {
-            grid_id
-            for cell_id in popout_cells
-            if (grid_id := self._cell_grid.get(cell_id)) is not None
+            widget.grid_id
+            for cell_id in self._popouts.live_cells()
+            if (widget := self._cells.get(cell_id)) is not None
         }
         return {
             grid_id: self._orchestrator.frame_generation(grid_id)
@@ -714,64 +937,80 @@ class PlotGridTabs:
     def _has_pending_work(self) -> bool:
         """Gated-tick gate: True when the next pass would do visible work.
 
-        Mirrors the gates inside :meth:`_poll_for_plot_updates`: topology
-        reconcile, per-layer lifecycle change, a new frame for any grid this
-        session renders (see :meth:`_live_generations`), tab switch, and
-        freshness-pill stall aging. The stall term is time-based because a
-        stalled stream sends no data and thus no wakes; with healthy data the
-        per-frame flush resets the timer before the stall interval elapses and
-        the term stays False.
-
-        Closing, minimizing and restoring a pop-out change what this session
-        shows without moving any state this can read, so they request their own
-        tick instead (see ``PlotPopoutManager``), exactly as a tab switch does.
+        Work is pending exactly when the input stamps differ from those the
+        last completed pass recorded, plus one genuinely time-based term: a
+        stalled stream ages its freshness pill by wall clock, because the
+        absence of events sends no wakes. With healthy data the per-frame
+        flush resets the timer before the stall interval elapses and the term
+        stays False.
         """
-        if self._orchestrator.topology_version() != self._last_topology_version:
+        recorded = _PassStamps(
+            topology_version=self._last_topology_version,
+            layer_version=self._last_layer_version,
+            active_grid_id=self._last_active_grid_id,
+            generations=self._last_generations,
+        )
+        if self._input_stamps() != recorded:
             return True
-        if self._plot_data_service.version != self._last_layer_version:
-            return True
-        active_grid_id = self._get_active_grid_id()
-        if active_grid_id != self._last_active_grid_id:
-            return True
-        generations = self._live_generations(active_grid_id, self._popouts.live_cells())
-        if generations != self._last_generations:
-            return True
-        # Only the visible grid renders a freshness pill: a pop-out shows the
-        # plot alone, so a popped-out cell on a hidden tab has none to age.
         return (
             time.monotonic() - self._last_freshness_update
             >= _FRESHNESS_STALL_INTERVAL_S
-            and active_grid_id in self._cell_grid.values()
+            and any(
+                widget.grid_id == self._last_active_grid_id
+                for widget in self._cells.values()
+            )
         )
 
-    def _poll_for_plot_updates(self) -> None:
+    def _poll_for_plot_updates(self, *, reconcile_topology: bool = True) -> None:
         """
-        Reconcile topology and push plot-data updates for this session.
+        Reconcile this session's widgets with shared state and push plot data.
 
         Called from SessionUpdater's wake and housekeeping ticks (inside
-        hold+freeze), gated by :meth:`_has_pending_work`.
-        First, on a topology-version change, rebuilds grid tabs and refreshes
-        the manager. Then a single pass over all orchestrator cells:
-        - Detects cell composition changes via signatures (layer add/remove/
-          reconfigure, title) and per-layer ``state.version`` changes (plotter
-          swaps), rebuilding affected cells.
-        - Sweeps cells that vanished from topology, removing and disposing them.
-        - Creates/updates session layers and pushes data to the active tab.
+        hold+freeze), gated by :meth:`_has_pending_work`. After the tab
+        reconcile, the pass has a strict read → decide → act shape:
 
-        Only layers this session renders -- the visible grid tab, plus any
-        cell with a showing pop-out window -- call ``update_pipe()``, since
-        ``dynamic=True`` on Tabs means hidden tabs have no materialized Bokeh
-        models. Skipped layers keep their dirty flag set; a tab switch
-        requests its own tick (:meth:`_on_active_tab_changed`), which sends the
-        newly visible layers' latest cached state.
+        1. *Tokens*: hold viewer tokens on the layers this session renders --
+           the visible grid's, plus those of any cell held live by a pop-out
+           window -- and release the rest. The first token on a layer computes
+           its plot synchronously, so the plans computed next see fresh state
+           and a reveal renders on its own pass.
+        2. *Decide*: :func:`~..cell_plan.desired_cells` maps topology, layer
+           snapshots, and this session's view to a target plan per cell —
+           including whether this session should hold a built widget at all
+           (``materialize``) and the inputs it must be built from.
+        3. *Act*: cells that left the topology are disposed; materialized
+           plans whose inputs differ from what the applied widget records are
+           rebuilt. A cell that is desired but not materialized — a hidden
+           grid nobody watches — is *deferred*: any number of input changes
+           coalesce into zero builds (#1216), and the input comparison builds
+           it exactly once on reveal or when a watcher appears. A failed build
+           leaves the applied record unchanged, so the next tick retries.
+        4. *Flush*: pending plot data is pushed to the figures this session
+           renders, gated per grid on a new data-burst frame for *that* grid
+           (or a tab switch), so one burst repaints in one frame and a frame
+           for a pop-out's grid cannot push the visible grid's half-built
+           burst. Hidden tabs have no materialized Bokeh models
+           (``dynamic=True``); their presenters keep their dirty flag and the
+           tab switch's own tick sends the latest cached state. Freshness
+           pills age on flush, rebuild, or the wall-clock stall cadence, and
+           only for the visible grid -- a pop-out shows the plot alone, with
+           no pill to age.
 
-        A hidden grid therefore does no display work at all between switches --
-        not even on the periodic full pass. Its layers are deactivated
-        (``activate_layer(..., False)``), so unless another session is viewing
-        them they do not even compute, though their buffers keep filling; this
-        pass only keeps their structure reconciled. What the user sees on
-        returning to the tab is the latest state, computed on the switch, not a
-        five-second-old rendering.
+        A hidden grid with no pop-out over it therefore does no display work
+        at all between switches. Its layers are deactivated, so unless another
+        session is viewing them they do not even compute, though their buffers
+        keep filling. What the user sees on returning to the tab is the latest
+        state, computed on the switch, not a five-second-old rendering. That
+        reveal pass is :meth:`_prebuild_revealed_grid`, which runs ahead of the
+        tab's materialization so the deferred cells are in the grid before its
+        models are built.
+
+        Parameters
+        ----------
+        reconcile_topology:
+            Whether to rebuild the grid tabs on a topology-version change. False
+            from the reveal hook, which is already inside the tab machinery; the
+            version stays unrecorded so the next tick reconciles.
         """
         # Snapshot before reading any layer state, and record it only once the
         # pass completes (below). The ingestion thread bumps this counter while
@@ -784,37 +1023,45 @@ class PlotGridTabs:
 
         # Reconcile grid tabs only when the shared topology changed. Runs on
         # this session's thread and document lock, not pushed cross-session.
+        # The stamp is recorded only after the reconcile succeeded, like every
+        # other stamp: an exception leaves it unrecorded, so the next tick
+        # retries instead of silently dropping the topology change.
         version = self._orchestrator.topology_version()
-        if version != self._last_topology_version:
-            self._last_topology_version = version
+        if reconcile_topology and version != self._last_topology_version:
             self._reconcile_topology()
             self._grid_manager.on_topology_changed()
+            self._last_topology_version = version
 
-        cells_to_rebuild: dict[CellId, tuple[PlotCell, PlotGrid, GridId]] = {}
-        versions_to_apply: dict[LayerId, int] = {}
-        seen_layer_ids: set[LayerId] = set()
-        # Per-cell, per-layer time bounds for active-grid cells, driving the
-        # titlebar freshness pill (merged) and the per-layer time-range panes.
-        active_cell_bounds: dict[CellId, dict[LayerId, TimeBounds | None]] = {}
         active_grid_id = self._get_active_grid_id()
 
+        # Live view of the topology for the grids this session has widgets
+        # for; peeked, not copied — read-only by contract.
+        grids = {}
+        for grid_id in self._grid_widgets:
+            grid_config = self._orchestrator.peek_grid(grid_id)
+            if grid_config is not None:
+                grids[grid_id] = grid_config
+
+        # A disabled grid's layers lose their viewers below, so a pop-out over
+        # one of its cells would float on frozen with no cue. Close it first,
+        # before the live set is read; the cell widget itself is kept for a
+        # re-enable.
+        for grid_config in grids.values():
+            if not grid_config.enabled:
+                for cell_id in grid_config.cells:
+                    self._close_popout(cell_id)
+
         # Flush a grid's plot data only when a new data-burst frame is ready
-        # for that grid (so all its layers from one burst repaint in a single
-        # frame, never staggered across poll ticks) or when it just became
-        # the visible tab (newly shown cells must render their latest data
-        # without waiting for the next frame). Staleness is per grid, not one
-        # flag: a presenter holds pending data as soon as the ingestion
-        # thread builds its layer, before the grid's frame commits, so a
-        # shared flag would let a frame for a pop-out's grid push the visible
-        # grid's half-built burst (or vice versa). Scoping the generation per
-        # grid also means data arriving for another session's tab does not
-        # wake this session, and a cell whose pop-out is on screen counts as
-        # live wherever it sits (see :meth:`_live_generations`).
-        # The cheap per-tick work below -- version/lifecycle scan, layer
-        # activation, freshness-pill aging -- always runs so it stays
-        # responsive.
-        popout_cells = self._popouts.live_cells()
-        generations = self._live_generations(active_grid_id, popout_cells)
+        # for *that* grid (so all its layers from one burst repaint in a
+        # single frame, never staggered across poll ticks) or when it just
+        # became the visible tab (newly shown cells must render their latest
+        # data without waiting for the next frame). Staleness is per grid and
+        # not one flag: a presenter holds pending data as soon as the
+        # ingestion thread builds its layer, before the grid's frame commits,
+        # so a shared flag would let a frame for a pop-out's grid push the
+        # visible grid's half-built burst, or the reverse.
+        live_cells = self._popouts.live_cells()
+        generations = self._live_generations(active_grid_id)
         stale_grids = {
             grid_id
             for grid_id, generation in generations.items()
@@ -823,98 +1070,47 @@ class PlotGridTabs:
         if active_grid_id != self._last_active_grid_id:
             stale_grids.add(active_grid_id)
 
-        for grid_id, plot_grid in self._grid_widgets.items():
-            grid_config = self._orchestrator.peek_grid(grid_id)
-            if grid_config is None:
-                continue
-            if not grid_config.enabled:
-                # A disabled grid's layers lose their viewers (orphan sweep
-                # below), so a pop-out over one of its cells would float on,
-                # frozen, with no cue. Close it; the cell widget itself is
-                # kept for a re-enable.
-                for cell_id in grid_config.cells:
-                    self._popouts.close(cell_id)
-                continue
-
-            grid_is_visible = grid_id == active_grid_id
-
+        # 1 · Tokens. The 0→1 transition computes the layer synchronously so
+        # the plans below see fresh snapshots and cached state on this same
+        # pass. This is the one policy the pass applies before deciding —
+        # tokens follow what this session renders — and it must stay in step
+        # with desired_cells' rule; it cannot live there because the plans
+        # must be computed from post-activation snapshots. Disabled grids'
+        # layers release their token but keep their SessionLayer: the kept
+        # widgets stay bound to its pipe, so deleting it would leave a
+        # re-enabled grid rendering through dead components with no build
+        # input changing to force a rebuild.
+        seen_layer_ids: set[LayerId] = set()
+        for grid_id, grid_config in grids.items():
+            grid_visible = grid_config.enabled and grid_id == active_grid_id
             for cell_id, cell in grid_config.cells.items():
-                # A cell always has >=1 layer while it exists in topology (the
-                # last layer's removal removes the cell); skip the transient
-                # empty state defensively.
-                if not cell.layers:
-                    continue
-
-                # A popped-out cell keeps computing and repainting while the
-                # user works in another tab; the window shows it either way.
+                # A cell whose pop-out is showing keeps computing while the
+                # user works in another tab; the window renders it either way.
                 # Minimized, it shows nothing and sleeps with its grid.
-                is_active = grid_is_visible or cell_id in popout_cells
-                flush_cell = is_active and grid_id in stale_grids
-
-                # Detect composition changes (layer add/remove/reconfigure,
-                # title). Plotter swaps keep the layer ids and are handled by
-                # the per-layer version path below.
-                signature = self._cell_signature(cell)
-                if cell_id not in self._cells or signature != self._cell_signatures.get(
-                    cell_id
-                ):
-                    cells_to_rebuild[cell_id] = (cell, plot_grid, grid_id)
-
+                is_active = grid_visible or cell_id in live_cells
                 for layer in cell.layers:
                     layer_id = layer.layer_id
                     seen_layer_ids.add(layer_id)
-
-                    state = self._plot_data_service.get(layer_id)
-                    if state is None:
-                        # Should not happen: layers are registered before widgets
-                        # are notified. Skip this layer but log for debugging.
+                    if self._plot_data_service.get(layer_id) is None:
+                        # Should not happen: layers are registered before
+                        # widgets are notified. Skip but log for debugging.
                         logger.warning(
                             "Layer %s has no state in PlotDataService during poll",
                             layer_id,
                         )
                         continue
-
-                    if is_active:
-                        bounds = (
-                            state.plotter.time_bounds
-                            if state.plotter is not None
-                            else None
-                        )
-                        active_cell_bounds.setdefault(cell_id, {})[layer_id] = bounds
-
-                    # Get or create session layer for version tracking
                     session_layer = self._session_layers.get(layer_id)
                     if session_layer is None:
-                        session_layer = SessionLayer(
-                            layer_id=layer_id, last_seen_version=state.version
-                        )
+                        session_layer = SessionLayer(layer_id=layer_id)
                         self._session_layers[layer_id] = session_layer
-                        # New layer → rebuild cell
-                        cells_to_rebuild[cell_id] = (cell, plot_grid, grid_id)
-                    else:
-                        # Check for version changes (plotter changes increment version)
-                        if state.version != session_layer.last_seen_version:
-                            cells_to_rebuild[cell_id] = (cell, plot_grid, grid_id)
-                            versions_to_apply[layer_id] = state.version
-
-                    # Drive the layer compute gate: on 0→1 the orchestrator
-                    # flushes any pending build synchronously so the rebuild
-                    # below sees fresh has_cached_state on this same pass.
                     self._orchestrator.activate_layer(
                         layer_id, session_layer, is_active
                     )
 
-                    # Push pending data to the browser. Runs after activate_layer
-                    # so a tab-switch 0→1 build is sent on this same tick. Gated
-                    # on the grid's staleness to coalesce a burst's layers into
-                    # one frame; no-op anyway unless the presenter has a pending
-                    # update.
-                    if flush_cell:
-                        session_layer.update_pipe()
-
-        # Clean up orphaned session layers (removed from orchestrator). Per-cell
-        # widget state (freshness/time panes, autoscale) is swept on cell rebuild
-        # or removal, so only the global layer registry needs explicit cleanup.
+        # Clean up orphaned session layers (removed from orchestrator).
+        # Per-cell widget state (freshness/time panes, autoscale) is swept on
+        # cell rebuild or removal, so only the global layer registry needs
+        # explicit cleanup.
         for layer_id in list(self._session_layers.keys()):
             if layer_id not in seen_layer_ids:
                 self._orchestrator.activate_layer(
@@ -922,50 +1118,80 @@ class PlotGridTabs:
                 )
                 del self._session_layers[layer_id]
 
-        # Sweep cells that vanished from topology (cell or grid removed). A cell
-        # on a merely disabled grid still exists in topology and is kept so its
-        # widget (and state) survives a re-enable, even though the poll loop
-        # above skips disabled grids. Remove the widget from its grid (if the
-        # grid still exists) and dispose it.
+        # 2 · Decide. Runs after the token maintenance above so the viewed
+        # set no longer counts this session's own released tokens; read once
+        # rather than lock-per-layer.
+        viewed = self._plot_data_service.viewed_layers()
+        plans = desired_cells(
+            grids,
+            self._plot_data_service.get,
+            SessionView(active_grid_id=active_grid_id, live_cell_ids=live_cells),
+            viewed.__contains__,
+        )
+
+        # 3 · Act. First sweep cells that vanished from topology (cell or grid
+        # removed). Membership is checked against the orchestrator directly,
+        # not the ``grids`` view above, so the sweep stays correct even if a
+        # reentrant tick observes ``_grid_widgets`` mid-rebuild. A cell on a
+        # merely disabled grid still exists in topology and is kept so its
+        # widget (and state) survives a re-enable. Remove the widget from its
+        # grid (if the grid still exists) and dispose it.
         for cell_id in list(self._cells):
-            grid_id = self._cell_grid.get(cell_id)
-            grid_config = (
-                self._orchestrator.peek_grid(grid_id) if grid_id is not None else None
-            )
+            cell_widget = self._cells[cell_id]
+            grid_config = self._orchestrator.peek_grid(cell_widget.grid_id)
             if grid_config is not None and cell_id in grid_config.cells:
                 continue
-            cell_widget = self._cells.pop(cell_id)
-            self._cell_grid.pop(cell_id, None)
-            self._cell_signatures.pop(cell_id, None)
+            del self._cells[cell_id]
+            # The widget is disposed below, which severs the window's pane
+            # along with the grid cell's; nothing is left to repair.
             self._popouts.close(cell_id)
-            plot_grid = self._grid_widgets.get(grid_id) if grid_id is not None else None
+            plot_grid = self._grid_widgets.get(cell_widget.grid_id)
             if plot_grid is not None:
                 plot_grid.remove_widget_at(cell_widget.geometry)
             cell_widget.dispose()
 
-        # Rebuild affected cells.
-        # Defer insertion to allow Bokeh to process any pending model updates
-        # from pipe.send() calls above. Without deferral, widget removal can
-        # race with DynamicMap updates, causing KeyError when Panel tries to
-        # access removed models. The guard skips the insert if the cell was
-        # removed before the deferred callback runs.
-        for cell_id, (cell, plot_grid, grid_id) in cells_to_rebuild.items():
-            view = self._build_cell(cell_id, cell).view
-            pn.state.execute(
-                lambda g=cell.geometry, w=view, pg=plot_grid, cid=cell_id: (
-                    pg.insert_widget_at(g, w) if cid in self._cells else None
+        # Then build the plans whose inputs differ from what the applied
+        # widget was built from. Built and inserted synchronously: the pass
+        # holds the document lock, so a pn.state.execute here would run
+        # inline anyway rather than defer. The build samples its inputs again
+        # (see _build_cell), so a transition landing between plan and build is
+        # recorded honestly. On a build failure the applied record is
+        # unchanged and the armed gate retries next tick.
+        rebuilt = False
+        for cell_id, plan in plans.items():
+            applied = self._cells.get(cell_id)
+            if applied is not None and applied.build_inputs == plan.inputs:
+                continue
+            self._insert_cell(cell_id, grids[plan.grid_id].cells[cell_id], plan.grid_id)
+            rebuilt = True
+
+        # 4 · Flush pending data to the figures this session renders and
+        # sample the per-layer time bounds driving the titlebar freshness pill
+        # (merged) and the per-layer time-range panes. Bounds are read from
+        # the plan snapshots, i.e. after activation: the 0→1 transition is
+        # what computes a revealed layer's first frame, and with it the
+        # bounds. Only the visible grid's cells show those panes -- a pop-out
+        # renders the plot alone.
+        active_cell_bounds: dict[CellId, dict[LayerId, TimeBounds | None]] = {}
+        for cell_id, plan in plans.items():
+            on_active_grid = plan.grid_id == active_grid_id
+            if not (on_active_grid or cell_id in live_cells):
+                continue
+            flush = plan.grid_id in stale_grids
+            per_layer: dict[LayerId, TimeBounds | None] = {}
+            for layer_input in plan.inputs.layers:
+                snapshot = layer_input.snapshot
+                per_layer[layer_input.layer_id] = (
+                    snapshot.plotter.time_bounds
+                    if snapshot is not None and snapshot.plotter is not None
+                    else None
                 )
-            )
-            # Record signature/grid and bump versions only after a successful
-            # rebuild — if _build_cell raised, the stale records make the next
-            # poll retry.
-            self._cell_signatures[cell_id] = self._cell_signature(cell)
-            self._cell_grid[cell_id] = grid_id
-            for layer in cell.layers:
-                if layer.layer_id in versions_to_apply:
-                    sl = self._session_layers.get(layer.layer_id)
-                    if sl is not None:
-                        sl.last_seen_version = versions_to_apply[layer.layer_id]
+                if flush:
+                    session_layer = self._session_layers.get(layer_input.layer_id)
+                    if session_layer is not None:
+                        session_layer.update_pipe()
+            if on_active_grid:
+                active_cell_bounds[cell_id] = per_layer
 
         # Refresh the freshness/lag indicator for active-grid cells. Runs after
         # rebuilds so cells recreated this poll update their fresh pane handle.
@@ -974,29 +1200,39 @@ class PlotGridTabs:
         # cadence -- ticking it every poll just animates aging with no new info.
         # The per-layer time/lag row only changes on a new frame, so it tracks
         # the data flush too.
+        #
+        # A rebuild is due as well: a rebuilt cell carries brand-new, blank
+        # panes, so without this it would show no age and no time range until
+        # the next frame or stall tick, however good the data behind it is.
+        # Frames for a pop-out's grid do not count: they reach no pill, and
+        # letting them reset the timer would keep deferring the aging of a
+        # visible grid whose own stream stalled.
         now_mono = time.monotonic()
-        stalled = now_mono - self._last_freshness_update >= _FRESHNESS_STALL_INTERVAL_S
-        # The stall timer serves the visible grid's pills, so only a flush
-        # that reached them resets it: frames for a pop-out's grid must not
-        # keep deferring the aging of a visible grid whose own stream stalled.
-        if active_grid_id in stale_grids or stalled:
+        stalled = now_mono - self._last_freshness_update
+        active_flushed = active_grid_id in stale_grids
+        freshness_due = (
+            active_flushed or rebuilt or stalled >= _FRESHNESS_STALL_INTERVAL_S
+        )
+        # Only start the stall interval over when there was something to update:
+        # a pass over a hidden or empty grid would otherwise consume the very
+        # interval a rebuild landing just after it depends on.
+        if freshness_due and active_cell_bounds:
             self._last_freshness_update = now_mono
         for cell_id, per_layer in active_cell_bounds.items():
             cell_widget = self._cells.get(cell_id)
             if cell_widget is None:
                 continue
-            cell_flushed = self._cell_grid.get(cell_id) in stale_grids
-            if cell_flushed or stalled:
+            if freshness_due:
                 cell_widget.update_freshness(per_layer)
-            if cell_flushed:
+            if active_flushed or rebuilt:
                 for layer_id, bounds in per_layer.items():
                     cell_widget.update_layer_time(layer_id, bounds)
 
-        # Record gate state for the next poll. Every stale grid was flushed in
-        # the pass above, so the generations read this pass can be recorded
-        # wholesale: a grid that was not stale records the value it already
-        # had. (An exception escaping the pass skips this, leaving the gate
-        # armed so the next tick retries.)
+        # Record gate state for the next poll. Every stale grid was flushed
+        # above and every other one records the generation it already had, so
+        # the read can be recorded wholesale -- a tab change piggybacking on an
+        # unchanged generation cannot suppress the next genuine frame. (An
+        # exception escaping the pass skips this, leaving the gate armed.)
         self._last_generations = generations
         self._last_active_grid_id = active_grid_id
         self._last_layer_version = layer_version
@@ -1021,9 +1257,9 @@ class PlotGridTabs:
     def dispose_widgets(self) -> None:
         """Dispose session-bound widgets (tier 1).
 
-        Disposes cell widgets and any open pop-out windows, breaking Bokeh-tool
-        reference cycles. Mutates Bokeh document state, so it must run on the
-        session's IOLoop. Idempotent.
+        Disposes cell widgets and closes any open pop-out windows, breaking
+        Bokeh-tool reference cycles. Mutates Bokeh document state, so it must
+        run on the session's IOLoop. Idempotent.
         """
         self._popouts.close_all()
         for cell_widget in self._cells.values():

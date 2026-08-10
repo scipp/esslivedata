@@ -35,8 +35,10 @@ from ess.livedata.dashboard.plot_params import (
     PlotAspectType,
     PlotParams1d,
     PlotParams2d,
+    PlotParams3d,
     StretchMode,
 )
+from ess.livedata.dashboard.slicer_plotter import SlicerPlotter
 
 hv.extension('bokeh')
 
@@ -84,6 +86,18 @@ def _data_2d(n: int) -> dict:
     return dict.fromkeys(_keys(n), da)
 
 
+def _data_3d() -> dict:
+    da = sc.DataArray(
+        sc.array(dims=['z', 'y', 'x'], values=np.arange(24.0).reshape(2, 3, 4)),
+        coords={
+            'x': sc.arange('x', 4, dtype='float64'),
+            'y': sc.arange('y', 3, dtype='float64'),
+            'z': sc.arange('z', 2, dtype='float64'),
+        },
+    )
+    return dict.fromkeys(_keys(1), da)
+
+
 # Every aspect type, and both stretch modes for the constrained ones, since the
 # stretch mode decides which axis the pane and the figure must agree on.
 _ASPECTS = [
@@ -128,5 +142,58 @@ def test_every_figure_adopts_the_panes_sizing_mode(
     figures = _present_figures(plotter_cls.from_params(params), make_data(n_sources))
 
     assert len(figures) == (n_sources if combine == CombineMode.layout else 1)
+    for fig in figures:
+        assert fig.sizing_mode == pane_sizing_mode(aspect)
+
+
+@pytest.mark.parametrize(
+    'aspect', _ASPECTS, ids=lambda a: f'{a.aspect_type.name}-{a.stretch_mode.name}'
+)
+def test_slicer_figure_adopts_the_panes_sizing_mode(aspect):
+    """The slicer styles each rendered slice instead of its DynamicMap.
+
+    It has to: element options on a kdim-carrying DynamicMap wrap it in an
+    operation that the grid cell's own ``.opts()`` call then cannot see through.
+    That makes the sizing easy to drop on the render path, so pin it here. The
+    slicer takes a single source and produces a single figure, hence no
+    combine-mode or source-count axis.
+    """
+    figures = _present_figures(
+        SlicerPlotter.from_params(PlotParams3d(plot_aspect=aspect)), _data_3d()
+    )
+
+    assert len(figures) == 1
+    assert figures[0].sizing_mode == pane_sizing_mode(aspect)
+
+
+@pytest.mark.parametrize(
+    ('plotter_cls', 'params_cls', 'make_data'),
+    [
+        (plots.LinePlotter, PlotParams1d, _data_1d),
+        (plots.ImagePlotter, PlotParams2d, _data_2d),
+    ],
+    ids=['line', 'image'],
+)
+@pytest.mark.parametrize('combine', [CombineMode.overlay, CombineMode.layout])
+def test_computed_frames_are_styled_before_they_reach_a_session(
+    plotter_cls, params_cls, make_data, combine
+):
+    """Styling must ride on the frame, not on the session's DynamicMap.
+
+    ``DynamicMap.opts`` is not a one-off: it wraps the map in a ``Dynamic``
+    operation that re-applies the options to every frame, in every session, on
+    the shared IOLoop. Rendering the cached frame on its own therefore has to
+    show the finished styling.
+    """
+    aspect = PlotAspect(
+        aspect_type=PlotAspectType.square, stretch_mode=StretchMode.width
+    )
+    params = params_cls(layout=LayoutParams(combine_mode=combine), plot_aspect=aspect)
+    plotter = plotter_cls.from_params(params)
+    plotter.compute({'primary': make_data(2)})
+
+    figures = _figures(plotter.get_cached_state())
+
+    assert figures
     for fig in figures:
         assert fig.sizing_mode == pane_sizing_mode(aspect)

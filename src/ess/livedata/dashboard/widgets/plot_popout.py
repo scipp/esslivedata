@@ -9,8 +9,15 @@ plot, its toolbars, and its place in the grid. The window renders the cell's
 own composition a second time rather than composing its own, so the two views
 repaint from one layer ``Pipe`` — the pop-out is live, not a snapshot — and
 share one autoscale controller, so turning a toggle off in the window turns it
-off in the cell. The cell widget owns that composition and disposes it; a
-window only ever borrows it.
+off in the cell. The ``CellWidget`` owns both panes and severs both on
+disposal; a window only ever borrows one.
+
+That shared ownership is not a nicety: tearing down *any* plot on a layer's
+pipe severs *every* plot on it (holoviews#6988, see ``CellWidget.dispose``).
+Closing a window therefore stops the grid cell updating too, which is why
+``PlotGridTabs`` rebuilds the cell behind a window it closes — see
+``PlotGridTabs._close_popout``. Opening one needs no such repair: an extra
+subscriber costs the existing ones nothing.
 
 Deliberately a ``FloatPanel`` and not a ``pn.Modal``: a modal would block the
 grid underneath, and several pop-outs can usefully be open at once (comparing
@@ -45,6 +52,11 @@ to its owner, which requests a tick -- the same treatment a tab switch gets.
 The data path needs no such help: a new frame for the grid behind a live
 pop-out is shared state, and ``PlotGridTabs`` widens its predicate to see it.
 
+This module is deliberately passive: it builds, registers and tears down
+windows, and reports what they show. Deciding which cells that keeps live, and
+repairing the cell behind a closed window, belongs to ``PlotGridTabs`` and
+``cell_plan.desired_cells``.
+
 Pop-outs are per session and non-persistent: they are not part of the plot
 topology, so closing the browser tab discards them.
 """
@@ -58,7 +70,7 @@ import panel as pn
 from panel.reactive import ReactiveHTML
 
 from ..plot_orchestrator import CellId
-from .cell import CellWidget, ComposedPlot
+from .cell import CellWidget
 from .styles import Colors
 
 # Initial window size. Generous, but small enough that the grid stays partly
@@ -163,7 +175,7 @@ _VISIBLE_STATUSES = frozenset({'normalized', 'maximized'})
 
 def _build_window(
     title: str,
-    composed: ComposedPlot,
+    pane: pn.viewable.Viewable,
     css_classes: list[str],
     cascade: int,
     status: str,
@@ -174,8 +186,8 @@ def _build_window(
     ----------
     title:
         The cell's title, shown in the window header.
-    composed:
-        The cell's composed plot, rendered here a second time.
+    pane:
+        A second view of the cell's plot, built (and owned) by its widget.
     css_classes:
         Automation hooks for the window element.
     cascade:
@@ -188,7 +200,7 @@ def _build_window(
     offset = _CASCADE_STEP * (cascade % _CASCADE_WRAP)
     return pn.layout.FloatPanel(
         pn.Column(
-            composed.build_pane(),
+            pane,
             # Stretches into the height ``_FILL_WINDOW`` gives the wrappers, so
             # the plot tracks the window at every size. The wrapper is also what
             # gives the relocated content a layout root of its own: a bare pane
@@ -229,16 +241,17 @@ class PlotPopoutManager:
 
     Parameters
     ----------
-    on_visibility_change:
-        Called when the user changes what a window shows: closing, minimizing
-        or restoring it. None of those moves shared state, so no version-gated
-        predicate can see them and the session has to be told to run a pass
-        (the same treatment a tab switch gets). Opening needs no such call:
-        the pop-out button lives in a cell titlebar, so the cell is on the
-        visible tab and already live and rendering.
+    on_window_change:
+        Called with ``(cell_id, status)`` when the user works a window's own
+        controls: closing, minimizing or restoring it. None of those moves
+        shared state, so no version-gated predicate can see them and the owner
+        has to run a pass of its own (the same treatment a tab switch gets);
+        a close additionally needs the cell behind it rebuilt. Opening reports
+        nothing: the pop-out button lives in a cell titlebar, so the cell is on
+        the visible tab and already live and rendering.
     """
 
-    def __init__(self, on_visibility_change: Callable[[], None]) -> None:
+    def __init__(self, on_window_change: Callable[[CellId, str], None]) -> None:
         # Zero-height so the container does not compete for vertical space;
         # the windows themselves render as free-floating overlays. The fitter
         # is invisible and only installs document-level handlers, so it costs
@@ -252,7 +265,7 @@ class PlotPopoutManager:
         # open C lands C exactly on B), hiding the covered window's close
         # button -- the very thing the cascade offset exists to avoid.
         self._cascade = 0
-        self._on_visibility_change = on_visibility_change
+        self._on_window_change = on_window_change
 
     @property
     def container(self) -> pn.Column:
@@ -303,21 +316,20 @@ class PlotPopoutManager:
         cell_id:
             The cell to open a window for.
         cell_widget:
-            The cell's widget, whose composition the window renders.
+            The cell's widget, which builds (and owns) the pane rendered here.
         status:
             jsPanel status to open with; a cell rebuild passes the old
             window's status so a minimized window stays minimized (and its
             cell asleep). The window's position and size are not carried
             over. Defaults to a normal window.
         """
-        composed = cell_widget.composed
-        if composed is None:
+        if not cell_widget.has_plot:
             return
         self.close(cell_id)
         geometry = cell_widget.geometry
         window = _build_window(
             cell_widget.title,
-            composed,
+            cell_widget.build_plot_pane(),
             # Per-cell automation hook, slugged by grid position like the cell
             # titlebar's — a CellId is a UUID, useless as a stable selector.
             css_classes=['lt-popout', f'lt-popout-r{geometry.row}c{geometry.col}'],
@@ -333,8 +345,11 @@ class PlotPopoutManager:
         """Close the pop-out for a cell, if one is open.
 
         Popping the registry entry first makes the re-entrant call from the
-        status watcher (closing the window round-trips a status change) a
-        no-op. The cell's composed plot is left alone: the cell widget owns it.
+        owner's close handler a no-op. The window's pane is left to the cell
+        widget, which owns and severs it -- but removing the window runs
+        Panel's own pane cleanup, which severs the cell's plots along with it
+        (see the module docstring), so every caller must be prepared to
+        rebuild the cell.
         """
         window = self._open.pop(cell_id, None)
         if window is None:
@@ -348,7 +363,7 @@ class PlotPopoutManager:
             self.close(cell_id)
 
     def _on_status(self, cell_id: CellId, status: str) -> None:
-        """React to the window's own controls: close, minimize, restore.
+        """Report the window's own controls: close, minimize, restore.
 
         ``FloatPanel.status`` round-trips from jsPanel, so the window's own
         buttons land here. A status this manager assigned itself does not:
@@ -358,12 +373,10 @@ class PlotPopoutManager:
         the rebuilding.
 
         Minimize and restore move nothing a predicate could watch -- only what
-        :meth:`live_cells` reports -- so they must ask for the pass that acts
+        :meth:`live_cells` reports -- so the owner must run the pass that acts
         on them, or a restored window would sit frozen at whatever it showed
         when it was minimized until the next full pass.
         """
         if cell_id not in self._open:
             return
-        if status == 'closed':
-            self.close(cell_id)
-        self._on_visibility_change()
+        self._on_window_change(cell_id, status)

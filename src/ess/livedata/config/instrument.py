@@ -25,6 +25,7 @@ from .workflow_spec import (
     DETECTORS,
     REDUCTION,
     AuxSources,
+    NoParams,
     WorkflowGroup,
     WorkflowId,
     WorkflowSpec,
@@ -210,6 +211,22 @@ class Instrument:
                 f"ContextBinding references unknown stream "
                 f"{binding.stream_name!r}; declared streams: "
                 f"{sorted(self.streams)}"
+            )
+        owner = next(
+            (
+                name
+                for name, device in self.devices.items()
+                if binding.stream_name in device.substream_names
+            ),
+            None,
+        )
+        if owner is not None:
+            raise ValueError(
+                f"ContextBinding references device substream "
+                f"{binding.stream_name!r}; bind the device {owner!r} instead. "
+                "DeviceSynthesizer merges the substreams into the device stream "
+                "and suppresses them, so a substream binding never becomes "
+                "available and its jobs stay gated forever."
             )
         if _is_chain_patch(binding):
             self.chain_patch_path(binding)
@@ -584,7 +601,7 @@ class Instrument:
         title: str,
         description: str = '',
         source_names: Sequence[str] | None = None,
-        params: type[Any] | None = None,
+        params: type[pydantic.BaseModel] = NoParams,
         aux_sources: AuxSources | None = None,
         outputs: type[Any],
         device_outputs: dict[str, str] | None = None,
@@ -619,8 +636,9 @@ class Instrument:
             Optional list of source names that the workflow can handle. This is used to
             create a workflow specification.
         params:
-            Optional Pydantic model class defining workflow parameters. Must be
-            explicit (not inferred from factory).
+            Pydantic model class defining workflow parameters. Must be explicit
+            (not inferred from factory). Defaults to :class:`NoParams` for
+            workflows that take no configuration.
         aux_sources:
             Optional declarative auxiliary source definitions. If provided,
             this will be used for validation and UI generation. The auxiliary source
@@ -748,11 +766,8 @@ class Instrument:
         )
 
         for reg in list(self.workflow_factory.registrations()):
-            params = reg.spec.params
-            if (
-                reg.factory is None
-                and params is not None
-                and issubclass(params, MonitorDataParamsBase)
+            if reg.factory is None and issubclass(
+                reg.spec.params, MonitorDataParamsBase
             ):
                 self.workflow_factory.attach_factory(reg.spec.get_id())(
                     create_monitor_workflow_factory

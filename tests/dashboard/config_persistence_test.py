@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: BSD-3-Clause
 # Copyright (c) 2025 Scipp contributors (https://github.com/scipp)
-"""Integration tests for workflow configuration persistence via config store."""
+"""Tests for workflow configuration persistence via config store."""
 
 from collections.abc import Generator
 

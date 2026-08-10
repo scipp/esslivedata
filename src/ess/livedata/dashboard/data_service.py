@@ -6,7 +6,7 @@ import threading
 from abc import ABC, abstractmethod
 from collections.abc import Hashable, Iterable, Iterator, Mapping, MutableMapping
 from contextlib import contextmanager
-from typing import Any, Generic, TypeVar
+from typing import Any
 
 import structlog
 
@@ -15,11 +15,8 @@ from .temporal_buffer_manager import TemporalBufferManager
 
 logger = structlog.get_logger(__name__)
 
-K = TypeVar('K', bound=Hashable)
-V = TypeVar('V')
 
-
-class DataServiceSubscriber(ABC, Generic[K]):
+class DataServiceSubscriber[K: Hashable](ABC):
     """Base class for data service subscribers with cached keys and extractors.
 
     Notifications carry no data: :py:meth:`on_updated` only reports which keys
@@ -67,7 +64,7 @@ class DataServiceSubscriber(ABC, Generic[K]):
         """
 
 
-class DataService(MutableMapping[K, V]):
+class DataService[K: Hashable, V](MutableMapping[K, V]):
     """
     A service for managing and retrieving data and derived data.
 

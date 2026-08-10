@@ -199,6 +199,7 @@ class GridRow:
         download_button = create_download_button(
             filename=filename,
             callback=get_yaml_content,
+            css_classes=context,
         )
 
         # Remove button

@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: BSD-3-Clause
 # Copyright (c) 2025 Scipp contributors (https://github.com/scipp)
 import bisect
-from datetime import timezone
+from datetime import UTC
 
 import pytest
 
@@ -182,8 +182,8 @@ class TestTimestampFactory:
 
     def test_to_datetime_with_tz(self):
         ts = Timestamp.from_ns(1_700_000_000_000_000_000)
-        dt = ts.to_datetime(tz=timezone.utc)
-        assert dt.tzinfo == timezone.utc
+        dt = ts.to_datetime(tz=UTC)
+        assert dt.tzinfo == UTC
 
     def test_to_scipp(self):
         ts = Timestamp.from_ns(42)

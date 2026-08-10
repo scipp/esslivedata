@@ -9,7 +9,9 @@ from urllib.request import urlopen
 
 import holoviews as hv
 import panel as pn
+from holoviews.core.options import Compositor
 from holoviews.plotting.bokeh.plot import LayoutPlot
+from holoviews.plotting.util import apply_nodata, process_cmap
 from panel.io.resources import CDN_DIST
 from panel.theme.material import Material
 
@@ -53,6 +55,32 @@ pn.extension(
     'holoviews', 'modal', 'floatpanel', notifications=True, template='material'
 )
 hv.extension('bokeh')
+
+# HoloViews registers `apply_nodata` as a data-mode compositor for Image, Raster,
+# QuadMesh and ImageStack, implementing the `nodata` plot option: an integer
+# sentinel value is rewritten to NaN, which draws transparent. It cannot fire here
+# -- no plotter offers the option, and the 2D path converts to float64, which the
+# operation passes through -- but the machinery around it runs on every frame of
+# every 2D layer regardless, wrapping the element in overlays, matching patterns
+# and cloning the result back in, ~1.4 ms per layer per update.
+#
+# `Compositor.definitions` is global and matched per element type, so there is no
+# re-enabling this for one plot: masking values for display is ours to do in
+# `Plotter.compute` (see `Plotter._prepare_2d_image_data`), where it costs one
+# pass per frame rather than one per frame *per session*.
+Compositor.definitions = [
+    definition
+    for definition in Compositor.definitions
+    if definition.operation is not apply_nodata
+]
+
+# Resolving a colormap imports colorcet, which registers hundreds of colormaps with
+# matplotlib. Left lazy, that lands on a session's IOLoop during its first plot render
+# and blocks every request behind it. Pay it here, at startup, where blocking is free.
+# Costs ~70 ms; with matplotlib < 3.11.2 it is ~2.8 s, since each registration paid
+# difflib "did you mean" generation (matplotlib#32172). The warmup is worth keeping
+# independent of that fix -- remove it only if first-render profiling says otherwise.
+process_cmap('viridis')
 
 # Remove Bokeh logo from Layout toolbars by patching LayoutPlot.initialize_plot
 

@@ -40,6 +40,9 @@ plot_grids:
             aggregation: auto
           rate:
             normalize_to_rate: false
+    # Image with the ROI overlay stack the UI builds on top of it (readback
+    # before request, as OVERLAY_PATTERNS orders them). Drawing a rectangle
+    # here exercises the request/readback loopback end to end.
     - geometry:
         row: 0
         col: 1
@@ -55,7 +58,8 @@ plot_grids:
         plot_name: image
         params:
           layout:
-            combine_mode: layout
+            # Overlay mode: a layout-mode plot may not share its cell.
+            combine_mode: overlay
             layout_columns: 2
           plot_aspect:
             aspect_type: Square
@@ -76,6 +80,22 @@ plot_grids:
             aggregation: auto
           rate:
             normalize_to_rate: false
+      - data_sources:
+          primary:
+            workflow_id: dummy/panel_0_xy/1
+            source_names:
+            - panel_0
+            view_name: roi_rectangle
+        plot_name: rectangles_readback
+        params: {}
+      - data_sources:
+          primary:
+            workflow_id: dummy/panel_0_xy/1
+            source_names:
+            - panel_0
+            view_name: roi_rectangle
+        plot_name: rectangles_request
+        params: {}
     # Two layers in one cell, so the titlebar gear is a layer-picker menu rather
     # than a direct button. Omitted params take their model defaults.
     - geometry:
@@ -99,4 +119,55 @@ plot_grids:
             - monitor2
             view_name: histogram
         plot_name: lines
+        params: {}
+  # A second grid, so the fixture covers multi-grid rendering and the tab
+  # ordering controls. Cells here cover the plotter families the detector grid
+  # does not reach; a grid's rows share its height, so they get their own tab
+  # rather than squeezing the detector images.
+  - title: Diagnostics
+    nrows: 2
+    ncols: 2
+    cells:
+    - geometry:
+        row: 0
+        col: 0
+        row_span: 1
+        col_span: 1
+      layers:
+      - data_sources:
+          primary:
+            workflow_id: dummy/timeseries_data/1
+            source_names:
+            - motion1
+            - motion2
+            view_name: delta
+        plot_name: timeseries
+        params: {}
+    - geometry:
+        row: 0
+        col: 1
+        row_span: 1
+        col_span: 1
+      layers:
+      - data_sources:
+          primary:
+            workflow_id: dummy/total_counts/1
+            source_names:
+            - panel_0
+            view_name: total_counts
+        plot_name: table
+        params: {}
+    - geometry:
+        row: 1
+        col: 0
+        row_span: 1
+        col_span: 2
+      layers:
+      - data_sources:
+          primary:
+            workflow_id: dummy/panel_0_layers/1
+            source_names:
+            - panel_0
+            view_name: image
+        plot_name: slicer
         params: {}

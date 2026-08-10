@@ -116,6 +116,8 @@ class CellAutoscaleController:
         # what keeps their toggle states in step.
         self._toggles: dict[Axis, Any] = {}
         self._fit_tool: Any | None = None
+        # Figures this cell renders into, as seen by the hook. Only the Fit
+        # handler needs it -- installation keys on the toolbar itself.
         self._figures: WeakSet = WeakSet()
         # Last target written per axis. Read back on subsequent off-state
         # renders so the c-axis freeze has a stable value to apply.
@@ -196,27 +198,37 @@ class CellAutoscaleController:
         self._fit_pending.clear()
 
     def _install_tools(self, plot: Any) -> None:
-        """Install this cell's ``CustomAction`` tools on a figure's toolbar.
+        """Ensure this cell's ``CustomAction`` tools are on the figure's toolbar.
 
-        Idempotent per *figure*, mirroring the pattern in
-        ``flatten_plotter._make_hover_hook``: a cell rendered into both its
-        grid cell and a pop-out window needs buttons on both toolbars. The
-        tool models themselves are created once and shared, so the two
-        toolbars drive -- and display -- one toggle state.
+        Keyed on the toolbar rather than on a controller-wide latch: a cell's
+        hook is attached to the session's ``DynamicMap``, which HoloViews can
+        render into more than one Bokeh figure (a pop-out window showing the
+        cell a second time, a rebuilt cell whose previous pane is still in the
+        document, a kdim/Layout figure swap). A one-shot latch let whichever
+        figure rendered first consume the installation and left the figure the
+        user sees with no toggles at all.
+
+        The tool models are created once and shared across figures, so the
+        toggle state a user set survives a figure swap -- and a pop-out's
+        toolbar drives, and displays, the same state as its grid cell's.
         """
         figure = getattr(plot, 'state', None)
-        if figure is None or figure in self._figures:
-            return
         toolbar = getattr(figure, 'toolbar', None)
         if toolbar is None:
-            # Don't record the figure -- a subsequent render with a real
-            # toolbar should retry rather than silently lose the toggles.
             logger.warning(
                 "No Bokeh toolbar found for cell autoscale controller; "
                 "toggles will be unavailable until the next render."
             )
             return
-        self._create_tools()
+        # Recorded even when the tools are already there: this is the only
+        # place the controller learns which figures a Fit click has to reach.
+        self._figures.add(figure)
+        if self._fit_tool is not None and any(
+            tool is self._fit_tool for tool in toolbar.tools
+        ):
+            return
+        if self._fit_tool is None:
+            self._create_tools()
         # Tools are added via assignment to keep Bokeh's property setter
         # notified; in-place append would not trigger change events.
         toolbar.tools = [
@@ -224,29 +236,17 @@ class CellAutoscaleController:
             *self._toggles.values(),
             self._fit_tool,
         ]
-        self._figures.add(figure)
 
     def _create_tools(self) -> None:
-        """Create the shared toggle and Fit tool models, once per controller."""
-        if self._toggles:
-            return
+        """Create the per-axis toggles and the Fit action."""
         from .widgets.icons import get_icon_data_uri
 
-        axis_icons: dict[Axis, tuple[str, str]] = {
-            axis: (
-                get_icon_data_uri(f'autoscale-{axis}-on'),
-                get_icon_data_uri(f'autoscale-{axis}'),
-            )
-            for axis in self._axes
-        }
-
         for axis in sorted(self._axes):
-            on_icon, off_icon = axis_icons[axis]
             self._toggles[axis] = _make_toggle_action(
                 active=True,
                 description=_TOGGLE_DESCRIPTIONS[axis],
-                on_icon=on_icon,
-                off_icon=off_icon,
+                on_icon=get_icon_data_uri(f'autoscale-{axis}-on'),
+                off_icon=get_icon_data_uri(f'autoscale-{axis}'),
             )
         self._fit_tool = _make_fit_action(
             description='Fit ranges to current data',

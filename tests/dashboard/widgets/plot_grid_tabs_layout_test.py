@@ -12,14 +12,9 @@ import time
 from uuid import uuid4
 
 import holoviews as hv
-import pydantic
-import pytest
 
 from ess.livedata.config.workflow_spec import WorkflowId
 from ess.livedata.core.timestamp import Timestamp
-from ess.livedata.dashboard.data_service import DataService
-from ess.livedata.dashboard.job_service import JobService
-from ess.livedata.dashboard.notification_queue import NotificationQueue
 from ess.livedata.dashboard.plot_data_service import LayerId, PlotDataService
 from ess.livedata.dashboard.plot_orchestrator import (
     CellGeometry,
@@ -30,118 +25,12 @@ from ess.livedata.dashboard.plot_orchestrator import (
     PlotConfig,
     PlotOrchestrator,
 )
-from ess.livedata.dashboard.plots import PresenterBase, TimeBounds
-from ess.livedata.dashboard.plotting_controller import PlottingController
-from ess.livedata.dashboard.session_registry import SessionId, SessionRegistry
-from ess.livedata.dashboard.session_updater import SessionUpdater
-from ess.livedata.dashboard.stream_manager import StreamManager
-from ess.livedata.dashboard.widgets.plot_grid_tabs import PlotGridTabs
+from ess.livedata.dashboard.plots import TimeBounds
 from ess.livedata.dashboard.widgets.styles import StatusPill
-from ess.livedata.dashboard.widgets.workflow_status_widget import (
-    WorkflowStatusListWidget,
-)
+from tests.helpers.panel_ui import click_tool
+from tests.helpers.plot_fakes import EmptyParams, FakePlotter, ViewerToken
 
 hv.extension('bokeh')
-
-
-# -- Fakes -----------------------------------------------------------------
-
-
-class FakePlotter:
-    """Minimal plotter whose cached state can be set to any HoloViews object."""
-
-    def __init__(self, cached_state=None, time_bounds=None):
-        self._cached_state = cached_state
-        self._time_bounds = time_bounds
-        self._presenters: list[FakePresenter] = []
-
-    def get_cached_state(self):
-        return self._cached_state
-
-    @property
-    def is_overlayable(self) -> bool:
-        # Mirror a real plotter: a Layout cannot share a figure with siblings.
-        return not isinstance(self._cached_state, hv.Layout)
-
-    @property
-    def time_bounds(self):
-        return self._time_bounds
-
-    def has_cached_state(self):
-        return self._cached_state is not None
-
-    def create_presenter(self, *, owner=None):
-        presenter = FakePresenter(self, owner=owner)
-        self._presenters.append(presenter)
-        return presenter
-
-    def mark_presenters_dirty(self):
-        for p in self._presenters:
-            p._mark_dirty()
-
-
-class FakePresenter(PresenterBase):
-    def present(self, pipe):
-        return hv.DynamicMap(lambda data: data, streams=[pipe], cache_size=1)
-
-
-class _Params(pydantic.BaseModel):
-    pass
-
-
-# -- Fixtures --------------------------------------------------------------
-
-
-@pytest.fixture
-def plot_data_service():
-    return PlotDataService()
-
-
-@pytest.fixture
-def data_service():
-    return DataService()
-
-
-@pytest.fixture
-def job_service():
-    return JobService()
-
-
-@pytest.fixture
-def plot_orchestrator(job_orchestrator, data_service, plot_data_service):
-    stream_manager = StreamManager(data_service=data_service)
-    return PlotOrchestrator(
-        plotting_controller=PlottingController(stream_manager=stream_manager),
-        job_orchestrator=job_orchestrator,
-        data_service=data_service,
-        instrument='dummy',
-        plot_data_service=plot_data_service,
-    )
-
-
-@pytest.fixture
-def plot_grid_tabs(
-    plot_orchestrator,
-    workflow_registry,
-    plot_data_service,
-    job_orchestrator,
-    job_service,
-):
-    stream_manager = StreamManager(data_service=DataService())
-    return PlotGridTabs(
-        plot_orchestrator=plot_orchestrator,
-        workflow_registry=workflow_registry,
-        plotting_controller=PlottingController(stream_manager=stream_manager),
-        workflow_status_widget=WorkflowStatusListWidget(
-            orchestrator=job_orchestrator, job_service=job_service
-        ),
-        plot_data_service=plot_data_service,
-        session_updater=SessionUpdater(
-            session_id=SessionId('test'),
-            session_registry=SessionRegistry(),
-            notification_queue=NotificationQueue(),
-        ),
-    )
 
 
 # -- Helpers ---------------------------------------------------------------
@@ -188,7 +77,7 @@ def _inject_layer(
             )
         },
         plot_name='image',
-        params=_Params(),
+        params=EmptyParams(),
     )
     cell = PlotCell(
         geometry=CellGeometry(row=0, col=0, row_span=1, col_span=1),
@@ -222,7 +111,7 @@ def _inject_two_layer_cell(
                 )
             },
             plot_name='image',
-            params=_Params(),
+            params=EmptyParams(),
         )
 
     cell = PlotCell(
@@ -257,41 +146,46 @@ class TestPollHandlesLayoutPlotters:
         grid_id = plot_orchestrator.add_grid(title='Test', nrows=2, ncols=2)
         layer_id = _inject_layer(plot_orchestrator, plot_data_service, grid_id, plotter)
 
-        # First poll adds the grid tab and builds the cell/session layer.
+        # First poll adds the grid tab; revealing it builds the cell/session
+        # layer (the switch runs the pass synchronously in tests).
         plot_grid_tabs._poll_for_plot_updates()
+        plot_grid_tabs.tabs.active = plot_grid_tabs._static_tabs_count
 
         session_layer = plot_grid_tabs._session_layers.get(layer_id)
         assert session_layer is not None
         assert session_layer.dmap is not None
 
-    def test_failed_rebuild_does_not_bump_version(
+    def test_failed_rebuild_retries_on_next_poll(
         self, plot_orchestrator, plot_data_service, plot_grid_tabs
     ):
         """
-        If a rebuild raises, the session layer's version must stay stale
-        so the next poll cycle retries.
+        If a rebuild raises, the cell widget record is unchanged
+        so the next poll cycle retries the build.
         """
         plotter = FakePlotter(cached_state=_make_layout())
         grid_id = plot_orchestrator.add_grid(title='Test', nrows=2, ncols=2)
         layer_id = _inject_layer(plot_orchestrator, plot_data_service, grid_id, plotter)
 
         plot_grid_tabs._poll_for_plot_updates()
-        version_after_first_poll = plot_grid_tabs._session_layers[
-            layer_id
-        ].last_seen_version
+        plot_grid_tabs.tabs.active = plot_grid_tabs._static_tabs_count
 
-        # Bump version
+        # Get the cell_id from the topology
+        cell_id = next(iter(plot_orchestrator.peek_grid(grid_id).cells.keys()))
+
+        # Verify the cell was built
+        assert cell_id in plot_grid_tabs._cells
+        original_widget = plot_grid_tabs._cells[cell_id]
+
+        # Bump the layer version (triggers rebuild attempt)
         plot_data_service.job_started(
             layer_id, FakePlotter(cached_state=_make_layout())
         )
         plot_data_service.data_arrived(layer_id)
-        new_version = plot_data_service.get(layer_id).version
-        assert new_version != version_after_first_poll
 
         # Inject a transient failure into the rebuild path
-        original = plot_grid_tabs._build_cell
+        original_build_cell = plot_grid_tabs._build_cell
 
-        def _raise(cell_id, cell):
+        def _raise(cell_id_arg, cell, grid_id):
             raise RuntimeError("injected failure")
 
         plot_grid_tabs._build_cell = _raise
@@ -301,10 +195,18 @@ class TestPollHandlesLayoutPlotters:
             except RuntimeError:
                 pass
 
-            session_layer = plot_grid_tabs._session_layers[layer_id]
-            assert session_layer.last_seen_version != new_version
+            # The widget record is unchanged because the build failed
+            assert plot_grid_tabs._cells[cell_id] is original_widget
+
+            # Now clear the failure and poll again
+            plot_grid_tabs._build_cell = original_build_cell
+            plot_grid_tabs._poll_for_plot_updates()
+
+            # The cell widget was rebuilt
+            rebuilt_widget = plot_grid_tabs._cells[cell_id]
+            assert rebuilt_widget is not original_widget
         finally:
-            plot_grid_tabs._build_cell = original
+            plot_grid_tabs._build_cell = original_build_cell
 
 
 class TestFreshnessIndicator:
@@ -321,9 +223,12 @@ class TestFreshnessIndicator:
         _inject_layer(plot_orchestrator, plot_data_service, grid_id, plotter)
 
         # First poll adds the tab and builds the cell; activate then poll again
-        # so the freshness pane fills for the now-active grid.
+        # so the freshness pane fills for the now-active grid. The per-layer
+        # time panes exist only once their toolbars are revealed.
         plot_grid_tabs._poll_for_plot_updates()
         plot_grid_tabs.tabs.active = plot_grid_tabs._static_tabs_count
+        for cell_widget in plot_grid_tabs._cells.values():
+            click_tool(cell_widget.view, 'lt-tool-layer-details')
         plot_grid_tabs._poll_for_plot_updates()
 
         panes = [cw.freshness_pane for cw in plot_grid_tabs._cells.values()]
@@ -361,9 +266,12 @@ class TestFreshnessIndicator:
         )
 
         # First poll adds the tab and builds the cell; activate then poll again
-        # so the per-layer time panes fill for the now-active grid.
+        # so the per-layer time panes fill for the now-active grid. The panes
+        # exist only once their toolbars are revealed.
         plot_grid_tabs._poll_for_plot_updates()
         plot_grid_tabs.tabs.active = plot_grid_tabs._static_tabs_count
+        for cell_widget in plot_grid_tabs._cells.values():
+            click_tool(cell_widget.view, 'lt-tool-layer-details')
         plot_grid_tabs._poll_for_plot_updates()
 
         (cell_widget,) = plot_grid_tabs._cells.values()
@@ -371,6 +279,102 @@ class TestFreshnessIndicator:
         assert 'Lag:' in cell_widget.layer_time_panes[l2].object
         # The cell pill must still show with two layers.
         assert 'border-radius' in cell_widget.freshness_pane.object
+
+    def test_rebuilt_cell_refills_its_time_panes_on_the_same_poll(
+        self, plot_orchestrator, plot_data_service, plot_grid_tabs
+    ):
+        """A rebuilt cell must show its age and time range straight away.
+
+        A rebuild mints blank panes, so the poll that rebuilds refills them (a
+        revealed cell's panes are additionally seeded from current bounds as
+        they are built). Without either, the cell shows no age and no time
+        range until the next frame or the stall tick, however good the data
+        behind it is.
+        """
+        grid_id = plot_orchestrator.add_grid(title='Test', nrows=2, ncols=2)
+        layer_id = _inject_layer(
+            plot_orchestrator,
+            plot_data_service,
+            grid_id,
+            FakePlotter(cached_state=_make_layout(), time_bounds=_make_bounds(2.0)),
+        )
+        plot_grid_tabs._poll_for_plot_updates()
+        plot_grid_tabs.tabs.active = plot_grid_tabs._static_tabs_count
+        for cell_widget in plot_grid_tabs._cells.values():
+            click_tool(cell_widget.view, 'lt-tool-layer-details')
+        plot_grid_tabs._poll_for_plot_updates()
+
+        # A new plotter bumps the layer version, so the next poll rebuilds the
+        # cell -- without a new frame, which would have refreshed it anyway.
+        plot_data_service.job_started(
+            layer_id,
+            FakePlotter(cached_state=_make_layout(), time_bounds=_make_bounds(3.0)),
+        )
+        plot_data_service.data_arrived(layer_id)
+        plot_grid_tabs._poll_for_plot_updates()
+
+        (cell_widget,) = plot_grid_tabs._cells.values()
+        assert 'border-radius' in cell_widget.freshness_pane.object
+        assert 'Lag:' in cell_widget.layer_time_panes[layer_id].object
+
+    def test_poll_updating_nothing_does_not_consume_the_stall_interval(
+        self, plot_orchestrator, plot_data_service, plot_grid_tabs
+    ):
+        """The stall clock budgets the next update; it is not a poll counter.
+
+        Polls over a hidden grid update no cell. Restarting the interval on
+        them would make a cell revealed just afterwards wait a further full
+        interval before the stall path could fill its pill.
+        """
+        grid_id = plot_orchestrator.add_grid(title='Test', nrows=2, ncols=2)
+        _inject_layer(
+            plot_orchestrator,
+            plot_data_service,
+            grid_id,
+            FakePlotter(cached_state=_make_layout(), time_bounds=_make_bounds(2.0)),
+        )
+        # Leave a non-plot static tab active so the grid is hidden.
+        plot_grid_tabs.tabs.active = 0
+        stall_clock = plot_grid_tabs._last_freshness_update
+
+        plot_grid_tabs._poll_for_plot_updates()
+        plot_grid_tabs._poll_for_plot_updates()
+
+        assert plot_grid_tabs._last_freshness_update == stall_clock
+
+    def test_stall_rerenders_pill_into_older_band(
+        self, plot_orchestrator, plot_data_service, plot_grid_tabs
+    ):
+        """With no new frame, only an elapsed stall interval re-renders the
+        pill; the aged bounds then move it to an older band."""
+        from ess.livedata.dashboard.widgets.plot_grid_tabs import (
+            _FRESHNESS_STALL_INTERVAL_S,
+        )
+
+        plotter = FakePlotter(
+            cached_state=_make_layout(), time_bounds=_make_bounds(2.0)
+        )
+        grid_id = plot_orchestrator.add_grid(title='Test', nrows=2, ncols=2)
+        _inject_layer(plot_orchestrator, plot_data_service, grid_id, plotter)
+        plot_grid_tabs._poll_for_plot_updates()
+        plot_grid_tabs.tabs.active = plot_grid_tabs._static_tabs_count
+        plot_grid_tabs._poll_for_plot_updates()
+        (cell_widget,) = plot_grid_tabs._cells.values()
+        assert StatusPill.FRESH[0] in cell_widget.freshness_pane.object
+
+        # Ages the stream without a wall-clock sleep; no version moves, so a
+        # poll before the stall interval elapses leaves the pill untouched.
+        plotter.time_bounds = _make_bounds(60.0)
+        plot_grid_tabs._poll_for_plot_updates()
+        assert StatusPill.FRESH[0] in cell_widget.freshness_pane.object
+
+        plot_grid_tabs._last_freshness_update -= _FRESHNESS_STALL_INTERVAL_S
+        assert plot_grid_tabs._has_pending_work()
+        plot_grid_tabs._poll_for_plot_updates()
+
+        pill = cell_widget.freshness_pane.object
+        assert StatusPill.OLD[0] in pill
+        assert StatusPill.FRESH[0] not in pill
 
     def test_hidden_grid_does_not_update_freshness(
         self, plot_orchestrator, plot_data_service, plot_grid_tabs
@@ -380,10 +384,15 @@ class TestFreshnessIndicator:
         grid_id = plot_orchestrator.add_grid(title='Test', nrows=2, ncols=2)
         # Leave a non-plot static tab active so the grid is hidden.
         plot_grid_tabs.tabs.active = 0
-        _inject_layer(plot_orchestrator, plot_data_service, grid_id, plotter)
+        layer_id = _inject_layer(plot_orchestrator, plot_data_service, grid_id, plotter)
+
+        # Another session's viewer token makes the hidden cell build (#1216).
+        token = ViewerToken()
+        plot_data_service.set_active(layer_id, token, True)
 
         plot_grid_tabs._poll_for_plot_updates()
 
+        assert plot_grid_tabs._cells
         for cell_widget in plot_grid_tabs._cells.values():
             assert cell_widget.freshness_pane.object in ('', None)
 

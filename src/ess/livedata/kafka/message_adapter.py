@@ -2,7 +2,7 @@
 # Copyright (c) 2025 Scipp contributors (https://github.com/scipp)
 from collections.abc import Sequence
 from dataclasses import replace
-from typing import Any, Generic, Protocol, TypeVar
+from typing import Any, Protocol
 
 import numpy as np
 import pydantic
@@ -46,10 +46,6 @@ from .stream_mapping import InputStreamKey, StreamLUT
 from .x5f2_compat import x5f2_to_status
 
 logger = structlog.get_logger(__name__)
-
-T = TypeVar('T')
-U = TypeVar('U')
-V = TypeVar('V')
 
 
 class KafkaMessage(Protocol):
@@ -123,7 +119,7 @@ class IgnoredMessageError(Exception):
     """
 
 
-class MessageAdapter(Protocol, Generic[T, U]):
+class MessageAdapter[T, U](Protocol):
     def adapt(self, message: T) -> U: ...
 
 
@@ -134,7 +130,7 @@ class NullAdapter(MessageAdapter[KafkaMessage, Any]):
         raise IgnoredMessageError
 
 
-class KafkaAdapter(MessageAdapter[KafkaMessage, Message[T]]):
+class KafkaAdapter[T](MessageAdapter[KafkaMessage, Message[T]]):
     """
     Base class for Kafka adapters.
 
@@ -499,12 +495,12 @@ class ResponsesAdapter(MessageAdapter[KafkaMessage, Message[CommandAcknowledgeme
         return Message(stream=RESPONSES_STREAM_ID, timestamp=timestamp, value=ack)
 
 
-class ChainedAdapter(MessageAdapter[T, V]):
+class ChainedAdapter[T, V](MessageAdapter[T, V]):
     """
     Chains two adapters together.
     """
 
-    def __init__(self, first: MessageAdapter[T, U], second: MessageAdapter[U, V]):
+    def __init__[U](self, first: MessageAdapter[T, U], second: MessageAdapter[U, V]):
         self._first = first
         self._second = second
 
@@ -513,7 +509,7 @@ class ChainedAdapter(MessageAdapter[T, V]):
         return self._second.adapt(intermediate)
 
 
-class RouteBySchemaAdapter(MessageAdapter[KafkaMessage, T]):
+class RouteBySchemaAdapter[T](MessageAdapter[KafkaMessage, T]):
     """
     Routes messages to different adapters based on the schema.
     """
@@ -536,7 +532,7 @@ class RouteBySchemaAdapter(MessageAdapter[KafkaMessage, T]):
         return self._routes[schema].adapt(message)
 
 
-class RouteByTopicAdapter(MessageAdapter[KafkaMessage, T]):
+class RouteByTopicAdapter[T](MessageAdapter[KafkaMessage, T]):
     """
     Routes messages to different adapters based on the topic.
     """
@@ -559,7 +555,7 @@ class RouteByTopicAdapter(MessageAdapter[KafkaMessage, T]):
         return self._routes[topic].adapt(message)
 
 
-class AdaptingMessageSource(MessageSource[U]):
+class AdaptingMessageSource[T, U](MessageSource[U]):
     """
     Wraps a source of messages and adapts them to a different type.
     """

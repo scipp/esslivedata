@@ -26,13 +26,15 @@ import structlog
 from ess.livedata.config.workflow_spec import WorkflowId, WorkflowSpec
 
 from ..cell_autoscale import CellAutoscaleController, build_controller_from_layers
+from ..cell_plan import CellBuildInputs
 from ..format_utils import extract_error_summary
 from ..frame_aspect import pane_sizing_mode
 from ..hover_suspend import make_hover_suspend_hook
-from ..plot_data_service import LayerState, LayerStateMachine, PlotDataService
+from ..plot_data_service import LayerSnapshot, LayerState, PlotDataService
 from ..plot_orchestrator import (
     CellGeometry,
     CellId,
+    GridId,
     LayerId,
     PlotCell,
     PlotOrchestrator,
@@ -199,173 +201,12 @@ class CellDeps:
     on_popout: Callable[[CellId], None]
 
 
-@dataclass(frozen=True)
-class ComposedPlot:
-    """A cell's composed plot together with the autoscale controller driving it.
-
-    One composition per cell, however many times it is rendered: a pop-out
-    window calls :meth:`build_pane` a second time on the same instance. Sharing
-    it is deliberate — the controller then installs one set of tool models on
-    both toolbars, so the views' autoscale toggles move together, and both
-    figures repaint from the layers' single ``Pipe``.
-    """
-
-    plot: hv.DynamicMap | hv.Element
-    autoscale: CellAutoscaleController | None
-    sizing_mode: str
-
-    def dispose(self) -> None:
-        """Dispose the autoscale controller, breaking its reference cycle."""
-        if self.autoscale is not None:
-            self.autoscale.dispose()
-
-    def build_pane(self) -> pn.viewable.Viewable:
-        """
-        Wrap the plot in a HoloViews pane ready for placement in a layout.
-
-        Call once per view: a Panel component has a single parent, so a second
-        view of this plot needs its own pane over the same HoloViews object.
-
-        Returns
-        -------
-        :
-            Layout containing the plot pane and any DynamicMap kdim widgets.
-        """
-        # Use .layout to preserve widgets for DynamicMaps with kdims.
-        # When pn.pane.HoloViews wraps a DynamicMap with kdims, it generates
-        # widgets. However, these widgets don't render when the pane is placed
-        # in a Panel layout (Tabs, Column, etc.). The .layout property contains
-        # both the plot and widgets, which renders correctly in layouts.
-        # See: https://github.com/holoviz/panel/issues/5628
-        #
-        # CRITICAL: Use linked_axes=False to prevent unintended axis linking (#607)
-        #
-        # Problem: By default, Panel's HoloViews pane links axes across different
-        # plots based on their axis labels (e.g., all plots with 'x' and 'y' axes
-        # get linked). For detector panels in different grid cells, this is unwanted:
-        # - Different detector panels have independent spatial coordinates
-        # - Zooming one panel shouldn't affect others
-        # - Each panel needs independent autoscaling
-        #
-        # Previous workarounds and why they failed:
-        # - shared_axes=False (HoloViews): Breaks dynamic features that rely on
-        #   shared axis infrastructure
-        # - Wrapping in hv.Layout: Prevents multi-layer composition with hv.Overlay,
-        #   which was needed for the layer system (#606)
-        #
-        # Solution: linked_axes=False on the Panel pane
-        # - Disables Panel's cross-plot axis linking while preserving HoloViews
-        #   features (autoscaling, dynamic updates)
-        # - Allows proper multi-layer composition via hv.Overlay
-        # - Each grid cell's plot remains independent
-        return pn.pane.HoloViews(
-            self.plot, sizing_mode=self.sizing_mode, linked_axes=False
-        ).layout
-
-
-def compose_cell_plot(cell: PlotCell, deps: CellDeps) -> ComposedPlot | None:
-    """
-    Compose a cell's plot from session-local DynamicMaps or static elements.
-
-    Ensures session components exist when data is available. Sets a descriptive
-    SaveTool filename on the result so that browser "Save" downloads get a
-    meaningful name, suspends hover while an ROI edit tool is active, and builds
-    an autoscale controller for the composed view.
-
-    Parameters
-    ----------
-    cell:
-        Plot cell configuration with all layers.
-    deps:
-        Shared session dependencies (services and session layer registry).
-
-    Returns
-    -------
-    :
-        Composed plot and its controller, or None if no layer is displayable.
-    """
-    plots = []
-    non_overlayable = False
-    cell_plotters: list = []
-    for layer in cell.layers:
-        layer_id = layer.layer_id
-        session_layer = deps.session_layers.get(layer_id)
-        if session_layer is None:
-            continue
-
-        # Ensure components exist if data is now available
-        state = deps.plot_data_service.get(layer_id)
-        if state is not None:
-            session_layer.ensure_components(state)
-            # Static overlays (vlines/hlines/rectangles) are not Plotters
-            # and carry no autoscale axes; exclude them from the controller.
-            if state.plotter is not None and not layer.config.is_static():
-                cell_plotters.append(state.plotter)
-            # Tables and layout-mode plotters produce a DataTable/Layout with
-            # no single figure for the SaveTool/aspect hooks to act on. Such
-            # layers are forbidden from sharing a cell, so this flags a
-            # solitary non-overlayable layer; hooks are skipped below.
-            if state.plotter is not None and not getattr(
-                state.plotter, 'is_overlayable', True
-            ):
-                non_overlayable = True
-
-        dmap = session_layer.dmap
-        if dmap is not None:
-            plots.append(dmap)
-
-    if not plots:
-        return None
-
-    # Layers of one cell are consistent for overlay, so the first one's aspect
-    # config sets the sizing mode for the whole composition.
-    params = cell.layers[0].config.params
-    sizing_mode = pane_sizing_mode(getattr(params, 'plot_aspect', _FREE_ASPECT))
-
-    result: hv.DynamicMap | hv.Element
-    if len(plots) == 1:
-        result = plots[0]
-    else:
-        # Collate so hooks survive for any number of DynamicMap layers.
-        # Without collation, HoloViews drops overlay-level opts (including
-        # hooks) when an Overlay contains 3+ DynamicMaps.  Collating first
-        # produces a single DynamicMap whose outputs are plain Overlays;
-        # opts applied afterwards land on the OverlayPlot and persist.
-        result = hv.Overlay(plots).collate()
-
-    # Skip the cell-level hooks for a non-overlayable layer: a Layout's
-    # sub-figures each carry their own SaveTool, and a Table's DataTable
-    # widget has no figure for the SaveTool/autoscale hooks to act on. The
-    # frame-aspect hook is not among these — it is declared per element type
-    # by the plotter (see Plotter._sizing_opts), so it reaches every
-    # sub-figure of a Layout regardless.
-    if non_overlayable:
-        return ComposedPlot(plot=result, autoscale=None, sizing_mode=sizing_mode)
-
-    hooks: list = [make_hover_suspend_hook()]
-    filename = build_save_filename_from_cell(
-        cell, deps.workflow_registry, deps.orchestrator.get_source_title
-    )
-    if filename is not None:
-        hooks.append(make_save_filename_hook(filename))
-    # Fresh controller on every composition: keeps tools and toggle state local
-    # to the figure this view renders. The previous view's controller is
-    # disposed by its owner after the swap, breaking its on_change reference
-    # cycle (would otherwise leak across the session).
-    controller = build_controller_from_layers(cell_plotters)
-    if controller is not None:
-        hooks.append(controller.make_hook())
-    return ComposedPlot(
-        plot=result.opts(hooks=hooks), autoscale=controller, sizing_mode=sizing_mode
-    )
-
-
 class CellWidget:
     """
     Per-session widget for a single plot cell.
 
-    Builds a Panel ``Column`` with a titlebar, a (toggleable) column of
-    per-layer toolbars, and a content area showing the composed plot or a
+    Builds a Panel ``Column`` with a titlebar, a column of per-layer toolbars
+    built on first reveal, and a content area showing the composed plot or a
     status placeholder. Owns the cell's autoscale controller and the panes
     updated in place by the poll loop (titlebar freshness pill, per-layer
     time-range labels).
@@ -381,6 +222,13 @@ class CellWidget:
     toolbars_visible
         Initial visibility of the per-layer toolbars. Preserved across cell
         rebuilds by the owner so the user's toggle survives version polling.
+    grid_id
+        The grid this cell belongs to; recorded so the reconcile pass can
+        route removal and stall checks without a separate cell-to-grid map.
+    build_inputs
+        The :class:`~..cell_plan.CellBuildInputs` sampled just before this
+        build; the differ rebuilds when the current inputs no longer compare
+        equal.
     """
 
     def __init__(
@@ -390,16 +238,23 @@ class CellWidget:
         deps: CellDeps,
         *,
         toolbars_visible: bool,
+        grid_id: GridId,
+        build_inputs: CellBuildInputs,
     ) -> None:
         self._cell_id = cell_id
         self._cell = cell
         self._deps = deps
         self._toolbars_shown = toolbars_visible
+        self.grid_id = grid_id
+        self.build_inputs = build_inputs
+        self._autoscale_controller: CellAutoscaleController | None = None
         self._freshness_pane = create_freshness_pane()
         self._stopped_layers: frozenset[LayerId] = frozenset()
         self._pill_frozen = False
         self._layer_time_panes: dict[LayerId, pn.pane.HTML] = {}
-        self._composed = compose_cell_plot(cell, deps)
+        # One pane per rendered view of the plot: the grid cell's, plus one
+        # per pop-out window. Kept so dispose() can unsubscribe them all.
+        self._plot_panes: list[pn.pane.HoloViews] = []
         self._title = (
             cell.user_title
             if cell.user_title is not None
@@ -409,6 +264,8 @@ class CellWidget:
                 get_source_title=deps.orchestrator.get_source_title,
             )
         )
+        # Composing builds the autoscale controller as a side effect.
+        self._plot = self._compose_plot()
         self._view = self._build()
 
     @property
@@ -422,17 +279,6 @@ class CellWidget:
         return self._title
 
     @property
-    def composed(self) -> ComposedPlot | None:
-        """The cell's composed plot, or None while it shows a placeholder.
-
-        Rendered a second time by a pop-out window, which shares it rather
-        than composing its own: sharing is what links the two views' autoscale
-        toggles and keeps them both fed by one ``Pipe``. The cell widget owns
-        it and disposes it.
-        """
-        return self._composed
-
-    @property
     def geometry(self) -> CellGeometry:
         """Grid geometry (position and span) of this cell."""
         return self._cell.geometry
@@ -440,7 +286,7 @@ class CellWidget:
     @property
     def has_plot(self) -> bool:
         """Whether the cell currently shows a composed plot (vs. placeholder)."""
-        return self._composed is not None
+        return self._plot is not None
 
     @property
     def toolbars_shown(self) -> bool:
@@ -459,8 +305,13 @@ class CellWidget:
 
     @property
     def autoscale_controller(self) -> CellAutoscaleController | None:
-        """The in-grid view's autoscale controller, if any layer drives autoscale."""
-        return self._composed.autoscale if self._composed is not None else None
+        """The cell's autoscale controller, if any layer drives autoscale.
+
+        One controller per cell, driving every figure the cell renders into --
+        the grid cell's and any pop-out window's -- so their toolbars show, and
+        move, one toggle state.
+        """
+        return self._autoscale_controller
 
     def update_freshness(
         self, bounds_by_layer: Mapping[LayerId, TimeBounds | None]
@@ -493,18 +344,52 @@ class CellWidget:
             pane.object = html
 
     def dispose(self) -> None:
-        """Dispose the autoscale controller, breaking its reference cycle.
+        """Release everything this widget attached to shared or session state.
 
-        Calling ``dispose()`` breaks the controller → Bokeh-tool →
-        on_change-callback → controller reference cycle so long sessions
-        don't accumulate detached controllers after cell rebuilds/removals.
+        Breaks the autoscale controller → Bokeh-tool → on_change-callback →
+        controller reference cycle, and unsubscribes every pane this widget
+        built — the grid cell's and any pop-out window's — from the layers'
+        ``hv.streams.Pipe``. The pipe half is essential when a cell is rebuilt
+        while its grid is visible: ``GridSpec`` never cleans up removed
+        children (holoviz/panel#8710), so without the explicit sever the
+        discarded plot keeps rendering every pipe update for the rest of the
+        session (#1224).
+
+        ``Plot.cleanup`` severs *every* weakly-wrapped plot-refresh subscriber
+        on the streams it touches, not only its own — its owner filter is
+        defeated upstream (holoviz/holoviews#6988). So this is all-or-nothing:
+        it cannot spare a pane, and any *other* teardown touching these pipes
+        takes this widget's panes down with it. Two rules follow, and both must
+        survive any change to teardown until #6988 is fixed:
+
+        - A layer's pipe is per session and per cell, and a rebuild disposes
+          the displaced widget before the replacement renders, so the old and
+          new plots never hold live subscriptions concurrently. Keep that order
+          — sever first, render the replacement after.
+        - Removing one view of a live cell (closing a pop-out window, which
+          runs Panel's own pane cleanup) leaves the survivors severed. The
+          owner rebuilds the cell; see ``PlotGridTabs._close_popout``.
         """
-        if self._composed is not None:
-            self._composed.dispose()
+        if self._autoscale_controller is not None:
+            self._autoscale_controller.dispose()
+            self._autoscale_controller = None
+        for pane in self._plot_panes:
+            # TODO(holoviz/panel#8710): delete this block once the minimum
+            # panel version cleans up displaced GridSpec children itself, and
+            # re-point the subscriber-count regression tests at
+            # PlotGrid.insert_widget_at/remove_widget_at, which then carry the
+            # cleanup. Until then: no public teardown API on the pane; this
+            # mirrors the pipe half of pn.pane.HoloViews._cleanup, which Panel
+            # only runs from a document root we never held.
+            for plot, _ in pane._plots.values():
+                if plot is not None:
+                    plot.cleanup()
+            pane._plots.clear()
+        self._plot_panes.clear()
 
-    def _layer_states(self) -> dict[LayerId, LayerStateMachine]:
+    def _layer_states(self) -> dict[LayerId, LayerSnapshot]:
         """Get layer states from PlotDataService for all layers in the cell."""
-        result: dict[LayerId, LayerStateMachine] = {}
+        result: dict[LayerId, LayerSnapshot] = {}
         for layer in self._cell.layers:
             state = self._deps.plot_data_service.get(layer.layer_id)
             if state is None:
@@ -517,7 +402,7 @@ class CellWidget:
         return result
 
     def _freeze_pill_for_status(
-        self, layer_states: dict[LayerId, LayerStateMachine]
+        self, layer_states: dict[LayerId, LayerSnapshot]
     ) -> None:
         """Freeze the titlebar pill to a status pill when the cell is not live.
 
@@ -553,18 +438,21 @@ class CellWidget:
         self._freeze_pill_for_status(layer_states)
 
         # Per-layer toolbars, wrapped in a column the titlebar toggle can hide.
-        layer_toolbars = self._build_layer_toolbars(layer_states)
+        # Populated only once revealed: a hidden Panel component still creates
+        # every one of its Bokeh models, and the toolbars are a quarter of a
+        # cell's model count while most cells are never expanded.
         layers_column = pn.Column(
-            *layer_toolbars,
             sizing_mode='stretch_width',
             margin=0,
             visible=self._toolbars_shown,
         )
+        if self._toolbars_shown:
+            layers_column[:] = self._build_layer_toolbars(layer_states)
         titlebar = self._build_titlebar(layers_column)
 
         # Create content area (placeholder or plot)
-        if self._composed is not None:
-            content = self._composed.build_pane()
+        if self._plot is not None:
+            content = self.build_plot_pane()
             border = None
             bg_color = None
         else:
@@ -626,6 +514,8 @@ class CellWidget:
 
         def on_toggle_toolbars(visible: bool) -> None:
             self._toolbars_shown = visible
+            if visible and not layers_column.objects:
+                layers_column[:] = self._build_layer_toolbars(self._layer_states())
             layers_column.visible = visible
 
         geometry = cell.geometry
@@ -648,7 +538,7 @@ class CellWidget:
 
     def _build_layer_toolbars(
         self,
-        layer_states: dict[LayerId, LayerStateMachine],
+        layer_states: dict[LayerId, LayerSnapshot],
     ) -> list[pn.Row | pn.Column]:
         """
         Create per-layer info rows (title + time range) for the cell's layers.
@@ -692,6 +582,10 @@ class CellWidget:
 
             time_pane = create_layer_time_pane()
             self._layer_time_panes[layer_id] = time_pane
+            # Seed from the layer's current bounds: toolbars revealed between
+            # frames would otherwise read blank until the next data flush.
+            if state.plotter is not None:
+                self.update_layer_time(layer_id, state.plotter.time_bounds)
 
             rows.append(
                 create_layer_info_row(
@@ -706,7 +600,7 @@ class CellWidget:
 
     def _build_placeholder(
         self,
-        layer_states: dict[LayerId, LayerStateMachine],
+        layer_states: dict[LayerId, LayerSnapshot],
     ) -> pn.pane.Markdown:
         """
         Create placeholder content showing layer status.
@@ -764,3 +658,155 @@ class CellWidget:
             content,
             styles={'text-align': 'left', 'padding': '20px'},
         )
+
+    def build_plot_pane(self) -> pn.viewable.Viewable:
+        """
+        Build a Panel view of this cell's composed plot.
+
+        Called once for the grid cell's own content and once more per pop-out
+        window: a Panel component has a single parent, so a second view of the
+        cell needs its own pane over the same HoloViews object. Both then
+        repaint from the layers' single ``Pipe`` and share the cell's autoscale
+        controller, which installs its tools on both toolbars.
+
+        Every pane built here is owned by this widget and severed by
+        :meth:`dispose`; only call it for views the widget outlives.
+
+        Returns
+        -------
+        :
+            Layout containing the plot pane and any DynamicMap kdim widgets.
+        """
+        # Use sizing mode from first layer (they should be consistent for overlay)
+        if self._cell.layers:
+            params = self._cell.layers[0].config.params
+            aspect = getattr(params, 'plot_aspect', _FREE_ASPECT)
+        else:
+            aspect = _FREE_ASPECT
+        sizing_mode = pane_sizing_mode(aspect)
+
+        # Use .layout to preserve widgets for DynamicMaps with kdims.
+        # When pn.pane.HoloViews wraps a DynamicMap with kdims, it generates
+        # widgets. However, these widgets don't render when the pane is placed
+        # in a Panel layout (Tabs, Column, etc.). The .layout property contains
+        # both the plot and widgets, which renders correctly in layouts.
+        # See: https://github.com/holoviz/panel/issues/5628
+        #
+        # CRITICAL: Use linked_axes=False to prevent unintended axis linking (#607)
+        #
+        # Problem: By default, Panel's HoloViews pane links axes across different
+        # plots based on their axis labels (e.g., all plots with 'x' and 'y' axes
+        # get linked). For detector panels in different grid cells, this is unwanted:
+        # - Different detector panels have independent spatial coordinates
+        # - Zooming one panel shouldn't affect others
+        # - Each panel needs independent autoscaling
+        #
+        # Previous workarounds and why they failed:
+        # - shared_axes=False (HoloViews): Breaks dynamic features that rely on
+        #   shared axis infrastructure
+        # - Wrapping in hv.Layout: Prevents multi-layer composition with hv.Overlay,
+        #   which was needed for the layer system (#606)
+        #
+        # Solution: linked_axes=False on the Panel pane
+        # - Disables Panel's cross-plot axis linking while preserving HoloViews
+        #   features (autoscaling, dynamic updates)
+        # - Allows proper multi-layer composition via hv.Overlay
+        # - Each grid cell's plot remains independent
+        plot_pane_wrapper = pn.pane.HoloViews(
+            self._plot, sizing_mode=sizing_mode, linked_axes=False
+        )
+        # Kept so dispose() can unsubscribe the rendered plots from the layer
+        # pipes; see dispose().
+        self._plot_panes.append(plot_pane_wrapper)
+        return plot_pane_wrapper.layout
+
+    def _compose_plot(self) -> hv.DynamicMap | hv.Element | None:
+        """
+        Compose the cell's plot from session-local DynamicMaps or static elements.
+
+        Ensures session components exist when data is available. Sets a
+        descriptive SaveTool filename on the result so that browser "Save"
+        downloads get a meaningful name, suspends hover while an ROI edit tool
+        is active, and builds the cell's autoscale controller as a side effect.
+
+        Returns
+        -------
+        :
+            Composed plot from session DMaps/elements, or None if none available.
+        """
+        plots = []
+        non_overlayable = False
+        cell_plotters: list = []
+        for layer in self._cell.layers:
+            layer_id = layer.layer_id
+            session_layer = self._deps.session_layers.get(layer_id)
+            if session_layer is None:
+                continue
+
+            # Ensure components exist if data is now available
+            state = self._deps.plot_data_service.get(layer_id)
+            if state is not None:
+                session_layer.ensure_components(state)
+                # Static overlays (vlines/hlines/rectangles) are not Plotters
+                # and carry no autoscale axes; exclude them from the controller.
+                if state.plotter is not None and not layer.config.is_static():
+                    cell_plotters.append(state.plotter)
+                # Tables and layout-mode plotters produce a DataTable/Layout with
+                # no single figure for the SaveTool/aspect hooks to act on. Such
+                # layers are forbidden from sharing a cell, so this flags a
+                # solitary non-overlayable layer; hooks are skipped below.
+                if state.plotter is not None and not getattr(
+                    state.plotter, 'is_overlayable', True
+                ):
+                    non_overlayable = True
+
+            dmap = session_layer.dmap
+            if dmap is not None:
+                plots.append(dmap)
+
+        if not plots:
+            return None
+
+        result: hv.DynamicMap | hv.Element
+        if len(plots) == 1:
+            result = plots[0]
+        else:
+            # Collate so hooks survive for any number of DynamicMap layers.
+            # Without collation, HoloViews drops overlay-level opts (including
+            # hooks) when an Overlay contains 3+ DynamicMaps.  Collating first
+            # produces a single DynamicMap whose outputs are plain Overlays;
+            # opts applied afterwards land on the OverlayPlot and persist.
+            result = hv.Overlay(plots).collate()
+            # Sharing one figure also fuses the layers' update cost: a send on
+            # any one layer re-runs the OverlayPlot's range machinery over every
+            # subplot, so a layer's repaint grows with the number of layers in
+            # its cell. Only the data push stays proportional to the sender.
+            # `Plotter.applies_ranges` is what keeps that off the layers whose
+            # axes the cell writes itself.
+
+        # Skip the cell-level hooks for a non-overlayable layer: a Layout's
+        # sub-figures each carry their own SaveTool, and a Table's DataTable
+        # widget has no figure for the SaveTool/autoscale hooks to act on. The
+        # frame-aspect hook is not among these — it is declared per element type
+        # by the plotter (see Plotter._sizing_opts), so it reaches every
+        # sub-figure of a Layout regardless.
+        if non_overlayable:
+            return result
+
+        hooks: list = [make_hover_suspend_hook()]
+        filename = build_save_filename_from_cell(
+            self._cell,
+            self._deps.workflow_registry,
+            self._deps.orchestrator.get_source_title,
+        )
+        if filename is not None:
+            hooks.append(make_save_filename_hook(filename))
+        # Fresh controller on every cell rebuild: keeps tools and toggle state
+        # local to this session's Bokeh document. The previous cell widget's
+        # controller is disposed by the owner after the swap, breaking its
+        # on_change reference cycle (would otherwise leak across the session).
+        controller = build_controller_from_layers(cell_plotters)
+        if controller is not None:
+            self._autoscale_controller = controller
+            hooks.append(controller.make_hook())
+        return result.opts(hooks=hooks)

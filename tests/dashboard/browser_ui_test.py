@@ -6,9 +6,13 @@ Automates the recurring manual verification items that need no Kafka backend,
 driving the fake-backend dashboard (seeded from the committed dummy fixture)
 through the stable ``lt-*`` automation hooks:
 
+- clicking out an empty grid region and completing the plot wizard yields a
+  live plot;
 - session reload restores tabs and live updates;
 - a grid created in one session appears in others without stealing focus;
 - a cell title survives a no-op Save of the cell-properties modal;
+- a cell rebuilt in an open session renders its titlebar rather than an
+  invisible one;
 - disabling or removing a grid keeps the remaining tabs resolving and
   updating;
 - two sessions racing to save edits on the same grid converge on one title,
@@ -27,6 +31,7 @@ cleanly where Playwright is absent).
 from __future__ import annotations
 
 import copy
+import re
 from pathlib import Path
 
 import pytest
@@ -90,6 +95,56 @@ def _add_grid(dash: Dashboard, title: str) -> None:
     wait_until(
         dash, lambda: title in dash.tab_names(), label=f"tab {title!r} to appear"
     )
+
+
+def _wizard_click(dash: Dashboard, label: str) -> None:
+    """Click a plot-wizard control once it is rendered.
+
+    Every step rebuilds the dialog body, so a control is briefly absent and can
+    detach under the cursor: wait for it to exist, then use the retrying click.
+    """
+    selector = f'button:text-is("{label}")'
+    wait_until(
+        dash,
+        lambda: dash.page.locator(selector).count() > 0,
+        label=f"wizard control {label!r}",
+    )
+    dash.click(selector)
+
+
+@pytest.mark.browser
+def test_clicking_out_an_empty_region_creates_a_live_plot():
+    """The click-to-place flow, from two clicks on a bare grid to live data.
+
+    Every other plot in this suite comes pre-seeded from the fixture, so this
+    is the only coverage of the path a user actually takes to create one.
+    """
+    cell = ".lt-empty-cell-r0c0"
+    with fake_dashboard("dummy") as fake, Dashboard.connect(fake.url) as dash:
+        page = dash.page
+        dash.goto_tab("Manage Plots")
+        _add_grid(dash, "Placed")
+
+        # The first click only arms the region; the relabelled cell is the
+        # proof it landed, without which the second click would arm rather
+        # than complete the selection.
+        dash.click(cell)
+        armed = page.get_by_text("Click again for 1x1 plot", exact=True)
+        wait_until(dash, lambda: armed.count() > 0, label="the armed cell")
+        dash.open_modal(cell)
+
+        for label in ("Monitors", "Beam monitor", "Histogram", "Next", "Lines"):
+            _wizard_click(dash, label)
+        _wizard_click(dash, "Next")
+        _wizard_click(dash, "Add Plot")
+
+        page.locator("[role=dialog]").first.wait_for(state="hidden", timeout=10000)
+        wait_until(
+            dash,
+            lambda: page.locator(".lt-cell-r0c0").count() > 0,
+            label="the placed cell's titlebar",
+        )
+        assert_updating(dash, "plot placed by clicking out a region")
 
 
 @pytest.mark.browser
@@ -169,30 +224,71 @@ def test_cell_title_survives_noop_save_of_cell_properties_modal():
 
 
 @pytest.mark.browser
+def test_rebuilt_cell_titlebar_panes_are_visible_without_cdn_access():
+    """A cell rebuilt in an open session must show its titlebar, not hide it.
+
+    Panel reveals a markup pane's content only once every stylesheet ``<link>``
+    in it has fired ``load``, and arms that reveal once, while rendering. A pane
+    built after page load -- every cell the poll loop rebuilds -- first renders
+    against cdn.holoviz.org URLs, which Panel then swaps for the locally served
+    copies; the load events the reveal waits on belong to the discarded links
+    (holoviz/panel#8696). The pane's model, text and layout stay correct, so the
+    failure is invisible to every assertion except a visibility check.
+
+    Blocking the CDN, as the deployment network does, makes those links fail for
+    certain instead of racing the swap, which is what makes this deterministic.
+    Which pane loses that race varies, so both titlebar panes are checked.
+    """
+    with fake_dashboard("dummy") as fake, Dashboard.connect(fake.url) as dash:
+        page = dash.page
+        page.route("**cdn.holoviz.org/**", lambda route: route.abort())
+        dash.goto_tab("Detectors")
+
+        # Renaming rebuilds the cell, minting fresh titlebar panes.
+        dash.open_modal(".lt-cell-r0c0.lt-tool-pencil")
+        page.locator(_CELL_TITLE_INPUT).fill("Rebuilt Cell")
+        page.get_by_role("button", name="Save", exact=True).click()
+
+        title = page.get_by_text("Rebuilt Cell", exact=True).first
+        wait_until(
+            dash, lambda: title.count() > 0, label="renamed cell title in the DOM"
+        )
+        assert title.is_visible(), "rebuilt cell title is in the DOM but invisible"
+
+        # The freshness pill is the same kind of pane and the symptom that was
+        # reported; it fills on the first freshness-due poll after the rebuild.
+        pill = page.get_by_text(re.compile(r"^\d+(\.\d+)?[sm]$")).first
+        wait_until(dash, lambda: pill.count() > 0, label="freshness pill in the DOM")
+        assert pill.is_visible(), "freshness pill is in the DOM but invisible"
+
+
+@pytest.mark.browser
 def test_remaining_tabs_keep_updating_after_disabling_and_removing_grids():
     with fake_dashboard("dummy") as fake, Dashboard.connect(fake.url) as dash:
-        # Arrange three grids ordered [Bravo, Charlie, Detectors]: two empty
-        # grids ahead of the fixture's populated one, so disabling the first
-        # and removing the middle both shift the Detectors tab position --
-        # the regression class where tab indices fall out of alignment with
-        # the grid list once a preceding grid is hidden or gone.
+        # Order the grids [Diagnostics, Bravo, Charlie, Detectors]: two empty
+        # grids ahead of the fixture's populated one, so disabling one and
+        # removing the next both shift the Detectors tab position -- the
+        # regression class where tab indices fall out of alignment with the
+        # grid list once a preceding grid is hidden or gone.
         dash.goto_tab("Manage Plots")
         _add_grid(dash, "Bravo")
         dash.goto_tab("Manage Plots")
         _add_grid(dash, "Charlie")
         dash.goto_tab("Manage Plots")
         for expected in (
-            ["Bravo", "Detectors", "Charlie"],
-            ["Bravo", "Charlie", "Detectors"],
+            ["Diagnostics", "Detectors", "Bravo", "Charlie"],
+            ["Diagnostics", "Bravo", "Detectors", "Charlie"],
+            ["Diagnostics", "Bravo", "Charlie", "Detectors"],
         ):
             dash.click(".lt-grid-detectors.lt-tool-chevron-down")
             wait_until(
                 dash,
-                lambda expected=expected: dash.tab_names()[-3:] == expected,
+                lambda expected=expected: dash.tab_names()[-4:] == expected,
                 label=f"grid tab order {expected}",
             )
 
-        # Disable the first grid: its tab vanishes, the rest keep working.
+        # Disable a grid ahead of Detectors: its tab vanishes, the rest keep
+        # working.
         dash.click(".lt-grid-bravo.lt-tool-eye")
         wait_until(
             dash,
@@ -203,7 +299,7 @@ def test_remaining_tabs_keep_updating_after_disabling_and_removing_grids():
         dash.goto_tab("Detectors")
         assert_updating(dash, "Detectors tab after disabling first grid")
 
-        # Remove the middle grid of [Bravo (disabled), Charlie, Detectors].
+        # Remove the grid between the disabled Bravo and Detectors.
         dash.goto_tab("Manage Plots")
         dash.click(".lt-grid-charlie.lt-tool-x")
         wait_until(
@@ -234,12 +330,19 @@ def test_multi_layer_cell_gear_picks_the_layer_to_configure():
         for entry in entries:
             wait_until(dash, entry.is_visible, label="layer menu entry")
 
+        # The dropdown's min-width rule targets the popup's actual DOM class
+        # (Bokeh's Dropdown menu is `bk-Menu`, not the lowercase `bk-menu` a
+        # stale selector would suggest); a mismatch silently drops the rule
+        # and wraps every entry across multiple lines.
+        menu_box = page.locator(".bk-Menu").bounding_box()
+        assert menu_box is not None
+        assert menu_box["width"] >= 200
+
         # Choosing one opens the config modal for that layer, not the cell's
         # first: the source selector is pre-filled with the chosen layer's
         # source. (The dialog's own inner_text is empty -- Panel renders each
         # widget into its own shadow root -- so assert on the chip itself.)
-        entries[1].click()
-        page.locator("[role=dialog]").first.wait_for(state="visible", timeout=10000)
+        dash.open_modal(entries[1])
         chip = page.locator(".choices__list--multiple .choices__item").first
         chip.wait_for(state="visible", timeout=10000)
         assert chip.inner_text().startswith("monitor2")

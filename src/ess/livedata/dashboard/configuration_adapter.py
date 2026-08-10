@@ -3,13 +3,11 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from typing import Any, Generic, TypeVar
+from typing import Any
 
 from pydantic import BaseModel, Field
 
 from ess.livedata.config.workflow_spec import AuxSources
-
-Model = TypeVar('Model')
 
 DEFAULT_SOURCE_PRESELECTION_CAP = 5
 """Maximum number of sources to pre-select by default.
@@ -42,7 +40,7 @@ class ConfigurationState(BaseModel):
     )
 
 
-class ConfigurationAdapter(ABC, Generic[Model]):
+class ConfigurationAdapter[Model](ABC):
     """
     Abstract adapter for providing configuration data to generic widgets.
 
@@ -96,6 +94,7 @@ class ConfigurationAdapter(ABC, Generic[Model]):
     @property
     def aux_sources(self) -> AuxSources | None:
         """Auxiliary source specification, or None if the workflow has none."""
+        return None
 
     @property
     def initial_aux_source_names(self) -> dict[str, str]:
@@ -116,9 +115,7 @@ class ConfigurationAdapter(ABC, Generic[Model]):
             if k in inputs and v in inputs[k].choices
         }
 
-    def set_aux_sources(
-        self, aux_source_names: dict[str, str] | None
-    ) -> type[Model] | None:
+    def set_aux_sources(self, aux_source_names: dict[str, str] | None) -> type[Model]:
         """Set auxiliary sources and return the parameter model class.
 
         Parameters
@@ -129,13 +126,14 @@ class ConfigurationAdapter(ABC, Generic[Model]):
         Returns
         -------
         :
-            Pydantic model class for parameters, or None if no parameters.
+            Pydantic model class for parameters. A model with no fields means
+            the workflow or plotter takes no parameters.
         """
         self._cached_aux_sources = aux_source_names
         return self.model_class()
 
     @abstractmethod
-    def model_class(self) -> type[Model] | None:
+    def model_class(self) -> type[Model]:
         """
         Pydantic model class for parameters.
 
@@ -214,13 +212,8 @@ class ConfigurationAdapter(ABC, Generic[Model]):
         if self._config_state is None:
             return {}
 
-        # Check compatibility with current model
-        model_class = self.model_class()
-        if model_class is None:
-            # No model defined, return params as-is
-            return self._config_state.params
-
         # Check if stored params have ANY overlap with current model fields
+        model_class = self.model_class()
         # If no field names match, the config is from an incompatible version
         stored_keys = set(self._config_state.params.keys())
         model_fields = set(model_class.model_fields.keys())

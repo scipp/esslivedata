@@ -97,7 +97,7 @@ class PlotConfigurationAdapter(ConfigurationAdapter):
         """Description for the configuration panel."""
         return self._plot_spec.description
 
-    def model_class(self) -> type[pydantic.BaseModel] | None:
+    def model_class(self) -> type[pydantic.BaseModel]:
         """Get the pydantic model class for plotter parameters.
 
         When a ``params_factory`` and output template dims are both available,

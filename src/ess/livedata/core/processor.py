@@ -2,11 +2,11 @@
 # Copyright (c) 2025 Scipp contributors (https://github.com/scipp)
 from __future__ import annotations
 
-from typing import Generic, Protocol
+from typing import Protocol
 
 import structlog
 
-from .message import Message, MessageSink, MessageSource, Tin, Tout
+from .message import Message, MessageSink, MessageSource
 
 logger = structlog.get_logger(__name__)
 
@@ -27,7 +27,7 @@ class Processor(Protocol):
         """
 
 
-class IdentityProcessor(Generic[Tin, Tout]):
+class IdentityProcessor[Tin, Tout]:
     """
     Simple processor that passes messages directly from source to sink.
 

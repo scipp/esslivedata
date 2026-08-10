@@ -36,12 +36,60 @@ def refresh(self):
 
 **Key principles**:
 - Widgets detect changes via version counters on shared state, not via push callbacks
-- All widget updates run inside `SessionUpdater._batched_update()` for efficient recomputation
+- All widget updates run inside `batched_update()` for efficient recomputation
 - Widget event handlers should only call methods on shared components, never rebuild directly
+
+### Plot-grid reconciler: policy vs mechanism
+
+The plot-grid session pass (`plot_grid_tabs.py`) is split into a pure policy
+function and a fixed differ/applier:
+
+- **Policy** — *which cells should have a widget, built from what* — lives in
+  `desired_cells` (`dashboard/cell_plan.py`), a pure function unit-tested with
+  plain data (`cell_plan_test.py`). Any new visibility/materialization rule is
+  a diff to this function, never a gate threaded through the pass.
+- **Mechanism** — the differ rules (build when materialized inputs differ,
+  dispose when the cell left topology, defer otherwise) and the apply ordering
+  are fixed; do not add policy conditions there. `cell_plan.py` must not
+  import Panel/Bokeh/HoloViews (guarded by a test).
+- The wake predicate compares input stamps recorded at the last completed
+  pass; do not add hand-written per-gate terms to it. A new pass input joins
+  `_input_stamps` and the end-of-pass recording, nothing else.
+
+Pop-out windows (`plot_popout.py`) ride entirely on these three seams: a cell
+behind a showing window enters `SessionView.live_cell_ids` (policy), takes a
+viewer token like a visible cell (tokens), and adds its grid to the per-grid
+frame generations the stamps carry (`_live_generations`). Nothing else in the
+pass knows pop-outs exist.
+
+### A cell's views are torn down together
+
+A `CellWidget` owns every pane rendering its plot — the grid cell's and one per
+pop-out — because `Plot.cleanup` severs *all* weakly-held plot-refresh
+subscribers on the streams it touches, not just its own
+([holoviews#6988](https://github.com/holoviz/holoviews/issues/6988)). Removing
+any one view therefore stops every other view of that cell updating, silently:
+the plot stays on screen showing data that looks current.
+
+Two consequences to preserve:
+
+- **Rebuild after any removal that leaves a survivor.** Closing a pop-out runs
+  Panel's pane cleanup, so `PlotGridTabs._close_popout` rebuilds the cell
+  behind it. Adding a view is free; removing one is not.
+- **Sever before the replacement renders.** `_build_cell` closes the window,
+  builds the new widget, disposes the old one, and only then reopens the
+  window — the reopened pane must subscribe *after* the disposal has cleared
+  the pipes.
 
 ## Icons
 
 Do not use Unicode characters for button icons. Use embedded SVG icons from `dashboard/widgets/icons.py` via `get_icon()`. Use the `create_tool_button()` helper from `dashboard/widgets/buttons.py` for consistent styling.
+
+Where the icon cannot be a widget — a Bokeh tab label is plain text, for instance —
+paint it on a `::before` pseudo-element with `mask-image: url(get_icon_data_uri(name,
+color=None))` and `background-color: currentColor`. A mask reads only the alpha channel,
+so the icon inherits the element's text color and follows its active/hover states without
+a second, recolored copy (see `_static_tab_stylesheet` in `plot_grid_tabs.py`).
 
 ## Stable CSS hooks for automation
 
@@ -51,10 +99,18 @@ no text, `title`, or `aria-label` — leaving nothing semantic for browser autom
 `create_tool_button()` tags every button with **committed, visually-inert CSS classes**:
 
 - `lt-tool` on all tool buttons, plus `lt-tool-{icon_name}` (e.g. `lt-tool-settings`,
-  `lt-tool-player-play`, `lt-tool-x`).
+  `lt-tool-player-play`, `lt-tool-x`). `create_download_button()` follows the same
+  shape with a fixed `lt-tool-download`.
 - Callers pass `css_classes=[...]` for context. Workflow rows add `lt-wf-{workflow_id.name}`
   (the WorkflowId *name* slug, not the display title), so a workflow's gear is
   `.lt-wf-monitor_histogram.lt-tool-settings`.
+
+The empty cells of a plot grid are not tool buttons but are click targets — the
+two-click place gesture that opens the plot wizard — so they carry
+`lt-empty-cell` plus `lt-empty-cell-r{row}c{col}` (`plot_grid.py`). Empty and
+occupied cells are hooked apart on purpose: a selector placing a plot must be
+able to demand a cell that is still free, so an occupied cell's `lt-cell-*` hook
+never answers for one.
 
 `lt-wf-*` and `lt-grid-*` slug different things on purpose: a workflow has a stable
 *name* identity to slug (`workflow_status_widget.py`'s `_tool_css_class`), but a grid has
@@ -100,6 +156,41 @@ UI, then copying the persisted `workflow_configs.yaml` (strip the runtime
 `current_job` key, keep `jobs`) and `plot_configs.yaml` from the config
 dir back into the fixture; `ui_config_fixtures_test.py` guards against drift.
 
+**Diagnosing a failure.** When a block driving a session raises, everything is printed
+to **stdout** — browser console tail, page state (active tab, dialog count and how many
+of them are visible, `lt-*` hook inventory), a base64 JPEG screenshot, and the
+dashboard's server log tail. Nothing is uploaded as a CI artifact, deliberately: the
+artifact endpoint is firewalled in the devcontainer, whereas stdout lands in the pytest
+failure report and in the run-level log zip, which is allowlisted and readable mid-run
+(`gh api repos/scipp/esslivedata/actions/runs/<id>/logs > run.zip`). Recover the
+screenshot with the `base64 -d` pipeline the log prints next to it.
+
+`dialogs` vs `dialogs_visible` is the first thing to read on a modal timeout: a dialog
+present but not visible means it rendered and was hidden, none at all means the click
+never reached its handler.
+
+The server log tail is what distinguishes *why* it never reached the handler. Static
+assets are served off the same IOLoop as everything else, so their `tornado.access`
+timings measure how long that loop was blocked: a `GET /static/...` taking seconds
+means the click's round-trip was queued behind the session's periodic pass, not lost
+(#1185). Sub-millisecond serves with no post-click activity at all point at a dropped
+click instead.
+
+One console line is usually a red herring: `pageerror: Cannot read properties of
+undefined (reading 'parent_style')`. It is
+[bokeh#15274](https://github.com/bokeh/bokeh/issues/15274) — our plot grid is a
+`pn.GridSpec`, i.e. a Bokeh `GridBox`, and Panel emits a `children` change and the
+recomputed sizing props in one patch, which that view indexes inconsistently. Real bug
+(it drops the rest of the patch), but it is not the cause of any intermittent failure.
+
+What triggers it is patching a *materialized* grid's children. Revealing a plot-grid
+tab used to do that on every switch — the tab materialized the empty-cell
+placeholders, then the cells replaced them — so the line fired on every run. Cells
+are now built before the tab materializes (`_prebuild_revealed_grid`), and a reveal
+no longer produces it. Treat it as expected only where children really do change
+under a rendered grid (adding or removing a cell on the visible tab); on a plain tab
+switch it now means something changed, so investigate rather than dismiss it.
+
 **Ports.** `fake_dashboard(...)` without a port takes one the OS reports free — how the
 browser tests launch, so two checkouts (or a suite next to an interactive dashboard) can
 run at once. Do not hand a test a port literal; they collide silently across branches.
@@ -123,7 +214,11 @@ arrives collapsed — no clicking the hamburger, and it survives `page.reload()`
 **Tabs.** The top-level tabs are Bokeh-owned `.bk-tab` divs with no `lt-*` hooks, so
 navigate by visible text (`page.get_by_text("Detectors", exact=True)`). Static tab
 titles are code constants: **Workflows**, **System Status**, **Manage Plots**; further
-tabs are user/fixture plot-grid titles (the dummy fixture adds **Detectors**). With
+tabs are user/fixture plot-grid titles (the dummy fixture adds **Detectors** and
+**Diagnostics**). Only the
+static tabs carry a leading icon, keyed to their position, so a bare label identifies a
+plot-grid tab visually — but the icon is a CSS pseudo-element, invisible to text
+locators. With
 `dynamic=True` only the active tab's models exist, so a DOM/`lt-*` inventory reflects the
 *current* tab only — switch tabs before querying that tab's hooks.
 
@@ -179,9 +274,10 @@ freshly loaded tab roughly a 3-in-4 proposition. `click_until(dash, selector, co
 label=...)` retries until the effect is observable — use it for the first click of a
 session rather than `dash.click` plus a `wait_until`, which cannot recover.
 
-**Modals.** Settings (gear), cell edit (pencil), and workflow config open a `pn.Modal`
-rendered as `[role=dialog]` — use that as the open/visible signal (`Dashboard.open_modal`
-waits on it). Footer buttons are reachable by text (`Cancel`, `Update Plot`, `Back`). To
+**Modals.** Settings (gear), cell edit (pencil), workflow config, and the plot wizard
+an empty grid cell opens all render a `pn.Modal` as `[role=dialog]` — use that as the
+open/visible signal (`Dashboard.open_modal` waits on it). Footer buttons are reachable
+by text (`Cancel`, `Back`, `Next`, `Add Plot`, `Update Plot`). To
 dismiss, press **Escape** (a `ModalEscapeCloser` widget makes this work from initial
 focus) or click `.pnx-dialog-close`. Per-grid rows in **Manage Plots** carry
 `lt-grid-{title-slug}` (e.g. `.lt-grid-detectors.lt-tool-pencil`) — that pencil is the
@@ -243,6 +339,18 @@ needed (lazy creation) or use `dynamic=True` containers.
 Note that `dynamic=True` only gates Bokeh model creation. Python-side periodic callbacks
 (e.g., `SessionUpdater` custom handlers) still run for all registered widgets regardless
 of which tab is visible. Use an `is_visible` predicate to skip refresh work for hidden tabs.
+
+### Markup panes built after page load
+
+Panel keeps a markup pane (`pn.pane.HTML`, `Markdown`, `Str`) behind
+`visibility: hidden` until every `<link>` stylesheet in it has fired `load`, and arms
+that reveal exactly once, while rendering. A pane built after page load first renders
+against `cdn.holoviz.org` URLs — its model is not in a document yet, so Panel falls back
+to the CDN — and Panel then swaps those links for the locally served copies. The load
+events the reveal waits on belong to the discarded links, so the pane can stay invisible
+for the rest of the session while its model, text and layout are all correct and
+live-updating (#1154, holoviz/panel#8696). `dashboard/design.py` overrides the latch for
+the whole app; a template built without `LivedataDesign` brings the bug back.
 
 ## Colors and styling
 
