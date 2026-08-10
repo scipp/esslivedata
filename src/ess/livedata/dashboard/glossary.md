@@ -45,6 +45,11 @@ the disambiguation of overloaded words live in `src/ess/livedata/glossary.md`.
 
 From coarse to fine: **grid → cell → layer → plotter → presenter → figure**.
 
+- **Topology** — the shared arrangement of plots: which grids exist (order,
+  title, enabled), which cells each grid holds, and which layers each cell
+  holds. Owned by **PlotOrchestrator** and versioned as one unit
+  (`topology_version`); excludes data flow (frames, plotter contents) and
+  anything per-session (widgets, tokens, tab focus).
 - **Grid** — a titled `nrows × ncols` arrangement of cells (`PlotGridConfig`);
   shown as one dashboard tab. Grids are managed by **PlotOrchestrator**
   (`dashboard/plot_orchestrator.py`), which owns topology, persistence, and a
