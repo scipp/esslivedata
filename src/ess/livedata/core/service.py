@@ -24,7 +24,10 @@ class ServiceBase(ABC):
         self._logger = structlog.get_logger()
         self._silence_noisy_loggers()
         self._running = False
-        self._setup_signal_handlers()
+        # Set by anything that asks for shutdown -- a signal, a worker loop that
+        # died, an explicit stop() -- so that a blocking start() wakes up.
+        self._shutdown_requested = threading.Event()
+        self._shutdown_signum: int | None = None
 
     @staticmethod
     def _silence_noisy_loggers() -> None:
@@ -39,16 +42,29 @@ class ServiceBase(ABC):
         return self._running
 
     def _setup_signal_handlers(self) -> None:
-        """Setup handlers for graceful shutdown"""
+        """Install handlers for graceful shutdown.
+
+        Called from :meth:`start`, not from ``__init__``: a handler firing
+        mid-construction would run against a half-built service, and a service
+        that was never started has nothing to shut down anyway.
+        """
         signal.signal(signal.SIGTERM, self._handle_shutdown)
         signal.signal(signal.SIGINT, self._handle_shutdown)
         self._logger.info("Registered signal handlers")
 
     def _handle_shutdown(self, signum: int, _: Any) -> None:
-        """Handle shutdown signals"""
-        self._logger.info("Received signal %d, initiating shutdown...", signum)
-        self.stop()
-        self._finalize_processor()
+        """Ask the main thread to shut down, doing nothing that can block.
+
+        A handler runs on the main thread between bytecodes, so it must not
+        take a lock the interrupted frame may hold. Logging here deadlocks the
+        process whenever the signal lands inside another log call -- and a
+        service logs constantly, so this happens. Everything that logs, stops
+        threads or finalizes runs in :meth:`_shut_down` instead; raising
+        SystemExit is the async-signal-safe way to unwind the main thread out
+        of whatever it is blocked in and get there.
+        """
+        self._shutdown_signum = signum
+        self._shutdown_requested.set()
         sys.exit(self._exit_code)
 
     @property
@@ -63,18 +79,46 @@ class ServiceBase(ABC):
         """
 
     def start(self, blocking: bool = True) -> None:
-        """Start the service and block until stopped"""
+        """Start the service and, unless ``blocking`` is False, run until stopped"""
+        if not blocking:
+            self._launch()
+            return
+        try:
+            self._launch()
+            self.run_forever()
+        except SystemExit:
+            # A signal handler's exit, raised wherever the main thread happened
+            # to be -- possibly still in startup. The shutdown it asked for
+            # runs below, off the handler.
+            pass
+        self._shut_down()
+
+    def _launch(self) -> None:
+        self._setup_signal_handlers()
         self._logger.info("Starting service...")
         self._running = True
         self._start_impl()
         self._logger.info("Service started")
-        if blocking:
-            self.run_forever()
+
+    def _shut_down(self) -> None:
+        """Stop and finalize on the main thread, then exit the process.
+
+        Runs once :meth:`run_forever` has returned or been unwound, so the
+        logging and thread joins here are outside any signal handler.
+        """
+        if self._shutdown_signum is not None:
+            self._logger.info(
+                "Received signal %d, initiating shutdown...", self._shutdown_signum
+            )
+        self.stop()
+        self._finalize_processor()
+        sys.exit(self._exit_code)
 
     def stop(self) -> None:
         """Stop the service gracefully"""
         self._logger.info("Stopping service...")
         self._running = False
+        self._shutdown_requested.set()
         self._stop_impl()
         self._logger.info("Service stopped")
 
@@ -140,12 +184,8 @@ class Service(ServiceBase):
         self._thread.start()
 
     def run_forever(self) -> None:
-        """Block forever, waiting for signals"""
-        while self.is_running:
-            try:
-                signal.pause()
-            except KeyboardInterrupt:
-                self.stop()
+        """Block until a signal, an explicit stop, or the worker loop's death."""
+        self._shutdown_requested.wait()
 
     def step(self) -> None:
         """Run one step of the service loop for testing purposes"""
@@ -167,11 +207,12 @@ class Service(ServiceBase):
             self._logger.exception("Error in service loop")
             self._worker_error = str(e)
             self._running = False
-            # Send a signal to the main thread to unblock it
-            if threading.current_thread() is not threading.main_thread():
-                os.kill(os.getpid(), signal.SIGINT)
         finally:
             self._logger.info("Service loop stopped")
+            # Wake a blocking start(), which reports the error via the exit
+            # code. Signalling the process instead would land the shutdown in
+            # a signal handler, where it cannot log or join threads.
+            self._shutdown_requested.set()
 
     @property
     def _exit_code(self) -> int:
@@ -188,7 +229,14 @@ class Service(ServiceBase):
 
     def _stop_impl(self) -> None:
         """Stop the service gracefully"""
-        if self._thread and self._thread is not threading.current_thread():
+        # is_alive() is False for a thread that was created but never started,
+        # which a signal landing mid-startup makes reachable, and join() raises
+        # on such a thread.
+        if (
+            self._thread is not None
+            and self._thread.is_alive()
+            and self._thread is not threading.current_thread()
+        ):
             self._thread.join()
 
     @staticmethod
