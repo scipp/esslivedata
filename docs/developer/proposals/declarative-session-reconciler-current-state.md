@@ -132,7 +132,7 @@ race today, reproducibly after #1216's gate defers builds — the grid offers
 `PlotOrchestrator.add_cell`'s overlap `ValueError`, which the success handler
 did not catch. Two fixes: catch the error (done in #1220; the simultaneous-
 wizard race needs it regardless), and derive occupancy from topology (the
-structural half — phase 1 of the migration plan, in flight as
+structural half — phase 1 of the migration plan, merged as
 [#1221](https://github.com/scipp/esslivedata/pull/1221)).
 
 ## Defect walkthrough: #1224

@@ -62,7 +62,7 @@ to this module needs.
 
 ## Phase 1 — occupancy from topology (#1219, structural half)
 
-**Status: in flight as [#1221](https://github.com/scipp/esslivedata/pull/1221).**
+**Status: merged as [#1221](https://github.com/scipp/esslivedata/pull/1221).**
 
 `PlotGrid` stops deriving free positions from inserted widgets. Instead it
 receives a callable returning the grid's topology geometries (wired to the
