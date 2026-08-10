@@ -204,9 +204,11 @@ class DashboardServices:
     def _on_transport_failure(self) -> None:
         """Trigger orderly process shutdown after a fatal transport failure.
 
-        Mirrors the worker-thread → main-thread fail-fast path in
-        ``Service._run_loop``: SIGINT is delivered to the main thread, where
-        ``ServiceBase._handle_shutdown`` runs the cleanup and exits.
+        Fail-fast counterpart to ``Service._run_loop``, which wakes its main
+        thread through an event. This one cannot: the dashboard's main thread
+        is blocked in ``pn.serve``, so only a signal unblocks it.
+        ``ServiceBase._handle_shutdown`` raises SystemExit there and ``start``
+        runs the cleanup on the way out.
         """
         if threading.current_thread() is not threading.main_thread():
             os.kill(os.getpid(), signal.SIGINT)

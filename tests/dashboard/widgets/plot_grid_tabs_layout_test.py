@@ -258,8 +258,10 @@ class TestPollHandlesLayoutPlotters:
         grid_id = plot_orchestrator.add_grid(title='Test', nrows=2, ncols=2)
         layer_id = _inject_layer(plot_orchestrator, plot_data_service, grid_id, plotter)
 
-        # First poll adds the grid tab and builds the cell/session layer.
+        # First poll adds the grid tab; revealing it builds the cell/session
+        # layer (the switch runs the pass synchronously in tests).
         plot_grid_tabs._poll_for_plot_updates()
+        plot_grid_tabs.tabs.active = plot_grid_tabs._static_tabs_count
 
         session_layer = plot_grid_tabs._session_layers.get(layer_id)
         assert session_layer is not None
@@ -277,6 +279,7 @@ class TestPollHandlesLayoutPlotters:
         layer_id = _inject_layer(plot_orchestrator, plot_data_service, grid_id, plotter)
 
         plot_grid_tabs._poll_for_plot_updates()
+        plot_grid_tabs.tabs.active = plot_grid_tabs._static_tabs_count
         version_after_first_poll = plot_grid_tabs._session_layers[
             layer_id
         ].last_seen_version
@@ -449,10 +452,18 @@ class TestFreshnessIndicator:
         grid_id = plot_orchestrator.add_grid(title='Test', nrows=2, ncols=2)
         # Leave a non-plot static tab active so the grid is hidden.
         plot_grid_tabs.tabs.active = 0
-        _inject_layer(plot_orchestrator, plot_data_service, grid_id, plotter)
+        layer_id = _inject_layer(plot_orchestrator, plot_data_service, grid_id, plotter)
+
+        # Another session's viewer token makes the hidden cell build (#1216).
+        class _OtherSessionViewer:
+            pass
+
+        token = _OtherSessionViewer()
+        plot_data_service.set_active(layer_id, token, True)
 
         plot_grid_tabs._poll_for_plot_updates()
 
+        assert plot_grid_tabs._cells
         for cell_widget in plot_grid_tabs._cells.values():
             assert cell_widget.freshness_pane.object in ('', None)
 

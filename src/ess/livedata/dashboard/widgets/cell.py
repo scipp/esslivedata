@@ -238,6 +238,7 @@ class CellWidget:
         self._stopped_layers: frozenset[LayerId] = frozenset()
         self._pill_frozen = False
         self._layer_time_panes: dict[LayerId, pn.pane.HTML] = {}
+        self._plot_pane: pn.pane.HoloViews | None = None
         # Composing builds the autoscale controller as a side effect.
         self._plot = self._compose_plot()
         self._view = self._build()
@@ -308,15 +309,41 @@ class CellWidget:
             pane.object = html
 
     def dispose(self) -> None:
-        """Dispose the autoscale controller, breaking its reference cycle.
+        """Release everything this widget attached to shared or session state.
 
-        Calling ``dispose()`` breaks the controller → Bokeh-tool →
-        on_change-callback → controller reference cycle so long sessions
-        don't accumulate detached controllers after cell rebuilds/removals.
+        Breaks the autoscale controller → Bokeh-tool → on_change-callback →
+        controller reference cycle, and unsubscribes the plot pane's rendered
+        plots from the layers' ``hv.streams.Pipe``. The pipe half is essential
+        when a cell is rebuilt while its grid is visible: ``GridSpec`` never
+        cleans up removed children (holoviz/panel#8710), so without the
+        explicit sever the discarded plot keeps rendering every pipe update
+        for the rest of the session (#1224).
+
+        ``Plot.cleanup`` severs *every* weakly-wrapped plot-refresh subscriber
+        on the streams it touches, not only its own — its owner filter is
+        defeated upstream (holoviz/holoviews#6988). That is safe here because
+        a layer's pipe is per session and per cell, and a rebuild disposes the
+        displaced widget before the replacement renders — the two plots never
+        hold live subscriptions concurrently. Any change to teardown must keep
+        that order (sever first, render the replacement after) until #6988 is
+        fixed.
         """
         if self._autoscale_controller is not None:
             self._autoscale_controller.dispose()
             self._autoscale_controller = None
+        if self._plot_pane is not None:
+            # TODO(holoviz/panel#8710): delete this block once the minimum
+            # panel version cleans up displaced GridSpec children itself, and
+            # re-point the subscriber-count regression tests at
+            # PlotGrid.insert_widget_at/remove_widget_at, which then carry the
+            # cleanup. Until then: no public teardown API on the pane; this
+            # mirrors the pipe half of pn.pane.HoloViews._cleanup, which Panel
+            # only runs from a document root we never held.
+            for plot, _ in self._plot_pane._plots.values():
+                if plot is not None:
+                    plot.cleanup()
+            self._plot_pane._plots.clear()
+            self._plot_pane = None
 
     def _layer_states(self) -> dict[LayerId, LayerSnapshot]:
         """Get layer states from PlotDataService for all layers in the cell."""
@@ -651,6 +678,9 @@ class CellWidget:
         plot_pane_wrapper = pn.pane.HoloViews(
             plot, sizing_mode=sizing_mode, linked_axes=False
         )
+        # Kept so dispose() can unsubscribe the rendered plots from the layer
+        # pipes; see dispose().
+        self._plot_pane = plot_pane_wrapper
         return plot_pane_wrapper.layout
 
     def _compose_plot(self) -> hv.DynamicMap | hv.Element | None:
