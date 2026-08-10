@@ -4,11 +4,16 @@ import holoviews as hv
 import panel as pn
 import pytest
 
+from ess.livedata.config.workflow_spec import WorkflowId
 from ess.livedata.dashboard.data_service import DataService
 from ess.livedata.dashboard.job_service import JobService
 from ess.livedata.dashboard.notification_queue import NotificationQueue
 from ess.livedata.dashboard.plot_data_service import PlotDataService
-from ess.livedata.dashboard.plot_orchestrator import PlotOrchestrator
+from ess.livedata.dashboard.plot_orchestrator import (
+    CellGeometry,
+    CellId,
+    PlotOrchestrator,
+)
 from ess.livedata.dashboard.plotting_controller import PlottingController
 from ess.livedata.dashboard.session_registry import SessionId, SessionRegistry
 from ess.livedata.dashboard.session_updater import SessionUpdater
@@ -1534,3 +1539,112 @@ class TestWakeGateContract:
         assert plot_grid_tabs._has_pending_work()
         _tick(plot_grid_tabs)
         assert not plot_grid_tabs._has_pending_work()
+
+
+class TestDisposeSeversPipeSubscribers:
+    """#1224: a rebuilt or removed cell's rendered plot must unsubscribe from
+    the layer pipes. GridSpec slot replacement does not run Panel's pane
+    cleanup, so a leaked subscriber renders the layer once more on every pipe
+    update, for the rest of the session."""
+
+    @staticmethod
+    def _add_dynamic_layer_cell(plot_grid_tabs, plot_data_service):
+        """Register a one-layer dynamic cell with live session components."""
+        from uuid import uuid4
+
+        from ess.livedata.dashboard.data_roles import PRIMARY
+        from ess.livedata.dashboard.plot_data_service import LayerId
+        from ess.livedata.dashboard.plot_orchestrator import (
+            DataSourceConfig,
+            Layer,
+            PlotCell,
+            PlotConfig,
+        )
+        from ess.livedata.dashboard.plot_params import TimeWindowParams
+        from ess.livedata.dashboard.plots import PresenterBase
+        from ess.livedata.dashboard.session_layer import SessionLayer
+
+        class _Presenter(PresenterBase):
+            def present(self, pipe):
+                return hv.DynamicMap(lambda data: hv.Curve([]), streams=[pipe])
+
+        class _Plotter:
+            def __init__(self):
+                self._cached_state = None
+
+            @property
+            def autoscale_axes(self):
+                return frozenset({'x', 'y'})
+
+            def compute(self, data):
+                self._cached_state = data
+
+            def get_cached_state(self):
+                return self._cached_state
+
+            def has_cached_state(self):
+                return self._cached_state is not None
+
+            def create_presenter(self):
+                return _Presenter(self)
+
+            def iter_range_targets(self):
+                return iter(())
+
+        wf = WorkflowId(instrument='test', name='wf', version=1)
+        config = PlotConfig(
+            data_sources={
+                PRIMARY: DataSourceConfig(
+                    workflow_id=wf, source_names=['s1'], view_name='result'
+                )
+            },
+            plot_name='lines',
+            params=TimeWindowParams(),
+        )
+        layer = Layer(layer_id=LayerId(uuid4()), config=config)
+        cell = PlotCell(
+            geometry=CellGeometry(row=0, col=0, row_span=1, col_span=1),
+            layers=[layer],
+        )
+        plotter = _Plotter()
+        plotter.compute(hv.Curve([1, 2, 3]))
+        plot_data_service.job_started(layer.layer_id, plotter)
+        plot_data_service.data_arrived(layer.layer_id)
+        state = plot_data_service.get(layer.layer_id)
+        session_layer = SessionLayer(
+            layer_id=layer.layer_id, last_seen_version=state.version
+        )
+        session_layer.ensure_components(state)
+        plot_grid_tabs._session_layers[layer.layer_id] = session_layer
+        return cell, session_layer.components.pipe
+
+    def test_dispose_unsubscribes_rendered_plot(
+        self, plot_grid_tabs, plot_data_service
+    ):
+        from uuid import uuid4
+
+        cell, pipe = self._add_dynamic_layer_cell(plot_grid_tabs, plot_data_service)
+        baseline = len(pipe.subscribers)
+        widget = plot_grid_tabs._build_cell(CellId(uuid4()), cell)
+        widget.view.get_root()
+        assert len(pipe.subscribers) > baseline
+
+        widget.dispose()
+
+        assert len(pipe.subscribers) == baseline
+
+    def test_rebuild_while_rendered_does_not_accumulate_subscribers(
+        self, plot_grid_tabs, plot_data_service
+    ):
+        from uuid import uuid4
+
+        cell, pipe = self._add_dynamic_layer_cell(plot_grid_tabs, plot_data_service)
+        cell_id = CellId(uuid4())
+        first = plot_grid_tabs._build_cell(cell_id, cell)
+        first.view.get_root()
+        settled = len(pipe.subscribers)
+
+        second = plot_grid_tabs._build_cell(cell_id, cell)
+        second.view.get_root()
+
+        assert len(pipe.subscribers) == settled
