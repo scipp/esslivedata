@@ -912,6 +912,17 @@ class TestTopologyVersion:
         plot_orchestrator.remove_layer(layer_id)
         assert plot_orchestrator.topology_version() > before
 
+    def test_removing_the_last_layer_removes_the_cell(
+        self, plot_orchestrator, workflow_id
+    ):
+        grid_id = plot_orchestrator.add_grid(title='Test Grid', nrows=3, ncols=3)
+        cell_id = plot_orchestrator.add_cell(grid_id, DEFAULT_GEOMETRY)
+        layer_id = plot_orchestrator.add_layer(cell_id, make_plot_config(workflow_id))
+
+        plot_orchestrator.remove_layer(layer_id)
+
+        assert cell_id not in plot_orchestrator.peek_grid(grid_id).cells
+
     def test_update_layer_config_bumps_version(
         self, plot_orchestrator, plot_cell, workflow_id
     ):
