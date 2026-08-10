@@ -27,6 +27,8 @@ flowchart LR
 
 ## Phase 0 — characterization tests
 
+**Status: implemented in [#1229](https://github.com/scipp/esslivedata/pull/1229).**
+
 Lock in what the current pass does before changing how it does it. The tests
 from #1220 (hidden cell not built, reveal builds once, watcher preserves
 pre-warm, deferred rebuild) and #1226 (pipe subscribers severed on dispose,
@@ -79,6 +81,17 @@ the overlap `ValueError` — #1220's error handler stays necessary as the last
 line of defence, and no occupancy model removes it.
 
 ## Phase 2 — `desired()` + differ for structure and materialization
+
+**Status: implemented in [#1230](https://github.com/scipp/esslivedata/pull/1230)**
+(`desired_cells` in `dashboard/cell_plan.py`; plans compared against the
+build inputs each widget records). Outcome against the criteria below: 2–5
+met cleanly; criterion 1 met with one honest nuance — `_last_layer_version`
+survives, but purely as the wake stamp with no rebuild semantics, and its
+snapshot-early/record-late rule now applies uniformly to all stamps instead
+of being a per-field choreography. The build inputs turned out to need one
+element beyond the sketch below: ``has_plot`` per layer, because a STOPPED
+layer's retained data is computed by the reveal's first-viewer activation
+*without* a version bump — the one upgrade a counter cannot express.
 
 The spike. Scope: concerns 1–4 of the current pass (tabs, cell composition,
 layer lifecycle, tokens) move to the new shape; flush (5) and freshness (6)
@@ -204,6 +217,15 @@ frame generation N") and freshness as a derived output. Only worth it if
 phase 2 leaves flush/freshness as the odd ones out complicating the tick
 entry points; they are edge-triggered by nature and may legitimately stay a
 small imperative tail. Decide on the phase-2 outcome, same criteria style.
+
+**Decision (post phase 2): not pursued.** The condition above is not met:
+after #1230 the flush/freshness tail is a compact block driven off the same
+plans (it iterates the active grid's `CellPlan`s and their snapshots), its
+three gates are already uniform stamps recorded like every other pass input,
+and the freshness stall term is inherently wall-clock. Modeling "grid G
+shows generation N" declaratively would add a second applied-state axis
+while deleting nothing. Revisit only if a future feature needs per-cell
+flush policy (e.g. pause).
 
 ## Phase 4 — stable widget shell (speculative spike)
 

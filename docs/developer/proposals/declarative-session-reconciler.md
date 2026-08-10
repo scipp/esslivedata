@@ -429,11 +429,11 @@ risks, and the test strategy are in the
 
 | Phase | Content | Ships alone? |
 |---|---|---|
-| 0 | Characterization tests around the current pass | yes (pure gain) |
+| 0 | Characterization tests around the current pass | yes — [#1229](https://github.com/scipp/esslivedata/pull/1229) |
 | 1 | Occupancy derived from topology (#1219, part 2) | yes — merged as [#1221](https://github.com/scipp/esslivedata/pull/1221) |
-| 2 | `desired()` + differ for cell existence and materialization; delete signature/version memos | yes — **this is the go/no-go spike** |
-| 3 | Fold data-flush and freshness gating into the same shape | optional |
-| 4 | Stable widget shell, swap only the figure on plotter change | speculative spike |
+| 2 | `desired()` + differ for cell existence and materialization; delete signature/version memos | yes — the go/no-go spike, [#1230](https://github.com/scipp/esslivedata/pull/1230) |
+| 3 | Fold data-flush and freshness gating into the same shape | declined post-phase-2 (see migration plan) |
+| 4 | Stable widget shell, swap only the figure on plotter change | speculative spike, not scheduled |
 
 ## Is it worth it, and how do we decide?
 
