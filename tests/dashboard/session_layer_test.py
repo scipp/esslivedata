@@ -206,7 +206,7 @@ class TestSessionLayer:
     def test_dmap_returns_none_without_components(self):
         """Test that dmap is None when no components exist."""
         layer_id = LayerId(uuid4())
-        session_layer = SessionLayer(layer_id=layer_id, last_seen_version=1)
+        session_layer = SessionLayer(layer_id=layer_id)
 
         assert session_layer.dmap is None
 
@@ -220,16 +220,14 @@ class TestSessionLayer:
 
         state = plot_data_service.get(layer_id)
         components = SessionComponents.create(state)
-        session_layer = SessionLayer(
-            layer_id=layer_id, last_seen_version=state.version, components=components
-        )
+        session_layer = SessionLayer(layer_id=layer_id, components=components)
 
         assert session_layer.dmap is components.dmap
 
     def test_update_pipe_returns_false_without_components(self):
         """Test that update_pipe() returns False when no components exist."""
         layer_id = LayerId(uuid4())
-        session_layer = SessionLayer(layer_id=layer_id, last_seen_version=1)
+        session_layer = SessionLayer(layer_id=layer_id)
 
         assert session_layer.update_pipe() is False
 
@@ -246,7 +244,7 @@ class TestSessionLayerEnsureComponents:
         plot_data_service.data_arrived(layer_id)
 
         state = plot_data_service.get(layer_id)
-        session_layer = SessionLayer(layer_id=layer_id, last_seen_version=state.version)
+        session_layer = SessionLayer(layer_id=layer_id)
 
         assert session_layer.components is None
 
@@ -263,7 +261,7 @@ class TestSessionLayerEnsureComponents:
         plot_data_service.job_started(layer_id, plotter)
 
         state = plot_data_service.get(layer_id)
-        session_layer = SessionLayer(layer_id=layer_id, last_seen_version=state.version)
+        session_layer = SessionLayer(layer_id=layer_id)
 
         result = session_layer.ensure_components(state)
 
@@ -280,9 +278,7 @@ class TestSessionLayerEnsureComponents:
 
         state = plot_data_service.get(layer_id)
         components = SessionComponents.create(state)
-        session_layer = SessionLayer(
-            layer_id=layer_id, last_seen_version=state.version, components=components
-        )
+        session_layer = SessionLayer(layer_id=layer_id, components=components)
 
         original_components = session_layer.components
 
@@ -301,9 +297,7 @@ class TestSessionLayerEnsureComponents:
 
         state = plot_data_service.get(layer_id)
         components = SessionComponents.create(state)
-        session_layer = SessionLayer(
-            layer_id=layer_id, last_seen_version=state.version, components=components
-        )
+        session_layer = SessionLayer(layer_id=layer_id, components=components)
 
         # Simulate plotter replacement
         plotter_b = FakePlotter()
@@ -331,7 +325,7 @@ class TestSessionLayerWithStoppedState:
         plot_data_service.job_stopped(layer_id)
 
         state = plot_data_service.get(layer_id)
-        session_layer = SessionLayer(layer_id=layer_id, last_seen_version=state.version)
+        session_layer = SessionLayer(layer_id=layer_id)
 
         result = session_layer.ensure_components(state)
 

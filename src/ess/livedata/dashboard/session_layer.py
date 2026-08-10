@@ -3,9 +3,9 @@
 """
 SessionLayer - Per-session state for a single plot layer.
 
-Each browser session creates SessionLayer instances to track layer versions
-and hold session-bound HoloViews components (Pipe, DynamicMap, PresenterBase)
-when data is available.
+Each browser session creates SessionLayer instances to hold session-bound
+HoloViews components (Pipe, DynamicMap, PresenterBase) when data is
+available; the instance also serves as the session's viewer-interest token.
 """
 
 from __future__ import annotations
@@ -96,21 +96,21 @@ class SessionLayer:
     """
     Per-session state for a single plot layer.
 
-    Tracks the last seen version for change detection. Optionally holds
-    session-bound rendering components when data is available.
+    Holds session-bound rendering components when data is available, and
+    doubles as this session's viewer-interest token for the layer. Change
+    detection lives with the reconcile pass, which compares the immutable
+    :class:`~.plot_data_service.LayerSnapshot` a widget was built from against
+    the current one (see ``cell_plan``).
 
     Parameters
     ----------
     layer_id:
         The layer's unique identifier.
-    last_seen_version:
-        Version from PlotDataService when this was last seen.
     components:
         Session-bound rendering components, or None if no displayable data yet.
     """
 
     layer_id: LayerId
-    last_seen_version: int
     components: SessionComponents | None = None
 
     @property

@@ -1,0 +1,180 @@
+# SPDX-License-Identifier: BSD-3-Clause
+# Copyright (c) 2025 Scipp contributors (https://github.com/scipp)
+"""Desired per-session widget state for plot-grid cells.
+
+:func:`desired_cells` is the *policy* half of a session's reconcile pass: a
+pure function from shared-state snapshots and this session's view to the
+target widget tree. The *mechanism* half — diffing the result against the
+widgets that exist and building or disposing them — lives with the widgets
+(``widgets/plot_grid_tabs.py``) and never changes when policy does.
+
+Purity rule: this module must not import Panel, Bokeh, or HoloViews, and
+:func:`desired_cells` must not mutate anything it reads. Policy questions
+("should hidden grids pre-warm?", "should a modal suspend materialization?")
+are answered here, as reviewable diffs to one function, and unit-tested with
+plain data.
+"""
+
+from __future__ import annotations
+
+from collections.abc import Callable, Mapping
+from dataclasses import dataclass
+
+from .plot_data_service import LayerId, LayerSnapshot
+from .plot_orchestrator import (
+    CellGeometry,
+    CellId,
+    GridId,
+    PlotCell,
+    PlotGridConfig,
+)
+
+
+@dataclass(frozen=True, slots=True)
+class LayerBuildInput:
+    """What a cell widget is built from, for one layer.
+
+    ``snapshot`` pins the layer's lifecycle state (state, version, plotter
+    identity, error message); snapshots are immutable and replaced wholesale,
+    so equality means "no transition took effect in between".
+
+    ``has_plot`` is tracked separately because the plotter's computed state is
+    mutable *behind* a snapshot: the first viewer's activation computes a plot
+    without a lifecycle transition when the layer is STOPPED (retained data).
+    A widget built from "no computed plot" renders a placeholder, so the input
+    must change when a real plot appears.
+    """
+
+    layer_id: LayerId
+    snapshot: LayerSnapshot | None
+    has_plot: bool
+
+
+@dataclass(frozen=True, slots=True)
+class CellBuildInputs:
+    """Everything a cell widget's content is derived from.
+
+    A built widget records the instance it was built from; the differ rebuilds
+    exactly when the current inputs no longer compare equal. There is no
+    record to update by hand, so a record cannot go stale: a failed build
+    leaves the previous record (or none) in place, and the next pass retries.
+    """
+
+    geometry: CellGeometry
+    user_title: str | None
+    layers: tuple[LayerBuildInput, ...]
+
+
+def cell_build_inputs(
+    cell: PlotCell, layer_snapshot: Callable[[LayerId], LayerSnapshot | None]
+) -> CellBuildInputs:
+    """Sample a cell's build inputs as of right now.
+
+    Called by :func:`desired_cells` for the plan, and again by the applier
+    immediately before constructing a widget — the widget then records what
+    the build actually saw, so a lifecycle transition landing between plan and
+    build surfaces as an input difference on the next pass instead of being
+    absorbed unrendered.
+    """
+    layers = []
+    for layer in cell.layers:
+        snapshot = layer_snapshot(layer.layer_id)
+        has_plot = (
+            snapshot is not None
+            and snapshot.plotter is not None
+            and snapshot.plotter.has_cached_state()
+        )
+        layers.append(
+            LayerBuildInput(
+                layer_id=layer.layer_id, snapshot=snapshot, has_plot=has_plot
+            )
+        )
+    return CellBuildInputs(
+        geometry=cell.geometry, user_title=cell.user_title, layers=tuple(layers)
+    )
+
+
+@dataclass(frozen=True, slots=True)
+class CellPlan:
+    """Target state of one cell, from one session's point of view.
+
+    ``materialize`` says whether this session should hold a built widget for
+    the cell; ``inputs`` is what that widget must be built from. A cell that
+    is desired but not materialized is *deferred*: any number of input changes
+    while deferred coalesce into zero builds.
+    """
+
+    grid_id: GridId
+    materialize: bool
+    inputs: CellBuildInputs
+
+
+@dataclass(frozen=True, slots=True)
+class SessionView:
+    """This session's contribution to the materialization decision.
+
+    ``active_grid_id`` is None when no grid tab is visible — including while a
+    modal is open, which obscures the plots.
+    """
+
+    active_grid_id: GridId | None
+
+
+def desired_cells(
+    grids: Mapping[GridId, PlotGridConfig],
+    layer_snapshot: Callable[[LayerId], LayerSnapshot | None],
+    view: SessionView,
+    watched: Callable[[LayerId], bool],
+) -> dict[CellId, CellPlan]:
+    """Compute the target widget tree for one session.
+
+    Cells of disabled grids are omitted: they are not part of the desired
+    tree, but their already-built widgets survive (the differ disposes only
+    cells that left the topology, so a re-enable finds them intact).
+
+    A cell is materialized when its grid is the one this session displays, or
+    when any of its layers is watched (holds a viewer token — in practice
+    another session's, since the caller releases this session's tokens on
+    hidden layers before asking). A watched layer's plot is computed centrally
+    anyway, so the build is a real plot pre-warming this session's tab switch;
+    an unwatched hidden cell's build would be a placeholder that the reveal's
+    first-viewer activation immediately invalidates (#1216).
+
+    Parameters
+    ----------
+    grids:
+        Topology snapshot, all grids.
+    layer_snapshot:
+        Accessor for per-layer lifecycle snapshots
+        (:meth:`PlotDataService.get`).
+    view:
+        This session's view state.
+    watched:
+        Whether any session holds a viewer token on a layer
+        (:meth:`PlotDataService.has_viewers`).
+
+    Returns
+    -------
+    :
+        Target plan per cell, insertion-ordered by grid then cell.
+    """
+    plans: dict[CellId, CellPlan] = {}
+    for grid_id, grid in grids.items():
+        if not grid.enabled:
+            continue
+        is_active = grid_id == view.active_grid_id
+        for cell_id, cell in grid.cells.items():
+            # A cell always has >=1 layer while it exists in topology (the
+            # last layer's removal removes the cell); skip the transient
+            # empty state defensively.
+            if not cell.layers:
+                continue
+            materialize = is_active or any(
+                watched(layer.layer_id) for layer in cell.layers
+            )
+            plans[cell_id] = CellPlan(
+                grid_id=grid_id,
+                materialize=materialize,
+                inputs=cell_build_inputs(cell, layer_snapshot),
+            )
+    return plans

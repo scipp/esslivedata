@@ -97,7 +97,21 @@ From coarse to fine: **grid → cell → layer → plotter → presenter → fig
   hold+freeze batch entirely. Not the same as heartbeat *staleness* — see
   *stale* in `src/ess/livedata/glossary.md`.
 - **SessionLayer** — per-session render state for one layer: presenter, pipe,
-  and DynamicMap (`dashboard/session_layer.py`).
+  and DynamicMap; doubles as the session's viewer-interest token
+  (`dashboard/session_layer.py`).
+- **CellPlan / desired cells** — the target widget tree of one session's
+  reconcile pass: `desired_cells` (`dashboard/cell_plan.py`) is a pure
+  function from topology, layer snapshots, and the session view to one plan
+  per cell. Policy changes go here; the differ/applier in `plot_grid_tabs.py`
+  is fixed mechanism.
+- **Materialize / deferred** — a plan's verdict on whether the session should
+  hold a built widget for a cell. A *deferred* cell (hidden grid, nobody
+  watching) absorbs any number of input changes with zero builds; it is built
+  exactly once on reveal or when a watcher appears.
+- **Build inputs** — `CellBuildInputs`: geometry, user title, and per-layer
+  (snapshot, has-plot) a widget was built from, recorded on the widget. The
+  differ rebuilds exactly when the current inputs no longer compare equal —
+  there is no bookkeeping to go stale.
 - **Single-writer versioned pull** — the dashboard concurrency model: one writer
   mutates shared state and bumps a version; sessions poll the version and pull
   snapshots on their own IOLoop (ADR 0007).

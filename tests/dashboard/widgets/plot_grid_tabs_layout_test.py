@@ -155,12 +155,12 @@ class TestPollHandlesLayoutPlotters:
         assert session_layer is not None
         assert session_layer.dmap is not None
 
-    def test_failed_rebuild_does_not_bump_version(
+    def test_failed_rebuild_retries_on_next_poll(
         self, plot_orchestrator, plot_data_service, plot_grid_tabs
     ):
         """
-        If a rebuild raises, the session layer's version must stay stale
-        so the next poll cycle retries.
+        If a rebuild raises, the cell widget record is unchanged
+        so the next poll cycle retries the build.
         """
         plotter = FakePlotter(cached_state=_make_layout())
         grid_id = plot_orchestrator.add_grid(title='Test', nrows=2, ncols=2)
@@ -168,22 +168,24 @@ class TestPollHandlesLayoutPlotters:
 
         plot_grid_tabs._poll_for_plot_updates()
         plot_grid_tabs.tabs.active = plot_grid_tabs._static_tabs_count
-        version_after_first_poll = plot_grid_tabs._session_layers[
-            layer_id
-        ].last_seen_version
 
-        # Bump version
+        # Get the cell_id from the topology
+        cell_id = next(iter(plot_orchestrator.peek_grid(grid_id).cells.keys()))
+
+        # Verify the cell was built
+        assert cell_id in plot_grid_tabs._cells
+        original_widget = plot_grid_tabs._cells[cell_id]
+
+        # Bump the layer version (triggers rebuild attempt)
         plot_data_service.job_started(
             layer_id, FakePlotter(cached_state=_make_layout())
         )
         plot_data_service.data_arrived(layer_id)
-        new_version = plot_data_service.get(layer_id).version
-        assert new_version != version_after_first_poll
 
         # Inject a transient failure into the rebuild path
-        original = plot_grid_tabs._build_cell
+        original_build_cell = plot_grid_tabs._build_cell
 
-        def _raise(cell_id, cell):
+        def _raise(cell_id_arg, cell, grid_id):
             raise RuntimeError("injected failure")
 
         plot_grid_tabs._build_cell = _raise
@@ -193,10 +195,18 @@ class TestPollHandlesLayoutPlotters:
             except RuntimeError:
                 pass
 
-            session_layer = plot_grid_tabs._session_layers[layer_id]
-            assert session_layer.last_seen_version != new_version
+            # The widget record is unchanged because the build failed
+            assert plot_grid_tabs._cells[cell_id] is original_widget
+
+            # Now clear the failure and poll again
+            plot_grid_tabs._build_cell = original_build_cell
+            plot_grid_tabs._poll_for_plot_updates()
+
+            # The cell widget was rebuilt
+            rebuilt_widget = plot_grid_tabs._cells[cell_id]
+            assert rebuilt_widget is not original_widget
         finally:
-            plot_grid_tabs._build_cell = original
+            plot_grid_tabs._build_cell = original_build_cell
 
 
 class TestFreshnessIndicator:
