@@ -1613,16 +1613,17 @@ class TestWakeGateContract:
     def _assert_only_layer_version_term_armed(plot_orchestrator, plot_grid_tabs):
         """Pin that the gate fired on the layer-version term, not by accident.
 
-        Topology and frame generation are the other event-driven terms; if
+        Topology and frame generations are the other event-driven terms; if
         either moved too, the assertion on ``_has_pending_work`` would pass
         even with the layer-version term removed.
         """
         assert plot_orchestrator.topology_version() == (
             plot_grid_tabs._last_topology_version
         )
-        assert plot_orchestrator.frame_generation(
-            plot_grid_tabs._last_active_grid_id
-        ) == (plot_grid_tabs._last_flushed_generation)
+        assert (
+            plot_grid_tabs._live_generations(plot_grid_tabs._last_active_grid_id)
+            == plot_grid_tabs._last_generations
+        )
 
     def test_job_stopped_rearms_gate(
         self, plot_orchestrator, plot_grid_tabs, plot_data_service
@@ -2283,9 +2284,12 @@ class TestLateVersionRecording:
         assert plot_orchestrator.topology_version() == (
             deferred_tick_tabs._last_topology_version
         )
-        assert plot_orchestrator.frame_generation(
-            deferred_tick_tabs._last_active_grid_id
-        ) == (deferred_tick_tabs._last_flushed_generation)
+        assert (
+            deferred_tick_tabs._live_generations(
+                deferred_tick_tabs._last_active_grid_id
+            )
+            == deferred_tick_tabs._last_generations
+        )
         assert plot_data_service.version != deferred_tick_tabs._last_layer_version
         assert deferred_tick_tabs._has_pending_work()
 

@@ -103,6 +103,51 @@ def assert_updating(dash: Dashboard, label: str) -> None:
     )
 
 
+def assert_stops_updating(dash: Dashboard, label: str) -> None:
+    """Assert the session's rendered data goes quiet and stays quiet.
+
+    Retried rather than sampled once: a frame already in flight when the
+    session went to sleep may still land, and that is not a failure. Data
+    genuinely still flowing never yields two matching samples.
+    """
+    waited = 0
+    while True:
+        before = fingerprint(dash)
+        dash.page.wait_for_timeout(UPDATE_WINDOW_MS)
+        after = fingerprint(dash)
+        if after == before:
+            return
+        waited += UPDATE_WINDOW_MS
+        if waited >= PROPAGATION_TIMEOUT_MS:
+            raise AssertionError(f"{label} kept receiving data updates")
+
+
+def click_until(
+    dash: Dashboard,
+    selector: str,
+    condition: Callable[[], bool],
+    *,
+    label: str,
+    timeout_ms: int = PROPAGATION_TIMEOUT_MS,
+    interval_ms: int = 500,
+) -> None:
+    """Click ``selector`` until ``condition`` holds.
+
+    A rebuild racing the click detaches the target between locating it and
+    pressing it; the click then lands on an element whose handler is gone and
+    silently does nothing. Playwright reports success, so this cannot be caught
+    as an error -- only observed by the effect not happening. Cold start is the
+    usual trigger, the first refresh tick after load arriving mid-click.
+    """
+    waited = 0
+    while not condition():
+        if waited >= timeout_ms:
+            raise AssertionError(f"Timed out after {timeout_ms} ms waiting for {label}")
+        dash.click(selector)
+        dash.page.wait_for_timeout(interval_ms)
+        waited += interval_ms
+
+
 def wait_until(
     dash: Dashboard,
     condition: Callable[[], bool],

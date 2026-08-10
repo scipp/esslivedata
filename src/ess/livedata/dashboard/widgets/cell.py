@@ -189,7 +189,7 @@ class CellDeps:
     ``session_layers`` is the session's shared layer render-state registry
     (owned by the poll loop, read here when composing plots); the callbacks
     route modal interactions back to the owning ``PlotGridTabs`` (which holds
-    the shared modal container).
+    the shared modal and pop-out containers).
     """
 
     orchestrator: PlotOrchestrator
@@ -198,6 +198,7 @@ class CellDeps:
     session_layers: dict[LayerId, SessionLayer]
     on_edit_title: Callable[[CellId, str, bool], None]
     on_reconfigure_layer: Callable[[LayerId], None]
+    on_popout: Callable[[CellId], None]
 
 
 class CellWidget:
@@ -251,7 +252,18 @@ class CellWidget:
         self._stopped_layers: frozenset[LayerId] = frozenset()
         self._pill_frozen = False
         self._layer_time_panes: dict[LayerId, pn.pane.HTML] = {}
-        self._plot_pane: pn.pane.HoloViews | None = None
+        # One pane per rendered view of the plot: the grid cell's, plus one
+        # per pop-out window. Kept so dispose() can unsubscribe them all.
+        self._plot_panes: list[pn.pane.HoloViews] = []
+        self._title = (
+            cell.user_title
+            if cell.user_title is not None
+            else derive_cell_title(
+                cell,
+                deps.workflow_registry,
+                get_source_title=deps.orchestrator.get_source_title,
+            )
+        )
         # Composing builds the autoscale controller as a side effect.
         self._plot = self._compose_plot()
         self._view = self._build()
@@ -260,6 +272,11 @@ class CellWidget:
     def view(self) -> pn.Column:
         """The Panel widget for this cell."""
         return self._view
+
+    @property
+    def title(self) -> str:
+        """The cell's displayed title (user-defined or derived)."""
+        return self._title
 
     @property
     def geometry(self) -> CellGeometry:
@@ -288,7 +305,12 @@ class CellWidget:
 
     @property
     def autoscale_controller(self) -> CellAutoscaleController | None:
-        """The cell's autoscale controller, if any layer drives autoscale."""
+        """The cell's autoscale controller, if any layer drives autoscale.
+
+        One controller per cell, driving every figure the cell renders into --
+        the grid cell's and any pop-out window's -- so their toolbars show, and
+        move, one toggle state.
+        """
         return self._autoscale_controller
 
     def update_freshness(
@@ -325,26 +347,33 @@ class CellWidget:
         """Release everything this widget attached to shared or session state.
 
         Breaks the autoscale controller → Bokeh-tool → on_change-callback →
-        controller reference cycle, and unsubscribes the plot pane's rendered
-        plots from the layers' ``hv.streams.Pipe``. The pipe half is essential
-        when a cell is rebuilt while its grid is visible: ``GridSpec`` never
-        cleans up removed children (holoviz/panel#8710), so without the
-        explicit sever the discarded plot keeps rendering every pipe update
-        for the rest of the session (#1224).
+        controller reference cycle, and unsubscribes every pane this widget
+        built — the grid cell's and any pop-out window's — from the layers'
+        ``hv.streams.Pipe``. The pipe half is essential when a cell is rebuilt
+        while its grid is visible: ``GridSpec`` never cleans up removed
+        children (holoviz/panel#8710), so without the explicit sever the
+        discarded plot keeps rendering every pipe update for the rest of the
+        session (#1224).
 
         ``Plot.cleanup`` severs *every* weakly-wrapped plot-refresh subscriber
         on the streams it touches, not only its own — its owner filter is
-        defeated upstream (holoviz/holoviews#6988). That is safe here because
-        a layer's pipe is per session and per cell, and a rebuild disposes the
-        displaced widget before the replacement renders — the two plots never
-        hold live subscriptions concurrently. Any change to teardown must keep
-        that order (sever first, render the replacement after) until #6988 is
-        fixed.
+        defeated upstream (holoviz/holoviews#6988). So this is all-or-nothing:
+        it cannot spare a pane, and any *other* teardown touching these pipes
+        takes this widget's panes down with it. Two rules follow, and both must
+        survive any change to teardown until #6988 is fixed:
+
+        - A layer's pipe is per session and per cell, and a rebuild disposes
+          the displaced widget before the replacement renders, so the old and
+          new plots never hold live subscriptions concurrently. Keep that order
+          — sever first, render the replacement after.
+        - Removing one view of a live cell (closing a pop-out window, which
+          runs Panel's own pane cleanup) leaves the survivors severed. The
+          owner rebuilds the cell; see ``PlotGridTabs._close_popout``.
         """
         if self._autoscale_controller is not None:
             self._autoscale_controller.dispose()
             self._autoscale_controller = None
-        if self._plot_pane is not None:
+        for pane in self._plot_panes:
             # TODO(holoviz/panel#8710): delete this block once the minimum
             # panel version cleans up displaced GridSpec children itself, and
             # re-point the subscriber-count regression tests at
@@ -352,11 +381,11 @@ class CellWidget:
             # cleanup. Until then: no public teardown API on the pane; this
             # mirrors the pipe half of pn.pane.HoloViews._cleanup, which Panel
             # only runs from a document root we never held.
-            for plot, _ in self._plot_pane._plots.values():
+            for plot, _ in pane._plots.values():
                 if plot is not None:
                     plot.cleanup()
-            self._plot_pane._plots.clear()
-            self._plot_pane = None
+            pane._plots.clear()
+        self._plot_panes.clear()
 
     def _layer_states(self) -> dict[LayerId, LayerSnapshot]:
         """Get layer states from PlotDataService for all layers in the cell."""
@@ -423,7 +452,7 @@ class CellWidget:
 
         # Create content area (placeholder or plot)
         if self._plot is not None:
-            content = self._build_plot_content(self._plot)
+            content = self.build_plot_pane()
             border = None
             bg_color = None
         else:
@@ -466,15 +495,7 @@ class CellWidget:
         """
         cell = self._cell
         has_user_title = cell.user_title is not None
-        title = (
-            cell.user_title
-            if has_user_title
-            else derive_cell_title(
-                cell,
-                self._deps.workflow_registry,
-                get_source_title=self._deps.orchestrator.get_source_title,
-            )
-        )
+        title = self._title
 
         configure_layers = [
             (
@@ -506,6 +527,8 @@ class CellWidget:
             on_configure_layer=self._deps.on_reconfigure_layer,
             toolbars_visible=self._toolbars_shown,
             on_toggle_toolbars_callback=on_toggle_toolbars,
+            on_popout_callback=lambda: self._deps.on_popout(self._cell_id),
+            can_popout=self.has_plot,
             freshness_pane=self._freshness_pane,
             # Per-cell automation hook: a rebuilt cell's DOM position is not
             # stable, so the grid position addresses it (unique per grid, and
@@ -636,22 +659,23 @@ class CellWidget:
             styles={'text-align': 'left', 'padding': '20px'},
         )
 
-    def _build_plot_content(
-        self,
-        plot: hv.DynamicMap | hv.Element | hv.Overlay,
-    ) -> pn.pane.HoloViews:
+    def build_plot_pane(self) -> pn.viewable.Viewable:
         """
-        Create plot content widget.
+        Build a Panel view of this cell's composed plot.
 
-        Parameters
-        ----------
-        plot
-            The composed plot.
+        Called once for the grid cell's own content and once more per pop-out
+        window: a Panel component has a single parent, so a second view of the
+        cell needs its own pane over the same HoloViews object. Both then
+        repaint from the layers' single ``Pipe`` and share the cell's autoscale
+        controller, which installs its tools on both toolbars.
+
+        Every pane built here is owned by this widget and severed by
+        :meth:`dispose`; only call it for views the widget outlives.
 
         Returns
         -------
         :
-            HoloViews pane containing the plot.
+            Layout containing the plot pane and any DynamicMap kdim widgets.
         """
         # Use sizing mode from first layer (they should be consistent for overlay)
         if self._cell.layers:
@@ -689,11 +713,11 @@ class CellWidget:
         # - Allows proper multi-layer composition via hv.Overlay
         # - Each grid cell's plot remains independent
         plot_pane_wrapper = pn.pane.HoloViews(
-            plot, sizing_mode=sizing_mode, linked_axes=False
+            self._plot, sizing_mode=sizing_mode, linked_axes=False
         )
         # Kept so dispose() can unsubscribe the rendered plots from the layer
         # pipes; see dispose().
-        self._plot_pane = plot_pane_wrapper
+        self._plot_panes.append(plot_pane_wrapper)
         return plot_pane_wrapper.layout
 
     def _compose_plot(self) -> hv.DynamicMap | hv.Element | None:

@@ -56,6 +56,31 @@ function and a fixed differ/applier:
   pass; do not add hand-written per-gate terms to it. A new pass input joins
   `_input_stamps` and the end-of-pass recording, nothing else.
 
+Pop-out windows (`plot_popout.py`) ride entirely on these three seams: a cell
+behind a showing window enters `SessionView.live_cell_ids` (policy), takes a
+viewer token like a visible cell (tokens), and adds its grid to the per-grid
+frame generations the stamps carry (`_live_generations`). Nothing else in the
+pass knows pop-outs exist.
+
+### A cell's views are torn down together
+
+A `CellWidget` owns every pane rendering its plot — the grid cell's and one per
+pop-out — because `Plot.cleanup` severs *all* weakly-held plot-refresh
+subscribers on the streams it touches, not just its own
+([holoviews#6988](https://github.com/holoviz/holoviews/issues/6988)). Removing
+any one view therefore stops every other view of that cell updating, silently:
+the plot stays on screen showing data that looks current.
+
+Two consequences to preserve:
+
+- **Rebuild after any removal that leaves a survivor.** Closing a pop-out runs
+  Panel's pane cleanup, so `PlotGridTabs._close_popout` rebuilds the cell
+  behind it. Adding a view is free; removing one is not.
+- **Sever before the replacement renders.** `_build_cell` closes the window,
+  builds the new widget, disposes the old one, and only then reopens the
+  window — the reopened pane must subscribe *after* the disposal has cleared
+  the pipes.
+
 ## Icons
 
 Do not use Unicode characters for button icons. Use embedded SVG icons from `dashboard/widgets/icons.py` via `get_icon()`. Use the `create_tool_button()` helper from `dashboard/widgets/buttons.py` for consistent styling.
@@ -91,11 +116,14 @@ never answers for one.
 *name* identity to slug (`workflow_status_widget.py`'s `_tool_css_class`), but a grid has
 none, so `lt-grid-*` slugs the grid *title* instead (`plot_grid_manager.py`) — the same
 title that also drives the grid's download filename. Plot cells have neither a name nor
-a stable title, so every button in their titlebar — gear (or layer menu), pencil, and
-layer-details toggle — carries the grid position as `lt-cell-r{row}c{col}` (`cell.py`),
-unique per grid, and only the active tab's grid is rendered. Address one with a compound
-selector: `.lt-cell-r0c1.lt-tool-settings`. Do not rely on DOM order for cells: a rebuilt
-cell (e.g. after a rename) moves to the end of the document.
+a stable title, so every button in their titlebar — pop-out, gear (or layer menu),
+pencil, and layer-details toggle — carries the grid position as `lt-cell-r{row}c{col}`
+(`cell.py`), unique per grid, and only the active tab's grid is rendered. Address one
+with a compound selector: `.lt-cell-r0c1.lt-tool-settings`. Do not rely on DOM order for
+cells: a rebuilt cell (e.g. after a rename) moves to the end of the document.
+
+A cell's pop-out window (`plot_popout.py`) is slugged by the same grid position:
+`lt-popout` + `lt-popout-r{row}c{col}`, one per cell at most.
 
 These classes have no associated style rules — adding/removing them is visually inert.
 Treat them as a stable contract: do not drop them in refactors (a test in
@@ -193,6 +221,58 @@ plot-grid tab visually — but the icon is a CSS pseudo-element, invisible to te
 locators. With
 `dynamic=True` only the active tab's models exist, so a DOM/`lt-*` inventory reflects the
 *current* tab only — switch tabs before querying that tab's hooks.
+
+**Pop-out windows.** The cell titlebar's pop-out tool
+(`.lt-cell-r0c0.lt-tool-arrows-maximize`) opens a jsPanel `FloatPanel`, *not* a dialog —
+`Dashboard.open_modal` times out on it. Wait on `.lt-popout-r0c0` instead, and close it
+with `.jsPanel-btn-close` (or by clicking the tool again, which replaces the window).
+Two windows opened back to back cascade by a few pixels; without that offset the second
+would cover the first's close button and intercept the click. A window keeps rendering
+while another tab is shown, so with `dynamic=True` tearing down the hidden grid's models
+it is then the only plot in the document — which is what makes `assert_updating` on
+another tab a pop-out liveness check.
+
+Minimizing parks the panel *off-screen* (x ≈ −9000) and leaves a replacement strip of
+small buttons at the bottom of the viewport. So after a minimize, `.jsPanel-btn-close`
+still matches the parked panel and any click on it times out as "outside of the
+viewport" — drive the strip instead (`.jsPanel-btn-sm.jsPanel-btn-normalize`, or the
+matching `-close`). A minimized pop-out is deliberately *not* live, so
+`assert_stops_updating` is the check there.
+
+The window hangs from the top of the viewport and is sized in `vh`, because its title
+bar holds the only close/minimize controls: centring a fixed pixel height puts them
+above `y=0` on any viewport shorter than the window, and the window then cannot be
+dismissed at all. Test viewports are 1000 px tall by default, which is *above* the
+threshold — regressions here only show at laptop heights, so the geometry test
+parametrizes over 700 px as well. Note `maxSize` is not a fix: jsPanel applies it to
+interactive resizing only, not to the size the panel opens at; override `contentSize`
+via `config` instead, which takes precedence over the size Panel derives from
+`width`/`height`.
+
+**Getting a plot to fill a FloatPanel** takes two things, both handled once per session
+by `PopoutWindowFitter` (`plot_popout.py`) — expect neither to work by default:
+
+- The height chain `.jsPanel-content` → `#float` (Panel's template root) → `#flex-item`
+  is broken: those wrappers have no height, so nothing carries the window's size inward.
+  A `stretch_both` child then collapses to a ~66 px sliver, and a child with a fixed
+  height survives but can never follow the window. `stylesheets=` on the `FloatPanel`
+  does **not** reach these wrappers — they are light DOM, so it takes a document-level
+  rule (`.jsPanel-content > .bk-root`).
+- Panel re-lays out only on `jspanelresizestop`, which a drag fires but maximize,
+  normalize and smallify do not. Re-dispatch that event on `jspanelstatuschange` with
+  `event.panel` copied across (Panel's handler matches on it) rather than reimplementing
+  the layout call. A synthetic `window` resize does *not* work.
+
+Any invisible `ReactiveHTML` helper needs a **public** class name: a leading underscore
+yields `could not resolve type '_Foo1'` in the browser and the whole session fails to
+render.
+
+**Clicks that silently do nothing.** A rebuild racing a click detaches the target
+between locating and pressing it; Playwright reports success and nothing happens. The
+cold-start tick after load triggers this often enough to make a single click on a
+freshly loaded tab roughly a 3-in-4 proposition. `click_until(dash, selector, condition,
+label=...)` retries until the effect is observable — use it for the first click of a
+session rather than `dash.click` plus a `wait_until`, which cannot recover.
 
 **Modals.** Settings (gear), cell edit (pencil), workflow config, and the plot wizard
 an empty grid cell opens all render a `pn.Modal` as `[role=dialog]` — use that as the

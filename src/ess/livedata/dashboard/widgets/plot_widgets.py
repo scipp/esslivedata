@@ -382,6 +382,8 @@ def create_cell_titlebar(
     on_configure_layer: Callable[[LayerId], None],
     toolbars_visible: bool,
     on_toggle_toolbars_callback: Callable[[bool], None],
+    on_popout_callback: Callable[[], None],
+    can_popout: bool,
     freshness_pane: pn.pane.HTML | None = None,
     css_classes: list[str] | None = None,
 ) -> pn.Row:
@@ -389,10 +391,10 @@ def create_cell_titlebar(
     Create the cell-level titlebar shown above the per-layer info rows.
 
     The titlebar holds the cell title on the left and cell-level actions on the
-    right: a gear that configures a layer (directly for one layer, via a layer
-    picker for several), edit cell properties (opens a modal for
-    rename/add/remove layer), and a toggle that hides/shows the per-layer info
-    rows.
+    right: a pop-out that opens the plot in a larger floating window, a gear
+    that configures a layer (directly for one layer, via a layer picker for
+    several), edit cell properties (opens a modal for rename/add/remove layer),
+    and a toggle that hides/shows the per-layer info rows.
 
     Parameters
     ----------
@@ -413,6 +415,12 @@ def create_cell_titlebar(
         Current visibility of the per-layer info rows; sets the toggle icon.
     on_toggle_toolbars_callback:
         Invoked with the new visibility state when the toggle is clicked.
+    on_popout_callback:
+        Invoked when the pop-out button is clicked; opens the cell's plot in a
+        floating window.
+    can_popout:
+        Whether the cell currently shows a plot. A cell showing a status
+        placeholder has nothing to pop out, so the button is disabled.
     freshness_pane:
         Optional pane showing the data freshness/lag indicator, placed between
         the title and the action buttons. Updated in place by the caller.
@@ -452,8 +460,17 @@ def create_cell_titlebar(
         on_toggle=on_toggle_toolbars_callback,
         css_classes=css_classes,
     )
+    popout_button = create_tool_button(
+        icon_name='arrows-maximize',
+        button_color=Colors.TEXT_MUTED,
+        hover_color=HoverColors.MUTED,
+        on_click_callback=on_popout_callback,
+        css_classes=css_classes,
+        disabled=not can_popout,
+        description='Open in a floating window',
+    )
 
-    right_buttons: list = [gear_button, edit_button, toggle_button]
+    right_buttons: list = [popout_button, gear_button, edit_button, toggle_button]
 
     # Freshness pill sits at the far left; the stretch title fills the middle and
     # pushes the action buttons to the right.

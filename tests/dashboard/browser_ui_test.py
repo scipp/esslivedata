@@ -17,7 +17,9 @@ through the stable ``lt-*`` automation hooks:
   updating;
 - two sessions racing to save edits on the same grid converge on one title,
   without a server-side exception or a duplicated/lost tab;
-- uploading a grid config whose cells claim the same slot is rejected.
+- uploading a grid config whose cells claim the same slot is rejected;
+- a popped-out plot opens within the viewport, floats above other tabs and
+  keeps updating there, and stops costing anything once minimized.
 
 Each test launches its own dashboard for isolation, since grid topology changes
 are process-global; ports are allocated per launch, so concurrent runs of this
@@ -39,7 +41,9 @@ pytest.importorskip("playwright.sync_api")
 from tests.helpers.browser import (
     REPO_ROOT,
     Dashboard,
+    assert_stops_updating,
     assert_updating,
+    click_until,
     fake_dashboard,
     fingerprint,
     wait_until,
@@ -500,3 +504,155 @@ def test_uploading_a_grid_config_with_overlapping_cells_is_rejected(tmp_path):
         )
         dash.goto_tab("Tiled Import")
         assert_updating(dash, "imported grid")
+
+
+# Tallest canvas inside the pop-out window. The plot renders into per-widget
+# shadow roots, which descendant CSS selectors do not cross, so walk them.
+_POPOUT_PLOT_HEIGHT = """
+() => {
+  const deep = (root, out) => {
+    root.querySelectorAll('*').forEach(e => {
+      if (e.tagName === 'CANVAS') out.push(e);
+      if (e.shadowRoot) deep(e.shadowRoot, out);
+    });
+    return out;
+  };
+  const panel = document.querySelector('.jsPanel');
+  if (!panel) return 0;
+  const heights = deep(panel, []).map(c => c.getBoundingClientRect().height);
+  return heights.length ? Math.round(Math.max(...heights)) : 0;
+}
+"""
+
+
+def _window_height(dash: Dashboard) -> float:
+    box = dash.page.locator(".jsPanel").first.bounding_box()
+    assert box is not None
+    return box["height"]
+
+
+@pytest.mark.browser
+def test_popped_out_plot_resizes_with_its_window():
+    """The plot must track the window, maximize included.
+
+    jsPanel resizes its own content element, but the wrappers Panel puts below
+    it carry no height, and Panel re-lays out only on a drag-resize. Without
+    both gaps closed the plot keeps whatever size it had when it opened, and
+    the window grows around it into whitespace.
+
+    Uses the free-aspect cell: an aspect-locked plot derives its height from
+    the window's *width*, so it legitimately overflows a wider window.
+    """
+    with fake_dashboard("dummy") as fake, Dashboard.connect(fake.url) as dash:
+        del fake
+        page = dash.page
+        page.set_viewport_size({"width": 1280, "height": 900})
+        dash.goto_tab("Detectors")
+
+        click_until(
+            dash,
+            ".lt-cell-r2c0.lt-tool-arrows-maximize",
+            lambda: page.locator(".lt-popout-r2c0").count() == 1,
+            label="the pop-out window to open",
+        )
+        wait_until(
+            dash,
+            lambda: page.evaluate(_POPOUT_PLOT_HEIGHT) > 0,
+            label="the popped-out plot to render",
+        )
+        opened = page.evaluate(_POPOUT_PLOT_HEIGHT)
+        assert opened > _window_height(dash) * 0.8, (
+            f"plot {opened} does not fill the window it opened in"
+        )
+
+        page.locator(".jsPanel-btn-maximize").first.click()
+        wait_until(
+            dash,
+            lambda: page.evaluate(_POPOUT_PLOT_HEIGHT) > opened,
+            label="the plot to grow with the maximized window",
+        )
+        assert page.evaluate(_POPOUT_PLOT_HEIGHT) > _window_height(dash) * 0.8
+
+
+@pytest.mark.browser
+@pytest.mark.parametrize("viewport_height", [700, 1000])
+def test_popped_out_window_fits_the_viewport_it_opens_on(viewport_height):
+    """The window must never open with its title bar off the top of the screen.
+
+    That title bar carries the only controls for closing, minimizing and
+    maximizing, so a window opening above the fold cannot be dismissed at all.
+    A fixed pixel height centred vertically does exactly that on any screen
+    shorter than the window, which is most laptops.
+    """
+    with fake_dashboard("dummy") as fake, Dashboard.connect(fake.url) as dash:
+        del fake
+        page = dash.page
+        page.set_viewport_size({"width": 1280, "height": viewport_height})
+        dash.goto_tab("Detectors")
+
+        click_until(
+            dash,
+            ".lt-cell-r0c0.lt-tool-arrows-maximize",
+            lambda: page.locator(".lt-popout-r0c0").count() == 1,
+            label="the pop-out window to open",
+        )
+
+        box = page.locator(".jsPanel").first.bounding_box()
+        assert box is not None
+        assert box["y"] >= 0, f"window opened above the viewport: {box}"
+        assert box["y"] + box["height"] <= viewport_height, (
+            f"window opened taller than the viewport: {box}"
+        )
+        # The controls specifically, not just the window's box.
+        close_button = page.locator(".jsPanel-btn-close").first.bounding_box()
+        assert close_button is not None
+        assert close_button["y"] >= 0
+
+
+@pytest.mark.browser
+def test_popped_out_plot_stays_live_across_tabs_and_sleeps_when_minimized():
+    """A pop-out is a live second view, and costs nothing while it shows none.
+
+    Switching tabs is the interesting case: ``dynamic=True`` tears down the
+    hidden grid's Bokeh models, so the window is then the *only* plot in the
+    document -- and the poll loop must still be feeding it. Minimizing it must
+    stop that feed, or popping out many cells and minimizing the windows would
+    pin every one of those cells live for nothing on screen.
+    """
+    popout = ".lt-cell-r0c0.lt-tool-arrows-maximize"
+    with fake_dashboard("dummy") as fake, Dashboard.connect(fake.url) as dash:
+        del fake
+        page = dash.page
+        dash.goto_tab("Detectors")
+
+        click_until(
+            dash,
+            popout,
+            lambda: page.locator(".lt-popout-r0c0").count() == 1,
+            label="the pop-out window to open",
+        )
+        # The cell is a detail *view*: the grid cell keeps its own plot and
+        # its whole titlebar, including the button that opened the window.
+        assert page.locator(popout).count() == 1
+
+        dash.goto_tab("Workflows")
+        assert page.locator(".jsPanel").first.is_visible()
+        assert_updating(dash, "popped-out plot while another tab is shown")
+
+        # Minimizing must put the cell back to sleep, and restoring must wake
+        # it. Proving both end to end matters because the guard rests on
+        # jsPanel round-tripping the user's click as a ``status`` change.
+        page.locator(".jsPanel-btn-minimize").first.click()
+        assert_stops_updating(dash, "minimized pop-out on a hidden tab")
+
+        # A minimized window is parked off-screen and replaced by a strip of
+        # small buttons; normalize from there rather than from the panel.
+        page.locator(".jsPanel-btn-sm.jsPanel-btn-normalize").click()
+        assert_updating(dash, "restored pop-out on a hidden tab")
+
+        page.locator(".jsPanel-btn-close").first.click()
+        wait_until(
+            dash,
+            lambda: page.locator(".lt-popout-r0c0").count() == 0,
+            label="the pop-out window to close",
+        )

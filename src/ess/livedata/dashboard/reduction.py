@@ -51,7 +51,9 @@ ANNOUNCEMENTS_URL = (
     'https://public.esss.dk/groups/scipp/esslivedata/_static/announcements.md'
 )
 
-pn.extension('holoviews', 'modal', notifications=True, template='material')
+pn.extension(
+    'holoviews', 'modal', 'floatpanel', notifications=True, template='material'
+)
 hv.extension('bokeh')
 
 # HoloViews registers `apply_nodata` as a data-mode compositor for Image, Raster,
