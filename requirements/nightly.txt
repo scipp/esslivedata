@@ -104,8 +104,6 @@ idna==3.18
     # via
     #   email-validator
     #   requests
-importlib-metadata==9.0.0
-    # via dask
 iniconfig==2.3.0
     # via pytest
 ipydatawidgets==4.3.5
@@ -312,7 +310,7 @@ sciline==25.11.1
     #   essreduce
     #   essreflectometry
     #   esssans
-scipp==26.3.1
+scipp==26.8.0
     # via
     #   -r nightly.in
     #   esspolarization
@@ -377,7 +375,6 @@ traittypes==0.2.3
 typing-extensions==4.16.0
     # via
     #   ase
-    #   ipython
     #   panel
     #   pydantic
     #   pydantic-core
@@ -395,5 +392,3 @@ widgetsnbextension==4.0.15
     # via ipywidgets
 xyzservices==2026.3.0
     # via bokeh
-zipp==4.1.0
-    # via importlib-metadata
