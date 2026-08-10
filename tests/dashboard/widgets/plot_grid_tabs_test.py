@@ -4,11 +4,17 @@ import holoviews as hv
 import panel as pn
 import pytest
 
+from ess.livedata.config.workflow_spec import WorkflowId
 from ess.livedata.dashboard.data_service import DataService
 from ess.livedata.dashboard.job_service import JobService
 from ess.livedata.dashboard.notification_queue import NotificationQueue
 from ess.livedata.dashboard.plot_data_service import PlotDataService
-from ess.livedata.dashboard.plot_orchestrator import PlotOrchestrator
+from ess.livedata.dashboard.plot_orchestrator import (
+    CellGeometry,
+    CellId,
+    GridId,
+    PlotOrchestrator,
+)
 from ess.livedata.dashboard.plotting_controller import PlottingController
 from ess.livedata.dashboard.session_registry import SessionId, SessionRegistry
 from ess.livedata.dashboard.session_updater import SessionUpdater
@@ -1202,6 +1208,63 @@ def _add_static_cell(plot_orchestrator, grid_id, geometry, *, positions='10, 20'
     return cell_id
 
 
+# Source and output of the workflow-backed layer below. Shared so the layer's
+# subscription and the published data agree on the DataKey -- a mismatch would
+# leave the layer without data, silently defeating tests that need it to
+# compute.
+_WORKFLOW_SOURCE = 'source1'
+_WORKFLOW_VIEW = 'result'
+
+
+def _add_workflow_cell(
+    plot_orchestrator: PlotOrchestrator,
+    grid_id: GridId,
+    geometry: CellGeometry,
+    workflow_id: WorkflowId,
+) -> CellId:
+    """Add a cell with a single workflow-backed lines layer.
+
+    Unlike a static overlay, such a layer computes only once data has been
+    pulled through its subscription, so it stays un-READY until the first
+    viewer activates it.
+    """
+    from ess.livedata.dashboard.data_roles import PRIMARY
+    from ess.livedata.dashboard.plot_orchestrator import DataSourceConfig, PlotConfig
+    from ess.livedata.dashboard.plotter_registry import plotter_registry
+
+    config = PlotConfig(
+        data_sources={
+            PRIMARY: DataSourceConfig(
+                workflow_id=workflow_id,
+                source_names=[_WORKFLOW_SOURCE],
+                view_name=_WORKFLOW_VIEW,
+            )
+        },
+        plot_name='lines',
+        params=plotter_registry.get_spec('lines').params(),
+    )
+    cell_id = plot_orchestrator.add_cell(grid_id, geometry)
+    plot_orchestrator.add_layer(cell_id, config)
+    return cell_id
+
+
+def _publish_layer_data(data_service: DataService, workflow_id: WorkflowId) -> None:
+    """Publish one result on the key a ``_add_workflow_cell`` layer subscribes to."""
+    import scipp as sc
+
+    from ess.livedata.config.workflow_spec import DataKey
+
+    key = DataKey(
+        workflow_id=workflow_id,
+        source_name=_WORKFLOW_SOURCE,
+        output_name=_WORKFLOW_VIEW,
+    )
+    data_service[key] = sc.DataArray(
+        sc.array(dims=['x'], values=[1.0, 2.0, 3.0]),
+        coords={'x': sc.array(dims=['x'], values=[0.0, 1.0, 2.0])},
+    )
+
+
 class TestLayerToolbars:
     """Per-layer toolbars are built when first revealed, not when hidden.
 
@@ -1484,6 +1547,42 @@ class TestHiddenGridRebuildGate:
         plot_grid_tabs.tabs.active = plot_grid_tabs._static_tabs_count
 
         assert cell_id in plot_grid_tabs._cells
+
+    def test_reveal_builds_the_deferred_cell_only_once(
+        self,
+        plot_orchestrator,
+        plot_grid_tabs,
+        job_orchestrator,
+        data_service,
+        workflow_id,
+    ):
+        """The reveal's 0->1 activation bumps the layer version mid-pass.
+
+        Recording the version the scan read (before the bump) would rebuild the
+        cell again on the very next pass, discarding a widget that has already
+        been rendered -- whose plot then stays subscribed to the layer pipe,
+        doubling the grid's render cost for the rest of the session.
+
+        Needs a workflow-backed layer: a static overlay is already READY while
+        hidden, so its activation bumps nothing.
+        """
+        job_orchestrator.commit_workflow(workflow_id)
+        grid_id = plot_orchestrator.add_grid(title='G', nrows=2, ncols=2)
+        cell_id = _add_workflow_cell(
+            plot_orchestrator, grid_id, self._geometry(), workflow_id
+        )
+        # Data arrives while no session views the layer: the flush skips it, so
+        # it is still WAITING_FOR_DATA when the tab is revealed.
+        _publish_layer_data(data_service, workflow_id)
+        plot_orchestrator.flush_frames()
+        _tick(plot_grid_tabs)
+
+        plot_grid_tabs.tabs.active = plot_grid_tabs._static_tabs_count
+        widget = plot_grid_tabs._cells[cell_id]
+
+        _tick(plot_grid_tabs)
+
+        assert plot_grid_tabs._cells[cell_id] is widget
 
     def test_cell_viewed_by_another_session_is_built_while_hidden(
         self, plot_orchestrator, plot_grid_tabs, plot_data_service

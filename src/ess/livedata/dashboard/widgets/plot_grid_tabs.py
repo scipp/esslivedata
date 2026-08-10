@@ -773,7 +773,6 @@ class PlotGridTabs:
             self._grid_manager.on_topology_changed()
 
         cells_to_rebuild: dict[CellId, tuple[PlotCell, PlotGrid, GridId]] = {}
-        versions_to_apply: dict[LayerId, int] = {}
         seen_layer_ids: set[LayerId] = set()
         # Per-cell, per-layer time bounds for active-grid cells, driving the
         # titlebar freshness pill (merged) and the per-layer time-range panes.
@@ -844,7 +843,6 @@ class PlotGridTabs:
                         # Check for version changes (plotter changes increment version)
                         if state.version != session_layer.last_seen_version:
                             rebuild = True
-                            versions_to_apply[layer_id] = state.version
 
                     # Drive the layer compute gate: on 0→1 the orchestrator
                     # flushes any pending build synchronously so the rebuild
@@ -926,6 +924,20 @@ class PlotGridTabs:
         # holds the document lock, so a pn.state.execute here would run inline
         # anyway rather than defer.
         for cell_id, (cell, plot_grid, grid_id) in cells_to_rebuild.items():
+            # Versions as of now, i.e. after the activation above: the widget
+            # built below composes post-activation components, so recording the
+            # version the version scan read (before the 0→1 refresh bumped it)
+            # would rebuild this cell again on the next pass. That rebuild is
+            # not merely wasted work -- the widget it discards has already been
+            # rendered, and its plot stays subscribed to the layer pipes,
+            # doubling the grid's render cost for the rest of the session.
+            # Sampled before the build, not after, so a bump arriving from the
+            # ingestion thread mid-build still triggers the next pass's rebuild.
+            versions = {
+                layer.layer_id: state.version
+                for layer in cell.layers
+                if (state := self._plot_data_service.get(layer.layer_id)) is not None
+            }
             view = self._build_cell(cell_id, cell).view
             plot_grid.insert_widget_at(cell.geometry, view)
             # Record signature/grid and bump versions only after a successful
@@ -933,11 +945,10 @@ class PlotGridTabs:
             # poll retry.
             self._cell_signatures[cell_id] = self._cell_signature(cell)
             self._cell_grid[cell_id] = grid_id
-            for layer in cell.layers:
-                if layer.layer_id in versions_to_apply:
-                    sl = self._session_layers.get(layer.layer_id)
-                    if sl is not None:
-                        sl.last_seen_version = versions_to_apply[layer.layer_id]
+            for layer_id, version in versions.items():
+                session_layer = self._session_layers.get(layer_id)
+                if session_layer is not None:
+                    session_layer.last_seen_version = version
 
         # Refresh the freshness/lag indicator for active-grid cells. Runs after
         # rebuilds so cells recreated this poll update their fresh pane handle.
