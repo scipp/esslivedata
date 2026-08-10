@@ -26,6 +26,7 @@ import structlog
 from ess.livedata.config.workflow_spec import WorkflowId, WorkflowSpec
 
 from ..cell_autoscale import CellAutoscaleController, build_controller_from_layers
+from ..cell_plan import CellBuildInputs
 from ..format_utils import extract_error_summary
 from ..frame_aspect import pane_sizing_mode
 from ..hover_suspend import make_hover_suspend_hook
@@ -33,6 +34,7 @@ from ..plot_data_service import LayerSnapshot, LayerState, PlotDataService
 from ..plot_orchestrator import (
     CellGeometry,
     CellId,
+    GridId,
     LayerId,
     PlotCell,
     PlotOrchestrator,
@@ -219,6 +221,13 @@ class CellWidget:
     toolbars_visible
         Initial visibility of the per-layer toolbars. Preserved across cell
         rebuilds by the owner so the user's toggle survives version polling.
+    grid_id
+        The grid this cell belongs to; recorded so the reconcile pass can
+        route removal and stall checks without a separate cell-to-grid map.
+    build_inputs
+        The :class:`~..cell_plan.CellBuildInputs` sampled just before this
+        build; the differ rebuilds when the current inputs no longer compare
+        equal.
     """
 
     def __init__(
@@ -228,11 +237,15 @@ class CellWidget:
         deps: CellDeps,
         *,
         toolbars_visible: bool,
+        grid_id: GridId,
+        build_inputs: CellBuildInputs,
     ) -> None:
         self._cell_id = cell_id
         self._cell = cell
         self._deps = deps
         self._toolbars_shown = toolbars_visible
+        self.grid_id = grid_id
+        self.build_inputs = build_inputs
         self._autoscale_controller: CellAutoscaleController | None = None
         self._freshness_pane = create_freshness_pane()
         self._stopped_layers: frozenset[LayerId] = frozenset()

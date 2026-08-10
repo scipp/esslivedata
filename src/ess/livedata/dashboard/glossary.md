@@ -45,6 +45,11 @@ the disambiguation of overloaded words live in `src/ess/livedata/glossary.md`.
 
 From coarse to fine: **grid → cell → layer → plotter → presenter → figure**.
 
+- **Topology** — the shared arrangement of plots: which grids exist (order,
+  title, enabled), which cells each grid holds, and which layers each cell
+  holds. Owned by **PlotOrchestrator** and versioned as one unit
+  (`topology_version`); excludes data flow (frames, plotter contents) and
+  anything per-session (widgets, tokens, tab focus).
 - **Grid** — a titled `nrows × ncols` arrangement of cells (`PlotGridConfig`);
   shown as one dashboard tab. Grids are managed by **PlotOrchestrator**
   (`dashboard/plot_orchestrator.py`), which owns topology, persistence, and a
@@ -97,7 +102,22 @@ From coarse to fine: **grid → cell → layer → plotter → presenter → fig
   hold+freeze batch entirely. Not the same as heartbeat *staleness* — see
   *stale* in `src/ess/livedata/glossary.md`.
 - **SessionLayer** — per-session render state for one layer: presenter, pipe,
-  and DynamicMap (`dashboard/session_layer.py`).
+  and DynamicMap; doubles as the session's viewer-interest token
+  (`dashboard/session_layer.py`).
+- **CellPlan / desired cells** — the target widget tree of one session's
+  reconcile pass: `desired_cells` (`dashboard/cell_plan.py`) is a pure
+  function from topology, layer snapshots, and the session view to one plan
+  per *materialized* cell. Policy changes go here; the differ/applier in
+  `plot_grid_tabs.py` is fixed mechanism.
+- **Materialize / deferred** — whether a session should hold a built widget
+  for a cell. Materialized cells appear in the plans; a *deferred* cell
+  (hidden grid, nobody watching) is absent from them and absorbs any number
+  of input changes with zero builds — it is built exactly once on reveal or
+  when a watcher appears (the latter bounded by the 5 s full pass).
+- **Build inputs** — `CellBuildInputs`: geometry, user title, and per-layer
+  (snapshot, has-plot) a widget was built from, recorded on the widget. The
+  differ rebuilds exactly when the current inputs no longer compare equal —
+  there is no bookkeeping to go stale.
 - **Single-writer versioned pull** — the dashboard concurrency model: one writer
   mutates shared state and bumps a version; sessions poll the version and pull
   snapshots on their own IOLoop (ADR 0007).

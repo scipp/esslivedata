@@ -453,6 +453,18 @@ class PlotDataService:
         with self._lock:
             return bool(self._viewers.get(layer_id))
 
+    def viewed_layers(self) -> frozenset[LayerId]:
+        """All layers with at least one viewer token, as one locked read.
+
+        For callers consulting viewer state for many layers per pass (the
+        session reconcile), where per-layer :meth:`has_viewers` calls would
+        take the lock once per layer.
+        """
+        with self._lock:
+            return frozenset(
+                layer_id for layer_id, tokens in self._viewers.items() if tokens
+            )
+
     def _release_token(self, layer_id: LayerId, key: int) -> None:
         """Drop a token key from the gate (called by the weakref finalizer)."""
         with self._lock:

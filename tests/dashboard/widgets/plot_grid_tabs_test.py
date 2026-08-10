@@ -337,8 +337,7 @@ def _register_active_layer(plot_orchestrator, plot_data_service, plot_grid_tabs)
 
     layer_id = LayerId(uuid4())
     plot_data_service.job_started(layer_id, object())
-    state = plot_data_service.get(layer_id)
-    session_layer = SessionLayer(layer_id=layer_id, last_seen_version=state.version)
+    session_layer = SessionLayer(layer_id=layer_id)
     plot_grid_tabs._session_layers[layer_id] = session_layer
     plot_orchestrator.activate_layer(layer_id, session_layer, True)
     return layer_id
@@ -583,9 +582,7 @@ class TestPollForPlotUpdates:
         initial_version = state.version
 
         # Create session layer with components for plotter A
-        session_layer = SessionLayer(
-            layer_id=layer_id, last_seen_version=initial_version
-        )
+        session_layer = SessionLayer(layer_id=layer_id)
         session_layer.ensure_components(state)
 
         assert session_layer.components is not None
@@ -602,11 +599,9 @@ class TestPollForPlotUpdates:
 
         # Version must have changed (this is the key invariant)
         assert new_state.version != initial_version
-        assert new_state.version != session_layer.last_seen_version
 
         # Simulate what _poll_for_plot_updates does:
-        # It detects version change and triggers rebuild via ensure_components
-        session_layer.last_seen_version = new_state.version
+        # It detects plotter change and triggers rebuild via ensure_components
         session_layer.ensure_components(new_state)
 
         # Components should be recreated for the new plotter
@@ -630,12 +625,12 @@ class TestPollForPlotUpdates:
 
         state = plot_data_service.get(layer_id)
 
-        session_layer = SessionLayer(layer_id=layer_id, last_seen_version=state.version)
+        session_layer = SessionLayer(layer_id=layer_id)
         session_layer.ensure_components(state)
         original_components = session_layer.components
 
-        # Simulate polling with no version change
-        # (same state, version matches last_seen_version)
+        # Simulate polling with no plotter change
+        # (same plotter, components are preserved)
         session_layer.ensure_components(state)
 
         # Components should be preserved
@@ -646,7 +641,7 @@ class TestComposeMixedLayers:
     """Composition of cells mixing dynamic and static (overlay) layers."""
 
     def test_static_layer_does_not_break_autoscale_controller(
-        self, plot_grid_tabs, plot_data_service
+        self, plot_grid_tabs, plot_data_service, plot_orchestrator
     ):
         """A static overlay layer must not be fed to the autoscale controller.
 
@@ -718,14 +713,13 @@ class TestComposeMixedLayers:
             plot_data_service.job_started(layer.layer_id, plotter)
             plot_data_service.data_arrived(layer.layer_id)
             state = plot_data_service.get(layer.layer_id)
-            session_layer = SessionLayer(
-                layer_id=layer.layer_id, last_seen_version=state.version
-            )
+            session_layer = SessionLayer(layer_id=layer.layer_id)
             session_layer.ensure_components(state)
             plot_grid_tabs._session_layers[layer.layer_id] = session_layer
 
         cell_id = CellId(uuid4())
-        cell_widget = plot_grid_tabs._build_cell(cell_id, cell)
+        grid_id = plot_orchestrator.add_grid(title='Test', nrows=1, ncols=1)
+        cell_widget = plot_grid_tabs._build_cell(cell_id, cell, grid_id)
 
         assert cell_widget.has_plot
         # The dynamic layer still drives autoscale; controller was built.
@@ -787,15 +781,13 @@ class TestComposeTableLayer:
         plot_data_service.job_started(layer.layer_id, plotter)
         plot_data_service.data_arrived(layer.layer_id)
         state = plot_data_service.get(layer.layer_id)
-        session_layer = SessionLayer(
-            layer_id=layer.layer_id, last_seen_version=state.version
-        )
+        session_layer = SessionLayer(layer_id=layer.layer_id)
         session_layer.ensure_components(state)
         plot_grid_tabs._session_layers[layer.layer_id] = session_layer
         return layer
 
     def test_single_table_layer_is_not_a_layout(
-        self, plot_grid_tabs, plot_data_service
+        self, plot_grid_tabs, plot_data_service, plot_orchestrator
     ):
         from uuid import uuid4
 
@@ -811,7 +803,8 @@ class TestComposeTableLayer:
             geometry=CellGeometry(row=0, col=0, row_span=1, col_span=1),
             layers=[layer],
         )
-        cell_widget = plot_grid_tabs._build_cell(CellId(uuid4()), cell)
+        grid_id = plot_orchestrator.add_grid(title='Test', nrows=1, ncols=1)
+        cell_widget = plot_grid_tabs._build_cell(CellId(uuid4()), cell, grid_id)
 
         assert cell_widget.has_plot
         assert not isinstance(cell_widget._plot, hv.Layout)
@@ -883,7 +876,7 @@ class TestDisabledGridTabs:
         # Simulate a session layer that was created while the grid was active
         fake_layer_id = LayerId(uuid4())
         plot_grid_tabs._session_layers[fake_layer_id] = SessionLayer(
-            layer_id=fake_layer_id, last_seen_version=0
+            layer_id=fake_layer_id
         )
 
         # Disable the grid — poll should not visit it, so session layer
@@ -1187,8 +1180,6 @@ class TestCellReconcile:
         _tick(plot_grid_tabs)
 
         assert cell_id not in plot_grid_tabs._cells
-        assert cell_id not in plot_grid_tabs._cell_grid
-        assert cell_id not in plot_grid_tabs._cell_signatures
 
     def test_set_cell_title_rebuilds_cell(self, plot_orchestrator, plot_grid_tabs):
         grid_id = plot_orchestrator.add_grid(title='G', nrows=2, ncols=2)
@@ -1223,8 +1214,50 @@ class TestCellReconcile:
 
         plot_orchestrator.set_grid_enabled(grid_id, enabled=True)
         _tick(plot_grid_tabs)
-        # Still present after re-enable (rebuilt from a fresh session layer).
         assert cell_id in plot_grid_tabs._cells
+
+    def test_reenabled_grid_keeps_receiving_data(
+        self,
+        plot_orchestrator,
+        plot_grid_tabs,
+        plot_data_service,
+        job_orchestrator,
+        data_service,
+        workflow_id,
+    ):
+        """Disable must keep the SessionLayer the kept widget renders through:
+        deleting it would bind the widget to a dead pipe with no build input
+        changing to force a rebuild, freezing the cell's plot forever."""
+        job_orchestrator.commit_workflow(workflow_id)
+        grid_id = plot_orchestrator.add_grid(title='G', nrows=2, ncols=2)
+        geometry = CellGeometry(row=0, col=0, row_span=1, col_span=1)
+        cell_id = _add_workflow_cell(plot_orchestrator, grid_id, geometry, workflow_id)
+        _publish_layer_data(data_service, workflow_id)
+        plot_orchestrator.flush_frames()
+        _tick(plot_grid_tabs)
+        plot_grid_tabs.tabs.active = plot_grid_tabs._static_tabs_count
+        layer_id = plot_orchestrator.get_cell(cell_id).layers[0].layer_id
+        widget = plot_grid_tabs._cells[cell_id]
+        components = plot_grid_tabs._session_layers[layer_id].components
+
+        plot_orchestrator.set_grid_enabled(grid_id, enabled=False)
+        _tick(plot_grid_tabs)
+        # Token released (no compute while hidden), but the render state the
+        # kept widget is bound to survives.
+        assert not plot_data_service.has_viewers(layer_id)
+        assert plot_grid_tabs._session_layers[layer_id].components is components
+
+        plot_orchestrator.set_grid_enabled(grid_id, enabled=True)
+        _tick(plot_grid_tabs)
+        assert plot_grid_tabs._cells[cell_id] is widget
+
+        # New data must still reach the widget's pipe.
+        _publish_layer_data(data_service, workflow_id)
+        plot_orchestrator.flush_frames()
+        presenter = plot_grid_tabs._session_layers[layer_id].components.presenter
+        assert presenter.has_pending_update()
+        _tick(plot_grid_tabs)
+        assert not presenter.has_pending_update()
 
     def test_cell_edit_does_not_churn_tabs(self, plot_orchestrator, plot_grid_tabs):
         """Cell-level changes bump the topology version but must not tear down
@@ -1695,21 +1728,20 @@ class TestDisposeSeversPipeSubscribers:
         plot_data_service.job_started(layer.layer_id, plotter)
         plot_data_service.data_arrived(layer.layer_id)
         state = plot_data_service.get(layer.layer_id)
-        session_layer = SessionLayer(
-            layer_id=layer.layer_id, last_seen_version=state.version
-        )
+        session_layer = SessionLayer(layer_id=layer.layer_id)
         session_layer.ensure_components(state)
         plot_grid_tabs._session_layers[layer.layer_id] = session_layer
         return cell, session_layer.components.pipe
 
     def test_dispose_unsubscribes_rendered_plot(
-        self, plot_grid_tabs, plot_data_service
+        self, plot_grid_tabs, plot_data_service, plot_orchestrator
     ):
         from uuid import uuid4
 
         cell, pipe = self._add_dynamic_layer_cell(plot_grid_tabs, plot_data_service)
         baseline = len(pipe.subscribers)
-        widget = plot_grid_tabs._build_cell(CellId(uuid4()), cell)
+        grid_id = plot_orchestrator.add_grid(title='Test', nrows=1, ncols=1)
+        widget = plot_grid_tabs._build_cell(CellId(uuid4()), cell, grid_id)
         widget.view.get_root()
         assert len(pipe.subscribers) > baseline
 
@@ -1718,17 +1750,18 @@ class TestDisposeSeversPipeSubscribers:
         assert len(pipe.subscribers) == baseline
 
     def test_rebuild_while_rendered_does_not_accumulate_subscribers(
-        self, plot_grid_tabs, plot_data_service
+        self, plot_grid_tabs, plot_data_service, plot_orchestrator
     ):
         from uuid import uuid4
 
         cell, pipe = self._add_dynamic_layer_cell(plot_grid_tabs, plot_data_service)
         cell_id = CellId(uuid4())
-        first = plot_grid_tabs._build_cell(cell_id, cell)
+        grid_id = plot_orchestrator.add_grid(title='Test', nrows=1, ncols=1)
+        first = plot_grid_tabs._build_cell(cell_id, cell, grid_id)
         first.view.get_root()
         settled = len(pipe.subscribers)
 
-        second = plot_grid_tabs._build_cell(cell_id, cell)
+        second = plot_grid_tabs._build_cell(cell_id, cell, grid_id)
         second.view.get_root()
 
         assert len(pipe.subscribers) == settled
@@ -2133,7 +2166,6 @@ class TestOrphanSweep:
         _tick(plot_grid_tabs)
 
         assert cell_id not in plot_grid_tabs._cells
-        assert cell_id not in plot_grid_tabs._cell_grid
         assert grid_id not in plot_grid_tabs._grid_widgets
         assert layer_id not in plot_grid_tabs._session_layers
         assert len(plot_grid_tabs.tabs) == 2

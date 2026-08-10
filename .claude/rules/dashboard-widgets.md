@@ -39,6 +39,23 @@ def refresh(self):
 - All widget updates run inside `batched_update()` for efficient recomputation
 - Widget event handlers should only call methods on shared components, never rebuild directly
 
+### Plot-grid reconciler: policy vs mechanism
+
+The plot-grid session pass (`plot_grid_tabs.py`) is split into a pure policy
+function and a fixed differ/applier:
+
+- **Policy** — *which cells should have a widget, built from what* — lives in
+  `desired_cells` (`dashboard/cell_plan.py`), a pure function unit-tested with
+  plain data (`cell_plan_test.py`). Any new visibility/materialization rule is
+  a diff to this function, never a gate threaded through the pass.
+- **Mechanism** — the differ rules (build when materialized inputs differ,
+  dispose when the cell left topology, defer otherwise) and the apply ordering
+  are fixed; do not add policy conditions there. `cell_plan.py` must not
+  import Panel/Bokeh/HoloViews (guarded by a test).
+- The wake predicate compares input stamps recorded at the last completed
+  pass; do not add hand-written per-gate terms to it. A new pass input joins
+  `_input_stamps` and the end-of-pass recording, nothing else.
+
 ## Icons
 
 Do not use Unicode characters for button icons. Use embedded SVG icons from `dashboard/widgets/icons.py` via `get_icon()`. Use the `create_tool_button()` helper from `dashboard/widgets/buttons.py` for consistent styling.
