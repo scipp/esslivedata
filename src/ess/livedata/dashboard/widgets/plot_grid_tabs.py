@@ -6,6 +6,41 @@ PlotGridTabs - Tabbed interface for managing multiple plot grids.
 Provides a Panel Tabs widget that displays multiple PlotGrid instances,
 kept in sync with PlotOrchestrator by polling its topology version on each
 session's own periodic tick (see ``PlotOrchestrator`` "Threading").
+
+Framework-trap invariants
+-------------------------
+Each item below encodes a measured Panel/Bokeh failure mode. They are easy to
+drop in a refactor and hard or impossible to cover with unit tests, so any
+change to this module must re-check the list; the inline ``IMPORTANT:``
+comments at the enforcement sites carry the details.
+
+- **Lazy tabs**: ``dynamic=True`` on the Tabs widget is what keeps hidden
+  grids from materializing Bokeh models; without it any content change
+  freezes the UI for seconds (enforced in ``__init__``).
+- **Batching**: every update touching more than one widget runs inside
+  ``batched_update()`` / ``pn.io.hold()`` — the poll pass via
+  ``SessionUpdater``, tab switches via ``_BatchedTabs``, tab rebuilds via
+  ``_reconcile_grid_tabs``.
+- **Modal container parenting**: the modal container is created once, lives
+  at the top level wrapping the Tabs (never per tab — Panel components have
+  one parent), and the outer Column is created once in ``__init__`` so the
+  container's parent is stable across ``panel`` accesses.
+- **Reveal ordering**: a revealed tab's cells are built *before* Panel
+  materializes the tab's models (``_BatchedTabs.on_activate`` →
+  ``_prebuild_revealed_grid``); building after costs a throwaway round of
+  placeholder models and repaints.
+- **Disposal ordering and completeness**: ``CellWidget.dispose()`` must
+  break the Bokeh toolbar reference cycles and sever the rendered plots'
+  pipe subscriptions, and must run *before* the replacement widget renders —
+  holoviews severs all weak plot-refresh subscribers on the touched streams,
+  so ordering carries the correctness (#1224, enforced in ``_build_cell``).
+- **Wake-before-load guard**: ``SessionUpdater`` defers wake registration
+  until the browser session is loaded; ticking earlier touches a document
+  with no websocket.
+- **Markup-pane reveal**: markup panes built after page load stay invisible
+  without the ``LivedataDesign`` stylesheet-latch override (#1154,
+  ``dashboard/design.py``); this module's freshness pills and time labels
+  rely on it.
 """
 
 from __future__ import annotations

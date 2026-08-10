@@ -12,14 +12,9 @@ import time
 from uuid import uuid4
 
 import holoviews as hv
-import pydantic
-import pytest
 
 from ess.livedata.config.workflow_spec import WorkflowId
 from ess.livedata.core.timestamp import Timestamp
-from ess.livedata.dashboard.data_service import DataService
-from ess.livedata.dashboard.job_service import JobService
-from ess.livedata.dashboard.notification_queue import NotificationQueue
 from ess.livedata.dashboard.plot_data_service import LayerId, PlotDataService
 from ess.livedata.dashboard.plot_orchestrator import (
     CellGeometry,
@@ -30,119 +25,12 @@ from ess.livedata.dashboard.plot_orchestrator import (
     PlotConfig,
     PlotOrchestrator,
 )
-from ess.livedata.dashboard.plots import PresenterBase, TimeBounds
-from ess.livedata.dashboard.plotting_controller import PlottingController
-from ess.livedata.dashboard.session_registry import SessionId, SessionRegistry
-from ess.livedata.dashboard.session_updater import SessionUpdater
-from ess.livedata.dashboard.stream_manager import StreamManager
-from ess.livedata.dashboard.widgets.plot_grid_tabs import PlotGridTabs
+from ess.livedata.dashboard.plots import TimeBounds
 from ess.livedata.dashboard.widgets.styles import StatusPill
-from ess.livedata.dashboard.widgets.workflow_status_widget import (
-    WorkflowStatusListWidget,
-)
 from tests.helpers.panel_ui import click_tool
+from tests.helpers.plot_fakes import EmptyParams, FakePlotter, ViewerToken
 
 hv.extension('bokeh')
-
-
-# -- Fakes -----------------------------------------------------------------
-
-
-class FakePlotter:
-    """Minimal plotter whose cached state can be set to any HoloViews object."""
-
-    def __init__(self, cached_state=None, time_bounds=None):
-        self._cached_state = cached_state
-        self._time_bounds = time_bounds
-        self._presenters: list[FakePresenter] = []
-
-    def get_cached_state(self):
-        return self._cached_state
-
-    @property
-    def is_overlayable(self) -> bool:
-        # Mirror a real plotter: a Layout cannot share a figure with siblings.
-        return not isinstance(self._cached_state, hv.Layout)
-
-    @property
-    def time_bounds(self):
-        return self._time_bounds
-
-    def has_cached_state(self):
-        return self._cached_state is not None
-
-    def create_presenter(self, *, owner=None):
-        presenter = FakePresenter(self, owner=owner)
-        self._presenters.append(presenter)
-        return presenter
-
-    def mark_presenters_dirty(self):
-        for p in self._presenters:
-            p._mark_dirty()
-
-
-class FakePresenter(PresenterBase):
-    def present(self, pipe):
-        return hv.DynamicMap(lambda data: data, streams=[pipe], cache_size=1)
-
-
-class _Params(pydantic.BaseModel):
-    pass
-
-
-# -- Fixtures --------------------------------------------------------------
-
-
-@pytest.fixture
-def plot_data_service():
-    return PlotDataService()
-
-
-@pytest.fixture
-def data_service():
-    return DataService()
-
-
-@pytest.fixture
-def job_service():
-    return JobService()
-
-
-@pytest.fixture
-def plot_orchestrator(job_orchestrator, data_service, plot_data_service):
-    stream_manager = StreamManager(data_service=data_service)
-    return PlotOrchestrator(
-        plotting_controller=PlottingController(stream_manager=stream_manager),
-        job_orchestrator=job_orchestrator,
-        data_service=data_service,
-        instrument='dummy',
-        plot_data_service=plot_data_service,
-    )
-
-
-@pytest.fixture
-def plot_grid_tabs(
-    plot_orchestrator,
-    workflow_registry,
-    plot_data_service,
-    job_orchestrator,
-    job_service,
-):
-    stream_manager = StreamManager(data_service=DataService())
-    return PlotGridTabs(
-        plot_orchestrator=plot_orchestrator,
-        workflow_registry=workflow_registry,
-        plotting_controller=PlottingController(stream_manager=stream_manager),
-        workflow_status_widget=WorkflowStatusListWidget(
-            orchestrator=job_orchestrator, job_service=job_service
-        ),
-        plot_data_service=plot_data_service,
-        session_updater=SessionUpdater(
-            session_id=SessionId('test'),
-            session_registry=SessionRegistry(),
-            notification_queue=NotificationQueue(),
-        ),
-    )
 
 
 # -- Helpers ---------------------------------------------------------------
@@ -189,7 +77,7 @@ def _inject_layer(
             )
         },
         plot_name='image',
-        params=_Params(),
+        params=EmptyParams(),
     )
     cell = PlotCell(
         geometry=CellGeometry(row=0, col=0, row_span=1, col_span=1),
@@ -223,7 +111,7 @@ def _inject_two_layer_cell(
                 )
             },
             plot_name='image',
-            params=_Params(),
+            params=EmptyParams(),
         )
 
     cell = PlotCell(
@@ -444,6 +332,40 @@ class TestFreshnessIndicator:
 
         assert plot_grid_tabs._last_freshness_update == stall_clock
 
+    def test_stall_rerenders_pill_into_older_band(
+        self, plot_orchestrator, plot_data_service, plot_grid_tabs
+    ):
+        """With no new frame, only an elapsed stall interval re-renders the
+        pill; the aged bounds then move it to an older band."""
+        from ess.livedata.dashboard.widgets.plot_grid_tabs import (
+            _FRESHNESS_STALL_INTERVAL_S,
+        )
+
+        plotter = FakePlotter(
+            cached_state=_make_layout(), time_bounds=_make_bounds(2.0)
+        )
+        grid_id = plot_orchestrator.add_grid(title='Test', nrows=2, ncols=2)
+        _inject_layer(plot_orchestrator, plot_data_service, grid_id, plotter)
+        plot_grid_tabs._poll_for_plot_updates()
+        plot_grid_tabs.tabs.active = plot_grid_tabs._static_tabs_count
+        plot_grid_tabs._poll_for_plot_updates()
+        (cell_widget,) = plot_grid_tabs._cells.values()
+        assert StatusPill.FRESH[0] in cell_widget.freshness_pane.object
+
+        # Ages the stream without a wall-clock sleep; no version moves, so a
+        # poll before the stall interval elapses leaves the pill untouched.
+        plotter.time_bounds = _make_bounds(60.0)
+        plot_grid_tabs._poll_for_plot_updates()
+        assert StatusPill.FRESH[0] in cell_widget.freshness_pane.object
+
+        plot_grid_tabs._last_freshness_update -= _FRESHNESS_STALL_INTERVAL_S
+        assert plot_grid_tabs._has_pending_work()
+        plot_grid_tabs._poll_for_plot_updates()
+
+        pill = cell_widget.freshness_pane.object
+        assert StatusPill.OLD[0] in pill
+        assert StatusPill.FRESH[0] not in pill
+
     def test_hidden_grid_does_not_update_freshness(
         self, plot_orchestrator, plot_data_service, plot_grid_tabs
     ):
@@ -455,10 +377,7 @@ class TestFreshnessIndicator:
         layer_id = _inject_layer(plot_orchestrator, plot_data_service, grid_id, plotter)
 
         # Another session's viewer token makes the hidden cell build (#1216).
-        class _OtherSessionViewer:
-            pass
-
-        token = _OtherSessionViewer()
+        token = ViewerToken()
         plot_data_service.set_active(layer_id, token, True)
 
         plot_grid_tabs._poll_for_plot_updates()
