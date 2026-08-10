@@ -347,11 +347,18 @@ class PlotGridTabs:
         def grid_callback(geometry: CellGeometry) -> None:
             self._on_plot_requested(grid_id, geometry)
 
+        def occupied_geometries() -> tuple[CellGeometry, ...]:
+            config = self._orchestrator.peek_grid(grid_id)
+            if config is None:
+                return ()
+            return tuple(cell.geometry for cell in config.cells.values())
+
         # Create PlotGrid widget with grid-specific callback
         plot_grid = PlotGrid(
             nrows=grid_config.nrows,
             ncols=grid_config.ncols,
             plot_request_callback=grid_callback,
+            occupied_geometries=occupied_geometries,
         )
 
         # Store widget reference
@@ -513,11 +520,11 @@ class PlotGridTabs:
             # replaced by another session).
             show_error('Cannot add plot: the grid was removed.')
         except ValueError:
-            # The position is occupied in topology but rendered as an empty
-            # cell: another session placed a plot while the modal was open,
-            # or this grid's widgets were not built yet (hidden grids defer
-            # cell builds, so occupancy lags topology until the reveal pass
-            # inserts the widgets).
+            # The position was free when the wizard opened and is occupied now.
+            # ``PlotGrid`` reads occupancy from topology, so it no longer offers
+            # a region topology already holds; what remains is two sessions in
+            # the wizard on the same free region at once, which no occupancy
+            # check can prevent -- whoever commits second lands here.
             show_error('Cannot add plot: that position is already occupied.')
 
     def _on_plot_requested(self, grid_id: GridId, geometry: CellGeometry) -> None:

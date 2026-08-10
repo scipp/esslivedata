@@ -879,7 +879,12 @@ class TestClickToPlace:
     def grid(self) -> tuple[PlotGrid, list[CellGeometry]]:
         requested: list[CellGeometry] = []
         return (
-            PlotGrid(nrows=3, ncols=3, plot_request_callback=requested.append),
+            PlotGrid(
+                nrows=3,
+                ncols=3,
+                plot_request_callback=requested.append,
+                occupied_geometries=lambda: [],
+            ),
             requested,
         )
 
@@ -912,6 +917,7 @@ class TestClickToPlace:
             plot_request_callback=lambda geometry: placed.append(
                 (geometry, open_wizard())
             ),
+            occupied_geometries=lambda: [],
         )
 
         _click_cell(plot_grid, 1, 0)
@@ -937,6 +943,7 @@ class TestClickToPlace:
             plot_request_callback=lambda geometry: placed.append(
                 (geometry, open_wizard())
             ),
+            occupied_geometries=lambda: [],
         )
 
         _click_cell(plot_grid, 0, 0)
