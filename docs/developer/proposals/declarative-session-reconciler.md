@@ -240,6 +240,37 @@ flowchart TD
     class Pred,S4,Rebuild warn;
 ```
 
+### Where the pattern stops: the teardown leak (#1224)
+
+A third defect surfaced while measuring the #1220 fix, and it is recorded
+here precisely because it is **not** an instance of the pattern above. A cell
+rebuilt while its grid is visible left the discarded widget's rendered plot
+subscribed to the layer's pipe: replacing a widget in a grid slot does not
+run the UI framework's pane cleanup, and the widget's `dispose()` released
+only its autoscale controller. Each leaked subscriber renders the layer once
+more on every update, accumulating monotonically over the session
+([#1224](https://github.com/scipp/esslivedata/issues/1224); point fix in
+[#1226](https://github.com/scipp/esslivedata/pull/1226), which makes
+`dispose()` sever the pipe subscriptions).
+
+The decision layer was right — the pass correctly decided to rebuild. The
+defect sits in the *applier's mechanics*, one level below anything
+`desired()` or the differ touches, so the reconciler would **not** have
+prevented it; claiming otherwise would oversell this proposal. What the
+defect does share with the pattern is its shape: "dispose releases everything
+build acquired" is one more hand-maintained inverse that nothing checks,
+spread across three parties (the widget's dispose, the framework's
+slot-replacement semantics, the plotting library's render-time subscription).
+And visibility once again decided whether the defect was observable at all —
+a widget built for a hidden grid never renders, so it never subscribes, which
+is why no page-load measurement could see the leak.
+
+Two consequences for this proposal. The applied-state record gives build and
+dispose a single home, so the symmetry becomes reviewable in one place — a
+concentration benefit, not a structural guarantee. And the invariant that
+caught the leak — total pipe-subscriber count flat across rebuilds — is
+exactly a phase-0 characterization test; the migration plan lists it.
+
 ## Proposal
 
 Restructure the per-session pass into three stages with a strict read → decide

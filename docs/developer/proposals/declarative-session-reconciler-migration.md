@@ -29,7 +29,8 @@ flowchart LR
 
 Lock in what the current pass does before changing how it does it. The tests
 from #1220 (hidden cell not built, reveal builds once, watcher preserves
-pre-warm, deferred rebuild) are the seed; add:
+pre-warm, deferred rebuild) and #1226 (pipe subscribers severed on dispose,
+subscriber count flat across a rebuild) are the seed; add:
 
 - Tab reconcile: focus preserved across rebuilds, local-creation focus,
   disabled-grid tab omission, mid-removal identity lookups.
@@ -42,13 +43,19 @@ pre-warm, deferred rebuild) are the seed; add:
 - Predicate/pass agreement: for each gate, "pass would do work ⇒ predicate
   fires" (this test is only writable per-gate today; under phase 2 it becomes
   a single generic property).
+- Resource symmetry: dispose releases everything build acquired — total
+  pipe-subscriber count across a session's layers is flat across rebuilds and
+  removals, and `hv.DynamicMap` callback executions per pass stay flat
+  (#1224's acceptance checks; cheap to instrument in the pass).
 
 Also enumerate the framework-trap invariants that tests cannot easily cover
 as a checklist in the module docstring (they are currently scattered across
 `IMPORTANT:` comments): modal container has one stable parent at top level;
 wake registration deferred until browser load; batching around multi-widget
-updates; disposal breaks toolbar reference cycles; markup-pane reveal
-workaround.
+updates; disposal breaks toolbar reference cycles and severs pipe
+subscriptions *before* the replacement renders (holoviews severs all weak
+plot-refresh subscribers on the touched streams, so ordering carries the
+correctness — #1224); markup-pane reveal workaround.
 
 Value: independent of this proposal — it is the safety net any future change
 to this module needs.
@@ -206,7 +213,9 @@ rebuild cost would drop enough that much gating precision becomes
 unnecessary — the differ's job shrinks further. Risk: Panel pane replacement
 has its own churn and known traps (reveal latch, reparenting); history in
 this codebase says prototype first. Strictly optional; nothing in phases 0–3
-depends on it.
+depends on it. The #1224 sever must survive this phase: swapping only the
+figure pane still discards a rendered plot, and the phase-0 subscriber-count
+invariant is the guard that it keeps being released.
 
 ## Risks and mitigations
 
