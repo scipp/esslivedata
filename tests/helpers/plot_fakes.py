@@ -72,6 +72,11 @@ class FakePlotter:
     def time_bounds(self) -> TimeBounds | None:
         return self._time_bounds
 
+    @time_bounds.setter
+    def time_bounds(self, value: TimeBounds | None) -> None:
+        # Settable so tests can age a stream without wall-clock sleeps.
+        self._time_bounds = value
+
     def compute(self, data: Any) -> None:
         self._cached_state = data
         self.mark_presenters_dirty()

@@ -332,6 +332,40 @@ class TestFreshnessIndicator:
 
         assert plot_grid_tabs._last_freshness_update == stall_clock
 
+    def test_stall_rerenders_pill_into_older_band(
+        self, plot_orchestrator, plot_data_service, plot_grid_tabs
+    ):
+        """With no new frame, only an elapsed stall interval re-renders the
+        pill; the aged bounds then move it to an older band."""
+        from ess.livedata.dashboard.widgets.plot_grid_tabs import (
+            _FRESHNESS_STALL_INTERVAL_S,
+        )
+
+        plotter = FakePlotter(
+            cached_state=_make_layout(), time_bounds=_make_bounds(2.0)
+        )
+        grid_id = plot_orchestrator.add_grid(title='Test', nrows=2, ncols=2)
+        _inject_layer(plot_orchestrator, plot_data_service, grid_id, plotter)
+        plot_grid_tabs._poll_for_plot_updates()
+        plot_grid_tabs.tabs.active = plot_grid_tabs._static_tabs_count
+        plot_grid_tabs._poll_for_plot_updates()
+        (cell_widget,) = plot_grid_tabs._cells.values()
+        assert StatusPill.FRESH[0] in cell_widget.freshness_pane.object
+
+        # Ages the stream without a wall-clock sleep; no version moves, so a
+        # poll before the stall interval elapses leaves the pill untouched.
+        plotter.time_bounds = _make_bounds(60.0)
+        plot_grid_tabs._poll_for_plot_updates()
+        assert StatusPill.FRESH[0] in cell_widget.freshness_pane.object
+
+        plot_grid_tabs._last_freshness_update -= _FRESHNESS_STALL_INTERVAL_S
+        assert plot_grid_tabs._has_pending_work()
+        plot_grid_tabs._poll_for_plot_updates()
+
+        pill = cell_widget.freshness_pane.object
+        assert StatusPill.OLD[0] in pill
+        assert StatusPill.FRESH[0] not in pill
+
     def test_hidden_grid_does_not_update_freshness(
         self, plot_orchestrator, plot_data_service, plot_grid_tabs
     ):
