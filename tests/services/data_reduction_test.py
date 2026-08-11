@@ -760,19 +760,6 @@ def test_message_with_bad_timestamp_is_ignored(
     assert sink.messages[0].value.values.sum() == 2000
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "The BIFROST writer gives the event-mode monitors a depends_on pointing "
-        "at a `transformations` group they do not have — the geometry sits on "
-        "the sibling `elastic_monitor_backup` (NXnote) instead — so the "
-        "registered artifact has no chain for elastic_monitor and the tank angle "
-        "has nowhere to be patched in. Everything else is in place: copying "
-        "those transformations onto the monitor makes this pass and yields a "
-        "populated map. Paired with the _KNOWN_UNRESOLVABLE_CHAINS entry in "
-        "tests/config/motion_binding_test.py; both go when the artifact is fixed."
-    ),
-)
 @pytest.mark.slow
 def test_bifrost_bragg_peak_qmap_produces_map_once_rotation_context_arrives() -> None:
     """The Bragg peak monitor Q-map runs off monitor events plus a3/a4 context.

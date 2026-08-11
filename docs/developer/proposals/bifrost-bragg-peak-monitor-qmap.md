@@ -101,10 +101,8 @@ monitor events reach `data_reduction`, the job goes `pending_context` -> holds e
 without crashing -> `job_activated` once both rotation devices publish their
 RBV/VAL/DMOV substreams.
 
-Three strict markers record the single remaining blocker and clear themselves when the
-artifact is fixed: the service test's `xfail`, `_KNOWN_UNRESOLVABLE_CHAINS` in
-`tests/config/motion_binding_test.py`, and `_BLOCKED_ON_GEOMETRY_ARTIFACT` in
-`tests/config/registered_workflow_factories_test.py`.
+This works end to end against `geometry-bifrost-repaired-2026-08-11.nxs`, the registered
+artifact (see below): the service test passes and the map fills.
 
 ## The chain-patch binding is done; one producer-side blocker remains
 
@@ -147,23 +145,20 @@ the motor readback. Hence `specs.monitor_handle.skip_instrument_contexts()`.
 
 ### Verified end-to-end
 
-With the monitor's transformations restored in the artifact (see below), the service test
-**XPASSes**: streamed monitor events plus the two rotation devices yield a populated
-(100, 100) `(Q_perpendicular, Q_parallel)` map — 1952 of 2000 events land in it. The live
-a4 drives both the monitor position and the grouping coordinate. This is the real path,
-not the earlier static-position stand-in.
-
-Reproduce by rebuilding the fixture — copy `geometry-bifrost-2026-08-11.nxs`, then copy
-`elastic_monitor/transformations` (`r0` -> `t0_z` -> `t0_x`) in from
-`coda_bifrost_999999_00006061.hdf`, rewriting the final `depends_on` to
-`/entry/instrument/detector_tank_angle/transformations/detector_tank_angle_r0/value` —
-and pointing `instrument.nexus_file` at it.
+The service test passes against the registered artifact: streamed monitor events plus the
+two rotation devices yield a populated (100, 100) `(Q_perpendicular, Q_parallel)` map —
+1952 of 2000 events land in it. The live a4 drives both the monitor position and the
+grouping coordinate. This is the real path, not the earlier static-position stand-in.
 
 ## Geometry artifacts
 
-`geometry-bifrost-2026-08-11.nxs` was regenerated from
-`coda_bifrost_999999_00016610.hdf` (md5 `6291ecb5b1c0627dc7759e31f126c679`, not
-uploaded, registry untouched).
+`geometry-bifrost-repaired-2026-08-11.nxs` (md5 `4db6124e1e8d85a2e9c92d110b717736`) is
+registered and uploaded to the `geometry-v0` release. It is
+`geometry-bifrost-2026-08-11.nxs`, regenerated from `coda_bifrost_999999_00016610.hdf`
+(md5 `6291ecb5b1c0627dc7759e31f126c679`), plus the monitor repair described below — six
+added datasets, no other byte changed. The `repaired` in the name is deliberate: it is a
+hand-patched stopgap and should be superseded by a clean regeneration once the writer is
+fixed.
 
 Relevant to the #962 pin: all 45 detector chains resolve and there are **no stale
 `117_` groups**, so both defects the pin comment names are gone. But only structural
@@ -180,8 +175,11 @@ artifact nor its CODA source. So in the currently registered
 `geometry-bifrost-2026-06-08.nxs` **no BIFROST chain resolves at all** — not the
 monitor's and not the detectors' — and its `elastic_monitor` transformations
 (`r0` 59 deg -> `t0_z` 0.412 m -> `t0_x` 0.686 m -> `detector_tank_angle_r0`) are
-structurally present but unusable. Only the values are still good, which is why they can
-be lifted into the fixture above.
+structurally present but unusable. Only the values are still good.
+
+Registering the new artifact therefore also gives BIFROST resolvable detector chains for
+the first time. Nothing downstream noticed: the detector views are logical and the Q-cut
+workflows read the McStas file, so the full suite passes unchanged.
 
 **Producer bug, blocking regeneration — but the geometry is not lost.** In
 `coda_bifrost_999999_00016610.hdf` the two event-mode monitors (`elastic_monitor`,
@@ -209,7 +207,7 @@ for mon, sib in (('elastic_monitor', 'elastic_monitor_backup'),
 ```
 
 Both monitor chains then resolve, `elastic_monitor`'s terminating at the tank-angle
-placeholder, and the service test passes with the same map as the fixture above.
+placeholder. This is exactly how the registered artifact was produced.
 
 This repair belongs in a one-off artifact, **not** in `make_geometry_nexus.py`: that tool
 copies the source faithfully, and a "geometry may live on a similarly-named sibling" rule
@@ -258,8 +256,9 @@ the transformations are missing.
 
 ## Next steps
 
-1. Get the producer to restore the event-mode monitors' transformations, then regenerate
-   and register the artifact. All three strict markers flip together when it lands.
+1. Get the writer to attach the event-mode monitors' geometry to the NXmonitor group
+   rather than to a `<name>_backup` / `<name>_da00` NXnote sibling, then regenerate and
+   register a clean artifact to supersede the hand-repaired one.
 2. Open the upstream PR, ideally once the frame question above is settled.
 3. Decide on the #962 pin separately, on the strength of a numerical position check.
    Note the registered artifact's chains do not resolve at all, so whatever the pin

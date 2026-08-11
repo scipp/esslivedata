@@ -103,20 +103,6 @@ def instrument(request) -> Instrument:
     return inst
 
 
-# Consumers whose artifact chain cannot resolve yet, with the defect
-# responsible. Each entry is asserted to be *still* broken, so a fixed artifact
-# turns this test red and forces the entry out — the binding it covers is dead
-# weight until then.
-_KNOWN_UNRESOLVABLE_CHAINS: dict[tuple[str, str], str] = {
-    # The BIFROST writer gives the event-mode monitors a depends_on pointing at
-    # a `transformations` group they do not have — the geometry sits on the
-    # sibling `elastic_monitor_backup` — so the Bragg peak monitor has no chain
-    # to patch the tank angle into. See
-    # docs/developer/proposals/bifrost-bragg-peak-monitor-qmap.md.
-    ('bifrost', 'elastic_monitor'): 'monitor transformations missing from artifact',
-}
-
-
 def test_transform_paths_match_artifact(instrument: Instrument) -> None:
     """Each chain-patch binding's resolved transform path must appear on the
     depends_on chain of every declared consumer in the geometry artifact."""
@@ -125,14 +111,6 @@ def test_transform_paths_match_artifact(instrument: Instrument) -> None:
         path = instrument.chain_patch_path(binding)
         for source_name in binding.dependent_sources:
             chain = _chain_paths(artifact, source_name)
-            key = (instrument.name, source_name)
-            if (reason := _KNOWN_UNRESOLVABLE_CHAINS.get(key)) is not None:
-                assert path not in chain, (
-                    f"{instrument.name}/{source_name} is recorded as "
-                    f"unresolvable ({reason}), but the artifact now resolves "
-                    f"{path!r}. Remove the _KNOWN_UNRESOLVABLE_CHAINS entry."
-                )
-                continue
             assert path in chain, (
                 f"Binding {binding.stream_name!r} resolves transform path "
                 f"{path!r} in consumers of {source_name!r}, but it does not "
