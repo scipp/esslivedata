@@ -49,6 +49,12 @@ def _pixel_ranges() -> dict[str, tuple[int, int]]:
     return ranges
 
 
+#: Inclusive ``detector_number`` range per bank. Incoming ``event_id`` is assumed
+#: to fall inside the range of the bank it arrives on. The reference files
+#: ``coda_magic_999999_*.hdf`` violate this: their ``event_id``s are numbered
+#: against a superseded 245760-voxel bank A, so bank B's ids (245761-376604) fall
+#: entirely below its range and replaying such a file leaves the polarization bank
+#: empty. This is a producer-side bug to fix upstream, not worked around here.
 detector_pixel_ranges = _pixel_ranges()
 detector_names = list(detector_pixel_ranges)
 
@@ -106,6 +112,10 @@ strip_view_handle = instrument.add_logical_view(
 # Both banks are vertical (Y-axis) cylinders; project onto the mantle. Pixel
 # positions come from a geometry file whose offsets are derived from the NeXus
 # NXoff_geometry voxel centroids (see scripts/make_geometry_nexus --off-active-face).
+# The registered artifact uses the inner (smaller-radius) radial face: a voxel is a
+# cuboid with only one active surface, and which of its two radial faces that is has
+# not been confirmed against the hardware. Using the outer face instead would move
+# every pixel ~16.5 mm outwards.
 projection_handle = instrument.register_spec(
     group=DETECTORS,
     name='detector_projection',
