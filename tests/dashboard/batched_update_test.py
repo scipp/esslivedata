@@ -1,5 +1,6 @@
 # SPDX-License-Identifier: BSD-3-Clause
 # Copyright (c) 2025 Scipp contributors (https://github.com/scipp)
+import time
 from collections.abc import Callable, Iterator
 
 import pytest
@@ -7,8 +8,9 @@ from bokeh.document import Document
 from bokeh.models import Column, Div
 from bokeh.plotting import figure
 from panel.io.state import set_curdoc
+from structlog.testing import capture_logs
 
-from ess.livedata.dashboard.batched_update import batched_update
+from ess.livedata.dashboard.batched_update import _SLOW_UPDATE_S, batched_update
 
 
 class RecomputeCounter:
@@ -179,3 +181,40 @@ def test_raising_pass_leaves_the_document_usable(doc: Document) -> None:
 def test_works_without_a_current_document() -> None:
     with batched_update():
         pass
+
+
+def slow_updates(captured: list[dict[str, object]]) -> list[dict[str, object]]:
+    return [event for event in captured if event['event'] == 'dashboard_slow_update']
+
+
+def test_quick_pass_is_not_reported(doc: Document) -> None:
+    with capture_logs() as captured, set_curdoc(doc), batched_update():
+        pass
+    assert slow_updates(captured) == []
+
+
+def test_pass_that_blocks_the_loop_is_reported(doc: Document) -> None:
+    with capture_logs() as captured, set_curdoc(doc), batched_update():
+        time.sleep(_SLOW_UPDATE_S * 1.1)
+
+    reported = slow_updates(captured)
+    assert len(reported) == 1
+    assert reported[0]['elapsed_seconds'] >= _SLOW_UPDATE_S
+
+
+def test_nested_pass_is_reported_once(doc: Document) -> None:
+    with capture_logs() as captured, set_curdoc(doc), batched_update():
+        with batched_update():
+            time.sleep(_SLOW_UPDATE_S * 1.1)
+
+    assert len(slow_updates(captured)) == 1
+
+
+def test_raising_pass_is_still_reported(doc: Document) -> None:
+    with capture_logs() as captured:
+        with pytest.raises(RuntimeError):  # noqa: PT012
+            with set_curdoc(doc), batched_update():
+                time.sleep(_SLOW_UPDATE_S * 1.1)
+                raise RuntimeError("handler blew up")
+
+    assert len(slow_updates(captured)) == 1

@@ -17,6 +17,7 @@ from .dashboard_services import DashboardServices
 from .design import LivedataDesign
 from .fake_backend import FakeBackendTransport
 from .kafka_transport import DashboardKafkaTransport
+from .loop_monitor import start_loop_monitor
 from .session_registry import SessionId
 from .session_updater import SessionUpdater
 from .transport import NullTransport, Transport
@@ -245,6 +246,9 @@ class DashboardBase(ServiceBase, ABC):
 
     def create_layout(self) -> pn.template.MaterialTemplate:
         """Create the basic dashboard layout."""
+        # Started here rather than before serving: this runs on the loop that
+        # serves sessions, which is the one whose availability is at stake.
+        start_loop_monitor()
         # Own the document hold for the whole build so that widget code using
         # ``pn.io.hold()`` nests inside it instead of taking its own.
         #
