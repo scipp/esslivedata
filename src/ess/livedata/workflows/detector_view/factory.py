@@ -22,7 +22,7 @@ from ...preprocessors.accumulators import make_no_copy_accumulator_pair
 from ..detector_view_specs import (
     DetectorViewOutputs,
     DetectorViewOutputsBase,
-    DetectorViewParams,
+    DetectorViewParamsBase,
 )
 from ..stream_processor_workflow import StreamProcessorWorkflow
 from .data_source import DetectorDataSource, DetectorNumberSource
@@ -95,7 +95,7 @@ class DetectorViewFactory:
     def make_workflow(
         self,
         source_name: str,
-        params: DetectorViewParams,
+        params: DetectorViewParamsBase,
         aux_source_names: dict[str, str],
         lookup_table_filename: str | None = None,
     ) -> StreamProcessorWorkflow:

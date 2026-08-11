@@ -4,6 +4,7 @@ import subprocess
 import sys
 import uuid
 
+import pydantic
 import pytest
 
 from ess.livedata.config.instrument import Instrument
@@ -19,6 +20,10 @@ from ess.livedata.workflows.detector_view_specs import (
     DetectorROIAuxSources,
     DetectorViewOutputs,
     DetectorViewParams,
+    SpectrumViewSpec,
+    TOAOnlyDetectorViewParams,
+    WavelengthDetectorViewParams,
+    make_detector_view_params,
 )
 
 
@@ -143,3 +148,52 @@ class TestDetectorViewParamsGetActiveRange:
             toa_range=TOARange(enabled=False),
         )
         assert params.get_active_range() is None
+
+
+class TestDetectorViewCoordinateModeRestriction:
+    """Coordinate mode is a spec-level property, not a runtime choice.
+
+    The wavelength path consumes a lookup table as gated context, and gating
+    is resolved per ``(workflow_id, source_name)`` and never per parameter
+    value, so the two modes need separate specs (ADR 0010).
+    """
+
+    def test_toa_only_params_reject_wavelength(self):
+        with pytest.raises(pydantic.ValidationError):
+            TOAOnlyDetectorViewParams(coordinate_mode={'mode': 'wavelength'})
+
+    def test_wavelength_params_reject_toa(self):
+        with pytest.raises(pydantic.ValidationError):
+            WavelengthDetectorViewParams(coordinate_mode={'mode': 'toa'})
+
+    def test_wavelength_params_default_to_wavelength(self):
+        assert WavelengthDetectorViewParams().coordinate_mode.mode == 'wavelength'
+
+    def test_wavelength_params_use_wavelength_edges(self):
+        assert WavelengthDetectorViewParams().get_active_edges().unit == 'angstrom'
+
+    def test_wavelength_params_carry_no_toa_fields(self):
+        assert 'toa_edges' not in WavelengthDetectorViewParams.model_fields
+        assert 'toa_range' not in WavelengthDetectorViewParams.model_fields
+
+    def test_both_modes_remain_available_on_the_unrestricted_model(self):
+        for mode in ('toa', 'wavelength'):
+            params = DetectorViewParams(coordinate_mode={'mode': mode})
+            assert params.coordinate_mode.mode == mode
+
+    def test_make_params_keeps_the_requested_base(self):
+        params = make_detector_view_params(base=TOAOnlyDetectorViewParams)
+        assert params is TOAOnlyDetectorViewParams
+
+    def test_make_params_extends_the_requested_base_with_spectrum_params(self):
+        class SpectrumParams(pydantic.BaseModel):
+            value: int = 3
+
+        spec = SpectrumViewSpec(
+            transform=lambda da: da,
+            output_dims=['group'],
+            params_model=SpectrumParams,
+        )
+        params = make_detector_view_params(spec, base=TOAOnlyDetectorViewParams)
+        assert issubclass(params, TOAOnlyDetectorViewParams)
+        assert params().spectrum_params.value == 3

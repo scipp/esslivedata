@@ -12,7 +12,7 @@ from ess.livedata.config.workflow_spec import DETECTORS, WorkflowOutputsBase
 from ess.livedata.workflows.detector_view_specs import (
     DetectorROIAuxSources,
     DetectorViewOutputs,
-    DetectorViewParams,
+    TOAOnlyDetectorViewParams,
 )
 from ess.livedata.workflows.monitor_workflow_specs import (
     TOAOnlyMonitorDataParams,
@@ -65,7 +65,7 @@ panel_0_view_handle = instrument.register_spec(
     ),
     source_names=['panel_0'],
     aux_sources=DetectorROIAuxSources(),
-    params=DetectorViewParams,
+    params=TOAOnlyDetectorViewParams,
     outputs=DetectorViewOutputs,
 )
 
