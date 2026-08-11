@@ -242,6 +242,35 @@ class BifrostCustomElasticQMapParams(pydantic.BaseModel):
     )
 
 
+class BraggPeakQMapParams(pydantic.BaseModel):
+    q_parallel_edges: QEdges = pydantic.Field(
+        default=QEdges(start=-QMAX_DEFAULT, stop=QMAX_DEFAULT, num_bins=QBIN_DEFAULT),
+        description="Bin edges for Q parallel to the beam (in 1/Å).",
+    )
+    q_perpendicular_edges: QEdges = pydantic.Field(
+        default=QEdges(start=-QMAX_DEFAULT, stop=QMAX_DEFAULT, num_bins=QBIN_DEFAULT),
+        description="Bin edges for Q perpendicular to the beam (in 1/Å).",
+    )
+
+
+def _make_2d_template() -> sc.DataArray:
+    """Create an empty 2D template for 2D output data."""
+    return sc.DataArray(sc.zeros(dims=['dim_0', 'dim_1'], shape=[0, 0], unit='counts'))
+
+
+class BraggPeakQMapOutputs(WorkflowOutputsBase):
+    """Outputs for the Bragg peak monitor Q-map workflow."""
+
+    q_map: sc.DataArray = pydantic.Field(
+        default_factory=_make_2d_template,
+        title='Q Map',
+        description=(
+            'Elastic intensity accumulated over a sample rotation scan, binned in '
+            'Q perpendicular vs Q parallel.'
+        ),
+    )
+
+
 class QMapOutputs(WorkflowOutputsBase):
     """Outputs for Bifrost Q-map workflows."""
 
@@ -390,4 +419,19 @@ elastic_qmap_custom_handle = instrument.register_spec(
     source_names=['unified_detector'],
     params=BifrostCustomElasticQMapParams,
     outputs=QMapOutputs,
+)
+
+# The Bragg peak monitor is the elastic monitor (cbm5), a single-pixel monitor on
+# the detector tank. Over a sample rotation scan it maps elastic intensity in Q.
+bragg_peak_qmap_handle = instrument.register_spec(
+    name='bragg_peak_qmap',
+    version=1,
+    title='Elastic Q map (Bragg peak monitor)',
+    description=(
+        'Elastic intensity from the Bragg peak monitor, accumulated over a sample '
+        'rotation scan and binned in Q perpendicular vs Q parallel.'
+    ),
+    source_names=['elastic_monitor'],
+    params=BraggPeakQMapParams,
+    outputs=BraggPeakQMapOutputs,
 )

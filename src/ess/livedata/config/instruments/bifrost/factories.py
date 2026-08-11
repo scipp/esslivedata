@@ -17,6 +17,7 @@ from .specs import (
     BifrostCustomElasticQMapParams,
     BifrostElasticQMapParams,
     BifrostQMapParams,
+    BraggPeakQMapParams,
     DetectorRatemeterParams,
     DetectorRatemeterRegionParams,
 )
@@ -45,6 +46,12 @@ def setup_factories(instrument: Instrument) -> None:
         CutAxis2,
         CutData,
     )
+    from ess.bifrost.single_crystal import BifrostBraggPeakMonitorWorkflow
+    from ess.bifrost.single_crystal.types import (
+        IntensityQparQperp,
+        QParallelBins,
+        QPerpendicularBins,
+    )
     from ess.reduce.nexus.types import (
         Filename,
         NeXusData,
@@ -54,6 +61,7 @@ def setup_factories(instrument: Instrument) -> None:
     from ess.reduce.unwrap import LookupTableFilename
     from ess.reduce.unwrap.types import LookupTableRelativeErrorThreshold
     from ess.spectroscopy.types import (
+        ElasticMonitor,
         InstrumentAngle,
         PreopenNeXusFile,
         ProtonCharge,
@@ -89,6 +97,17 @@ def setup_factories(instrument: Instrument) -> None:
     )
     specs.detector_ratemeter_handle.skip_instrument_contexts()
     specs.unified_detector_view_handle.skip_instrument_contexts()
+
+    # The Bragg peak monitor rides the detector tank, so it needs the same two
+    # angles, but its source is the monitor rather than ``unified_detector``.
+    specs.bragg_peak_qmap_handle.add_context_binding(
+        stream_name='detector_tank_angle_r0',
+        workflow_key=InstrumentAngle[SampleRun],
+    )
+    specs.bragg_peak_qmap_handle.add_context_binding(
+        stream_name='rotation_stage',
+        workflow_key=SampleAngle[SampleRun],
+    )
 
     # Create base reduction workflow
     (
@@ -218,6 +237,39 @@ def setup_factories(instrument: Instrument) -> None:
         wf[CutAxis1] = axis1
         wf[CutAxis2] = axis2
         return _make_cut_stream_processor(wf)
+
+    # Bragg peak monitor Q-map workflow
+    @cache
+    def _init_bragg_peak_workflow() -> sciline.Pipeline:
+        """Initialize the Bragg peak monitor Q-map workflow."""
+        fname = simulated_elastic_incoherent_with_phonon()
+        with snx.File(fname) as f:
+            monitor_names = list(f['entry/instrument'][snx.NXmonitor])
+        workflow = BifrostBraggPeakMonitorWorkflow()
+        workflow[Filename[SampleRun]] = fname
+        workflow[LookupTableFilename] = lookup_table_simulation()
+        workflow[LookupTableRelativeErrorThreshold] = {
+            'detector': float('inf'),
+            **{name: float('inf') for name in monitor_names},
+        }
+        workflow[PreopenNeXusFile] = PreopenNeXusFile(True)
+        return workflow
+
+    @specs.bragg_peak_qmap_handle.attach_factory()
+    def _bragg_peak_qmap_workflow(
+        params: BraggPeakQMapParams,
+    ) -> StreamProcessorWorkflow:
+        wf = _init_bragg_peak_workflow().copy()
+        wf[QParallelBins] = params.q_parallel_edges.get_edges().rename(Q='Q_parallel')
+        wf[QPerpendicularBins] = params.q_perpendicular_edges.get_edges().rename(
+            Q='Q_perpendicular'
+        )
+        return StreamProcessorWorkflow(
+            wf,
+            dynamic_keys={'elastic_monitor': NeXusData[ElasticMonitor, SampleRun]},
+            target_keys={'q_map': IntensityQparQperp[SampleRun]},
+            accumulators=(IntensityQparQperp[SampleRun],),
+        )
 
 
 def _transpose_with_coords(data: sc.DataArray, dims: tuple[str, ...]) -> sc.DataArray:
