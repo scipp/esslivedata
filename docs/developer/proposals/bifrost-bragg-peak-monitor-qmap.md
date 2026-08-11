@@ -91,46 +91,73 @@ in for the monitor (it carries an explicit warning saying so).
 ### esslivedata — branch `555-elastic-qmap` (pushed)
 
 Spec `bifrost/bragg_peak_qmap/1` on `source_names=['elastic_monitor']`,
-`BraggPeakQMapParams` (Q∥/Q⊥ edges), 2D `q_map` output, spec-scope context bindings, and
-a factory accumulating `IntensityQparQperp`. 1212 tests pass, 1 strict xfail.
+`BraggPeakQMapParams` (Q∥/Q⊥ edges), 2D `q_map` output, and a factory accumulating
+`IntensityQparQperp`. Geometry comes from the geometry artifact; the detector tank angle
+is an instrument-scope chain-patch binding (`DetectorTankAngleLog`) that also feeds the
+a4 grouping coordinate, and the sample rotation stays a spec-scope direct bind.
 
 This is the first reduction spec whose primary source is a monitor. That path works:
 monitor events reach `data_reduction`, the job goes `pending_context` -> holds events
 without crashing -> `job_activated` once both rotation devices publish their
 RBV/VAL/DMOV substreams.
 
-## The one remaining blocker
+Three strict markers record the single remaining blocker and clear themselves when the
+artifact is fixed: the service test's `xfail`, `_KNOWN_UNRESOLVABLE_CHAINS` in
+`tests/config/motion_binding_test.py`, and `_BLOCKED_ON_GEOMETRY_ARTIFACT` in
+`tests/config/registered_workflow_factories_test.py`.
+
+## The chain-patch binding is done; one producer-side blocker remains
 
 The monitor is mounted on the detector tank, so its transformation chain runs through
-`detector_tank_angle`, whose value is live. Geometry currently comes from the McStas
-simulation file, whose tank-angle NXlog is a 720-sample rotation scan, so the position
-arrives time-dependent on *that file's* time base and cannot be assigned onto streamed
-events:
+`detector_tank_angle`, whose value is live. That is now handled by a chain-patch context
+binding (ADR 0003, `config/value_log.py`): `DetectorTankAngleLog` is a `ValueLog`
+subclass, so the routing layer substitutes the live f144 NXlog into the NeXus chain at
+the path derived from the stream name (`Instrument.chain_patch_path`).
+
+Three things had to be settled to make that work.
+
+**Geometry had to move off the McStas file onto the geometry artifact.** The patch path
+is the f144 stream's `nexus_path`,
+`/entry/instrument/detector_tank_angle/transformations/detector_tank_angle_r0/value`.
+The artifact writes the chain entry at exactly that path (a length-0 NXlog placeholder);
+the McStas file keys the same transform one level up, at
+`.../detector_tank_angle_r0`, and stores the 720-sample rotation scan in it. So on the
+McStas file the patch cannot land at all:
 
 ```
-DimensionError: Expected dimension to be in [event_time_zero:1, ], got time.
+KeyError: "Transformation entry '.../detector_tank_angle_r0/value' not found in chain."
 ```
 
-**The fix is a chain-patch context binding**, which the framework already supports.
-A `ContextBinding` whose `workflow_key` is a `ValueLog` subclass is routed via the fused
-per-component patched-chain provider, substituting the live f144 NXlog into the NeXus
-chain at a path derived from the stream name (`Instrument.chain_patch_path`). See ADR
-0003 and `config/value_log.py`.
+`_init_bragg_peak_workflow` therefore uses `instrument.nexus_file`. Nothing else was
+holding it to the simulation file: against the registered artifact the monitor chain is
+the *only* thing that fails (unlike `BifrostQCutWorkflow`, which also needs analyzer
+geometry the artifacts lack).
 
-The existing BIFROST a3/a4 bindings are explicitly *direct-bind*: they feed
-`group_by_rotation` a coordinate, not geometry. This workflow needs a4 **both** ways.
-Note `ValueLog` keys must be declared at instrument scope, so the spec-scope bindings
-currently in `factories.py` will need rethinking.
+**The tank angle is needed twice, but a stream carries one context key per spec.**
+`resolve_context_keys` returns `{stream_name: workflow_key}` and `validate` rejects the
+same stream at both scopes, so `detector_tank_angle_r0` cannot be bound to both
+`InstrumentAngle[SampleRun]` (what `group_by_rotation` bins on) and the `ValueLog`. The
+chain patch is the binding, and `_instrument_angle_from_tank_log` derives the coordinate
+from the same log — the payload is identical, direct-bind just passes it unwrapped.
 
-### Verified that the workflow itself is correct
+**The plain monitor histogram had to opt out.** Chain-patch bindings must be declared at
+instrument scope, and `dependent_sources={'elastic_monitor'}` also catches
+`monitor_histogram` on that monitor, which would have gated a counts-over-TOA workflow on
+the motor readback. Hence `specs.monitor_handle.skip_instrument_contexts()`.
 
-Given a static tank-frame position, the end-to-end service test **XPASSes** and produces
-a 2D map from streamed monitor events. Reproduce with
-`/workspace/esslivedata/geometry-bifrost-2026-08-11-tankframe.nxs` as
-`Filename[SampleRun]` in `_init_bragg_peak_workflow`. Note that file was made by
-truncating the chain before the tank rotation, which is **not** a correct general
-approach — see the dead ends below. It only demonstrates that everything downstream of
-the position works.
+### Verified end-to-end
+
+With the monitor's transformations restored in the artifact (see below), the service test
+**XPASSes**: streamed monitor events plus the two rotation devices yield a populated
+(100, 100) `(Q_perpendicular, Q_parallel)` map — 1952 of 2000 events land in it. The live
+a4 drives both the monitor position and the grouping coordinate. This is the real path,
+not the earlier static-position stand-in.
+
+Reproduce by rebuilding the fixture — copy `geometry-bifrost-2026-08-11.nxs`, then copy
+`elastic_monitor/transformations` (`r0` -> `t0_z` -> `t0_x`) in from
+`coda_bifrost_999999_00006061.hdf`, rewriting the final `depends_on` to
+`/entry/instrument/detector_tank_angle/transformations/detector_tank_angle_r0/value` —
+and pointing `instrument.nexus_file` at it.
 
 ## Geometry artifacts
 
@@ -142,17 +169,26 @@ Relevant to the #962 pin: all 45 detector chains resolve and there are **no stal
 `117_` groups**, so both defects the pin comment names are gone. But only structural
 resolution was checked, not numerical correctness of the positions.
 
-Also worth knowing: in the pinned `geometry-bifrost-2025-01-01.nxs` the detector chains
-are three links long and **never reach `detector_tank_angle`**, so the geometry we ship
-today has detector positions that do not depend on the tank angle at all.
+**The writer also changed how it references the tank angle, and that is what makes
+chain-patching possible.** In the new file the chains end at
+`.../detector_tank_angle_r0/value` — the NXlog itself, terminating with `depends_on='.'`
+— which is both the LOKI convention and exactly the path `chain_patch_path` derives from
+the f144 stream. Older files reference the enclosing `detector_tank_angle_r0`
+NXpositioner *group* instead, whose own `depends_on` points at
+`/entry/instrument/117_detector_tank_angle/...`, a group that exists in neither the
+artifact nor its CODA source. So in the currently registered
+`geometry-bifrost-2026-06-08.nxs` **no BIFROST chain resolves at all** — not the
+monitor's and not the detectors' — and its `elastic_monitor` transformations
+(`r0` 59 deg -> `t0_z` 0.412 m -> `t0_x` 0.686 m -> `detector_tank_angle_r0`) are
+structurally present but unusable. Only the values are still good, which is why they can
+be lifted into the fixture above.
 
 **Producer bug, blocking regeneration.** In `coda_bifrost_999999_00016610.hdf` the two
 event-mode monitors (`elastic_monitor`, `normalization_monitor`) have a dangling
 `depends_on` pointing at a `transformations` group that does not exist; they have no
-such group at all. The three histogram-mode monitors are fine. This is a regression —
-`geometry-bifrost-2026-06-08.nxs` has a complete chain for `elastic_monitor`
-(`r0` 59 deg -> `t0_z` 0.412 m -> `t0_x` 0.686 m -> `detector_tank_angle_r0`). A report
-is drafted; without those transformations there is no chain to patch into.
+such group at all. The three histogram-mode monitors are fine. A report is drafted.
+This is now the *only* thing between the branch and a working Q map: everything else —
+the binding, the artifact's tank-angle placeholder, the workflow — is verified.
 
 ## Dead ends — do not repeat
 
@@ -168,14 +204,20 @@ is drafted; without those transformations there is no chain to patch into.
 - **Rebasing PR #555.** Its `exclude_from_merge` plumbing in `kafka/routes.py` and
   `message_adapter.py` exists only because it assumed the monitor arrived on the
   *detector* topic. cbm5 is an NXmonitor on `bifrost_beam_monitor`; delete, do not port.
+- **Keeping the McStas file as this workflow's geometry source.** Its tank-angle
+  transform is keyed one level above the f144 path, so the chain patch can never land;
+  the workflow would be permanently inconsistent with its own binding.
+- **Binding the tank angle twice (direct + chain-patch) for the same spec.** One context
+  key per stream: `resolve_context_keys` is keyed by stream name and cross-scope
+  duplicates are rejected outright. Derive the second use with a provider instead.
 
 ## Open questions
 
-- Can the Q-map workflows move off the McStas file at all? Pointing `BifrostQCutWorkflow`
-  at the pinned artifact fails with `No NXcrystal found in the inputs of
-  135_channel_1_4_triplet` — the artifacts carry no analyzer geometry, which looks like
-  why the McStas file is used. Affects the instruction to use the same artifact
-  everywhere.
+- Can the *detector* Q-map workflows move off the McStas file? The monitor one has
+  (it must, to chain-patch), but pointing `BifrostQCutWorkflow` at the artifact still
+  fails with `No NXcrystal found in the inputs of 135_channel_1_4_triplet` — the
+  artifacts carry no analyzer geometry. So BIFROST currently reads geometry from two
+  different files, which is worth resolving.
 - The scientists say "(Qx, Qy) in the **laboratory** reference system", but upstream's
   `project_momentum_transfer` projects `sample_table_momentum_transfer` — the sample-table
   frame, which is what you would want to compare against an expected reciprocal lattice.
@@ -188,8 +230,9 @@ is drafted; without those transformations there is no chain to patch into.
 
 ## Next steps
 
-1. Declare the tank angle as a chain-patch binding for this spec and re-run the test;
-   the strict xfail flips loudly when it works.
-2. Get the producer to restore the monitor transformations, then regenerate the artifact.
-3. Open the upstream PR, ideally once the frame question above is settled.
-4. Decide on the #962 pin separately, on the strength of a numerical position check.
+1. Get the producer to restore the event-mode monitors' transformations, then regenerate
+   and register the artifact. All three strict markers flip together when it lands.
+2. Open the upstream PR, ideally once the frame question above is settled.
+3. Decide on the #962 pin separately, on the strength of a numerical position check.
+   Note the registered artifact's chains do not resolve at all, so whatever the pin
+   says, BIFROST detector geometry is not currently coming from a resolvable chain.

@@ -9,6 +9,7 @@ from functools import cache
 import scipp as sc
 
 from ess.livedata.config import Instrument
+from ess.livedata.config.value_log import ValueLog
 from ess.livedata.config.workflow_spec import Temporality
 
 from . import specs
@@ -21,6 +22,16 @@ from .specs import (
     DetectorRatemeterParams,
     DetectorRatemeterRegionParams,
 )
+
+
+class DetectorTankAngleLog(ValueLog):
+    """Per-binding Sciline key for the BIFROST detector-tank rotation readback.
+
+    The Bragg peak monitor rides the tank, so its ``depends_on`` chain runs
+    through ``detector_tank_angle_r0`` and its position is only known once the
+    live readback arrives.
+    """
+
 
 # Q-vector basis for Q-map calculations
 _Q_VECTORS = {
@@ -98,12 +109,21 @@ def setup_factories(instrument: Instrument) -> None:
     specs.detector_ratemeter_handle.skip_instrument_contexts()
     specs.unified_detector_view_handle.skip_instrument_contexts()
 
-    # The Bragg peak monitor rides the detector tank, so it needs the same two
-    # angles, but its source is the monitor rather than ``unified_detector``.
-    specs.bragg_peak_qmap_handle.add_context_binding(
+    # The Bragg peak monitor rides the detector tank, so the tank angle serves it
+    # twice: as geometry, patched into the monitor's ``depends_on`` chain, and as
+    # the a4 coordinate ``group_by_rotation`` bins on. A stream carries one
+    # context key per spec, so the chain patch is the binding and
+    # ``_instrument_angle_from_tank_log`` below derives the coordinate from it.
+    # Chain-patch bindings must live at instrument scope; the sample rotation is
+    # direct-bind and stays spec-scope.
+    instrument.add_context_binding(
         stream_name='detector_tank_angle_r0',
-        workflow_key=InstrumentAngle[SampleRun],
+        dependent_sources={'elastic_monitor'},
+        workflow_key=DetectorTankAngleLog,
     )
+    # The plain monitor histogram is counts-over-TOA and never resolves a
+    # position, so it must not wait on the tank readback.
+    specs.monitor_handle.skip_instrument_contexts()
     specs.bragg_peak_qmap_handle.add_context_binding(
         stream_name='rotation_stage',
         workflow_key=SampleAngle[SampleRun],
@@ -241,8 +261,16 @@ def setup_factories(instrument: Instrument) -> None:
     # Bragg peak monitor Q-map workflow
     @cache
     def _init_bragg_peak_workflow() -> sciline.Pipeline:
-        """Initialize the Bragg peak monitor Q-map workflow."""
-        fname = simulated_elastic_incoherent_with_phonon()
+        """Initialize the Bragg peak monitor Q-map workflow.
+
+        Geometry comes from the geometry artifact rather than the McStas
+        simulation file the Q-cut workflows use: the tank angle is patched into
+        the monitor's ``depends_on`` chain at the path the f144 stream targets,
+        and only the artifact writes the chain entry at that path. The
+        simulation file keys the same transform one level up and carries a
+        720-sample rotation scan in it, which no live readback can replace.
+        """
+        fname = instrument.nexus_file
         with snx.File(fname) as f:
             monitor_names = list(f['entry/instrument'][snx.NXmonitor])
         workflow = BifrostBraggPeakMonitorWorkflow()
@@ -255,11 +283,18 @@ def setup_factories(instrument: Instrument) -> None:
         workflow[PreopenNeXusFile] = PreopenNeXusFile(True)
         return workflow
 
+    def _instrument_angle_from_tank_log(
+        log: DetectorTankAngleLog,
+    ) -> InstrumentAngle[SampleRun]:
+        """Reuse the chain-patched tank readback as the a4 grouping coordinate."""
+        return InstrumentAngle[SampleRun](log.values)
+
     @specs.bragg_peak_qmap_handle.attach_factory()
     def _bragg_peak_qmap_workflow(
         params: BraggPeakQMapParams,
     ) -> StreamProcessorWorkflow:
         wf = _init_bragg_peak_workflow().copy()
+        wf.insert(_instrument_angle_from_tank_log)
         wf[QParallelBins] = params.q_parallel_edges.get_edges().rename(Q='Q_parallel')
         wf[QPerpendicularBins] = params.q_perpendicular_edges.get_edges().rename(
             Q='Q_perpendicular'

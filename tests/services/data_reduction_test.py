@@ -763,15 +763,14 @@ def test_message_with_bad_timestamp_is_ignored(
 @pytest.mark.xfail(
     strict=True,
     reason=(
-        "The monitor's transformation chain runs through detector_tank_angle, "
-        "whose value is live. It needs a chain-patch context binding (ADR 0003) "
-        "so the streamed a4 is substituted into the chain; the existing a3/a4 "
-        "bindings are direct-bind, feeding group_by_rotation as a coordinate "
-        "rather than as geometry. Geometry currently comes from the McStas "
-        "simulation file, whose tank-angle NXlog is a 720-sample rotation scan, "
-        "so the position comes out time-dependent on the file's time base and "
-        "cannot be assigned onto streamed events. The workflow itself is proven: "
-        "given a static tank-frame position it passes and produces a 2D map."
+        "The BIFROST writer gives the event-mode monitors a depends_on pointing "
+        "at a `transformations` group it never writes, so elastic_monitor has no "
+        "chain in the geometry artifact and the tank angle has nowhere to be "
+        "patched in. Everything else is in place: restoring those three "
+        "transformations in the artifact (the last one pointing at "
+        "detector_tank_angle_r0/value) makes this pass and yields a populated "
+        "map. Paired with the _KNOWN_UNRESOLVABLE_CHAINS entry in "
+        "tests/config/motion_binding_test.py; both go when the artifact is fixed."
     ),
 )
 @pytest.mark.slow
@@ -780,9 +779,10 @@ def test_bifrost_bragg_peak_qmap_produces_map_once_rotation_context_arrives() ->
 
     Unlike the detector Q-maps this workflow's source is a monitor
     (``elastic_monitor``, cbm5), so it exercises the monitor route into
-    ``data_reduction``. Its context bindings are spec-scope, so the gate must
-    open on the same two rotation devices even though the instrument-scope
-    bindings name ``unified_detector``.
+    ``data_reduction``. The tank angle arrives as a chain-patch binding — it
+    places the monitor *and* supplies the a4 grouping coordinate — while the
+    sample rotation is a direct spec-scope bind, so the gate must open on both
+    devices even though the instrument-scope binds name ``unified_detector``.
     """
     app = make_reduction_app(instrument='bifrost')
     sink = app.sink
@@ -817,4 +817,5 @@ def test_bifrost_bragg_peak_qmap_produces_map_once_rotation_context_arrives() ->
     service.step()
     assert len(sink.messages) >= 1
     result = sink.messages[-1].value
-    assert result.data.ndim == 2
+    assert result.dims == ('Q_perpendicular', 'Q_parallel')
+    assert result.data.sum().value > 0

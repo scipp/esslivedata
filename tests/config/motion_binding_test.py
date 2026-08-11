@@ -15,6 +15,8 @@ deliberate ledger of placeholders consciously left for follow-up work.
 
 from __future__ import annotations
 
+import warnings
+
 import pytest
 import scippnexus as snx
 from scippnexus.field import DependsOn
@@ -39,18 +41,29 @@ def _chain_patch_inputs(instrument: Instrument) -> list[ContextBinding]:
 def _load_chain(artifact: str, source_name: str) -> TransformationChain | None:
     """Walk a source's depends_on chain via scippnexus.
 
-    Returns ``None`` for static components with no ``depends_on`` field.
+    Returns ``None`` for static components with no ``depends_on`` field, for
+    sources that are not NeXus groups at all — BIFROST's ``unified_detector`` is
+    a logical name covering 45 triplet groups — and for chains that reference a
+    node the artifact does not contain.
     """
     parent_path = f'/entry/instrument/{source_name}'
     with snx.File(artifact, 'r') as f:
-        comp = f[parent_path]
+        try:
+            comp = f[parent_path]
+        except KeyError:
+            return None
         try:
             depends_on = comp['depends_on'][()]
         except KeyError:
             return None
         if not isinstance(depends_on, DependsOn):
             depends_on = DependsOn(parent=parent_path, value=depends_on)
-        return parse_depends_on_chain(comp, depends_on)
+        with warnings.catch_warnings():
+            # A dangling chain warns and yields None. Swallow the warning so the
+            # callers' assertions report which binding is affected, which is far
+            # more useful than the raised warning pytest would otherwise produce.
+            warnings.simplefilter('ignore', UserWarning)
+            return parse_depends_on_chain(comp, depends_on)
 
 
 def _chain_paths(artifact: str, source_name: str) -> list[str]:
@@ -90,6 +103,19 @@ def instrument(request) -> Instrument:
     return inst
 
 
+# Consumers whose artifact chain cannot resolve yet, with the defect
+# responsible. Each entry is asserted to be *still* broken, so a fixed artifact
+# turns this test red and forces the entry out — the binding it covers is dead
+# weight until then.
+_KNOWN_UNRESOLVABLE_CHAINS: dict[tuple[str, str], str] = {
+    # The BIFROST writer gives the event-mode monitors a depends_on pointing at
+    # a `transformations` group it never writes, so the Bragg peak monitor has
+    # no chain to patch the tank angle into. See
+    # docs/developer/proposals/bifrost-bragg-peak-monitor-qmap.md.
+    ('bifrost', 'elastic_monitor'): 'monitor transformations missing from artifact',
+}
+
+
 def test_transform_paths_match_artifact(instrument: Instrument) -> None:
     """Each chain-patch binding's resolved transform path must appear on the
     depends_on chain of every declared consumer in the geometry artifact."""
@@ -98,6 +124,14 @@ def test_transform_paths_match_artifact(instrument: Instrument) -> None:
         path = instrument.chain_patch_path(binding)
         for source_name in binding.dependent_sources:
             chain = _chain_paths(artifact, source_name)
+            key = (instrument.name, source_name)
+            if (reason := _KNOWN_UNRESOLVABLE_CHAINS.get(key)) is not None:
+                assert path not in chain, (
+                    f"{instrument.name}/{source_name} is recorded as "
+                    f"unresolvable ({reason}), but the artifact now resolves "
+                    f"{path!r}. Remove the _KNOWN_UNRESOLVABLE_CHAINS entry."
+                )
+                continue
             assert path in chain, (
                 f"Binding {binding.stream_name!r} resolves transform path "
                 f"{path!r} in consumers of {source_name!r}, but it does not "

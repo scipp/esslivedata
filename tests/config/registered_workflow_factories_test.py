@@ -86,9 +86,28 @@ def test_workflow_factory_is_attached(instrument_name: str, workflow_id: Workflo
     )
 
 
-@pytest.mark.parametrize(
-    ("instrument_name", "workflow_id"), _collect_workflow_factories()
-)
+#: Workflows that cannot be instantiated against the geometry artifact they are
+#: registered with. Strict, so a fixed artifact flips them and forces the entry out.
+_BLOCKED_ON_GEOMETRY_ARTIFACT = {
+    # The BIFROST writer omits the event-mode monitors' transformations, so
+    # building this workflow warns about elastic_monitor's dangling depends_on
+    # chain. See docs/developer/proposals/bifrost-bragg-peak-monitor-qmap.md.
+    'bifrost/bragg_peak_qmap/1': 'geometry artifact has no chain for elastic_monitor',
+}
+
+
+def _collect_roundtrip_cases():
+    """Factory cases, marking those whose artifact cannot support instantiation."""
+    cases = []
+    for case in _collect_workflow_factories():
+        marks = list(case.marks)
+        if (reason := _BLOCKED_ON_GEOMETRY_ARTIFACT.get(case.id)) is not None:
+            marks.append(pytest.mark.xfail(strict=True, reason=reason))
+        cases.append(pytest.param(*case.values, id=case.id, marks=marks))
+    return cases
+
+
+@pytest.mark.parametrize(("instrument_name", "workflow_id"), _collect_roundtrip_cases())
 def test_workflow_roundtrip(instrument_name: str, workflow_id: WorkflowId):
     """Test complete roundtrip for a registered workflow.
 
