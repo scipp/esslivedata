@@ -124,10 +124,7 @@ def setup_factories(instrument: Instrument) -> None:
         },
     )
 
-    from ess.livedata.workflows.detector_view_specs import (
-        DetectorViewParams,
-        WavelengthDetectorViewParams,
-    )
+    from ess.livedata.workflows.detector_view_specs import DetectorViewParams
 
     @specs.xy_projection_handle.attach_factory()
     def _detector_view_workflow_factory(
@@ -147,25 +144,8 @@ def setup_factories(instrument: Instrument) -> None:
             lookup_table_filename=lookup_table_filename,
         )
 
-    @specs.xy_projection_wavelength_handle.attach_factory()
-    def _detector_view_wavelength_workflow_factory(
-        source_name: str,
-        params: WavelengthDetectorViewParams,
-        aux_source_names: dict[str, str],
-    ) -> StreamProcessorWorkflow:
-        """Factory for the wavelength-only LOKI detector view."""
-        return _xy_projection.make_workflow(
-            source_name,
-            params,
-            aux_source_names,
-            lookup_table_filename=_resolve_lookup_table_filename(),
-        )
-
     from ess.livedata.workflows.monitor_workflow import create_monitor_workflow
-    from ess.livedata.workflows.monitor_workflow_specs import (
-        MonitorDataParams,
-        WavelengthMonitorDataParams,
-    )
+    from ess.livedata.workflows.monitor_workflow_specs import MonitorDataParams
 
     @specs.monitor_handle.attach_factory()
     def _monitor_workflow_factory(source_name: str, params: MonitorDataParams):
@@ -186,20 +166,6 @@ def setup_factories(instrument: Instrument) -> None:
             coordinate_mode=mode,
             lookup_table_filename=lookup_table_filename,
             geometry_filename=geometry_filename,
-        )
-
-    @specs.monitor_wavelength_handle.attach_factory()
-    def _monitor_wavelength_workflow_factory(
-        source_name: str, params: WavelengthMonitorDataParams
-    ):
-        """Factory for the wavelength-only LOKI monitor workflow."""
-        return create_monitor_workflow(
-            source_name=source_name,
-            edges=params.get_active_edges(),
-            range_filter=params.get_active_range(),
-            coordinate_mode=params.get_coordinate_mode(),
-            lookup_table_filename=_resolve_lookup_table_filename(),
-            geometry_filename=_nexus_geometry_filename,
         )
 
     # --- Providers for current_run transmission mode ---

@@ -37,6 +37,16 @@ dashboard-safe `workflow_key` (a `ValueLog` chain-patch marker, which subclasses
 
 ### Param-dependent context — explicit non-goal
 
+> **Superseded by ADR 0010.** The gate is now resolved from the job's validated params,
+> so a binding can be declared with a predicate and a job that does not consume the
+> stream is not gated on it. The reasoning below stands as the record of why this was
+> deferred; what expired is its YAGNI premise. A streamed wavelength lookup table made
+> the over-gate real (its producer is an operator-started job, not an always-on PV), and
+> the prescribed remedy — splitting the spec — turned out to cost more than the precise
+> gate: two specs give the two coordinate modes different output identities, so a plot
+> cannot follow a mode switch.
+
+
 Detector-view and monitor-view factories wire position context unconditionally for
 sources that have a motion binding, regardless of `coordinate_mode` (TOA vs
 wavelength). A precise design would gate only in wavelength mode (TOA does not consume

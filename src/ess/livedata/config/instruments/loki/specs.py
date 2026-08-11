@@ -28,12 +28,9 @@ from ess.livedata.workflows.detector_view_specs import (
     DetectorROIAuxSources,
     DetectorViewOutputs,
     DetectorViewParams,
-    WavelengthDetectorViewParams,
 )
 from ess.livedata.workflows.monitor_workflow_specs import (
     MonitorDataParams,
-    WavelengthMonitorDataParams,
-    register_monitor_wavelength_workflow_specs,
     register_monitor_workflow_specs,
 )
 
@@ -240,9 +237,6 @@ instrument_registry.register(instrument)
 monitor_handle = register_monitor_workflow_specs(
     instrument, instrument.monitors, params=MonitorDataParams
 )
-monitor_wavelength_handle = register_monitor_wavelength_workflow_specs(
-    instrument, instrument.monitors, params=WavelengthMonitorDataParams
-)
 
 # beam_monitor_m3 is pixellated (pixel IDs 4-8). Reuse the detector view workflow
 # with an identity logical projection to get per-pixel counts with TOA histogramming.
@@ -273,21 +267,6 @@ xy_projection_handle = instrument.register_spec(
     source_names=detector_names,
     aux_sources=DetectorROIAuxSources(),
     params=DetectorViewParams,
-    outputs=DetectorViewOutputs,
-)
-
-xy_projection_wavelength_handle = instrument.register_spec(
-    group=DETECTORS,
-    name='detector_xy_projection_wavelength',
-    version=1,
-    title='Detector XY Projection (wavelength)',
-    description=(
-        'Projection of a detector bank onto an XY-plane, with events '
-        'converted to wavelength.'
-    ),
-    source_names=detector_names,
-    aux_sources=DetectorROIAuxSources(),
-    params=WavelengthDetectorViewParams,
     outputs=DetectorViewOutputs,
 )
 
