@@ -134,25 +134,49 @@ Monitors are treated as statically known. The user-selectable aux-monitor mechan
 designed around; a check at job creation raises when the chosen monitor differs from the
 bound one, rather than silently supplying a table for the wrong distance.
 
-### Wavelength specs are split from TOA specs
+### The gate is resolved from the job's parameters
 
-Gating is resolved per `(workflow_id, source_name)` and never per parameters:
-`Instrument.resolve_context_keys` takes no parameters, and the job's gating set is its key
-set. Coordinate mode is a parameter. A spec offering a TOA/wavelength choice would
-therefore gate TOA-mode jobs on a table they never read.
+Coordinate mode is a parameter, so a spec that offers both modes must not gate its TOA
+jobs on a table they never read. ADR 0003 accepted exactly this over-gate for motion and
+prescribed splitting the spec if it ever became real. It has become real, and both of that
+decision's premises have expired.
 
-ADR 0003 accepted exactly this over-gate for motion and prescribed the remedy for when it
-became real: split the spec. It has become real, and the cost is far higher than for
-motion. Motion streams are control-system PVs pushed continuously and arrive within seconds
-of any service start. The LUT is published by an operator-started livedata job that
-re-emits only on chopper change. Over-gating TOA on it means TOA — the mode you fall back
-to when everything else is broken — depends on the most fragile link in the chain.
+The cost of over-gating is far higher here than for motion. Motion streams are
+control-system PVs pushed continuously, arriving within seconds of any service start. The
+LUT is published by an operator-started livedata job that re-emits only on chopper change.
+Over-gating TOA on it makes TOA — the mode you fall back to when everything else is broken
+— depend on the most fragile link in the chain.
 
-Wavelength-variant specs are therefore added *additively*, carrying the LUT binding, and
-existing specs are untouched. TOA keeps working unconditionally, with no version bumps and
-no saved-config migration, and the file-based path remains available until the streamed one
-is trusted. The new path carries no file default, so reducing with a table for the wrong
-chopper configuration is impossible by construction rather than discouraged by a warning.
+And the prescribed remedy is worse than the disease. Splitting doubles the workflow list,
+forces the operator to start and stop two jobs, and, because the dashboard's data plane is
+keyed by `DataKey` = (`workflow_id`, `source_name`, `output_name`), gives the two modes
+*different output identities*. A plot cannot follow a mode switch; the user reconfigures it
+or keeps two. Coordinate mode is a property of how you are currently looking at a detector,
+not of which detector you are looking at, and the spec split makes the workflow list encode
+the wrong one.
+
+So the gate becomes parameter-dependent instead: a `ContextBinding` carries a predicate
+over the job's validated params. A TOA job resolves an empty gating set; a wavelength job
+gates on its component's table. The workflow stays unified and coordinate mode stays a
+parameter.
+
+This is affordable because the gate is already a per-job quantity. It is resolved at a
+single call site, inside job creation, which already holds the full `WorkflowConfig`;
+nothing consumes the gating set earlier. Kafka subscriptions are derived statically per
+spec and are a superset of any per-job gate, so narrowing the gate needs no subscription
+change, and the context cache is keyed by stream name alone. The declaration-level
+collision validators run on declarations rather than resolved sets, so a predicate that
+only *removes* bindings keeps them conservative.
+
+The condition is stated once, in the predicate. The factory wires the table's context key
+unconditionally, because declaring a context key that no provider consumes is a verified
+no-op: `StreamProcessor` registers every context key as a graph node, so a key on a branch
+the targets never reach maps to an empty recompute set, and `set_context` stores a dead
+parameter and computes nothing. A TOA job that never receives the stream does not even
+reach that point, since the workflow only forwards context keys present in the batch. Had
+the factory branched too, the two conditions would have had to agree with nothing to catch
+a disagreement — the existing guard only checks that a workflow with resolved context keys
+implements `SupportsContext`, not that it consumes them.
 
 ### Consumers clear when the LUT's identity changes
 
@@ -197,7 +221,7 @@ event on run transitions, and this is a second trigger on that path.
 | Hand-declare every range | A dozen-plus numbers per instrument that nobody re-checks when an artifact is regenerated. Rejected. |
 | **LUT workflow consumes component motion streams** | Tables would always describe where the component actually is, and the static travel envelope — the one number this design needs from the instrument team — would disappear. It does *not* remove motion from consumers, which still need pixel positions for scattering geometry and for the per-pixel `Ltotal` that indexes the table. Costs: motion joins the LUT job's gating set, so a dead motion PV stops all wavelength reduction; every sample during a move re-emits and clears; and the LUT job's motion value can lag the one the consumer patched into its geometry, so padding is still needed. The strongest alternative; recorded to revisit. |
 | Route the LUT as ungated aux with the file as default (ROI precedent) | Survives a cold start, but leaves reducing with a stale or nominal table as a silent mode — the thing the feature exists to prevent. Rejected in favour of the gate plus explicit limitations. |
-| Parameter-dependent gating on coordinate mode | Explicitly ruled out by ADR 0003. Rejected. |
+| **Split the spec into TOA-only and wavelength variants** | ADR 0003's prescribed remedy for the over-gate. Rejected on UX: two specs are two entries in the workflow list, two jobs to run, and — because `DataKey` embeds `workflow_id` — two unrelated output streams, so a plot cannot follow a mode switch. It also duplicates every per-instrument params override. |
 | Reuse `livedata_data` instead of a dedicated topic | Backend services would subscribe to every detector image in the facility. Rejected. |
 | Reset on any received LUT, with no identity | Simplest, and puts the decision at the producer. But a LUT-job restart re-emits an unchanged table, and that restart is the recovery action; a liveness heartbeat would also clear on every beat. Rejected. |
 | ADR 0006's `start_time` generation marker | Changes on a restart with identical configuration, wiping statistics mid-run. Rejected. |
@@ -215,7 +239,14 @@ event on run transitions, and this is a second trigger on that path.
   in no stream lookup table. Harmless, because the context route is added unconditionally
   rather than derived from the mapping, but it needs a test pinning that — it reads as a
   bug otherwise.
-- Wavelength-variant specs are added; existing TOA and file-based specs are unchanged.
+- `ContextBinding` gains a predicate over the job's params, and the gate resolution
+  takes the validated params model. This supersedes ADR 0003's param-dependent-context
+  non-goal, which was decided on YAGNI grounds.
+- Specs are unchanged: coordinate mode stays a parameter on one workflow, so output
+  identity and any plot built on it survive a mode switch.
+- The file-based table stops being reachable on a migrated instrument, so the streamed
+  table cannot be A/B'd against it side by side within one instrument. The LUT job
+  publishes its tables as ordinary outputs, which is the comparison surface instead.
 - The LUT workflow loses its range parameter.
 
 ### Standing limitations

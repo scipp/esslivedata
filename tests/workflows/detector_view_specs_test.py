@@ -22,7 +22,6 @@ from ess.livedata.workflows.detector_view_specs import (
     DetectorViewParams,
     SpectrumViewSpec,
     TOAOnlyDetectorViewParams,
-    WavelengthDetectorViewParams,
     make_detector_view_params,
 )
 
@@ -162,19 +161,9 @@ class TestDetectorViewCoordinateModeRestriction:
         with pytest.raises(pydantic.ValidationError):
             TOAOnlyDetectorViewParams(coordinate_mode={'mode': 'wavelength'})
 
-    def test_wavelength_params_reject_toa(self):
-        with pytest.raises(pydantic.ValidationError):
-            WavelengthDetectorViewParams(coordinate_mode={'mode': 'toa'})
-
-    def test_wavelength_params_default_to_wavelength(self):
-        assert WavelengthDetectorViewParams().coordinate_mode.mode == 'wavelength'
-
-    def test_wavelength_params_use_wavelength_edges(self):
-        assert WavelengthDetectorViewParams().get_active_edges().unit == 'angstrom'
-
-    def test_wavelength_params_carry_no_toa_fields(self):
-        assert 'toa_edges' not in WavelengthDetectorViewParams.model_fields
-        assert 'toa_range' not in WavelengthDetectorViewParams.model_fields
+    def test_toa_only_params_carry_no_wavelength_fields(self):
+        assert 'wavelength_edges' not in TOAOnlyDetectorViewParams.model_fields
+        assert 'wavelength_range' not in TOAOnlyDetectorViewParams.model_fields
 
     def test_both_modes_remain_available_on_the_unrestricted_model(self):
         for mode in ('toa', 'wavelength'):

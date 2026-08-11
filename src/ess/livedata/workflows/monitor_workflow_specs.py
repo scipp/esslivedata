@@ -25,7 +25,6 @@ from .detector_view_specs import (
     CoordinateMode,
     CoordinateModeSettings,
     TOAOnlyCoordinateModeSettings,
-    WavelengthOnlyCoordinateModeSettings,
 )
 from .workflow_factory import SpecHandle
 
@@ -161,48 +160,6 @@ class MonitorDataParams(MonitorDataParamsBase):
                 )
 
 
-class WavelengthMonitorDataParams(MonitorDataParamsBase):
-    """Monitor data parameters restricted to wavelength mode."""
-
-    coordinate_mode: WavelengthOnlyCoordinateModeSettings = pydantic.Field(
-        title="Coordinate Mode",
-        description="Select coordinate system for monitor data. This workflow "
-        "always converts to wavelength.",
-        default_factory=WavelengthOnlyCoordinateModeSettings,
-    )
-    wavelength_edges: parameter_models.WavelengthEdges = pydantic.Field(
-        title="Wavelength Edges",
-        description="Wavelength edges for histogramming.",
-        default=parameter_models.WavelengthEdges(
-            start=1.0,
-            stop=10.0,
-            num_bins=100,
-            unit=parameter_models.WavelengthUnit.ANGSTROM,
-        ),
-    )
-    wavelength_range: parameter_models.WavelengthRangeFilter = pydantic.Field(
-        title="Wavelength Range",
-        description="Wavelength range filter.",
-        default=parameter_models.WavelengthRangeFilter(),
-    )
-
-    def get_active_edges(self) -> sc.Variable:
-        """Return the wavelength edges."""
-        return self.wavelength_edges.get_edges()
-
-    def get_active_range(self) -> tuple[sc.Variable, sc.Variable] | None:
-        """Return the wavelength range if enabled."""
-        return self.wavelength_range.range if self.wavelength_range.enabled else None
-
-
-def _make_histogram_template(dim: str, unit: str) -> sc.DataArray:
-    """Empty histogram template over the spectral coordinate of a coordinate mode."""
-    return sc.DataArray(
-        sc.zeros(dims=[dim], shape=[0], unit='counts'),
-        coords={dim: sc.arange(dim, 0, unit=unit)},
-    )
-
-
 class MonitorHistogramOutputs(WorkflowOutputsBase):
     """Outputs for the monitor histogram workflow."""
 
@@ -244,7 +201,10 @@ class MonitorHistogramOutputs(WorkflowOutputsBase):
     # da00 serialisation) and are referenced by ``output_views`` above.
 
     cumulative: CumulativeOutput = pydantic.Field(
-        default_factory=lambda: _make_histogram_template('time_of_arrival', 'ms'),
+        default_factory=lambda: sc.DataArray(
+            sc.zeros(dims=['time_of_arrival'], shape=[0], unit='counts'),
+            coords={'time_of_arrival': sc.arange('time_of_arrival', 0, unit='ms')},
+        ),
         title='Histogram',
         description=(
             'Monitor histogram accumulated since the start of the run. '
@@ -253,7 +213,10 @@ class MonitorHistogramOutputs(WorkflowOutputsBase):
         ),
     )
     current: WindowOutput = pydantic.Field(
-        default_factory=lambda: _make_histogram_template('time_of_arrival', 'ms'),
+        default_factory=lambda: sc.DataArray(
+            sc.zeros(dims=['time_of_arrival'], shape=[0], unit='counts'),
+            coords={'time_of_arrival': sc.arange('time_of_arrival', 0, unit='ms')},
+        ),
         title='Histogram update',
         description=(
             'Monitor histogram for the latest update interval only. '
@@ -287,32 +250,6 @@ class MonitorHistogramOutputs(WorkflowOutputsBase):
         title='Total in range',
         description='Number of monitor events within the configured range filter '
         'accumulated since the start of the run.',
-    )
-
-
-class WavelengthMonitorHistogramOutputs(MonitorHistogramOutputs):
-    """Monitor histogram outputs binned in wavelength.
-
-    Only the histogram templates differ from the TOA outputs: they declare the
-    spectral coordinate the workflow actually produces, which the UI uses to
-    pick a plotter. The scalar count outputs are coordinate-mode independent.
-    """
-
-    cumulative: CumulativeOutput = pydantic.Field(
-        default_factory=lambda: _make_histogram_template('wavelength', 'angstrom'),
-        title='Histogram',
-        description=(
-            'Monitor histogram accumulated since the start of the run. '
-            'Accumulation restarts if the monitor moves.'
-        ),
-    )
-    current: WindowOutput = pydantic.Field(
-        default_factory=lambda: _make_histogram_template('wavelength', 'angstrom'),
-        title='Histogram update',
-        description=(
-            'Monitor histogram for the latest update interval only. '
-            'Resets each update interval.'
-        ),
     )
 
 
@@ -373,66 +310,6 @@ def register_monitor_workflow_specs(
         outputs=MonitorHistogramOutputs,
         # Every instrument's cumulative monitor total is a NICOS derived device.
         device_outputs=COUNTS_TOTAL_DEVICE,
-    )
-
-
-def register_monitor_wavelength_workflow_specs(
-    instrument: Instrument,
-    source_names: list[str],
-    params: type[MonitorDataParamsBase] = WavelengthMonitorDataParams,
-    aux_sources: AuxSources | None = None,
-) -> SpecHandle | None:
-    """
-    Register the wavelength-mode monitor spec, separate from the TOA spec.
-
-    A separate spec rather than a coordinate-mode parameter on the TOA spec:
-    the wavelength path consumes a lookup table as gated context, and gating is
-    resolved per ``(workflow_id, source_name)`` and never per parameter value,
-    so a combined spec would gate its TOA jobs on a table they never read
-    (ADR 0010). Register this only for instruments that can supply a table.
-
-    Declares no ``device_outputs``: the NICOS monitor-total device is owned by
-    the TOA spec registered by :func:`register_monitor_workflow_specs`, and a
-    cumulative event count does not depend on the coordinate mode. Declaring it
-    on both specs would render the same device name twice, which
-    :class:`~ess.livedata.config.device_contract.DeviceContract` rejects.
-
-    Parameters
-    ----------
-    instrument:
-        The instrument to register the workflow spec for.
-    source_names:
-        Monitor names for which to register the workflow. If empty, returns
-        None without registering.
-    params:
-        Parameter model class, a :class:`MonitorDataParamsBase` subclass
-        restricted to wavelength. Instruments needing extra fields subclass
-        :class:`WavelengthMonitorDataParams`.
-    aux_sources:
-        Optional auxiliary source specification.
-
-    Returns
-    -------
-    :
-        SpecHandle for later factory attachment, or None if no monitors.
-    """
-    if not source_names:
-        return None
-
-    return instrument.register_spec(
-        group=MONITORS,
-        name='monitor_histogram_wavelength',
-        version=1,
-        title="Beam monitor (wavelength)",
-        description=(
-            "Histogrammed and time-integrated beam monitor, converted to "
-            "wavelength. The monitor is histogrammed or rebinned into "
-            "specified wavelength bins."
-        ),
-        source_names=source_names,
-        aux_sources=aux_sources,
-        params=params,
-        outputs=WavelengthMonitorHistogramOutputs,
     )
 
 

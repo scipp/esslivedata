@@ -71,37 +71,8 @@ class TOAOnlyCoordinateModeSettings(CoordinateModeSettings):
         if v != 'toa':
             raise ValueError(
                 f"Only 'toa' mode is supported for this workflow, got '{v}'. "
-                "Wavelength mode requires a lookup table, available only on "
-                "the dedicated wavelength workflow."
-            )
-        return v
-
-
-class WavelengthOnlyCoordinateModeSettings(CoordinateModeSettings):
-    """Coordinate mode settings restricted to wavelength.
-
-    The counterpart of :class:`TOAOnlyCoordinateModeSettings`, for the specs
-    that own the lookup table. Coordinate mode is a spec-level property rather
-    than a runtime choice because the lookup table is a gated context input:
-    gating is resolved per ``(workflow_id, source_name)`` and never per
-    parameter value, so a spec offering both modes would gate its TOA jobs on
-    a table they never read (see ADR 0010).
-    """
-
-    mode: CoordinateMode = pydantic.Field(
-        default='wavelength',
-        description="Coordinate system for event data. This workflow always "
-        "converts to wavelength.",
-        json_schema_extra={'labels': {'wavelength': 'Wavelength'}},
-    )
-
-    @pydantic.field_validator('mode')
-    @classmethod
-    def _validate_wavelength_only(cls, v: CoordinateMode) -> CoordinateMode:
-        if v != 'wavelength':
-            raise ValueError(
-                f"Only 'wavelength' mode is supported for this workflow, got "
-                f"'{v}'. Use the time-of-arrival workflow for TOA mode."
+                "Wavelength mode needs a lookup table and detector geometry, "
+                "which this workflow has no way to obtain."
             )
         return v
 
@@ -239,40 +210,6 @@ class TOAOnlyDetectorViewParams(DetectorViewParamsBase):
     def get_active_range(self) -> tuple[sc.Variable, sc.Variable] | None:
         """Return the TOA range if enabled."""
         return self.toa_range.range if self.toa_range.enabled else None
-
-
-class WavelengthDetectorViewParams(DetectorViewParamsBase):
-    """Detector-view parameters restricted to wavelength."""
-
-    coordinate_mode: WavelengthOnlyCoordinateModeSettings = pydantic.Field(
-        title="Coordinate Mode",
-        description="Select coordinate system for detector view. This workflow "
-        "always converts to wavelength.",
-        default_factory=WavelengthOnlyCoordinateModeSettings,
-    )
-    wavelength_range: parameter_models.WavelengthRangeFilter = pydantic.Field(
-        title="Wavelength Range",
-        description="Wavelength range filter.",
-        default=parameter_models.WavelengthRangeFilter(),
-    )
-    wavelength_edges: parameter_models.WavelengthEdges = pydantic.Field(
-        title="Wavelength Edges",
-        description="Wavelength edges for histogramming.",
-        default=parameter_models.WavelengthEdges(
-            start=1.0,
-            stop=10.0,
-            num_bins=100,
-            unit=parameter_models.WavelengthUnit.ANGSTROM,
-        ),
-    )
-
-    def get_active_edges(self) -> sc.Variable:
-        """Return the wavelength edges."""
-        return self.wavelength_edges.get_edges()
-
-    def get_active_range(self) -> tuple[sc.Variable, sc.Variable] | None:
-        """Return the wavelength range if enabled."""
-        return self.wavelength_range.range if self.wavelength_range.enabled else None
 
 
 @dataclass(frozen=True, slots=True)

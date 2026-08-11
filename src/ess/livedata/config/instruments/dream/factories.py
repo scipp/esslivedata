@@ -11,11 +11,7 @@ import scipp as sc
 from ess.livedata.config import Instrument
 
 from . import specs
-from .specs import (
-    DreamMonitorDataParams,
-    DreamWavelengthMonitorDataParams,
-    PowderWorkflowParams,
-)
+from .specs import DreamMonitorDataParams, PowderWorkflowParams
 
 
 def setup_factories(instrument: Instrument) -> None:
@@ -45,7 +41,7 @@ def setup_factories(instrument: Instrument) -> None:
         StreamProcessorWorkflow,
     )
 
-    from .specs import DreamDetectorViewParams, DreamWavelengthDetectorViewParams
+    from .specs import DreamDetectorViewParams
 
     def _resolve_lookup_table_filename(instrument_configuration):
         """Resolve lookup table filename from DREAM instrument configuration."""
@@ -120,22 +116,6 @@ def setup_factories(instrument: Instrument) -> None:
             lookup_table_filename=lookup_table_filename,
         )
 
-    @specs.projection_wavelength_handle.attach_factory()
-    def _detector_view_wavelength_workflow_factory(
-        source_name: str,
-        params: DreamWavelengthDetectorViewParams,
-        aux_source_names: dict[str, str],
-    ) -> StreamProcessorWorkflow:
-        """Factory for the wavelength-only detector view workflow."""
-        return _detector_view_factory.make_workflow(
-            source_name,
-            params,
-            aux_source_names,
-            lookup_table_filename=_resolve_lookup_table_filename(
-                params.instrument_configuration
-            ),
-        )
-
     # Monitor workflow factory with DREAM-specific TOF configuration
     from ess.livedata.workflows.monitor_workflow import create_monitor_workflow
 
@@ -160,22 +140,6 @@ def setup_factories(instrument: Instrument) -> None:
             coordinate_mode=mode,
             lookup_table_filename=lookup_table_filename,
             geometry_filename=geometry_filename,
-        )
-
-    @specs.monitor_wavelength_handle.attach_factory()
-    def _monitor_wavelength_workflow_factory(
-        source_name: str, params: DreamWavelengthMonitorDataParams
-    ):
-        """Factory for the wavelength-only DREAM monitor workflow."""
-        return create_monitor_workflow(
-            source_name=source_name,
-            edges=params.get_active_edges(),
-            range_filter=params.get_active_range(),
-            coordinate_mode=params.get_coordinate_mode(),
-            lookup_table_filename=_resolve_lookup_table_filename(
-                params.instrument_configuration
-            ),
-            geometry_filename=get_nexus_geometry_filename('dream-no-shape'),
         )
 
     # Powder reduction workflow setup
