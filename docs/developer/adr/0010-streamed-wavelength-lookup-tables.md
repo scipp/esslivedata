@@ -216,10 +216,30 @@ A new LUT means the chopper phasing changed, so the wavelength for a given time-
 changed: data accumulated before and after are not the same measurement. Downstream
 workflows clear.
 
-Change is detected by **content comparison** (`sc.identical`), not by a generation marker.
-ADR 0006's `start_time` marker is the obvious candidate and is wrong here: it changes when
-the LUT job restarts with identical configuration, so a routine restart would wipe every
+Change is detected by **content comparison**, not by a generation marker. ADR 0006's
+`start_time` marker is the obvious candidate and is wrong here: it changes when the LUT
+job restarts with identical configuration, so a routine restart would wipe every
 consumer's statistics mid-run. Comparing a few-KB table costs nothing.
+
+The comparison must be NaN-aware. `sc.identical` returns `False` for two bit-identical
+arrays containing `NaN`, and a LUT is full of `NaN` rows wherever the cascade blocks the
+beam (`ess/reduce/unwrap/lut.py:609-612`) -- so `sc.identical` would report a change on
+every republish and clear every consumer every time. Use
+`sc.allclose(new, old, equal_nan=True)` on the data, which does compare variances, plus an
+explicit comparison of the `distance` and `event_time_offset` axes and the four provenance
+coords, which `allclose` does not look at.
+
+Its tolerance is also the noise knob: `rtol`/`atol` state how different a table must be
+before discarding accumulated statistics is worth it, so a setpoint jittering within
+tolerance re-emits an equal table and clears nothing. The `chopper_cascade` trigger is
+already plateau-filtered upstream (`_StabilityDetector`, `chopper_synthesizer.py`); this is
+the backstop behind it.
+
+Motion and LUT clearing are orthogonal by construction. A carriage move does not change
+the LUT -- the range is static and covers the envelope -- so it can never cause a
+LUT-driven clear. Whether it should cause a *motion*-driven clear is the separate question
+above. Had the range been derived from live motion instead, the two would be coupled and
+every carriage nudge would spuriously clear consumers through the LUT.
 
 Clearing is opt-in per binding -- `clear_on_change: bool = False` on `ContextBinding`, set
 only for LUT bindings. Universal clearing is arguably more correct (a carriage move does
@@ -257,11 +277,12 @@ consumes a table.
 | One job per component | Requires N synthetic trigger streams to give each job a `source_name`, recomputes the cascade N times, and multiplies the ways params can drift between components. Rejected. |
 | Derive every range generically from the geometry artifact | Silently wrong for BIFROST (164-166 m against a 162.0 m lookup). The failure mode is exactly the one this ADR exists to remove. Rejected. |
 | Hand-declare every range, no derivation | ~14 numbers per instrument that nobody re-checks when an artifact is regenerated. Rejected. |
-| LUT workflow consumes motion context for a live range | Gates the LUT job on motion and races the consumer's own geometry patch. Static envelope is simpler and sufficient. Rejected. |
+| LUT workflow consumes motion context for a live range | Gates the LUT job on motion, races the consumer's own geometry patch, and couples motion to LUT-driven clearing so every carriage nudge would discard statistics. Static envelope is simpler and sufficient. Rejected. |
 | Route the LUT as ungated aux, file as default (ROI precedent) | Survives a cold start, but leaves "reducing with a stale or nominal table" as a silent mode -- the thing the feature exists to prevent. Rejected in favour of the gate plus an explicit v0 limitation. |
 | Param-dependent gating on `coordinate_mode` | Explicitly ruled out by ADR 0003. Rejected. |
 | Reuse `livedata_data` instead of a dedicated topic | Backend services would subscribe to every detector image in the facility. Rejected. |
 | Generation marker (`start_time`) to detect LUT change | Fires on a LUT-job restart with identical config, wiping consumer statistics mid-run. Rejected in favour of content comparison. |
+| `sc.identical` for that comparison | Returns `False` for bit-identical arrays containing `NaN`, which every LUT has. Would clear on every republish. Rejected in favour of `sc.allclose(..., equal_nan=True)`. |
 | Mirror named for the LUT rather than for the seam | Same code either way; the generic name is the honest one. Rejected. |
 
 ## Consequences
