@@ -216,30 +216,35 @@ A new LUT means the chopper phasing changed, so the wavelength for a given time-
 changed: data accumulated before and after are not the same measurement. Downstream
 workflows clear.
 
-Change is detected by **content comparison**, not by a generation marker. ADR 0006's
-`start_time` marker is the obvious candidate and is wrong here: it changes when the LUT
-job restarts with identical configuration, so a routine restart would wipe every
-consumer's statistics mid-run. Comparing a few-KB table costs nothing.
+Consumers do not compare tables. They clear when the LUT's **identity coord** changes: a
+0-D fingerprint the producer stamps alongside the four provenance scalars, derived from
+the inputs that determine the table -- per-chopper speed and delay setpoints, pulse period
+and stride, the resolutions, the source offset and the component's range -- each rounded
+to a declared precision.
 
-The comparison must be NaN-aware. `sc.identical` returns `False` for two bit-identical
-arrays containing `NaN`, and a LUT is full of `NaN` rows wherever the cascade blocks the
-beam (`ess/reduce/unwrap/lut.py:609-612`) -- so `sc.identical` would report a change on
-every republish and clear every consumer every time. Use
-`sc.allclose(new, old, equal_nan=True)` on the data, which does compare variances, plus an
-explicit comparison of the `distance` and `event_time_offset` axes and the four provenance
-coords, which `allclose` does not look at.
+Clearing on *any* received LUT would be simpler, and correctly locates the decision at the
+producer rather than having consumers second-guess it. It fails on one case that matters:
+restarting the LUT job re-emits an unchanged table, and restarting the LUT job is the v0
+recovery action for a lost stream. Recovery must not destroy every consumer's statistics.
+The same objection rules it out for the liveness heartbeat below, where every beat would
+clear the facility.
 
-Its tolerance is also the noise knob: `rtol`/`atol` state how different a table must be
-before discarding accumulated statistics is worth it, so a setpoint jittering within
-tolerance re-emits an equal table and clears nothing. The `chopper_cascade` trigger is
-already plateau-filtered upstream (`_StabilityDetector`, `chopper_synthesizer.py`); this is
-the backstop behind it.
+ADR 0006's `start_time` generation marker is the other obvious candidate and is wrong for
+the same reason: it changes on a restart with identical configuration.
 
-Motion and LUT clearing are orthogonal by construction. A carriage move does not change
-the LUT -- the range is static and covers the envelope -- so it can never cause a
-LUT-driven clear. Whether it should cause a *motion*-driven clear is the separate question
-above. Had the range been derived from live motion instead, the two would be coupled and
-every carriage nudge would spuriously clear consumers through the LUT.
+Comparing table *contents* at the consumer also works and is worse on every axis. It is N
+comparisons instead of one stamp; `sc.identical` cannot be used at all, since it returns
+`False` for bit-identical arrays containing `NaN` and a LUT is full of `NaN` rows wherever
+the cascade blocks the beam (`ess/reduce/unwrap/lut.py:609-612`); and the tolerance needed
+to work around that puts the noise-rejection knob at the consumer, far from the setpoint
+jitter it is filtering.
+
+Deriving the fingerprint from inputs rather than from the table's bytes keeps it stable
+across producer restarts -- the setpoints replay from retained context, so the same cascade
+yields the same fingerprint in a fresh process -- and avoids a float hash that would not
+survive a library or platform change. The rounding precision is the noise knob, sitting at
+the source. It backs up the plateau filtering `ChopperSynthesizer` already applies
+(`_StabilityDetector`, `chopper_synthesizer.py`).
 
 Clearing is opt-in per binding -- `clear_on_change: bool = False` on `ContextBinding`, set
 only for LUT bindings. Universal clearing is arguably more correct (a carriage move does
@@ -282,12 +287,17 @@ consumes a table.
 | Param-dependent gating on `coordinate_mode` | Explicitly ruled out by ADR 0003. Rejected. |
 | Reuse `livedata_data` instead of a dedicated topic | Backend services would subscribe to every detector image in the facility. Rejected. |
 | Generation marker (`start_time`) to detect LUT change | Fires on a LUT-job restart with identical config, wiping consumer statistics mid-run. Rejected in favour of content comparison. |
+| Reset on any received LUT, with no identity at all | Simplest, and correctly puts the decision at the producer. But a LUT-job restart re-emits an unchanged table, and that restart is the v0 recovery action; the follow-up liveness heartbeat would also clear the facility on every beat. Rejected in favour of a producer-stamped fingerprint. |
+| Content comparison at the consumer | Works with `sc.allclose(..., equal_nan=True)`, but is N comparisons rather than one stamp and puts the noise tolerance at the consumer instead of at the setpoints it filters. `sc.identical` is not usable at all -- `False` for bit-identical `NaN`-bearing arrays. Rejected. |
+| Fingerprint hashed from the table's bytes rather than its inputs | Not stable across a library or platform change, and says nothing about *why* the table changed. Rejected. |
+| **LUT workflow consumes component motion streams** | Tables would always describe where the component actually is, and the static travel envelope -- the one number this design needs from the instrument team -- would disappear. Does *not* remove motion from consumers: they still need pixel positions for scattering geometry and for the per-pixel `Ltotal` that indexes the table. Costs: motion joins the LUT job's gating set, so a dead motion PV stops all wavelength reduction; every sample during a move re-emits and clears; and the LUT job's motion value can lag the one the consumer patched into its geometry, so padding is still needed. The strongest alternative here; recorded to revisit, not taken for v0. |
 | `sc.identical` for that comparison | Returns `False` for bit-identical arrays containing `NaN`, which every LUT has. Would clear on every republish. Rejected in favour of `sc.allclose(..., equal_nan=True)`. |
 | Mirror named for the LUT rather than for the seam | Same code either way; the generic name is the honest one. Rejected. |
 
 ## Consequences
 
 - `WorkflowSpec` gains `context_outputs`; `ContextBinding` gains `clear_on_change`.
+- The LUT carries an identity coord alongside its four provenance scalars.
 - A new `StreamKind`, topic, sink route, ingest route and preprocessor case; the ingest
   half has no precedent in ADR 0006 and is the genuinely new mechanism.
 - `gather_source_names` will include the LUT stream names, and `resolve_stream_names`
