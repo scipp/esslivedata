@@ -56,6 +56,19 @@ function and a fixed differ/applier:
   pass; do not add hand-written per-gate terms to it. A new pass input joins
   `_input_stamps` and the end-of-pass recording, nothing else.
 
+The tests follow the same seam, and a new test belongs on the side its
+subject does:
+
+- A materialization or rebuild *rule* is a case in `cell_plan_test.py` —
+  plain data, no fixtures, no Panel. Do not re-assert it through the widget
+  stack; `plot_grid_tabs_test.py` only checks that the pass carries the rules
+  out (`TestCellDiffer`) and that real state reaches the decision
+  (`TestMaterializationWiring`).
+- The wake gate is exercised *only* in `TestWakeGateContract`; everywhere
+  else tests drive `_poll_for_plot_updates` unconditionally. A new stamped
+  input therefore needs its own re-arm test there, and a deliberately
+  unstamped one an asserted hole — nothing else will catch it.
+
 ## Icons
 
 Do not use Unicode characters for button icons. Use embedded SVG icons from `dashboard/widgets/icons.py` via `get_icon()`. Use the `create_tool_button()` helper from `dashboard/widgets/buttons.py` for consistent styling.

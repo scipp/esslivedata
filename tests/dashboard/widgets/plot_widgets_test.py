@@ -32,6 +32,7 @@ from ess.livedata.dashboard.widgets.plot_widgets import (
     create_cell_titlebar,
     derive_cell_title,
     get_plot_cell_display_info,
+    overlay_suggestions_for_layer,
 )
 
 
@@ -435,3 +436,83 @@ class TestDeriveCellTitle:
     def test_empty_cell_returns_empty(self) -> None:
         cell = PlotCell(geometry=_GEO, layers=[])
         assert derive_cell_title(cell, {}) == ''
+
+
+class _ImageWithRoiOutputs(WorkflowOutputsBase):
+    detector: sc.DataArray = pydantic.Field(
+        default_factory=lambda: sc.DataArray(
+            sc.zeros(dims=['x', 'y'], shape=[0, 0], unit='counts'),
+            coords={
+                'x': sc.arange('x', 0, unit='m'),
+                'y': sc.arange('y', 0, unit='m'),
+            },
+        )
+    )
+    roi_rectangle: sc.DataArray = pydantic.Field(
+        default_factory=lambda: sc.DataArray(
+            sc.zeros(dims=['bounds'], shape=[0]),
+            coords={
+                'roi_index': sc.arange('bounds', 0),
+                'x': sc.arange('bounds', 0, unit='m'),
+                'y': sc.arange('bounds', 0, unit='m'),
+            },
+        )
+    )
+
+
+class TestOverlaySuggestions:
+    """What ``overlay_suggestions_for_layer`` adds to the controller's list.
+
+    Which overlays a plotter can carry is the controller's business (covered
+    in ``plotting_controller_test.py``); this function drops the ones the cell
+    already shows, so that the ``+`` menu never offers a duplicate.
+    """
+
+    _WF = WorkflowId(instrument='test', name='roi_workflow', version=1)
+
+    @staticmethod
+    def _spec():
+        return WorkflowSpec(
+            instrument='test',
+            name='roi_workflow',
+            version=1,
+            title='ROI',
+            description='ROI',
+            outputs=_ImageWithRoiOutputs,
+            group=REDUCTION,
+        )
+
+    def _suggestions(self, plotting_controller, existing: frozenset[str]):
+        layer = _make_layer(
+            self._WF, ['det'], view_name='detector', plot_name='image', params=None
+        )
+        return overlay_suggestions_for_layer(
+            layer.config,
+            existing,
+            {self._WF: self._spec()},
+            plotting_controller,
+        )
+
+    def test_suggests_the_overlay_a_layer_can_carry(self, plotting_controller):
+        suggestions = self._suggestions(plotting_controller, frozenset())
+
+        assert [plotter for _, plotter, _ in suggestions] == ['rectangles_readback']
+
+    def test_omits_an_overlay_the_cell_already_shows(self, plotting_controller):
+        suggestions = self._suggestions(
+            plotting_controller, frozenset({'rectangles_readback'})
+        )
+
+        assert suggestions == []
+
+    def test_static_layer_suggests_nothing(self, plotting_controller):
+        static = _make_static_layer('Box')
+
+        suggestions = overlay_suggestions_for_layer(
+            static.config,
+            frozenset(),
+            {self._WF: self._spec()},
+            plotting_controller,
+        )
+
+        assert suggestions == []
