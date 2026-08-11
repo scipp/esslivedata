@@ -109,8 +109,9 @@ def instrument(request) -> Instrument:
 # weight until then.
 _KNOWN_UNRESOLVABLE_CHAINS: dict[tuple[str, str], str] = {
     # The BIFROST writer gives the event-mode monitors a depends_on pointing at
-    # a `transformations` group it never writes, so the Bragg peak monitor has
-    # no chain to patch the tank angle into. See
+    # a `transformations` group they do not have — the geometry sits on the
+    # sibling `elastic_monitor_backup` — so the Bragg peak monitor has no chain
+    # to patch the tank angle into. See
     # docs/developer/proposals/bifrost-bragg-peak-monitor-qmap.md.
     ('bifrost', 'elastic_monitor'): 'monitor transformations missing from artifact',
 }

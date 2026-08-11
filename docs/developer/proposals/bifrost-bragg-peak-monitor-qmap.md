@@ -183,12 +183,40 @@ monitor's and not the detectors' — and its `elastic_monitor` transformations
 structurally present but unusable. Only the values are still good, which is why they can
 be lifted into the fixture above.
 
-**Producer bug, blocking regeneration.** In `coda_bifrost_999999_00016610.hdf` the two
-event-mode monitors (`elastic_monitor`, `normalization_monitor`) have a dangling
-`depends_on` pointing at a `transformations` group that does not exist; they have no
-such group at all. The three histogram-mode monitors are fine. A report is drafted.
-This is now the *only* thing between the branch and a working Q map: everything else —
-the binding, the artifact's tank-angle placeholder, the workflow — is verified.
+**Producer bug, blocking regeneration — but the geometry is not lost.** In
+`coda_bifrost_999999_00016610.hdf` the two event-mode monitors (`elastic_monitor`,
+`normalization_monitor`) have a dangling `depends_on` pointing at a `transformations`
+group they do not have. The transformations were not dropped: they sit on sibling groups
+`elastic_monitor_backup` and `normalization_monitor_da00`, both typed **NXnote**, with
+the event group keeping only `cbm5_events`/`cbm4_events` and the broken `depends_on`. It
+reads like a writer-config split between the ev44 and da00/backup entries for the same
+device. The three histogram-mode monitors are fine.
+
+The values there are bit-identical to `coda_bifrost_999999_00006061.hdf` (a whole-file
+comparison of all 786 scalar transforms shows *no* other difference between the June and
+August files), and their final link already uses the new `.../detector_tank_angle_r0/value`
+convention. `make_geometry_nexus.py` copies the sibling groups through, so
+`geometry-bifrost-2026-08-11.nxs` **already contains the correct monitor
+transformations** — under the wrong parent.
+
+So the artifact can be repaired from its own contents, no older file involved:
+
+```python
+inst = h5py.File(artifact, 'r+')['entry/instrument']
+for mon, sib in (('elastic_monitor', 'elastic_monitor_backup'),
+                 ('normalization_monitor', 'normalization_monitor_da00')):
+    inst.copy(inst[sib]['transformations'], inst[mon], name='transformations')
+```
+
+Both monitor chains then resolve, `elastic_monitor`'s terminating at the tank-angle
+placeholder, and the service test passes with the same map as the fixture above.
+
+This repair belongs in a one-off artifact, **not** in `make_geometry_nexus.py`: that tool
+copies the source faithfully, and a "geometry may live on a similarly-named sibling" rule
+would encode a producer bug and silently mis-assign if the naming shifts again. The
+producer report should say that the NXmonitor's `depends_on` points at its own missing
+`transformations` while the geometry sits on `<name>_backup` / `<name>_da00` — not that
+the transformations are missing.
 
 ## Dead ends — do not repeat
 

@@ -764,12 +764,12 @@ def test_message_with_bad_timestamp_is_ignored(
     strict=True,
     reason=(
         "The BIFROST writer gives the event-mode monitors a depends_on pointing "
-        "at a `transformations` group it never writes, so elastic_monitor has no "
-        "chain in the geometry artifact and the tank angle has nowhere to be "
-        "patched in. Everything else is in place: restoring those three "
-        "transformations in the artifact (the last one pointing at "
-        "detector_tank_angle_r0/value) makes this pass and yields a populated "
-        "map. Paired with the _KNOWN_UNRESOLVABLE_CHAINS entry in "
+        "at a `transformations` group they do not have — the geometry sits on "
+        "the sibling `elastic_monitor_backup` (NXnote) instead — so the "
+        "registered artifact has no chain for elastic_monitor and the tank angle "
+        "has nowhere to be patched in. Everything else is in place: copying "
+        "those transformations onto the monitor makes this pass and yields a "
+        "populated map. Paired with the _KNOWN_UNRESOLVABLE_CHAINS entry in "
         "tests/config/motion_binding_test.py; both go when the artifact is fixed."
     ),
 )
