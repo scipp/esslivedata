@@ -763,14 +763,15 @@ def test_message_with_bad_timestamp_is_ignored(
 @pytest.mark.xfail(
     strict=True,
     reason=(
-        "Needs a geometry artifact whose monitor chain terminates in the tank "
-        "frame. The workflow itself is proven: with such a file this passes and "
-        "produces a 2D map. It currently reads geometry from the McStas "
-        "simulation file, whose detector-tank-angle NXlog is a 720-sample "
-        "rotation scan, so the position comes out time-dependent and cannot be "
-        "assigned onto streamed events. A4 is supplied live via context, so the "
-        "artifact must stop before the tank rotation, as the pinned artifact's "
-        "detector chains already do."
+        "The monitor's transformation chain runs through detector_tank_angle, "
+        "whose value is live. It needs a chain-patch context binding (ADR 0003) "
+        "so the streamed a4 is substituted into the chain; the existing a3/a4 "
+        "bindings are direct-bind, feeding group_by_rotation as a coordinate "
+        "rather than as geometry. Geometry currently comes from the McStas "
+        "simulation file, whose tank-angle NXlog is a 720-sample rotation scan, "
+        "so the position comes out time-dependent on the file's time base and "
+        "cannot be assigned onto streamed events. The workflow itself is proven: "
+        "given a static tank-frame position it passes and produces a 2D map."
     ),
 )
 @pytest.mark.slow
