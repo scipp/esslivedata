@@ -15,7 +15,7 @@ from ess.livedata.config.workflow_spec import DETECTORS
 from ess.livedata.workflows.detector_view_specs import (
     DetectorROIAuxSources,
     DetectorViewOutputs,
-    DetectorViewParams,
+    TOAOnlyDetectorViewParams,
 )
 from ess.livedata.workflows.monitor_workflow_specs import (
     TOAOnlyMonitorDataParams,
@@ -52,7 +52,7 @@ panel_xy_view_handle = instrument.register_spec(
     description='Detector counts per pixel.',
     source_names=detector_names,
     aux_sources=DetectorROIAuxSources(),
-    params=DetectorViewParams,
+    params=TOAOnlyDetectorViewParams,
     outputs=DetectorViewOutputs,
     device_outputs=COUNTS_TOTAL_DEVICE,
 )

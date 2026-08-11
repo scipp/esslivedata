@@ -28,9 +28,12 @@ from ess.livedata.workflows.detector_view_specs import (
     DetectorROIAuxSources,
     DetectorViewOutputs,
     DetectorViewParams,
+    WavelengthDetectorViewParams,
 )
 from ess.livedata.workflows.monitor_workflow_specs import (
     MonitorDataParams,
+    WavelengthMonitorDataParams,
+    register_monitor_wavelength_workflow_specs,
     register_monitor_workflow_specs,
 )
 
@@ -100,6 +103,16 @@ class DreamMonitorDataParams(MonitorDataParams):
     )
 
 
+class DreamWavelengthMonitorDataParams(WavelengthMonitorDataParams):
+    """DREAM-specific wavelength monitor parameters with chopper settings."""
+
+    instrument_configuration: InstrumentConfiguration = pydantic.Field(
+        title="Instrument Configuration",
+        description="Chopper configuration selecting the lookup table.",
+        default_factory=InstrumentConfiguration,
+    )
+
+
 # Create instrument
 instrument = Instrument(
     name='dream',
@@ -146,6 +159,9 @@ instrument_registry.register(instrument)
 monitor_handle = register_monitor_workflow_specs(
     instrument, monitor_names, params=DreamMonitorDataParams
 )
+monitor_wavelength_handle = register_monitor_wavelength_workflow_specs(
+    instrument, monitor_names, params=DreamWavelengthMonitorDataParams
+)
 
 # Register logical detector views
 instrument.add_logical_view(
@@ -190,6 +206,16 @@ class DreamDetectorViewParams(DetectorViewParams):
     )
 
 
+class DreamWavelengthDetectorViewParams(WavelengthDetectorViewParams):
+    """DREAM-specific wavelength detector view parameters with chopper settings."""
+
+    instrument_configuration: InstrumentConfiguration = pydantic.Field(
+        title="Instrument Configuration",
+        description="Chopper configuration selecting the lookup table.",
+        default_factory=InstrumentConfiguration,
+    )
+
+
 # Register detector projection spec with DreamDetectorViewParams for TOF mode.
 # Replaces both the legacy DetectorProjection and the Sciline detector view
 # registrations. Which projection each bank uses is declared once, on the
@@ -210,6 +236,21 @@ projection_handle = instrument.register_spec(
     # The projection covers every bank, so it carries the NICOS counts devices;
     # the wire and strip views cover subsets.
     device_outputs=COUNTS_TOTAL_DEVICE,
+)
+
+projection_wavelength_handle = instrument.register_spec(
+    group=DETECTORS,
+    name='detector_projection_wavelength',
+    version=1,
+    title='Detector Projection (wavelength)',
+    description=(
+        'Projection of detector banks onto 2D planes, with events converted '
+        'to wavelength. Uses the appropriate projection for each detector.'
+    ),
+    source_names=detector_names,
+    aux_sources=DetectorROIAuxSources(),
+    params=DreamWavelengthDetectorViewParams,
+    outputs=DetectorViewOutputs,
 )
 
 

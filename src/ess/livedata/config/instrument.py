@@ -560,6 +560,7 @@ class Instrument:
         """
         from ess.livedata.workflows.detector_view_specs import (
             DetectorROIAuxSources,
+            TOAOnlyDetectorViewParams,
             make_detector_view_outputs,
             make_detector_view_params,
         )
@@ -567,7 +568,12 @@ class Instrument:
         outputs = make_detector_view_outputs(
             output_ndim, roi_support=roi_support, spectrum_view=spectrum_view
         )
-        params = make_detector_view_params(spectrum_view=spectrum_view)
+        # Logical views are TOA-only: they run on ``InstrumentDetectorSource``,
+        # which carries no geometry, so there is no Ltotal to index a wavelength
+        # lookup table with. Offering the mode would fail at job start.
+        params = make_detector_view_params(
+            spectrum_view=spectrum_view, base=TOAOnlyDetectorViewParams
+        )
         handle = self.register_spec(
             group=group,
             service=service,
