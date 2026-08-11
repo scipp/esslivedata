@@ -33,12 +33,47 @@ _SUMMARY_INTERVAL_S = 60.0
 """How often the accumulated view of loop availability is logged."""
 
 
+class LogThrottle:
+    """Passes the first event, then at most one per cooldown.
+
+    A loop kept saturated by one large grid crosses the reporting thresholds on
+    every data frame, so an unthrottled warning would arrive once a second per
+    session for as long as the grid stays open -- loudest exactly when the
+    journal most needs to stay readable. Counting what is suppressed keeps the
+    frequency in the record: the next event through carries how many it stands
+    for, and the periodic summary carries the severity.
+    """
+
+    def __init__(self, cooldown: float = _SUMMARY_INTERVAL_S) -> None:
+        self._cooldown = cooldown
+        self._last: float | None = None
+        self._suppressed = 0
+
+    def take(self, now: float) -> int | None:
+        """Report this event, or suppress it.
+
+        Returns
+        -------
+        :
+            How many events were suppressed since the last one reported, or
+            ``None`` if this event is itself suppressed.
+        """
+        if self._last is not None and now - self._last < self._cooldown:
+            self._suppressed += 1
+            return None
+        self._last = now
+        suppressed, self._suppressed = self._suppressed, 0
+        return suppressed
+
+
 class LoopMonitor:
     """Reports how long the IOLoop is unavailable to serve sessions.
 
     Emits ``dashboard_loop_blocked`` at WARNING for any single block over
-    ``block_threshold``, and ``dashboard_loop_metrics`` at INFO once per
-    summary interval.
+    ``block_threshold``, throttled to one per cooldown, and
+    ``dashboard_loop_metrics`` at INFO once per summary interval. A loop that
+    stays blocked therefore reads as one warning and a summary per minute
+    rather than one warning per probe.
 
     ``unavailable_fraction`` is a lower bound: work that starts and finishes
     between two probes delays neither of them and is not seen. It measures harm
@@ -52,10 +87,12 @@ class LoopMonitor:
         interval: float = _PROBE_INTERVAL_S,
         block_threshold: float = _BLOCK_THRESHOLD_S,
         summary_interval: float = _SUMMARY_INTERVAL_S,
+        warn_cooldown: float = _SUMMARY_INTERVAL_S,
     ) -> None:
         self._interval = interval
         self._block_threshold = block_threshold
         self._summary_interval = summary_interval
+        self._blocked_throttle = LogThrottle(warn_cooldown)
         self._due = 0.0
         self._window_start = 0.0
         self._late_total = 0.0
@@ -89,7 +126,13 @@ class LoopMonitor:
         self._late_total += late
         self._late_max = max(self._late_max, late)
         if late >= self._block_threshold:
-            logger.warning('dashboard_loop_blocked', blocked_seconds=round(late, 3))
+            suppressed = self._blocked_throttle.take(now)
+            if suppressed is not None:
+                logger.warning(
+                    'dashboard_loop_blocked',
+                    blocked_seconds=round(late, 3),
+                    suppressed=suppressed,
+                )
         if now - self._window_start >= self._summary_interval:
             self._log_summary(now)
         if self._running:

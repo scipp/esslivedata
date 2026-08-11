@@ -10,7 +10,9 @@ from bokeh.plotting import figure
 from panel.io.state import set_curdoc
 from structlog.testing import capture_logs
 
+from ess.livedata.dashboard import batched_update as batched_update_module
 from ess.livedata.dashboard.batched_update import _SLOW_UPDATE_S, batched_update
+from ess.livedata.dashboard.loop_monitor import LogThrottle
 
 
 class RecomputeCounter:
@@ -28,6 +30,16 @@ class RecomputeCounter:
 
     def restore(self) -> None:
         del self._models.recompute
+
+
+@pytest.fixture(autouse=True)
+def fresh_slow_update_throttle(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Give each test its own throttle.
+
+    The shipped one is process-global on purpose, so without this the first test
+    to report a slow batch would suppress every later one.
+    """
+    monkeypatch.setattr(batched_update_module, '_slow_updates', LogThrottle())
 
 
 @pytest.fixture
@@ -218,3 +230,17 @@ def test_raising_pass_is_still_reported(doc: Document) -> None:
                 raise RuntimeError("handler blew up")
 
     assert len(slow_updates(captured)) == 1
+
+
+def test_slow_pass_repeated_within_the_cooldown_is_reported_once(
+    doc: Document,
+) -> None:
+    """A grid stalling on every frame must not warn on every frame."""
+    with capture_logs() as captured, set_curdoc(doc):
+        for _ in range(2):
+            with batched_update():
+                time.sleep(_SLOW_UPDATE_S * 1.1)
+
+    reported = slow_updates(captured)
+    assert len(reported) == 1
+    assert reported[0]['suppressed'] == 0

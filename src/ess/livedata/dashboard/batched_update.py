@@ -12,6 +12,8 @@ from typing import TYPE_CHECKING
 import panel as pn
 import structlog
 
+from .loop_monitor import LogThrottle
+
 if TYPE_CHECKING:
     from bokeh.document import Document
 
@@ -28,6 +30,18 @@ than the per-frame repaint.
 
 _depth = 0
 """Nesting depth, so one pass is reported once rather than once per batch."""
+
+_slow_updates = LogThrottle()
+"""Throttle for the slow-batch warning.
+
+A grid big enough to exceed the threshold on its steady-state repaint would
+otherwise warn on every data frame, for as long as it stays open.
+
+Shared by every session rather than held per session: the question the warning
+answers is whether this process is stalling, and one throttle per session would
+scale the volume with the number of sessions, which is the wrong direction.
+Which session a reported batch belonged to is in the message.
+"""
 
 
 @contextmanager
@@ -51,7 +65,8 @@ def batched_update() -> Iterator[None]:
     Every path that blocks the loop with document work passes through here --
     the session tick and the tab reveal alike -- so this is also where that work
     is timed, and where a batch long enough to stall the other sessions on the
-    process is reported.
+    process is reported -- at most once per cooldown, since a grid large enough
+    to cross the threshold does so on every frame.
     """
     global _depth
     doc = pn.state.curdoc
@@ -66,15 +81,19 @@ def batched_update() -> Iterator[None]:
             yield
     finally:
         _depth -= 1
-        elapsed = time.monotonic() - start
+        end = time.monotonic()
+        elapsed = end - start
         # Reported on the exception path too: a pass that blocks the loop and
         # then raises is the one most worth seeing.
         if outermost and elapsed >= _SLOW_UPDATE_S:
-            logger.warning(
-                'dashboard_slow_update',
-                elapsed_seconds=round(elapsed, 3),
-                session_id=_session_id(doc),
-            )
+            suppressed = _slow_updates.take(end)
+            if suppressed is not None:
+                logger.warning(
+                    'dashboard_slow_update',
+                    elapsed_seconds=round(elapsed, 3),
+                    session_id=_session_id(doc),
+                    suppressed=suppressed,
+                )
 
 
 def _session_id(doc: Document | None) -> str | None:
