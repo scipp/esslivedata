@@ -763,12 +763,14 @@ def test_message_with_bad_timestamp_is_ignored(
 @pytest.mark.xfail(
     strict=True,
     reason=(
-        "Live streaming still unresolved: the monitor geometry loaded from the "
-        "geometry file carries a 'time' dim from that file's detector-tank-angle "
-        "log, while streamed monitor events carry 'event_time_zero'. The position "
-        "has to be derived from the live InstrumentAngle context instead. "
-        "Everything up to that point works: routing, gating on a3/a4, job "
-        "activation."
+        "Needs a geometry artifact whose monitor chain terminates in the tank "
+        "frame. The workflow itself is proven: with such a file this passes and "
+        "produces a 2D map. It currently reads geometry from the McStas "
+        "simulation file, whose detector-tank-angle NXlog is a 720-sample "
+        "rotation scan, so the position comes out time-dependent and cannot be "
+        "assigned onto streamed events. A4 is supplied live via context, so the "
+        "artifact must stop before the tank rotation, as the pinned artifact's "
+        "detector chains already do."
     ),
 )
 @pytest.mark.slow
