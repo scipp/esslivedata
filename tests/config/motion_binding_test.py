@@ -15,8 +15,6 @@ deliberate ledger of placeholders consciously left for follow-up work.
 
 from __future__ import annotations
 
-import warnings
-
 import pytest
 import scippnexus as snx
 from scippnexus.field import DependsOn
@@ -41,10 +39,9 @@ def _chain_patch_inputs(instrument: Instrument) -> list[ContextBinding]:
 def _load_chain(artifact: str, source_name: str) -> TransformationChain | None:
     """Walk a source's depends_on chain via scippnexus.
 
-    Returns ``None`` for static components with no ``depends_on`` field, for
+    Returns ``None`` for static components with no ``depends_on`` field and for
     sources that are not NeXus groups at all — BIFROST's ``unified_detector`` is
-    a logical name covering 45 triplet groups — and for chains that reference a
-    node the artifact does not contain.
+    a logical name covering 45 triplet groups.
     """
     parent_path = f'/entry/instrument/{source_name}'
     with snx.File(artifact, 'r') as f:
@@ -58,12 +55,7 @@ def _load_chain(artifact: str, source_name: str) -> TransformationChain | None:
             return None
         if not isinstance(depends_on, DependsOn):
             depends_on = DependsOn(parent=parent_path, value=depends_on)
-        with warnings.catch_warnings():
-            # A dangling chain warns and yields None. Swallow the warning so the
-            # callers' assertions report which binding is affected, which is far
-            # more useful than the raised warning pytest would otherwise produce.
-            warnings.simplefilter('ignore', UserWarning)
-            return parse_depends_on_chain(comp, depends_on)
+        return parse_depends_on_chain(comp, depends_on)
 
 
 def _chain_paths(artifact: str, source_name: str) -> list[str]:
