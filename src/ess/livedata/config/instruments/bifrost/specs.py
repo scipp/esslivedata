@@ -242,6 +242,35 @@ class BifrostCustomElasticQMapParams(pydantic.BaseModel):
     )
 
 
+class ElasticMonitorQMapParams(pydantic.BaseModel):
+    q_parallel_edges: QEdges = pydantic.Field(
+        default=QEdges(start=-QMAX_DEFAULT, stop=QMAX_DEFAULT, num_bins=QBIN_DEFAULT),
+        description="Bin edges for Q parallel to the beam (in 1/Å).",
+    )
+    q_perpendicular_edges: QEdges = pydantic.Field(
+        default=QEdges(start=-QMAX_DEFAULT, stop=QMAX_DEFAULT, num_bins=QBIN_DEFAULT),
+        description="Bin edges for Q perpendicular to the beam (in 1/Å).",
+    )
+
+
+def _make_2d_template() -> sc.DataArray:
+    """Create an empty 2D template for 2D output data."""
+    return sc.DataArray(sc.zeros(dims=['dim_0', 'dim_1'], shape=[0, 0], unit='counts'))
+
+
+class ElasticMonitorQMapOutputs(WorkflowOutputsBase):
+    """Outputs for the elastic monitor Q-map workflow."""
+
+    q_map: sc.DataArray = pydantic.Field(
+        default_factory=_make_2d_template,
+        title='Q Map',
+        description=(
+            'Elastic intensity accumulated over a sample rotation scan, binned in '
+            'Q perpendicular vs Q parallel.'
+        ),
+    )
+
+
 class QMapOutputs(WorkflowOutputsBase):
     """Outputs for Bifrost Q-map workflows."""
 
@@ -278,7 +307,9 @@ instrument = Instrument(
 instrument_registry.register(instrument)
 
 # Register monitor workflow spec (TOA-only, no TOF lookup tables)
-register_monitor_workflow_specs(instrument, monitors, params=TOAOnlyMonitorDataParams)
+monitor_handle = register_monitor_workflow_specs(
+    instrument, monitors, params=TOAOnlyMonitorDataParams
+)
 
 
 def _logical_view(obj: sc.Variable | sc.DataArray, source_name: str) -> sc.DataArray:
@@ -390,4 +421,23 @@ elastic_qmap_custom_handle = instrument.register_spec(
     source_names=['unified_detector'],
     params=BifrostCustomElasticQMapParams,
     outputs=QMapOutputs,
+)
+
+# cbm5, a single-pixel monitor riding the detector tank. Over a sample rotation
+# scan it maps elastic intensity in Q, to be compared against the expected
+# reciprocal lattice. Older material -- and upstream's
+# ``BifrostBraggPeakMonitorWorkflow`` -- calls it the Bragg peak monitor.
+# The title carries a source qualifier because the workflow chooser lists bare
+# titles within a group, next to the ``elastic_qmap`` detector workflow.
+elastic_monitor_qmap_handle = instrument.register_spec(
+    name='elastic_monitor_qmap',
+    version=1,
+    title='Elastic Q map (monitor)',
+    description=(
+        'Elastic intensity from the elastic monitor, accumulated over a sample '
+        'rotation scan and binned in Q perpendicular vs Q parallel.'
+    ),
+    source_names=['elastic_monitor'],
+    params=ElasticMonitorQMapParams,
+    outputs=ElasticMonitorQMapOutputs,
 )
