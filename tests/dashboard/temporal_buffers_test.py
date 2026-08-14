@@ -645,6 +645,42 @@ class TestTemporalBuffer:
         assert result.sizes['roi'] == 3
         assert result.coords['time'].values[0] == 1.0
 
+    @pytest.mark.parametrize(
+        ('first_has_variances', 'second_has_variances'),
+        [(False, True), (True, False)],
+        ids=['no_variances_then_variances', 'variances_then_no_variances'],
+    )
+    def test_variances_presence_change_resets_without_error(
+        self, first_has_variances, second_has_variances
+    ):
+        """A change in whether data carries variances resets instead of raising.
+
+        Regression test: a monitor stream that starts (or stops) publishing
+        variances part-way through used to pass ``_metadata_matches`` (which
+        never actually compared ``new.data``'s variances against the
+        buffer's) and then crash inside ``VariableBuffer.append()`` with
+        scipp's ``VariancesError``, since the buffer's storage is allocated
+        with a fixed variances-or-not shape at initialization time.
+        """
+
+        def make(value, time_value, with_variances):
+            data = (
+                sc.scalar(value, variance=0.1, unit='counts')
+                if with_variances
+                else sc.scalar(value, unit='counts')
+            )
+            return sc.DataArray(data, coords={'time': sc.scalar(time_value, unit='s')})
+
+        buffer = TemporalBuffer()
+        buffer.add(make(1.0, 0.0, first_has_variances))
+        # Must not raise scipp.VariancesError.
+        buffer.add(make(2.0, 1.0, second_has_variances))
+
+        result = buffer.get()
+        assert result.sizes['time'] == 1
+        assert result.values[0] == 2.0
+        assert (result.variances is not None) == second_has_variances
+
 
 class TestVariableBuffer:
     """Tests for VariableBuffer."""

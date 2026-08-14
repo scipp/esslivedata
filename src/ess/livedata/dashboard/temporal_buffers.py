@@ -511,6 +511,20 @@ class TemporalBuffer(BufferProtocol[sc.DataArray]):
         if new.sizes != self._reference.sizes:
             return False
 
+        # Whether variances are present is a structural property baked into the
+        # VariableBuffer at initialization time (see VariableBuffer._allocate_buffer:
+        # with_variances=template.variances is not None), not something later
+        # appends can change. template.assign() below substitutes in
+        # self._reference.data, so the sc.identical() check further down can never
+        # see a variances mismatch on `new` -- it would always compare
+        # self._reference against itself on this axis. Without this explicit check,
+        # a stream that starts publishing variances (or stops) part-way through
+        # would pass this "matches" check and then crash inside
+        # VariableBuffer.append() with scipp's VariancesError, instead of cleanly
+        # triggering the buffer reset that a genuine metadata change is meant to.
+        if (new.data.variances is None) != (self._reference.data.variances is None):
+            return False
+
         template = new.assign(self._reference.data)
         template = template.drop_coords(
             [name for name in accumulated if name in template.coords]
