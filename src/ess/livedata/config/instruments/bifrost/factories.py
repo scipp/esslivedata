@@ -18,16 +18,16 @@ from .specs import (
     BifrostCustomElasticQMapParams,
     BifrostElasticQMapParams,
     BifrostQMapParams,
-    BraggPeakQMapParams,
     DetectorRatemeterParams,
     DetectorRatemeterRegionParams,
+    ElasticMonitorQMapParams,
 )
 
 
 class DetectorTankAngleLog(ValueLog):
     """Per-binding Sciline key for the BIFROST detector-tank rotation readback.
 
-    The Bragg peak monitor rides the tank, so its ``depends_on`` chain runs
+    The elastic monitor rides the tank, so its ``depends_on`` chain runs
     through ``detector_tank_angle_r0`` and its position is only known once the
     live readback arrives.
     """
@@ -109,7 +109,7 @@ def setup_factories(instrument: Instrument) -> None:
     specs.detector_ratemeter_handle.skip_instrument_contexts()
     specs.unified_detector_view_handle.skip_instrument_contexts()
 
-    # The Bragg peak monitor rides the detector tank, so the tank angle serves it
+    # The elastic monitor rides the detector tank, so the tank angle serves it
     # twice: as geometry, patched into the monitor's ``depends_on`` chain, and as
     # the a4 coordinate ``group_by_rotation`` bins on. A stream carries one
     # context key per spec, so the chain patch is the binding and
@@ -124,7 +124,7 @@ def setup_factories(instrument: Instrument) -> None:
     # The plain monitor histogram is counts-over-TOA and never resolves a
     # position, so it must not wait on the tank readback.
     specs.monitor_handle.skip_instrument_contexts()
-    specs.bragg_peak_qmap_handle.add_context_binding(
+    specs.elastic_monitor_qmap_handle.add_context_binding(
         stream_name='rotation_stage',
         workflow_key=SampleAngle[SampleRun],
     )
@@ -258,10 +258,10 @@ def setup_factories(instrument: Instrument) -> None:
         wf[CutAxis2] = axis2
         return _make_cut_stream_processor(wf)
 
-    # Bragg peak monitor Q-map workflow
+    # Elastic monitor Q-map workflow
     @cache
-    def _init_bragg_peak_workflow() -> sciline.Pipeline:
-        """Initialize the Bragg peak monitor Q-map workflow.
+    def _init_elastic_monitor_qmap_workflow() -> sciline.Pipeline:
+        """Initialize the elastic monitor Q-map workflow.
 
         Geometry comes from the geometry artifact rather than the McStas
         simulation file the Q-cut workflows use: the tank angle is patched into
@@ -289,11 +289,16 @@ def setup_factories(instrument: Instrument) -> None:
         """Reuse the chain-patched tank readback as the a4 grouping coordinate."""
         return InstrumentAngle[SampleRun](log.values)
 
-    @specs.bragg_peak_qmap_handle.attach_factory()
-    def _bragg_peak_qmap_workflow(
-        params: BraggPeakQMapParams,
+    @specs.elastic_monitor_qmap_handle.attach_factory()
+    def _elastic_monitor_qmap_workflow(
+        params: ElasticMonitorQMapParams,
     ) -> StreamProcessorWorkflow:
-        wf = _init_bragg_peak_workflow().copy()
+        # The map is accumulated here rather than emitted as a scalar for the
+        # dashboard's correlation histogram to bin: the full wavelength band puts
+        # a distribution of Q in every update, not a scalar, and over a
+        # multi-day run a timeseries would grow without bound where a histogram
+        # does not.
+        wf = _init_elastic_monitor_qmap_workflow().copy()
         wf.insert(_instrument_angle_from_tank_log)
         wf[QParallelBins] = params.q_parallel_edges.get_edges().rename(Q='Q_parallel')
         wf[QPerpendicularBins] = params.q_perpendicular_edges.get_edges().rename(

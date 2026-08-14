@@ -761,8 +761,8 @@ def test_message_with_bad_timestamp_is_ignored(
 
 
 @pytest.mark.slow
-def test_bifrost_bragg_peak_qmap_produces_map_once_rotation_context_arrives() -> None:
-    """The Bragg peak monitor Q-map runs off monitor events plus a3/a4 context.
+def test_bifrost_elastic_monitor_qmap_maps_once_rotation_context_arrives() -> None:
+    """The elastic monitor Q-map runs off monitor events plus a3/a4 context.
 
     Unlike the detector Q-maps this workflow's source is a monitor
     (``elastic_monitor``, cbm5), so it exercises the monitor route into
@@ -774,7 +774,7 @@ def test_bifrost_bragg_peak_qmap_produces_map_once_rotation_context_arrives() ->
     app = make_reduction_app(instrument='bifrost')
     sink = app.sink
     service = app.service
-    workflow_id, _ = _get_workflow_from_registry('bifrost', 'bragg_peak_qmap')
+    workflow_id, _ = _get_workflow_from_registry('bifrost', 'elastic_monitor_qmap')
 
     workflow_config = workflow_spec.WorkflowConfig(
         identifier=workflow_id, job_id=_job_id('elastic_monitor')

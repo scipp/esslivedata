@@ -242,7 +242,7 @@ class BifrostCustomElasticQMapParams(pydantic.BaseModel):
     )
 
 
-class BraggPeakQMapParams(pydantic.BaseModel):
+class ElasticMonitorQMapParams(pydantic.BaseModel):
     q_parallel_edges: QEdges = pydantic.Field(
         default=QEdges(start=-QMAX_DEFAULT, stop=QMAX_DEFAULT, num_bins=QBIN_DEFAULT),
         description="Bin edges for Q parallel to the beam (in 1/Å).",
@@ -258,8 +258,8 @@ def _make_2d_template() -> sc.DataArray:
     return sc.DataArray(sc.zeros(dims=['dim_0', 'dim_1'], shape=[0, 0], unit='counts'))
 
 
-class BraggPeakQMapOutputs(WorkflowOutputsBase):
-    """Outputs for the Bragg peak monitor Q-map workflow."""
+class ElasticMonitorQMapOutputs(WorkflowOutputsBase):
+    """Outputs for the elastic monitor Q-map workflow."""
 
     q_map: sc.DataArray = pydantic.Field(
         default_factory=_make_2d_template,
@@ -423,17 +423,21 @@ elastic_qmap_custom_handle = instrument.register_spec(
     outputs=QMapOutputs,
 )
 
-# The Bragg peak monitor is the elastic monitor (cbm5), a single-pixel monitor on
-# the detector tank. Over a sample rotation scan it maps elastic intensity in Q.
-bragg_peak_qmap_handle = instrument.register_spec(
-    name='bragg_peak_qmap',
+# cbm5, a single-pixel monitor riding the detector tank. Over a sample rotation
+# scan it maps elastic intensity in Q, to be compared against the expected
+# reciprocal lattice. Older material -- and upstream's
+# ``BifrostBraggPeakMonitorWorkflow`` -- calls it the Bragg peak monitor.
+# The title carries a source qualifier because the workflow chooser lists bare
+# titles within a group, next to the ``elastic_qmap`` detector workflow.
+elastic_monitor_qmap_handle = instrument.register_spec(
+    name='elastic_monitor_qmap',
     version=1,
-    title='Elastic Q map (Bragg peak monitor)',
+    title='Elastic Q map (monitor)',
     description=(
-        'Elastic intensity from the Bragg peak monitor, accumulated over a sample '
+        'Elastic intensity from the elastic monitor, accumulated over a sample '
         'rotation scan and binned in Q perpendicular vs Q parallel.'
     ),
     source_names=['elastic_monitor'],
-    params=BraggPeakQMapParams,
-    outputs=BraggPeakQMapOutputs,
+    params=ElasticMonitorQMapParams,
+    outputs=ElasticMonitorQMapOutputs,
 )
