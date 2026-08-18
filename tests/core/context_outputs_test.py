@@ -19,6 +19,9 @@ import scipp as sc
 from pydantic import Field, ValidationError
 from streaming_data_types import dataarray_da00
 
+from ess.livedata.config.instrument import Instrument, instrument_registry
+from ess.livedata.config.instruments import get_config
+from ess.livedata.config.streams import get_stream_mapping
 from ess.livedata.config.workflow_spec import (
     REDUCTION,
     JobId,
@@ -31,11 +34,20 @@ from ess.livedata.core.context_outputs import (
     resolve_context_streams,
 )
 from ess.livedata.core.job import JobResult
-from ess.livedata.core.message import StreamKind
+from ess.livedata.core.message import StreamId, StreamKind
 from ess.livedata.core.timestamp import Timestamp
+from ess.livedata.kafka.message_adapter import FakeKafkaMessage
+from ess.livedata.kafka.routes import RoutingAdapterBuilder
 from ess.livedata.kafka.sink_serializers import make_default_sink_serializer
+from ess.livedata.preprocessors.detector_data import DetectorPreprocessorFactory
 
 START_TIME = Timestamp.from_ns(1000)
+
+
+@pytest.fixture(scope='module')
+def dummy_instrument() -> Instrument:
+    get_config('dummy')  # Imports spec module, registering workflow specs.
+    return instrument_registry['dummy']
 
 
 class _LutOutputs(WorkflowOutputsBase):
@@ -206,3 +218,46 @@ def test_serialized_da00_carries_stream_name_as_source_name(
     assert serialized.topic == 'dummy_livedata_context'
     decoded = dataarray_da00.deserialise_da00(serialized.value)
     assert decoded.source_name == 'wavelength_lut/chopper_cascade'
+
+
+def test_published_table_round_trips_back_as_a_context_stream(
+    extractor: ContextOutputExtractor, result: JobResult, dummy_instrument: Instrument
+) -> None:
+    """The full seam: a designated output published by one service is read back
+    by another under the stream name a ``ContextBinding`` declares.
+
+    The ingest route carries no stream lookup table, so the internal stream name
+    is the da00 source name. That is the whole reason a rendered
+    ``context_outputs`` template can be named directly by a consumer.
+    """
+    stream_mapping = get_stream_mapping(instrument='dummy', dev=True)
+    (message,) = extractor.extract([result])
+    serialized = make_default_sink_serializer(instrument='dummy').serialize(message)
+    adapter = (
+        RoutingAdapterBuilder(stream_mapping=stream_mapping)
+        .with_livedata_context_route()
+        .build()
+    )
+
+    ingested = adapter.adapt(
+        FakeKafkaMessage(value=serialized.value, topic=serialized.topic)
+    )
+
+    assert ingested.stream.kind == StreamKind.LIVEDATA_CONTEXT
+    assert ingested.stream.name == 'wavelength_lut/chopper_cascade'
+    assert ingested.value.value == 1.5
+
+
+def test_context_stream_is_preprocessed_as_a_retained_context_value(
+    dummy_instrument: Instrument,
+) -> None:
+    """The JobManager gate and the context cache both key off ``is_context``,
+    so the accumulator for this kind must be a context accumulator."""
+    factory = DetectorPreprocessorFactory(instrument=dummy_instrument)
+
+    accumulator = factory.make_preprocessor(
+        StreamId(kind=StreamKind.LIVEDATA_CONTEXT, name='wavelength_lut/x')
+    )
+
+    assert accumulator is not None
+    assert accumulator.is_context
