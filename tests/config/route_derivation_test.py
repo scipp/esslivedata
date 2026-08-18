@@ -236,3 +236,54 @@ class TestResolveStreamNames:
         )
         result = resolve_stream_names(set(), instrument, mapping)
         assert result == set()
+
+
+class TestContextStreamNamesAreDropped:
+    """A context stream published by another workflow appears in no stream LUT.
+
+    ``gather_source_names`` collects it like any other ``ContextBinding``, and
+    ``resolve_stream_names`` then drops it, because it is not a Kafka input the
+    subscription must cover: the topic carrying it is routed unconditionally by
+    ``with_livedata_context_route``. Pinned here because the gather-then-drop
+    reads as a bug otherwise.
+    """
+
+    def test_gather_collects_the_context_stream_name(self) -> None:
+        instrument = Instrument(name="test", detector_names=["det_a"], monitors=[])
+        handle = instrument.register_spec(
+            group=DETECTORS,
+            name="view",
+            version=1,
+            title="View",
+            source_names=["det_a"],
+            outputs=DefaultOutputs,
+        )
+        handle.add_context_binding(
+            stream_name='wavelength_lut/det_a', workflow_key=object
+        )
+
+        assert gather_source_names(instrument, "detector_data") == {
+            'det_a',
+            'wavelength_lut/det_a',
+        }
+
+    def test_resolve_drops_it_without_expanding_anything(
+        self, infra_kwargs: dict
+    ) -> None:
+        # The name is neither in a LUT nor a logical detector/monitor name, so
+        # it must not trigger the Bifrost all-physical-names fallback either.
+        instrument = Instrument(
+            name="test", detector_names=["det_a"], monitors=["mon_1"]
+        )
+        mapping = StreamMapping(
+            instrument="test",
+            detectors={InputStreamKey(topic="t", source_name="s"): "det_a"},
+            monitors={InputStreamKey(topic="m", source_name="s"): "mon_1"},
+            **infra_kwargs,
+        )
+
+        result = resolve_stream_names(
+            {"det_a", "wavelength_lut/det_a"}, instrument, mapping
+        )
+
+        assert result == {"det_a"}

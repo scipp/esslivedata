@@ -24,6 +24,7 @@ class LivedataTopics:
 
     instrument: str
     livedata_commands: str
+    livedata_context: str
     livedata_data: str
     livedata_responses: str
     livedata_roi: str
@@ -53,6 +54,7 @@ class StreamMapping:
         area_detectors: StreamLUT | None = None,
         logs: StreamLUT | None = None,
         livedata_commands_topic: str,
+        livedata_context_topic: str,
         livedata_data_topic: str,
         livedata_responses_topic: str,
         livedata_roi_topic: str,
@@ -66,6 +68,7 @@ class StreamMapping:
         self._topics = LivedataTopics(
             instrument=instrument,
             livedata_commands=livedata_commands_topic,
+            livedata_context=livedata_context_topic,
             livedata_data=livedata_data_topic,
             livedata_responses=livedata_responses_topic,
             livedata_roi=livedata_roi_topic,
