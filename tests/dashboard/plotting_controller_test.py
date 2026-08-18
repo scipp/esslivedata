@@ -396,7 +396,7 @@ class TestGetAvailableOverlays:
         assert isinstance(title, str)
         # Title should be human readable (from PlotterSpec)
         # Image only suggests readback, not request
-        assert title == 'ROI Rectangles (Readback)'
+        assert title == 'ROI Rectangles'
 
     def test_readback_layer_suggests_request_overlay(self, plotting_controller):
         """Test that rectangles_readback layer suggests rectangles_request."""
@@ -432,7 +432,7 @@ class TestGetAvailableOverlays:
         output_name, plotter_name, title = overlays[0]
         assert output_name == 'roi_rectangle'
         assert plotter_name == 'rectangles_request'
-        assert title == 'ROI Rectangles (Interactive)'
+        assert title == 'Edit ROI Rectangles'
 
 
 class TestOverlayPatterns:
