@@ -12,12 +12,20 @@ from __future__ import annotations
 import pytest
 import scipp as sc
 
+from ess.livedata.config.stream import MotionEnvelope
 from ess.livedata.preprocessors.detector_data import get_nexus_geometry_filename
 from ess.livedata.workflows.lut_ranges import (
     LtotalRangeError,
     component_ltotal_range,
     component_ltotal_ranges,
 )
+
+#: LOKI's carriage envelope, mirroring the instrument declaration.
+LOKI_MOTION = {
+    '/entry/instrument/detector_carriage/value': MotionEnvelope(
+        nominal=sc.scalar(0.0, unit='mm'), travel=sc.scalar(15.0, unit='m')
+    )
+}
 
 
 @pytest.fixture(scope='module')
@@ -72,18 +80,31 @@ def test_monitor_uses_straight_line_not_scattering_geometry(
 
 @pytest.mark.slow
 def test_travel_envelope_extends_the_range_downstream_only(
-    dream_geometry: str,
+    loki_geometry: str,
 ) -> None:
-    static = component_ltotal_range(dream_geometry, 'mantle_detector', is_monitor=False)
-    moving = component_ltotal_range(
-        dream_geometry,
-        'mantle_detector',
-        is_monitor=False,
-        travel=sc.scalar(15.0, unit='m'),
+    """LOKI's rear bank rides the carriage: parked at the declared nominal it
+    sits ~28.6 m out, and the 15 m of travel extends the range downstream only,
+    since the carriage moves away from the sample."""
+    start, stop = component_ltotal_range(
+        loki_geometry, 'loki_detector_0', is_monitor=False, motion=LOKI_MOTION
     )
 
-    assert sc.identical(moving[0], static[0])
-    assert sc.isclose(moving[1] - static[1], sc.scalar(15.0, unit='m'))
+    assert start < sc.scalar(28.7, unit='m')
+    assert stop > start + sc.scalar(15.0, unit='m')
+
+
+@pytest.mark.slow
+def test_component_riding_a_declared_axis_becomes_placeable(
+    loki_geometry: str,
+) -> None:
+    # Without the declaration there is no position at all; with it, the
+    # artifact's geometry resolves.
+    with pytest.raises(LtotalRangeError, match='MotionEnvelope'):
+        component_ltotal_range(loki_geometry, 'loki_detector_0', is_monitor=False)
+
+    component_ltotal_range(
+        loki_geometry, 'loki_detector_0', is_monitor=False, motion=LOKI_MOTION
+    )
 
 
 @pytest.mark.slow
@@ -110,10 +131,11 @@ def test_ranges_are_narrow_enough_to_be_worth_splitting(
 
 
 @pytest.mark.slow
-def test_component_on_a_live_transform_fails_loud(loki_geometry: str) -> None:
-    """LOKI's rear bank hangs off an f144-driven carriage transform whose
-    nominal value the artifact does not carry, so no range can be derived from
-    geometry alone. Failing loud is the point: the alternative is a table
-    silently placed at the wrong distance."""
-    with pytest.raises(LtotalRangeError, match='loki_detector_0'):
-        component_ltotal_range(loki_geometry, 'loki_detector_0', is_monitor=False)
+def test_undeclared_live_axis_fails_loud(loki_geometry: str) -> None:
+    """``beam_monitor_m4`` rides its own axis, which nothing declares. Failing
+    loud is the point: the alternative is a table silently placed at the wrong
+    distance."""
+    with pytest.raises(LtotalRangeError, match='beam_monitor_m4'):
+        component_ltotal_range(
+            loki_geometry, 'beam_monitor_m4', is_monitor=True, motion=LOKI_MOTION
+        )

@@ -20,20 +20,51 @@ class DetectorCarriageLog(ValueLog):
 
 def setup_factories(instrument: Instrument) -> None:
     """Initialize LOKI-specific factories and workflows."""
-    import ess.loki.data
-    from ess.reduce.unwrap import LookupTableFilename
-
-    from ess.livedata.workflows.lut_context import bind_lookup_tables
+    from ess.livedata.workflows.lut_context import (
+        DetectorLutContext,
+        bind_all_lookup_tables,
+        bind_lookup_tables,
+        detector_lookup_table,
+        reads_wavelength,
+        role_lookup_table_provider,
+    )
+    from ess.livedata.workflows.wavelength_lut_workflow_specs import lut_stream_name
 
     # Each detector and monitor binds its own streamed lookup table, gated so
     # only wavelength-mode jobs wait for it.
     bind_lookup_tables(
         specs.xy_projection_handle,
+        instrument=instrument,
+        source_names=instrument.detector_names,
+        is_monitor=False,
+        predicate=reads_wavelength,
+    )
+    bind_lookup_tables(
+        specs.monitor_handle,
+        instrument=instrument,
+        source_names=instrument.monitors,
+        is_monitor=True,
+        predicate=reads_wavelength,
+    )
+    # I(Q) needs one table per sciline Component -- the detector plus the
+    # incident and transmission monitor *roles* -- and which monitor fills each
+    # role is a per-job aux selection. Every candidate therefore binds its own
+    # key and the factory maps the chosen ones onto the roles.
+    # The detector is fixed per job, so it binds per source like a view does,
+    # just without a predicate: a reduction always reduces to wavelength.
+    bind_lookup_tables(
+        specs.i_of_q_handle,
+        instrument=instrument,
         source_names=instrument.detector_names,
         is_monitor=False,
     )
-    bind_lookup_tables(
-        specs.monitor_handle, source_names=instrument.monitors, is_monitor=True
+    # The monitors are not: which one fills the incident or transmission role is
+    # a per-job aux selection, so every candidate binds its own key and the
+    # factory maps the chosen ones onto the roles.
+    _iq_monitor_luts = bind_all_lookup_tables(
+        specs.i_of_q_handle,
+        instrument=instrument,
+        source_names=instrument.monitors,
     )
     import sciline
     import sciline.typing
@@ -97,13 +128,6 @@ def setup_factories(instrument: Instrument) -> None:
         """
         wf = LokiWorkflow()
         wf[Filename[SampleRun]] = _nexus_geometry_filename
-        # I(Q) still loads its table from a file. Unlike a view, it needs one
-        # table per sciline Component -- the detector plus the incident and
-        # transmission monitor *roles* -- and the monitor playing each role is a
-        # per-job aux selection that a spec-scope ContextBinding, declared at
-        # import time, cannot know. Migrating it needs the job-creation check
-        # ADR 0010 leaves open, so it is out of scope here.
-        wf[LookupTableFilename] = str(ess.loki.data.loki_lookup_table_no_choppers())
         wf[DirectBeam] = None
         wf[CorrectForGravity] = CorrectForGravity(False)
         wf[ReturnEvents] = ReturnEvents(False)
@@ -217,6 +241,14 @@ def setup_factories(instrument: Instrument) -> None:
         wf[NeXusDetectorName] = source_name
         wf[NeXusMonitorName[Incident]] = aux_source_names['incident_monitor']
         wf[NeXusMonitorName[Transmission]] = aux_source_names['transmission_monitor']
+        wf.insert(detector_lookup_table)
+        # Map the selected monitors' tables onto the roles that consume them.
+        for role, monitor in (
+            (Incident, aux_source_names['incident_monitor']),
+            (Transmission, aux_source_names['transmission_monitor']),
+        ):
+            if (key := _iq_monitor_luts.get(monitor)) is not None:
+                wf.insert(role_lookup_table_provider(role, key))
         wf[sans_types.QBins] = params.q_edges.get_edges()
         wf[sans_types.WavelengthBins] = params.wavelength_edges.get_edges()
         wf[BeamCenter] = params.beam_center.get_vector()
@@ -247,6 +279,13 @@ def setup_factories(instrument: Instrument) -> None:
         return StreamProcessorWorkflow(
             wf,
             dynamic_keys=_dynamic_keys(source_name, aux_source_names),
+            context_keys={
+                lut_stream_name(source_name): DetectorLutContext,
+                **{
+                    lut_stream_name(monitor): key
+                    for monitor, key in _iq_monitor_luts.items()
+                },
+            },
             target_keys=target_keys,
             accumulators=_accumulators,
         )

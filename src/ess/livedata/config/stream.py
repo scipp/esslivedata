@@ -25,6 +25,8 @@ from collections.abc import Callable, Iterable
 from dataclasses import dataclass
 from typing import Any
 
+import scipp as sc
+
 
 @dataclass(frozen=True, slots=True, kw_only=True)
 class Stream:
@@ -160,6 +162,27 @@ class ContextBinding:
     collision checks and the statically derived Kafka subscriptions stay
     conservative supersets of any resolved gate.
     """
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class MotionEnvelope:
+    """How far a component riding one moving axis can travel, and where it rests.
+
+    Declared per NeXus transform path, because that is what the geometry
+    artifact keys a live (f144-driven) transform by, and which components ride
+    the axis is then derivable from their ``depends_on`` chains rather than
+    restated. A component later hung off the axis inherits the envelope instead
+    of silently getting a nominal-only range.
+
+    The artifact stores a live transform as an *empty* NXlog, so it carries no
+    position at all for such a component -- neither the travel nor the resting
+    value can be recovered from it. Both are therefore instrument declarations.
+    """
+
+    nominal: sc.Variable
+    """Axis value the artifact's nominal geometry corresponds to."""
+    travel: sc.Variable
+    """Maximum displacement downstream of the nominal position."""
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)

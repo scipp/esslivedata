@@ -217,3 +217,85 @@ def test_wavelength_monitor_job_consumes_the_streamed_table(
     assert not reply.has_error, reply.error_message
     assert result.error_message is None, result.error_message
     assert result.data['cumulative'].unit == 'counts'
+
+
+@pytest.fixture(scope='module')
+def loki() -> Instrument:
+    get_config('loki')
+    instrument = instrument_registry['loki']
+    instrument.load_factories()
+    return instrument
+
+
+class TestLokiMotionAndRoles:
+    """LOKI exercises the two cases DREAM cannot.
+
+    Its rear bank rides a declared axis, and ``beam_monitor_m4`` rides an
+    undeclared one; and its I(Q) reduction needs a table per sciline
+    ``Component`` rather than one per source.
+    """
+
+    def test_declared_axis_makes_the_rear_bank_placeable(
+        self, loki: Instrument
+    ) -> None:
+        assert 'loki_detector_0' in loki.lut_components
+
+    def test_component_on_an_undeclared_axis_has_no_table(
+        self, loki: Instrument
+    ) -> None:
+        # No nominal position, so no range, so no table -- and therefore no
+        # binding anywhere, rather than a table placed at a guessed distance.
+        assert 'beam_monitor_m4' not in loki.lut_components
+
+    def test_nothing_gates_on_a_table_that_is_never_published(
+        self, loki: Instrument
+    ) -> None:
+        """The reason the previous test matters: binding an unpublishable
+        stream would wedge every job that could have selected that monitor."""
+        workflow_id = _spec_id(loki, 'i_of_q')
+
+        declared = loki.declared_context_keys(workflow_id, 'loki_detector_0')
+
+        assert lut_stream_name('beam_monitor_m4') not in declared
+
+    def test_reduction_gates_on_every_candidate_monitor(self, loki: Instrument) -> None:
+        """Which monitor fills the incident or transmission role is a per-job
+        aux selection, so all candidates are bound. They come from the same LUT
+        job and arrive together, so gating on all of them opens the gate at the
+        same instant as gating on one."""
+        workflow_id = _spec_id(loki, 'i_of_q')
+
+        declared = loki.declared_context_keys(workflow_id, 'loki_detector_0')
+
+        assert {name for name in declared if name.startswith('wavelength_lut/')} == {
+            lut_stream_name(name)
+            for name in (
+                'loki_detector_0',
+                'beam_monitor_m0',
+                'beam_monitor_m1',
+                'beam_monitor_m2',
+                'beam_monitor_m3',
+            )
+        }
+
+    def test_reduction_binds_only_its_own_detector(self, loki: Instrument) -> None:
+        # The detector is fixed per job; gating on all nine banks' tables would
+        # be over-gating with no upside.
+        declared = loki.declared_context_keys(
+            _spec_id(loki, 'i_of_q'), 'loki_detector_5'
+        )
+
+        assert lut_stream_name('loki_detector_5') in declared
+        assert lut_stream_name('loki_detector_0') not in declared
+
+    def test_reduction_has_no_coordinate_mode_so_always_gates(
+        self, loki: Instrument
+    ) -> None:
+        workflow_id = _spec_id(loki, 'i_of_q')
+        params_model = loki.workflow_factory.registration(workflow_id).spec.params
+
+        resolved = loki.resolve_context_keys(
+            workflow_id, 'loki_detector_0', params_model()
+        )
+
+        assert lut_stream_name('loki_detector_0') in resolved

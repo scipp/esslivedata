@@ -57,6 +57,7 @@ from ess.reduce.unwrap.lut import (
 )
 
 from ..config.chopper import delay_setpoint_stream, speed_setpoint_stream
+from ..config.stream import MotionEnvelope
 from .dynamic_transforms import synthesise_provider
 from .lut_ranges import LtotalRangeError, component_ltotal_range
 from .stream_processor_workflow import StreamProcessorWorkflow
@@ -440,7 +441,8 @@ def attach_wavelength_lut_factory(
     nexus_filename: str,
     detectors: Sequence[str],
     monitors: Sequence[str],
-) -> None:
+    motion: Mapping[str, MotionEnvelope],
+) -> dict[str, tuple[sc.Variable, sc.Variable]]:
     """Bind per-chopper setpoint context and attach the LUT factory.
 
     The single per-instrument entry point: from ``factories.py`` an instrument
@@ -455,14 +457,18 @@ def attach_wavelength_lut_factory(
     instrument's ``factories.py`` to wire matching keys by hand.
 
     Each component's flight-path range is derived from the geometry artifact.
-    A component whose range cannot be derived -- typically one hanging off a
-    live f144-driven transform, whose nominal position the artifact does not
-    carry -- is left without a table. Its consumers then stay gated on a stream
-    that never arrives, which surfaces as ``pending_context`` rather than as a
-    table quietly placed at the wrong distance.
+    A component whose range cannot be derived -- one riding a live f144-driven
+    axis with no declared :class:`MotionEnvelope` -- is left without a table.
+
+    Returns
+    -------
+    :
+        The derived ranges, keyed by component. Consumers bind only these, so a
+        component without a table gates nothing rather than blocking every job
+        that could have selected it.
     """
     ltotal_ranges = _derive_ltotal_ranges(
-        nexus_filename, detectors=detectors, monitors=monitors
+        nexus_filename, detectors=detectors, monitors=monitors, motion=motion
     )
     setpoint_keys = {
         chopper: make_chopper_setpoint_keys(chopper) for chopper in choppers
@@ -484,9 +490,15 @@ def attach_wavelength_lut_factory(
             ltotal_ranges=ltotal_ranges,
         )
 
+    return ltotal_ranges
+
 
 def _derive_ltotal_ranges(
-    nexus_filename: str, *, detectors: Sequence[str], monitors: Sequence[str]
+    nexus_filename: str,
+    *,
+    detectors: Sequence[str],
+    monitors: Sequence[str],
+    motion: Mapping[str, MotionEnvelope],
 ) -> dict[str, tuple[sc.Variable, sc.Variable]]:
     """Derive every component's range, skipping those the artifact cannot place."""
     ranges: dict[str, tuple[sc.Variable, sc.Variable]] = {}
@@ -494,7 +506,7 @@ def _derive_ltotal_ranges(
         for name in names:
             try:
                 ranges[name] = component_ltotal_range(
-                    nexus_filename, name, is_monitor=is_monitor
+                    nexus_filename, name, is_monitor=is_monitor, motion=motion
                 )
             except LtotalRangeError as exc:
                 logger.warning(

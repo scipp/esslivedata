@@ -16,17 +16,26 @@ from .specs import DreamMonitorDataParams, PowderWorkflowParams
 
 def setup_factories(instrument: Instrument) -> None:
     """Initialize DREAM-specific factories and workflows."""
-    from ess.livedata.workflows.lut_context import bind_lookup_tables
+    from ess.livedata.workflows.lut_context import (
+        bind_lookup_tables,
+        reads_wavelength,
+    )
 
     # Each detector and monitor binds its own streamed lookup table, gated so
     # only wavelength-mode jobs wait for it.
     bind_lookup_tables(
         specs.projection_handle,
+        instrument=instrument,
         source_names=instrument.detector_names,
         is_monitor=False,
+        predicate=reads_wavelength,
     )
     bind_lookup_tables(
-        specs.monitor_handle, source_names=instrument.monitors, is_monitor=True
+        specs.monitor_handle,
+        instrument=instrument,
+        source_names=instrument.monitors,
+        is_monitor=True,
+        predicate=reads_wavelength,
     )
     # Lazy imports - all expensive imports go inside the function
     import ess.powder.types  # noqa: F401
