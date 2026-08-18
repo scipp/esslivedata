@@ -744,6 +744,8 @@ class Instrument:
                 self._wavelength_lut_handle,
                 choppers=self.choppers,
                 nexus_filename=str(get_nexus_geometry_filename(self.name)),
+                detectors=self.detector_names,
+                monitors=self.monitors,
             )
 
         if hasattr(module, 'setup_factories'):
