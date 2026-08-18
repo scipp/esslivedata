@@ -82,11 +82,18 @@ to hundreds of metres. Padding absorbs them. Declaring the rule per component wo
 exactness the table's distance resolution does not reward, at the cost of a per-component
 declaration nobody re-checks.
 
-Motion is the one thing the artifact cannot supply. Which components ride a moving axis is
-already known from `Instrument.chain_patch_bindings`; only the travel envelope is
-underivable. So instruments declare one number per moving axis and the affected component
-set is derived — a component later hung off that axis inherits the padding instead of
-silently getting a nominal-only range.
+Motion is the one thing the artifact cannot supply, and it withholds more than expected:
+a live f144-driven transform is stored as an *empty* NXlog, so neither the travel envelope
+nor the component's resting position can be recovered from it. Instruments therefore
+declare both, as one `MotionEnvelope` per moving axis keyed by NeXus transform path. Which
+components ride an axis stays derived — a component is affected precisely when the axis
+appears in its `depends_on` chain — so one hung off it later inherits the envelope
+instead of silently getting a nominal-only range.
+
+A component riding an axis nobody declared cannot be placed at all, and gets no table.
+Nothing binds such a component: gating on a stream that is never published would leave the
+job waiting forever, and for an aux-selectable monitor it would take down every job that
+merely *could* have selected it.
 
 Over-padding is cheap and under-padding is silent, so the bias is deliberate. Widening a
 range adds distance rows at fixed `DistanceResolution`; it costs recompute in the LUT job
@@ -143,9 +150,19 @@ silently drop `choppers`, which that format cannot carry. Chopper provenance tra
 the identity coord instead. da00 round-trips variances, which the uncertainty mask
 requires unconditionally.
 
-Monitors are treated as statically known. The user-selectable aux-monitor mechanism is not
-designed around; a check at job creation raises when the chosen monitor differs from the
-bound one, rather than silently supplying a table for the wrong distance.
+A reduction needs one table per sciline `Component` — the detector plus the *incident*
+and *transmission* monitor roles — and which physical monitor fills a role is a per-job aux
+selection that an import-time binding cannot know. Every candidate monitor therefore binds
+its own context key, and the factory, which does see the selection, maps the chosen ones
+onto the roles. The unselected keys are dead parameters, which `set_context` stores and
+computes nothing from.
+
+Gating on every candidate rather than on the selected one costs nothing: all tables come
+from the same LUT job, split out of one result, so they arrive together and the gate opens
+at the same instant either way. The over-gating concern below is about a *second,
+independent* producer and does not apply. This supersedes an earlier plan to bind the
+default monitors and raise at job creation when the selection differed, which would have
+made the aux selector a lie in wavelength mode.
 
 ### The gate is resolved from the job's parameters
 
@@ -266,12 +283,16 @@ event on run transitions, and this is a second trigger on that path.
 - The file-based table stops being reachable on a migrated instrument, so the streamed
   table cannot be A/B'd against it side by side within one instrument. The LUT job
   publishes its tables as ordinary outputs, which is the comparison surface instead.
+- `Instrument` gains `motion_envelopes` and, once the LUT factory is attached, the set of
+  components it could place. Consumers bind against that set rather than against the full
+  component list.
 - DREAM and LOKI migrate first; they are the only instruments offering wavelength mode
   today. The detector- and monitor-view factories lose their lookup-table filename
   argument outright rather than defaulting it, so a view has no file path left to fall
-  back to. What remains of `LookupTableFilename` is set explicitly by the unmigrated
-  BIFROST and ESTIA reduction pipelines at their own call sites — an input, not a
-  fallback. Removing the type entirely waits on migrating those two.
+  back to, and LOKI's I(Q) reduction migrates with them. What remains of
+  `LookupTableFilename` is set explicitly by the unmigrated BIFROST and ESTIA reduction
+  pipelines at their own call sites — an input, not a fallback. Removing the type
+  entirely waits on migrating those two.
 - The LUT workflow loses its range parameter.
 
 ### Standing limitations
