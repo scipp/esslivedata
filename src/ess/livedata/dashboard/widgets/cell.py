@@ -28,7 +28,6 @@ from ess.livedata.config.workflow_spec import WorkflowId, WorkflowSpec
 from ..cell_autoscale import CellAutoscaleController, build_controller_from_layers
 from ..cell_plan import CellBuildInputs
 from ..format_utils import extract_error_summary
-from ..frame_aspect import pane_sizing_mode
 from ..hover_suspend import make_hover_suspend_hook
 from ..plot_data_service import LayerSnapshot, LayerState, PlotDataService
 from ..plot_orchestrator import (
@@ -39,7 +38,6 @@ from ..plot_orchestrator import (
     PlotCell,
     PlotOrchestrator,
 )
-from ..plot_params import PlotAspect, PlotAspectType
 from ..plots import TimeBounds, format_time_info, merge_time_bounds
 from ..save_filename import build_save_filename_from_cell, make_save_filename_hook
 from ..session_layer import SessionLayer
@@ -53,10 +51,6 @@ from .plot_widgets import (
 from .styles import Colors, StatusColors, StatusPill
 
 logger = structlog.get_logger(__name__)
-
-
-# Params without a configurable aspect size like an unconstrained plot.
-_FREE_ASPECT = PlotAspect(aspect_type=PlotAspectType.free)
 
 
 # Data-age thresholds in seconds (now minus the oldest data's end time) that
@@ -653,14 +647,6 @@ class CellWidget:
         :
             HoloViews pane containing the plot.
         """
-        # Use sizing mode from first layer (they should be consistent for overlay)
-        if self._cell.layers:
-            params = self._cell.layers[0].config.params
-            aspect = getattr(params, 'plot_aspect', _FREE_ASPECT)
-        else:
-            aspect = _FREE_ASPECT
-        sizing_mode = pane_sizing_mode(aspect)
-
         # Use .layout to preserve widgets for DynamicMaps with kdims.
         # When pn.pane.HoloViews wraps a DynamicMap with kdims, it generates
         # widgets. However, these widgets don't render when the pane is placed
@@ -689,7 +675,7 @@ class CellWidget:
         # - Allows proper multi-layer composition via hv.Overlay
         # - Each grid cell's plot remains independent
         plot_pane_wrapper = pn.pane.HoloViews(
-            plot, sizing_mode=sizing_mode, linked_axes=False
+            plot, sizing_mode='stretch_both', linked_axes=False
         )
         # Kept so dispose() can unsubscribe the rendered plots from the layer
         # pipes; see dispose().
