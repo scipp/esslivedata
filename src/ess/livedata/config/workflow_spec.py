@@ -504,16 +504,33 @@ class WorkflowSpec(BaseModel):
         ),
     )
 
+    context_outputs: dict[str, str] = Field(
+        default_factory=dict,
+        description=(
+            "Outputs republished as context input streams for other workflows, "
+            "mapping output field name to a stream-name template. The template is "
+            "formatted with ``{source_name}`` once per entry in ``source_names``; "
+            "include the placeholder whenever more than one source is declared, "
+            "otherwise the rendered names collide. A consuming workflow binds the "
+            "rendered name with a ``ContextBinding``; see "
+            ":mod:`ess.livedata.core.context_outputs`."
+        ),
+    )
+
     @model_validator(mode='after')
-    def validate_device_outputs(self) -> WorkflowSpec:
-        """Validate that every declared device output is a real output field."""
-        unknown = set(self.device_outputs) - set(self.outputs.model_fields)
-        if unknown:
-            raise ValueError(
-                f"device_outputs references unknown output field(s) "
-                f"{sorted(unknown)}; declared outputs: "
-                f"{sorted(self.outputs.model_fields)}"
-            )
+    def validate_designated_outputs(self) -> WorkflowSpec:
+        """Validate that every designated output is a real output field."""
+        for field_name, declared in (
+            ('device_outputs', self.device_outputs),
+            ('context_outputs', self.context_outputs),
+        ):
+            unknown = set(declared) - set(self.outputs.model_fields)
+            if unknown:
+                raise ValueError(
+                    f"{field_name} references unknown output field(s) "
+                    f"{sorted(unknown)}; declared outputs: "
+                    f"{sorted(self.outputs.model_fields)}"
+                )
         return self
 
     @field_validator('outputs', mode='after')
