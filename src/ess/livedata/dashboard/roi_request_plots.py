@@ -3,7 +3,8 @@
 """Interactive ROI request plotters for user-drawn ROI selection.
 
 These plotters create interactive BoxEdit/PolyDraw elements that allow users
-to draw ROIs visually. Edits are published to Kafka for backend processing.
+to draw ROIs visually. Edits are published to Kafka for backend processing and
+written back into the plotter's params, so that they survive plotter rebuilds.
 
 These plotters subscribe to the ROI readback output stream for source context.
 The readback data itself is not used for display - only the DataKey is needed
@@ -66,6 +67,23 @@ class ROIPublisherAware(Protocol):
 
     def set_roi_publisher(self, publisher: ROIPublisher | None) -> None:
         """Set the ROI publisher for this plotter."""
+        ...
+
+
+@runtime_checkable
+class ParamsPersisterAware(Protocol):
+    """Protocol for plotters that rewrite their own params from user interaction.
+
+    ROI request plotters rewrite their geometry as the user draws. The persister
+    stores the updated params with the layer, so that a plotter rebuilt later
+    (dashboard restart, layer re-added, new job generation) seeds from the last
+    edited state instead of clobbering it with the config-time geometry.
+    """
+
+    def set_params_persister(
+        self, persister: Callable[[pydantic.BaseModel], None]
+    ) -> None:
+        """Set the callback that stores params updated by this plotter."""
         ...
 
 
@@ -322,7 +340,7 @@ class OptionalRectanglesCoordinates(RectanglesCoordinates):
     coordinates: str = pydantic.Field(
         default="",
         title="Coordinates",
-        description='E.g., [0,0,10,10], [20,20,30,30] (leave empty for none)',
+        description='In plot axis units, e.g. [0,0,10,10], [20,20,30,30]',
     )
 
     @pydantic.field_validator('coordinates')
@@ -373,8 +391,8 @@ class RectanglesRequestParams(pydantic.BaseModel):
 
     geometry: OptionalRectanglesCoordinates = pydantic.Field(
         default_factory=OptionalRectanglesCoordinates,
-        title="Initial Coordinates",
-        description="Initial rectangle coordinates. Leave empty for none.",
+        title="Coordinates",
+        description="Rectangles to start from; rewritten as you draw.",
     )
     style: RectanglesRequestStyle = pydantic.Field(
         default_factory=RectanglesRequestStyle,
@@ -534,7 +552,8 @@ class BaseROIRequestPlotter[
 
     Implements compute() to extract data-dependent info and create_presenter()
     to create per-session presenters. Domain logic (ROI parsing, comparison,
-    skip logic, publishing) is handled via a closure-based edit callback.
+    skip logic, publishing, persistence) is handled via a closure-based edit
+    callback.
     """
 
     def __init__(
@@ -545,17 +564,20 @@ class BaseROIRequestPlotter[
         super().__init__()
         self._params = params
         self._roi_publisher = roi_publisher
+        self._params_persister: Callable[[pydantic.BaseModel], None] | None = None
         self._converter = self._create_converter()
         self._roi_mapper = get_roi_mapper()
 
         # Initialize static config from params
         self._index_offset = self._get_index_offset()
-        self._initial_rois: dict[int, ROIType] = self._parse_initial_geometry()
 
-        # Live ROI state shared across all sessions of this plotter. Sessions'
-        # edit handlers read and update this under _roi_lock; new presenters are
-        # seeded from it so a session opened after edits sees the current ROIs.
-        self._current_rois: dict[int, ROIType] = dict(self._initial_rois)
+        # Live ROI state shared across all sessions of this plotter. Seeded from
+        # params on the first compute(), which is where the coordinate units the
+        # params are expressed in become known. Sessions' edit handlers read and
+        # update this under _roi_lock; new presenters are seeded from it so a
+        # session opened after edits sees the current ROIs.
+        self._current_rois: dict[int, ROIType] = {}
+        self._seeded_from_params = False
         self._published_initial = False
         self._roi_lock = threading.Lock()
 
@@ -567,6 +589,12 @@ class BaseROIRequestPlotter[
     def set_roi_publisher(self, publisher: ROIPublisher | None) -> None:
         """Set the ROI publisher for this plotter."""
         self._roi_publisher = publisher
+
+    def set_params_persister(
+        self, persister: Callable[[pydantic.BaseModel], None]
+    ) -> None:
+        """Set the callback that stores params updated by this plotter."""
+        self._params_persister = persister
 
     @abstractmethod
     def _create_converter(self) -> ConverterType:
@@ -582,7 +610,11 @@ class BaseROIRequestPlotter[
 
     @abstractmethod
     def _parse_initial_geometry(self) -> dict[int, ROIType]:
-        """Parse initial geometry from params."""
+        """Parse the geometry stored in params, in the plot's axis units."""
+
+    @abstractmethod
+    def _format_geometry(self, rois: dict[int, ROIType]) -> str:
+        """Serialize ROIs into the coordinate string format params store."""
 
     @abstractmethod
     def _should_skip_edit(self, new_rois: dict[int, ROIType]) -> bool:
@@ -638,6 +670,12 @@ class BaseROIRequestPlotter[
             else None
         )
 
+        # Params hold bare numbers; they mean coordinates on the plot's axes, so
+        # they can only be turned into ROIs once the axis units are known.
+        if not self._seeded_from_params:
+            self._current_rois = self._parse_initial_geometry()
+            self._seeded_from_params = True
+
         # Forward data (presenter may use in future)
         self._set_cached_state(primary)
         return primary
@@ -647,8 +685,9 @@ class BaseROIRequestPlotter[
         Create an edit handler over the plotter's shared live ROI state.
 
         The handler parses edit stream data, compares with the shared state,
-        applies skip logic, and publishes changes. All sessions' handlers read
-        and update the same ``_current_rois`` under ``_roi_lock``.
+        applies skip logic, publishes changes and writes them back into the
+        layer's stored params. All sessions' handlers read and update the same
+        ``_current_rois`` under ``_roi_lock``.
 
         Also emits the initial ROI set once per plotter lifetime (on the first
         presenter creation after ``compute()`` has set ``_data_key``), never
@@ -676,12 +715,26 @@ class BaseROIRequestPlotter[
                     return
                 self._current_rois = new_rois
                 self._publish_rois(new_rois)
+                self._params = self._params_with_geometry(new_rois)
+                params = self._params
+            # Outside the ROI lock: the persister reaches back into the plot
+            # orchestrator, which takes its own locks and writes the config store.
+            if self._params_persister is not None:
+                self._params_persister(params)
 
         with self._roi_lock:
             if not self._published_initial and self._publish_rois(self._current_rois):
                 self._published_initial = True
 
         return handle_edit
+
+    def _params_with_geometry(self, rois: dict[int, ROIType]) -> ParamsType:
+        """Return a copy of the params carrying ``rois`` as their geometry."""
+        geometry = type(self._params.geometry).model_validate(
+            self._params.geometry.model_dump()
+            | {'coordinates': self._format_geometry(rois)}
+        )
+        return self._params.model_copy(update={'geometry': geometry})
 
     def _publish_rois(self, rois: dict[int, ROIType]) -> bool:
         """Publish ROIs to Kafka. Returns True if a message was published."""
@@ -727,7 +780,7 @@ class RectanglesRequestPlotter(
         return 0
 
     def _parse_initial_geometry(self) -> dict[int, RectangleROI]:
-        """Parse initial rectangles from params."""
+        """Parse the rectangles stored in params, in the plot's axis units."""
         coords_str = self._params.geometry.coordinates
         if not coords_str or coords_str.strip() == '':
             return {}
@@ -741,10 +794,17 @@ class RectanglesRequestPlotter(
         rois: dict[int, RectangleROI] = {}
         for i, (x0, y0, x1, y1) in enumerate(rects):
             rois[self._index_offset + i] = RectangleROI(
-                x=Interval(min=min(x0, x1), max=max(x0, x1), unit=None),
-                y=Interval(min=min(y0, y1), max=max(y0, y1), unit=None),
+                x=Interval(min=min(x0, x1), max=max(x0, x1), unit=self._x_unit),
+                y=Interval(min=min(y0, y1), max=max(y0, y1), unit=self._y_unit),
             )
         return rois
+
+    def _format_geometry(self, rois: dict[int, RectangleROI]) -> str:
+        """Serialize rectangles as ``[x0,y0,x1,y1], [x0,y0,x1,y1]``."""
+        return ', '.join(
+            f'[{rois[i].x.min},{rois[i].y.min},{rois[i].x.max},{rois[i].y.max}]'
+            for i in sorted(rois)
+        )
 
     def _should_skip_edit(self, new_rois: dict[int, RectangleROI]) -> bool:
         del new_rois  # Rectangles never skip edits
@@ -801,7 +861,10 @@ class PolygonsCoordinates(pydantic.BaseModel):
     coordinates: str = pydantic.Field(
         default="",
         title="Coordinates",
-        description='E.g., [[0,0],[10,0],[5,10]], [[20,20],[30,20],[30,30],[20,30]]',
+        description=(
+            'In plot axis units, e.g. [[0,0],[10,0],[5,10]], '
+            '[[20,20],[30,20],[30,30],[20,30]]'
+        ),
     )
 
     def parse(self) -> list[tuple[list[float], list[float]]]:
@@ -844,8 +907,8 @@ class PolygonsRequestParams(pydantic.BaseModel):
 
     geometry: PolygonsCoordinates = pydantic.Field(
         default_factory=PolygonsCoordinates,
-        title="Initial Coordinates",
-        description="Initial polygon coordinates. Leave empty for none.",
+        title="Coordinates",
+        description="Polygons to start from; rewritten as you draw.",
     )
     style: PolygonsRequestStyle = pydantic.Field(
         default_factory=PolygonsRequestStyle,
@@ -883,7 +946,7 @@ class PolygonsRequestPlotter(
         )
 
     def _parse_initial_geometry(self) -> dict[int, PolygonROI]:
-        """Parse initial polygons from params."""
+        """Parse the polygons stored in params, in the plot's axis units."""
         coords_str = self._params.geometry.coordinates
         if not coords_str or coords_str.strip() == '':
             return {}
@@ -898,9 +961,17 @@ class PolygonsRequestPlotter(
         for i, (xs, ys) in enumerate(polygons):
             if len(xs) >= 3:
                 rois[self._index_offset + i] = PolygonROI(
-                    x=xs, y=ys, x_unit=None, y_unit=None
+                    x=xs, y=ys, x_unit=self._x_unit, y_unit=self._y_unit
                 )
         return rois
+
+    def _format_geometry(self, rois: dict[int, PolygonROI]) -> str:
+        """Serialize polygons as ``[[x,y],[x,y],[x,y]], [[x,y],...]``."""
+
+        def vertices(roi: PolygonROI) -> str:
+            return ','.join(f'[{x},{y}]' for x, y in zip(roi.x, roi.y, strict=True))
+
+        return ', '.join(f'[{vertices(rois[i])}]' for i in sorted(rois))
 
     def _should_skip_edit(self, new_rois: dict[int, PolygonROI]) -> bool:
         """Skip publishing while user is actively drawing a polygon.

@@ -6,11 +6,13 @@ import holoviews as hv
 import numpy as np
 import pytest
 
-from ess.livedata.config.models import RectangleROI
+from ess.livedata.config.models import PolygonROI, RectangleROI
 from ess.livedata.config.workflow_spec import DataKey, WorkflowId
 from ess.livedata.dashboard.data_roles import PRIMARY
 from ess.livedata.dashboard.roi_publisher import FakeROIPublisher
 from ess.livedata.dashboard.roi_request_plots import (
+    PolygonsRequestParams,
+    PolygonsRequestPlotter,
     RectanglesRequestParams,
     RectanglesRequestPlotter,
 )
@@ -120,3 +122,169 @@ def test_edit_from_browser_synced_arrays_is_applied(
     )
 
     assert len(computed_plotter._current_rois) == count
+
+
+@pytest.fixture
+def persisted_params() -> list[RectanglesRequestParams]:
+    return []
+
+
+@pytest.fixture
+def persisting_plotter(
+    data_key: DataKey, persisted_params: list[RectanglesRequestParams]
+) -> RectanglesRequestPlotter:
+    """A computed plotter that records every params update it emits."""
+    plotter = RectanglesRequestPlotter.from_params(RectanglesRequestParams())
+    plotter.set_roi_publisher(FakeROIPublisher())
+    plotter.set_params_persister(persisted_params.append)
+    plotter.compute({PRIMARY: {data_key: RectangleROI.to_concatenated_data_array({})}})
+    return plotter
+
+
+def _rebuild(
+    params: RectanglesRequestParams,
+    data_key: DataKey,
+    coord_units: dict[str, str] | None = None,
+) -> RectanglesRequestPlotter:
+    """Build a fresh plotter from params, as a dashboard restart would."""
+    plotter = RectanglesRequestPlotter.from_params(params)
+    plotter.set_roi_publisher(FakeROIPublisher())
+    plotter.compute(
+        {
+            PRIMARY: {
+                data_key: RectangleROI.to_concatenated_data_array(
+                    {}, coord_units=coord_units
+                )
+            }
+        }
+    )
+    return plotter
+
+
+def test_edit_is_written_back_into_params(
+    persisting_plotter: RectanglesRequestPlotter,
+    persisted_params: list[RectanglesRequestParams],
+) -> None:
+    persisting_plotter.create_presenter()._handle_edit(_drawn_box())
+
+    assert len(persisted_params) == 1
+    assert persisted_params[-1].geometry.coordinates == '[1.0,2.0,5.0,6.0]'
+
+
+def test_initial_publish_does_not_write_back_params(
+    persisting_plotter: RectanglesRequestPlotter,
+    persisted_params: list[RectanglesRequestParams],
+) -> None:
+    """Publishing the config-time set changes nothing that needs storing."""
+    persisting_plotter.create_presenter()
+
+    assert persisted_params == []
+
+
+def test_rebuilt_plotter_seeds_from_persisted_edit(
+    persisting_plotter: RectanglesRequestPlotter,
+    persisted_params: list[RectanglesRequestParams],
+    data_key: DataKey,
+) -> None:
+    """A dashboard restart must show the drawn ROIs, not the config-time set."""
+    persisting_plotter.create_presenter()._handle_edit(_drawn_box())
+    edited = persisting_plotter._current_rois
+
+    rebuilt = _rebuild(persisted_params[-1], data_key)
+
+    assert rebuilt._current_rois == edited
+
+
+def test_rebuilt_plotter_republishes_the_persisted_edit(
+    persisting_plotter: RectanglesRequestPlotter,
+    persisted_params: list[RectanglesRequestParams],
+    data_key: DataKey,
+) -> None:
+    """The set published to a new job is what the user drew, not the config."""
+    persisting_plotter.create_presenter()._handle_edit(_drawn_box())
+    edited = persisting_plotter._current_rois
+
+    rebuilt = _rebuild(persisted_params[-1], data_key)
+    rebuilt.create_presenter()
+
+    publisher = rebuilt._roi_publisher
+    assert isinstance(publisher, FakeROIPublisher)
+    assert publisher.published[-1][2] == edited
+
+
+def test_clearing_all_rois_survives_a_rebuild(
+    persisting_plotter: RectanglesRequestPlotter,
+    persisted_params: list[RectanglesRequestParams],
+    data_key: DataKey,
+) -> None:
+    presenter = persisting_plotter.create_presenter()
+    presenter._handle_edit(_drawn_box())
+    presenter._handle_edit({'x0': [], 'x1': [], 'y0': [], 'y1': []})
+
+    assert persisted_params[-1].geometry.coordinates == ''
+    assert _rebuild(persisted_params[-1], data_key)._current_rois == {}
+
+
+def test_stored_coordinates_are_in_plot_axis_units(data_key: DataKey) -> None:
+    """Bare numbers in params mean coordinates on the plot's axes.
+
+    Reading them back as pixel indices would silently displace every ROI drawn
+    on a view with physical coordinates.
+    """
+    params = RectanglesRequestParams.model_validate(
+        {'geometry': {'coordinates': '[0.1,0.2,0.5,0.6]'}}
+    )
+
+    plotter = _rebuild(params, data_key, coord_units={'x': 'm', 'y': 'm'})
+
+    roi = plotter._current_rois[0]
+    assert roi.x.unit == 'm'
+    assert roi.y.unit == 'm'
+    assert (roi.x.min, roi.x.max) == (0.1, 0.5)
+
+
+def test_edit_on_a_physical_axis_round_trips_through_params(
+    data_key: DataKey,
+) -> None:
+    units = {'x': 'm', 'y': 'm'}
+    persisted: list[RectanglesRequestParams] = []
+    plotter = _rebuild(RectanglesRequestParams(), data_key, coord_units=units)
+    plotter.set_params_persister(persisted.append)
+
+    plotter.create_presenter()._handle_edit(
+        {'x0': [0.1], 'x1': [0.5], 'y0': [0.2], 'y1': [0.6]}
+    )
+
+    rebuilt = _rebuild(persisted[-1], data_key, coord_units=units)
+    assert rebuilt._current_rois == plotter._current_rois
+
+
+def _computed_polygon_plotter(
+    params: PolygonsRequestParams, data_key: DataKey
+) -> PolygonsRequestPlotter:
+    plotter = PolygonsRequestPlotter.from_params(params)
+    plotter.set_roi_publisher(FakeROIPublisher())
+    plotter.compute(
+        {
+            PRIMARY: {
+                data_key: PolygonROI.to_concatenated_data_array(
+                    {}, coord_units={'x': 'm', 'y': 'm'}
+                )
+            }
+        }
+    )
+    return plotter
+
+
+def test_polygon_edit_round_trips_through_params(data_key: DataKey) -> None:
+    persisted: list[PolygonsRequestParams] = []
+    plotter = _computed_polygon_plotter(PolygonsRequestParams(), data_key)
+    plotter.set_params_persister(persisted.append)
+
+    plotter.create_presenter()._handle_edit(
+        {'xs': [[0.0, 1.0, 0.5]], 'ys': [[0.0, 0.0, 1.0]]}
+    )
+
+    assert persisted[-1].geometry.coordinates == '[[0.0,0.0],[1.0,0.0],[0.5,1.0]]'
+    rebuilt = _computed_polygon_plotter(persisted[-1], data_key)
+    assert rebuilt._current_rois == plotter._current_rois

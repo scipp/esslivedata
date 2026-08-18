@@ -19,6 +19,7 @@ import traceback
 from collections.abc import Callable, Iterator, Mapping, Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass
+from functools import partial
 from typing import TYPE_CHECKING, Any, Protocol
 from uuid import uuid4
 
@@ -892,7 +893,9 @@ class PlotOrchestrator:
         """
         try:
             plotter = self._plotting_controller.create_plotter(
-                config.plot_name, params=config.params
+                config.plot_name,
+                params=config.params,
+                on_params_changed=partial(self._store_layer_params, layer_id),
             )
             self._plot_data_service.job_started(layer_id, plotter)
             return plotter
@@ -901,6 +904,25 @@ class PlotOrchestrator:
             self._logger.exception('Failed to create plotter for layer_id=%s', layer_id)
             self._plot_data_service.error_occurred(layer_id, error_msg)
             return None
+
+    def _store_layer_params(
+        self, layer_id: LayerId, params: pydantic.BaseModel
+    ) -> None:
+        """Store params a plotter rewrote from user interaction, e.g. drawn ROIs.
+
+        Without this the edit would live only in the plotter, and every rebuild
+        of it - dashboard restart, layer re-added, new job generation - would
+        silently revert to the config-time params.
+
+        Deliberately does not bump the topology version: the plotter and its
+        presenters are the source of the change and must survive it.
+        """
+        try:
+            self.get_layer_config(layer_id).params = params
+        except KeyError:
+            # Layer removed while one of its presenters was still emitting edits.
+            return
+        self._persist_to_store()
 
     def _build_title_resolver(self, layer_id: LayerId) -> Any:
         """Build a TitleResolver for a layer, checking cell-level view uniqueness.

@@ -59,6 +59,8 @@ class FakePlotter:
         # Invoked at the start of compute(); lets tests simulate concurrent
         # events (plotter swap, layer removal) landing mid-build.
         self.on_compute = None
+        # Callback injected by the orchestrator for storing rewritten params.
+        self.persist_params = None
 
     def initialize_from_data(self, data):
         self._initialized_data = data
@@ -198,6 +200,7 @@ class FakePlottingController:
         self,
         plot_name: str,
         params: dict,
+        on_params_changed=None,
     ):
         """Create a fake plotter, recording the call for assertions."""
         self._calls.append(
@@ -210,6 +213,8 @@ class FakePlottingController:
         if self._should_raise:
             raise self._exception_to_raise
         plotter = FakePlotter()
+        # Stands in for an ROI request plotter rewriting its own params.
+        plotter.persist_params = on_params_changed
         self.created_plotters.append(plotter)
         return plotter
 
@@ -2743,6 +2748,53 @@ class TestPersistenceRoundTrip:
             plot_data_service=plot_data_service,
             config_store=config_store,
         )
+
+    def test_params_rewritten_by_plotter_survive_a_reload(
+        self,
+        job_orchestrator,
+        fake_plotting_controller,
+        fake_data_service,
+        plot_data_service,
+        config_store,
+        workflow_id,
+        workflow_spec,
+    ):
+        """ROI edits reach the store, so a restart does not clobber them.
+
+        The plotter stands in for an ROI request plotter, which rewrites its
+        geometry as the user draws.
+        """
+        orch1 = self._make_orchestrator(
+            job_orchestrator,
+            fake_plotting_controller,
+            fake_data_service,
+            plot_data_service,
+            config_store,
+        )
+        grid_id = orch1.add_grid(title='Test Grid', nrows=1, ncols=1)
+        add_cell_with_layer(
+            orch1, grid_id, DEFAULT_GEOMETRY, make_plot_config(workflow_id)
+        )
+        commit_workflow_for_test(job_orchestrator, workflow_id, workflow_spec)
+        orch1.sync_job_states()
+
+        # The generation change replaced the plotter; the live one holds the
+        # persister, and its edits must outlive the next replacement.
+        fake_plotting_controller.created_plotters[-1].persist_params(
+            FakePlotParams(param1='drawn')
+        )
+
+        orch2 = self._make_orchestrator(
+            job_orchestrator,
+            fake_plotting_controller,
+            fake_data_service,
+            plot_data_service,
+            config_store,
+        )
+        (grid,) = orch2.get_all_grids().values()
+        (cell,) = grid.cells.values()
+        (layer,) = cell.layers
+        assert layer.config.params.param1 == 'drawn'
 
     def test_disabled_grid_restored_on_load(
         self,
