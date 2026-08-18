@@ -71,29 +71,35 @@ adds a plot. That visibility is worth having — "why is this component empty" i
 its table, which today is unreadable because the relevant rows are buried in tens of metres
 of empty distance.
 
-### Ranges are derived, from two declarations
+### Ranges are derived generically, padded for motion
 
-The range must use the same `Ltotal` definition the consumer uses at lookup time, and
-those differ: scattering geometry (source to sample to pixel) for most detectors, a
-straight line for monitors, and source-to-sample alone for indirect geometry, where the
-analyser and detector legs are excluded. A generic walk to each pixel would put an indirect
-instrument's table tens of metres away from where it is queried, and every event would
-`NaN`. The rule is therefore *declared* per component, so the physics distinction stays
-visible instead of hiding inside a hand-written constant.
+Each component's range is computed from the registered geometry artifact by one generic
+walk to its pixels. The `Ltotal` definition a consumer uses at lookup time does vary —
+scattering geometry (source to sample to pixel) for most detectors, a straight line for
+monitors, and source-to-sample alone for indirect geometry, where the analyser and
+detector legs are excluded — but the differences are metres against flight paths of tens
+to hundreds of metres. Padding absorbs them. Declaring the rule per component would buy
+exactness the table's distance resolution does not reward, at the cost of a per-component
+declaration nobody re-checks.
 
-Motion is a second, independent declaration. Which components ride a moving axis is already
-known from `Instrument.chain_patch_bindings`; only the travel envelope is underivable. So
-instruments declare one number per moving axis and the affected component set is derived —
-a component later hung off that axis inherits the padding instead of silently getting a
-nominal-only range.
+Motion is the one thing the artifact cannot supply. Which components ride a moving axis is
+already known from `Instrument.chain_patch_bindings`; only the travel envelope is
+underivable. So instruments declare one number per moving axis and the affected component
+set is derived — a component later hung off that axis inherits the padding instead of
+silently getting a nominal-only range.
+
+Over-padding is cheap and under-padding is silent, so the bias is deliberate. Widening a
+range adds distance rows at fixed `DistanceResolution`; it costs recompute in the LUT job
+and nothing else, and the rows are never wrong. A range that is too narrow yields `NaN`
+for every event outside it, which is the failure this ADR exists to remove.
 
 The range is static and covers the full envelope. The LUT workflow does not consume motion:
 a live range would gate the LUT job on motion, couple motion to LUT-driven clearing, and
 race the consumer's own geometry patch.
 
 A guard test recomputes each range from the registered geometry artifact and fails if a
-declared range no longer contains it, so regenerating an artifact cannot silently move a
-component out of its table.
+declared envelope no longer contains it, so regenerating an artifact cannot silently move
+a component out of its table.
 
 ### A generic mirror: workflow outputs republished as input streams
 
@@ -125,10 +131,17 @@ which component's stream that source receives. No new sciline type parameter is 
 handles one bank, so per-component delivery is a routing concern rather than a typing one.
 A reduction job binds its detector and monitor tables as distinct keys.
 
-The wire value is the table plus its provenance scalars as coords — deliberately the legacy
-on-disk layout that essreduce's file loader already rehydrates — so a small provider
-inverts it. da00 round-trips variances, which the uncertainty mask requires
-unconditionally.
+The bound key is essreduce's public `LookupTable[RunType, Component]` dataclass, so
+`Component` distinguishes a job's detector and monitor tables with no new type parameter.
+The wire value is a single `DataArray` carrying the table plus its provenance scalars as
+coords, because da00 serializes a `DataArray` and the dataclass has non-array fields
+(`pulse_stride` is an `int`, `choppers` a `DataGroup`). A small provider reassembles the
+dataclass from those coords. It does not route through
+`load_lookup_table_from_file`, whose matching branch is a backwards-compatibility shim for
+tables predating the dataclass — depending on it would tie us to a deprecated path and
+silently drop `choppers`, which that format cannot carry. Chopper provenance travels in
+the identity coord instead. da00 round-trips variances, which the uncertainty mask
+requires unconditionally.
 
 Monitors are treated as statically known. The user-selectable aux-monitor mechanism is not
 designed around; a check at job creation raises when the chosen monitor differs from the
@@ -214,10 +227,11 @@ event on run transitions, and this is a second trigger on that path.
 
 | Option | Notes |
 |---|---|
-| **Per-component tables, one job, many outputs (chosen)** | Removes the range parameter, cuts recompute by two orders of magnitude, makes each table readable, and maps onto the per-output mirror unchanged. |
+| **Per-component tables, one job, many outputs (chosen)** | Removes the range parameter, cuts recompute by one to two orders of magnitude depending on how much motion padding a component carries, makes each table readable, and maps onto the per-output mirror unchanged. |
 | One instrument-wide table, range = union over all components | Also removes the range parameter, with far less plumbing, but spans an order of magnitude in distance with almost all rows empty. Rejected. |
 | One job per component | Requires synthetic trigger streams to give each job a `source_name`, recomputes the cascade per component, and multiplies the ways shared parameters can drift. Rejected. |
-| Derive every range generically from the geometry artifact | Silently wrong for indirect geometry, which is the exact failure this ADR exists to remove. Rejected. |
+| **Derive every range generically from the geometry artifact, padded (chosen)** | The `Ltotal` rule does differ across geometries, but by metres against flight paths of tens to hundreds of metres, and padding is free apart from recompute. One derivation, no per-component declarations. |
+| Declare the `Ltotal` rule per component | Exact where padding is merely sufficient, and buys that exactness with a per-component declaration that nobody re-checks when the geometry changes. Rejected. |
 | Hand-declare every range | A dozen-plus numbers per instrument that nobody re-checks when an artifact is regenerated. Rejected. |
 | **LUT workflow consumes component motion streams** | Tables would always describe where the component actually is, and the static travel envelope — the one number this design needs from the instrument team — would disappear. It does *not* remove motion from consumers, which still need pixel positions for scattering geometry and for the per-pixel `Ltotal` that indexes the table. Costs: motion joins the LUT job's gating set, so a dead motion PV stops all wavelength reduction; every sample during a move re-emits and clears; and the LUT job's motion value can lag the one the consumer patched into its geometry, so padding is still needed. The strongest alternative; recorded to revisit. |
 | Route the LUT as ungated aux with the file as default (ROI precedent) | Survives a cold start, but leaves reducing with a stale or nominal table as a silent mode — the thing the feature exists to prevent. Rejected in favour of the gate plus explicit limitations. |
@@ -241,12 +255,23 @@ event on run transitions, and this is a second trigger on that path.
   bug otherwise.
 - `ContextBinding` gains a predicate over the job's params, and the gate resolution
   takes the validated params model. This supersedes ADR 0003's param-dependent-context
-  non-goal, which was decided on YAGNI grounds.
+  non-goal, which was decided on YAGNI grounds. Params validation moves up into job
+  creation and `WorkflowFactory.create` takes the validated model rather than the raw
+  `WorkflowConfig`, so the order is validate → resolve gate → build with one validation
+  site. Resolution splits in two: `declared_context_keys` ignores predicates and serves
+  the static callers (route derivation, the workflow visualizer) that need the superset;
+  `resolve_context_keys` filters it by predicate for the job path.
 - Specs are unchanged: coordinate mode stays a parameter on one workflow, so output
   identity and any plot built on it survive a mode switch.
 - The file-based table stops being reachable on a migrated instrument, so the streamed
   table cannot be A/B'd against it side by side within one instrument. The LUT job
   publishes its tables as ordinary outputs, which is the comparison surface instead.
+- DREAM and LOKI migrate first; they are the only instruments offering wavelength mode
+  today. The detector- and monitor-view factories lose their lookup-table filename
+  argument outright rather than defaulting it, so a view has no file path left to fall
+  back to. What remains of `LookupTableFilename` is set explicitly by the unmigrated
+  BIFROST and ESTIA reduction pipelines at their own call sites — an input, not a
+  fallback. Removing the type entirely waits on migrating those two.
 - The LUT workflow loses its range parameter.
 
 ### Standing limitations
