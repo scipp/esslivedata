@@ -168,7 +168,7 @@ def test_edit_is_written_back_into_params(
     persisting_plotter.create_presenter()._handle_edit(_drawn_box())
 
     assert len(persisted_params) == 1
-    assert persisted_params[-1].geometry.coordinates == '[1.0,2.0,5.0,6.0]'
+    assert persisted_params[-1].geometry.coordinates == '[1,2,5,6]'
 
 
 def test_initial_publish_does_not_write_back_params(
@@ -285,6 +285,99 @@ def test_polygon_edit_round_trips_through_params(data_key: DataKey) -> None:
         {'xs': [[0.0, 1.0, 0.5]], 'ys': [[0.0, 0.0, 1.0]]}
     )
 
-    assert persisted[-1].geometry.coordinates == '[[0.0,0.0],[1.0,0.0],[0.5,1.0]]'
+    assert persisted[-1].geometry.coordinates == '[[0,0],[1,0],[0.5,1]]'
     rebuilt = _computed_polygon_plotter(persisted[-1], data_key)
     assert rebuilt._current_rois == plotter._current_rois
+
+
+def test_stored_coordinates_drop_sub_pixel_float_noise(
+    data_key: DataKey,
+) -> None:
+    """The stored string is also the params field the user reads and edits.
+
+    A coordinate is a cursor pixel mapped onto the axis, so the digits past
+    the first few are noise from that mapping, not information.
+    """
+    persisted: list[RectanglesRequestParams] = []
+    plotter = _rebuild(RectanglesRequestParams(), data_key)
+    plotter.set_params_persister(persisted.append)
+
+    plotter.create_presenter()._handle_edit(
+        {
+            'x0': [0.10000000000000003],
+            'x1': [12.345678901234567],
+            'y0': [0.20000000000000004],
+            'y1': [6.000000000000001],
+        }
+    )
+
+    assert persisted[-1].geometry.coordinates == '[0.1,0.2,12.3457,6]'
+
+
+def test_rounding_keeps_small_magnitude_axes_intact(data_key: DataKey) -> None:
+    """Significant digits, not decimal places: a wavelength axis is ~1e-10 m."""
+    persisted: list[RectanglesRequestParams] = []
+    units = {'x': 'm', 'y': 'm'}
+    plotter = _rebuild(RectanglesRequestParams(), data_key, coord_units=units)
+    plotter.set_params_persister(persisted.append)
+
+    plotter.create_presenter()._handle_edit(
+        {'x0': [1.2345678e-10], 'x1': [5.4321e-10], 'y0': [1e-10], 'y1': [2e-10]}
+    )
+
+    rebuilt = _rebuild(persisted[-1], data_key, coord_units=units)
+    roi = rebuilt._current_rois[0]
+    assert roi.x.min == pytest.approx(1.2345678e-10, rel=1e-6)
+    assert roi.x.max == pytest.approx(5.4321e-10, rel=1e-6)
+
+
+def test_stored_geometry_is_a_fixed_point_of_the_round_trip(
+    data_key: DataKey,
+) -> None:
+    """Rebuilding must not perturb geometry, however often it happens."""
+    persisted: list[RectanglesRequestParams] = []
+    plotter = _rebuild(RectanglesRequestParams(), data_key)
+    plotter.set_params_persister(persisted.append)
+    plotter.create_presenter()._handle_edit(
+        {
+            'x0': [0.10000000000000003],
+            'x1': [12.345678901234567],
+            'y0': [2.0],
+            'y1': [6.0],
+        }
+    )
+    stored = persisted[-1]
+
+    rebuilt = _rebuild(stored, data_key)
+    reformatted = rebuilt._format_geometry(rebuilt._current_rois)
+
+    assert reformatted == stored.geometry.coordinates
+
+
+def test_polygon_stored_geometry_is_a_fixed_point_of_the_round_trip(
+    data_key: DataKey,
+) -> None:
+    persisted: list[PolygonsRequestParams] = []
+    plotter = _computed_polygon_plotter(PolygonsRequestParams(), data_key)
+    plotter.set_params_persister(persisted.append)
+    plotter.create_presenter()._handle_edit(
+        {
+            'xs': [[0.10000000000000003, 1.2345678901234567, 0.5]],
+            'ys': [[0.0, 0.0, 1.0000000000000002]],
+        }
+    )
+    stored = persisted[-1]
+
+    rebuilt = _computed_polygon_plotter(stored, data_key)
+    reformatted = rebuilt._format_geometry(rebuilt._current_rois)
+
+    assert reformatted == stored.geometry.coordinates
+
+
+def test_degenerate_stored_rectangle_is_dropped_not_raised(data_key: DataKey) -> None:
+    """A hand-edited zero-width rectangle must not take the plot down."""
+    params = RectanglesRequestParams.model_validate(
+        {'geometry': {'coordinates': '[1,2,1,6]'}}
+    )
+
+    assert _rebuild(params, data_key)._current_rois == {}

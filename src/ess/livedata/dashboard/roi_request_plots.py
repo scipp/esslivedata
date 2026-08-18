@@ -76,6 +76,22 @@ if TYPE_CHECKING:
 
 logger = structlog.get_logger(__name__)
 
+_COORD_PRECISION = 6
+"""Significant digits kept in stored ROI coordinates.
+
+A coordinate is a cursor pixel mapped onto the axis, so a 2000-pixel axis
+carries barely more than three digits of information and everything past that
+is float noise -- noise the user reads, since the stored string is also the
+params field they edit. Significant digits rather than decimal places: axes
+here run from pixel indices through Q in 1/angstrom to wavelength in m, and a
+fixed number of decimals would erase the small-magnitude ones.
+"""
+
+
+def _format_coord(value: float) -> str:
+    """Format a coordinate for storage, as JSON the coordinate parsers accept."""
+    return f'{value:.{_COORD_PRECISION}g}'
+
 
 @runtime_checkable
 class ROIPublisherAware(Protocol):
@@ -688,6 +704,9 @@ class BaseROIRequestPlotter[
 
         # Params hold bare numbers; they mean coordinates on the plot's axes, so
         # they can only be turned into ROIs once the axis units are known.
+        # Seeding here rather than in __init__ is safe because no presenter can
+        # exist yet: SessionComponents.create builds one only once the layer has
+        # a displayable plot, which this call is what produces.
         if not self._seeded_from_params:
             self._current_rois = self._parse_initial_geometry()
             self._seeded_from_params = True
@@ -722,6 +741,7 @@ class BaseROIRequestPlotter[
                 y_unit=self._y_unit,
                 index_offset=self._index_offset,
             )
+            params: ParamsType | None = None
             with self._roi_lock:
                 # Skip if unchanged
                 if new_rois == self._current_rois:
@@ -735,7 +755,7 @@ class BaseROIRequestPlotter[
                 params = self._params
             # Outside the ROI lock: the persister reaches back into the plot
             # orchestrator, which takes its own locks and writes the config store.
-            if self._params_persister is not None:
+            if params is not None and self._params_persister is not None:
                 self._params_persister(params)
 
         with self._roi_lock:
@@ -801,26 +821,32 @@ class RectanglesRequestPlotter(
         if not coords_str or coords_str.strip() == '':
             return {}
 
+        # Construction is inside the try because the stored string is user-facing
+        # and rounded: a hand-edited or degenerate rectangle (min == max after
+        # rounding) fails ``Interval`` validation, which must not take the plot
+        # down with it.
+        rois: dict[int, RectangleROI] = {}
         try:
-            rects = self._params.geometry.parse()
+            for i, (x0, y0, x1, y1) in enumerate(self._params.geometry.parse()):
+                rois[self._index_offset + i] = RectangleROI(
+                    x=Interval(min=min(x0, x1), max=max(x0, x1), unit=self._x_unit),
+                    y=Interval(min=min(y0, y1), max=max(y0, y1), unit=self._y_unit),
+                )
         except Exception:
             logger.warning("Failed to parse initial rectangle coordinates")
             return {}
-
-        rois: dict[int, RectangleROI] = {}
-        for i, (x0, y0, x1, y1) in enumerate(rects):
-            rois[self._index_offset + i] = RectangleROI(
-                x=Interval(min=min(x0, x1), max=max(x0, x1), unit=self._x_unit),
-                y=Interval(min=min(y0, y1), max=max(y0, y1), unit=self._y_unit),
-            )
         return rois
 
     def _format_geometry(self, rois: dict[int, RectangleROI]) -> str:
         """Serialize rectangles as ``[x0,y0,x1,y1], [x0,y0,x1,y1]``."""
-        return ', '.join(
-            f'[{rois[i].x.min},{rois[i].y.min},{rois[i].x.max},{rois[i].y.max}]'
-            for i in sorted(rois)
-        )
+
+        def corners(roi: RectangleROI) -> str:
+            return (
+                f'{_format_coord(roi.x.min)},{_format_coord(roi.y.min)},'
+                f'{_format_coord(roi.x.max)},{_format_coord(roi.y.max)}'
+            )
+
+        return ', '.join(f'[{corners(rois[i])}]' for i in sorted(rois))
 
     def _should_skip_edit(self, new_rois: dict[int, RectangleROI]) -> bool:
         del new_rois  # Rectangles never skip edits
@@ -967,25 +993,29 @@ class PolygonsRequestPlotter(
         if not coords_str or coords_str.strip() == '':
             return {}
 
+        # Construction is inside the try for the same reason as for rectangles:
+        # the stored string is user-facing, so a hand-edited polygon that fails
+        # ``PolygonROI`` validation must not take the plot down.
+        rois: dict[int, PolygonROI] = {}
         try:
-            polygons = self._params.geometry.parse()
+            for i, (xs, ys) in enumerate(self._params.geometry.parse()):
+                if len(xs) >= 3:
+                    rois[self._index_offset + i] = PolygonROI(
+                        x=xs, y=ys, x_unit=self._x_unit, y_unit=self._y_unit
+                    )
         except Exception:
             logger.warning("Failed to parse initial polygon coordinates")
             return {}
-
-        rois: dict[int, PolygonROI] = {}
-        for i, (xs, ys) in enumerate(polygons):
-            if len(xs) >= 3:
-                rois[self._index_offset + i] = PolygonROI(
-                    x=xs, y=ys, x_unit=self._x_unit, y_unit=self._y_unit
-                )
         return rois
 
     def _format_geometry(self, rois: dict[int, PolygonROI]) -> str:
         """Serialize polygons as ``[[x,y],[x,y],[x,y]], [[x,y],...]``."""
 
         def vertices(roi: PolygonROI) -> str:
-            return ','.join(f'[{x},{y}]' for x, y in zip(roi.x, roi.y, strict=True))
+            return ','.join(
+                f'[{_format_coord(x)},{_format_coord(y)}]'
+                for x, y in zip(roi.x, roi.y, strict=True)
+            )
 
         return ', '.join(f'[{vertices(rois[i])}]' for i in sorted(rois))
 
