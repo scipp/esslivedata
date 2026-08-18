@@ -20,13 +20,22 @@ nothing else, while a range that is too narrow blanks the component.
 
 from __future__ import annotations
 
-from collections.abc import Iterable
+import copy
+from collections.abc import Iterable, Mapping
 
 import scipp as sc
 import scippnexus as snx
-from ess.reduce.nexus.types import Filename, NeXusName, SampleRun
+from ess.reduce.nexus.types import (
+    Filename,
+    NeXusComponent,
+    NeXusName,
+    NeXusTransformationChain,
+    SampleRun,
+)
 from ess.reduce.unwrap import GenericUnwrapWorkflow
 from ess.reduce.unwrap.types import DetectorLtotal, MonitorLtotal
+
+from ..config.stream import MotionEnvelope
 
 #: Fraction of a component's own span added at each end, plus a floor, so that a
 #: component whose pixels all sit at one distance (every monitor, and a detector
@@ -40,17 +49,80 @@ class LtotalRangeError(ValueError):
     """Raised when a component's flight-path range cannot be derived."""
 
 
-def _ltotal(nexus_filename: str, component: str, *, is_monitor: bool) -> sc.Variable:
-    """Compute a component's ``Ltotal`` from the geometry artifact."""
+def _park_live_transforms(
+    workflow, component_class: type, motion: Mapping[str, MotionEnvelope]
+) -> sc.Variable:
+    """Resolve a component's live transforms to their nominal values.
+
+    The artifact stores an f144-driven transform as an empty NXlog, so a
+    component riding one has no position until something supplies a value.
+    Each such transform is parked at its declared nominal, and the travel of
+    every axis the component rides is summed into the padding its range needs.
+
+    Which components ride which axis is derived here rather than declared: a
+    component is affected precisely when the axis appears in its ``depends_on``
+    chain.
+    """
+    chain_key = NeXusTransformationChain[component_class, SampleRun]
+    chain = workflow.compute(chain_key)
+    live = {
+        path: transform
+        for path, transform in chain.transformations.items()
+        if isinstance(value := getattr(transform, 'value', None), sc.DataArray)
+        and 'time' in value.dims
+    }
+    if not live:
+        return sc.scalar(0.0, unit='m')
+
+    chain = copy.deepcopy(chain)
+    travel = sc.scalar(0.0, unit='m')
+    for path in live:
+        if (envelope := motion.get(path)) is None:
+            raise LtotalRangeError(
+                f"transform {path!r} is driven by a live stream and the artifact "
+                "carries no value for it; declare a MotionEnvelope for this axis"
+            )
+        transform = chain.transformations[path]
+        transform.value = sc.DataArray(
+            sc.array(
+                dims=['time'],
+                values=[envelope.nominal.to(unit=transform.value.unit).value],
+                unit=transform.value.unit,
+            ),
+            coords={
+                'time': sc.array(dims=['time'], values=[0], unit='ns', dtype='int64')
+            },
+        )
+        travel = travel + envelope.travel.to(unit='m')
+
+    component_key = NeXusComponent[component_class, SampleRun]
+    component = copy.copy(workflow.compute(component_key))
+    component['depends_on'] = chain
+    workflow[component_key] = component
+    return travel
+
+
+def _ltotal(
+    nexus_filename: str,
+    component: str,
+    *,
+    is_monitor: bool,
+    motion: Mapping[str, MotionEnvelope],
+) -> tuple[sc.Variable, sc.Variable]:
+    """Compute a component's ``Ltotal`` and its motion padding."""
     workflow = GenericUnwrapWorkflow(
         run_types=[SampleRun], monitor_types=[snx.NXmonitor]
     )
     workflow[Filename[SampleRun]] = nexus_filename
-    if is_monitor:
-        workflow[NeXusName[snx.NXmonitor]] = component
-        return workflow.compute(MonitorLtotal[SampleRun, snx.NXmonitor])
-    workflow[NeXusName[snx.NXdetector]] = component
-    return workflow.compute(DetectorLtotal[SampleRun])
+    component_class = snx.NXmonitor if is_monitor else snx.NXdetector
+    workflow[NeXusName[component_class]] = component
+    travel = _park_live_transforms(workflow, component_class, motion)
+    ltotal = (
+        workflow.compute(MonitorLtotal[SampleRun, snx.NXmonitor])
+        if is_monitor
+        else workflow.compute(DetectorLtotal[SampleRun])
+    )
+    return ltotal, travel
 
 
 def component_ltotal_range(
@@ -58,7 +130,7 @@ def component_ltotal_range(
     component: str,
     *,
     is_monitor: bool,
-    travel: sc.Variable | None = None,
+    motion: Mapping[str, MotionEnvelope] | None = None,
 ) -> tuple[sc.Variable, sc.Variable]:
     """Derive the flight-path range covered by one component's lookup table.
 
@@ -71,35 +143,38 @@ def component_ltotal_range(
     is_monitor:
         Select the straight-line ``Ltotal`` used for monitors over the
         scattering-geometry one used for detectors.
-    travel:
-        Travel envelope of the axis this component rides, added downstream of
-        the nominal position. ``None`` for a static component.
+    motion:
+        Declared envelopes for the instrument's moving axes, keyed by NeXus
+        transform path. Only the axes this component actually rides are applied.
 
     Returns
     -------
     :
-        ``(start, stop)`` in metres, padded.
+        ``(start, stop)`` in metres, padded, and extended downstream by the
+        travel of every axis the component rides.
 
     Raises
     ------
     LtotalRangeError:
-        If the component's position cannot be resolved from the artifact. The
-        common cause is a ``depends_on`` chain with a live (f144-driven)
-        transform, whose nominal value the artifact does not carry.
+        If the component's position cannot be resolved. Either the component is
+        absent from the artifact, or it rides a live axis with no declared
+        :class:`MotionEnvelope`.
     """
     try:
-        ltotal = _ltotal(nexus_filename, component, is_monitor=is_monitor).to(unit='m')
+        ltotal, travel = _ltotal(
+            nexus_filename, component, is_monitor=is_monitor, motion=motion or {}
+        )
+    except LtotalRangeError as exc:
+        raise LtotalRangeError(f"Cannot place {component!r}: {exc}") from exc
     except Exception as exc:
         raise LtotalRangeError(
             f"Cannot derive the flight-path range of {component!r} from "
             f"{nexus_filename}: {exc}"
         ) from exc
+    ltotal = ltotal.to(unit='m')
     start, stop = ltotal.min(), ltotal.max()
     pad = sc.max(sc.concat([(stop - start) * _RELATIVE_PAD, _MINIMUM_PAD], 'pad'))
-    stop = stop + pad
-    if travel is not None:
-        stop = stop + travel.to(unit='m')
-    return start - pad, stop
+    return start - pad, stop + pad + travel
 
 
 def component_ltotal_ranges(
@@ -107,7 +182,7 @@ def component_ltotal_ranges(
     *,
     detectors: Iterable[str],
     monitors: Iterable[str],
-    travel: dict[str, sc.Variable] | None = None,
+    motion: Mapping[str, MotionEnvelope] | None = None,
 ) -> dict[str, tuple[sc.Variable, sc.Variable]]:
     """Derive the flight-path range of every component, keyed by component name.
 
@@ -119,16 +194,13 @@ def component_ltotal_ranges(
         Detector names, given the scattering-geometry ``Ltotal``.
     monitors:
         Monitor names, given the straight-line ``Ltotal``.
-    travel:
-        Per-component travel envelopes; see :func:`component_ltotal_range`.
+    motion:
+        Declared envelopes for the instrument's moving axes; see
+        :func:`component_ltotal_range`.
     """
-    travel = travel or {}
     return {
         name: component_ltotal_range(
-            nexus_filename,
-            name,
-            is_monitor=is_monitor,
-            travel=travel.get(name),
+            nexus_filename, name, is_monitor=is_monitor, motion=motion
         )
         for names, is_monitor in ((detectors, False), (monitors, True))
         for name in names
