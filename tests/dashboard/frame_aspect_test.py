@@ -87,13 +87,15 @@ class TestHookAcrossUpdates:
         assert _n_js_callbacks(fig.x_range) == 2
         assert _n_js_callbacks(fig.y_range) == 2
 
-    def test_updates_reset_the_letterbox_padding(self, rendered_dmap) -> None:
-        """HoloViews rewrites ``min_border_*`` from its own opts on every update.
+    def test_reapplied_opts_reset_the_letterbox_padding(self, rendered_dmap) -> None:
+        """Re-applying element opts rewrites ``min_border_*``, wiping the letterbox.
 
-        The letterbox the CustomJS applied is therefore wiped once per data
-        frame, which is why the callback must be idempotent and must re-run:
-        the reset changes the frame size, which fires the callback again on
-        the same patch.
+        This fixture re-applies the opts per frame, which the dashboard's own
+        update path does not do (data arrives through pipes, leaving figure
+        properties alone). It pins the hazard the callback is written against:
+        anything that re-applies opts wipes the padding, so the rule has to be
+        idempotent and has to re-derive its input from the current layout
+        rather than remember what it applied.
         """
         fig, pipe = rendered_dmap
         # Simulate the browser-side CustomJS having letterboxed the frame.

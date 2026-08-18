@@ -24,12 +24,14 @@ cooperating parts:
    only from ``initialize_plot``, so the hook tags the figure and only acts
    once per figure: repeated attaching would leak a callback set per update.
 
-   HoloViews also rewrites ``min_border_*`` from its own opts on every update,
-   wiping the letterbox once per data frame.  The callback re-applies it: the
-   reset changes the frame size, and the resulting ``inner_width`` /
-   ``inner_height`` change re-triggers the callback within the same patch.
-   This is why the rule must be idempotent and must derive everything it needs
-   from the current layout.
+   Re-applying element opts rewrites ``min_border_*`` and so wipes the
+   letterbox; the callback then puts it back, because the rewrite changes the
+   frame size and the resulting ``inner_width`` / ``inner_height`` change
+   re-triggers the callback within the same patch.  The rule must therefore be
+   idempotent and derive everything it needs from the current layout.  The
+   dashboard's update path does not do this -- data reaches the plot through
+   pipes, leaving figure properties alone, so the letterbox is applied once and
+   then left untouched (measured: no border change across 145 data updates).
 
 Two hook variants exist:
 
