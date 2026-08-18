@@ -165,7 +165,11 @@ class TestWorkflowFactory:
             identifier=workflow_id,
             job_id=JobId(source_name="any-source", job_number=uuid.uuid4()),
         )
-        processor = factory.create(source_name="any-source", config=config)
+        processor = factory.create(
+            source_name="any-source",
+            config=config,
+            params=factory.validate_params(config),
+        )
         assert isinstance(processor, StreamProcessor)
 
     def test_create_with_source_name_parameter(self):
@@ -195,7 +199,11 @@ class TestWorkflowFactory:
             identifier=workflow_id,
             job_id=JobId(source_name="source1", job_number=uuid.uuid4()),
         )
-        processor = factory.create(source_name="source1", config=config)
+        processor = factory.create(
+            source_name="source1",
+            config=config,
+            params=factory.validate_params(config),
+        )
         assert isinstance(processor, StreamProcessor)
 
     def test_create_with_params(self):
@@ -226,7 +234,11 @@ class TestWorkflowFactory:
             job_id=JobId(source_name="any-source", job_number=uuid.uuid4()),
             params={"value": 100, "name": "custom"},
         )
-        processor = factory.create(source_name="any-source", config=config)
+        processor = factory.create(
+            source_name="any-source",
+            config=config,
+            params=factory.validate_params(config),
+        )
         assert isinstance(processor, StreamProcessor)
 
     def test_create_invalid_params_raises_pydantic_error(self):
@@ -260,7 +272,11 @@ class TestWorkflowFactory:
 
         # This should raise a pydantic validation error
         with pytest.raises(ValidationError):
-            factory.create(source_name="any-source", config=config)
+            factory.create(
+                source_name="any-source",
+                config=config,
+                params=factory.validate_params(config),
+            )
 
     def test_params_for_workflow_taking_none_are_rejected(
         self, workflow_id, workflow_spec
@@ -282,7 +298,11 @@ class TestWorkflowFactory:
         )
 
         with pytest.raises(ValidationError):
-            factory.create(source_name="any-source", config=config)
+            factory.create(
+                source_name="any-source",
+                config=config,
+                params=factory.validate_params(config),
+            )
 
     def test_unknown_workflow_id_raises_key_error(self):
         factory = WorkflowFactory()
@@ -297,7 +317,11 @@ class TestWorkflowFactory:
         )
 
         with pytest.raises(KeyError, match="Unknown workflow ID"):
-            factory.create(source_name="any-source", config=config)
+            factory.create(
+                source_name="any-source",
+                config=config,
+                params=factory.validate_params(config),
+            )
 
     def test_invalid_source_name_raises_value_error(self, workflow_spec_with_sources):
         factory = WorkflowFactory()
@@ -329,7 +353,11 @@ class TestWorkflowFactory:
         )
 
         with pytest.raises(ValueError, match="Source 'invalid-source' is not allowed"):
-            factory.create(source_name="invalid-source", config=config)
+            factory.create(
+                source_name="invalid-source",
+                config=config,
+                params=factory.validate_params(config),
+            )
 
     def test_multiple_registrations_create_distinct_entries(self):
         factory = WorkflowFactory()
@@ -451,8 +479,16 @@ class TestWorkflowFactory:
             identifier=workflow_id2,
             job_id=JobId(source_name="any", job_number=uuid.uuid4()),
         )
-        processor1 = factory.create(source_name="any", config=config1)
-        processor2 = factory.create(source_name="any", config=config2)
+        processor1 = factory.create(
+            source_name="any",
+            config=config1,
+            params=factory.validate_params(config1),
+        )
+        processor2 = factory.create(
+            source_name="any",
+            config=config2,
+            params=factory.validate_params(config2),
+        )
         assert isinstance(processor1, StreamProcessor)
         assert isinstance(processor2, StreamProcessor)
 
@@ -482,7 +518,11 @@ class TestWorkflowFactory:
             identifier=workflow_id,
             job_id=JobId(source_name="any", job_number=uuid.uuid4()),
         )
-        processor = factory.create(source_name="any", config=config)
+        processor = factory.create(
+            source_name="any",
+            config=config,
+            params=factory.validate_params(config),
+        )
         assert isinstance(processor, StreamProcessor)
 
     def test_case_sensitivity_in_source_names(self):
@@ -515,34 +555,44 @@ class TestWorkflowFactory:
         )
 
         # These should work
-        processor1 = factory.create(source_name="Source1", config=config)
+        processor1 = factory.create(
+            source_name="Source1",
+            config=config,
+            params=factory.validate_params(config),
+        )
+        config = WorkflowConfig(
+            identifier=workflow_id,
+            job_id=JobId(source_name="SOURCE2", job_number=uuid.uuid4()),
+        )
         processor2 = factory.create(
             source_name="SOURCE2",
-            config=WorkflowConfig(
-                identifier=workflow_id,
-                job_id=JobId(source_name="SOURCE2", job_number=uuid.uuid4()),
-            ),
+            config=config,
+            params=factory.validate_params(config),
         )
         assert isinstance(processor1, StreamProcessor)
         assert isinstance(processor2, StreamProcessor)
 
         # These should fail due to case sensitivity
+        bad_lower_config = WorkflowConfig(
+            identifier=workflow_id,
+            job_id=JobId(source_name="source1", job_number=uuid.uuid4()),
+        )
         with pytest.raises(ValueError, match="is not allowed"):
             factory.create(
                 source_name="source1",
-                config=WorkflowConfig(
-                    identifier=workflow_id,
-                    job_id=JobId(source_name="source1", job_number=uuid.uuid4()),
-                ),
+                config=bad_lower_config,
+                params=factory.validate_params(bad_lower_config),
             )
 
+        bad_upper_config = WorkflowConfig(
+            identifier=workflow_id,
+            job_id=JobId(source_name="source2", job_number=uuid.uuid4()),
+        )
         with pytest.raises(ValueError, match="is not allowed"):
             factory.create(
                 source_name="source2",
-                config=WorkflowConfig(
-                    identifier=workflow_id,
-                    job_id=JobId(source_name="source2", job_number=uuid.uuid4()),
-                ),
+                config=bad_upper_config,
+                params=factory.validate_params(bad_upper_config),
             )
 
     def test_create_with_aux_sources(self):
@@ -574,7 +624,11 @@ class TestWorkflowFactory:
             job_id=JobId(source_name="any-source", job_number=uuid.uuid4()),
             aux_source_names={"monitor": "monitor2", "rotation": "rotation2"},
         )
-        processor = factory.create(source_name="any-source", config=config)
+        processor = factory.create(
+            source_name="any-source",
+            config=config,
+            params=factory.validate_params(config),
+        )
         assert isinstance(processor, StreamProcessor)
 
     def test_create_without_aux_sources_when_not_required(self):
@@ -604,7 +658,11 @@ class TestWorkflowFactory:
             identifier=workflow_id,
             job_id=JobId(source_name="any-source", job_number=uuid.uuid4()),
         )
-        processor = factory.create(source_name="any-source", config=config)
+        processor = factory.create(
+            source_name="any-source",
+            config=config,
+            params=factory.validate_params(config),
+        )
         assert isinstance(processor, StreamProcessor)
 
     def test_create_with_aux_sources_rejects_when_not_expected(self):
@@ -640,7 +698,11 @@ class TestWorkflowFactory:
             ValueError,
             match="does not require auxiliary sources",
         ):
-            factory.create(source_name="any-source", config=config)
+            factory.create(
+                source_name="any-source",
+                config=config,
+                params=factory.validate_params(config),
+            )
 
     def test_register_sets_aux_sources_type_explicitly(self):
         """Test that the register decorator sets aux_sources type explicitly in spec."""
@@ -773,7 +835,11 @@ class TestTwoPhaseRegistration:
             identifier=workflow_id,
             job_id=JobId(source_name="any-source", job_number=uuid.uuid4()),
         )
-        processor = factory.create(source_name="any-source", config=config)
+        processor = factory.create(
+            source_name="any-source",
+            config=config,
+            params=factory.validate_params(config),
+        )
         assert isinstance(processor, StreamProcessor)
 
     def test_attach_factory_with_params(self):
@@ -806,7 +872,11 @@ class TestTwoPhaseRegistration:
             job_id=JobId(source_name="any-source", job_number=uuid.uuid4()),
             params={"value": 100, "name": "custom"},
         )
-        processor = factory.create(source_name="any-source", config=config)
+        processor = factory.create(
+            source_name="any-source",
+            config=config,
+            params=factory.validate_params(config),
+        )
         assert isinstance(processor, StreamProcessor)
 
     def test_attach_factory_params_type_mismatch_raises_error(self):
@@ -992,6 +1062,7 @@ class TestContextKeyInjection:
         workflow = factory.create(
             source_name='any',
             config=self._config(workflow_id),
+            params=factory.validate_params(self._config(workflow_id)),
             context_keys={'rot': _CtxKey},
         )
         assert workflow.context_keys == {'rot': _CtxKey}
@@ -999,7 +1070,12 @@ class TestContextKeyInjection:
 
     def test_build_called_even_without_context_keys(self) -> None:
         factory, workflow_id = self._register(lambda: FakeContextWorkflow())
-        workflow = factory.create(source_name='any', config=self._config(workflow_id))
+        config = self._config(workflow_id)
+        workflow = factory.create(
+            source_name='any',
+            config=config,
+            params=factory.validate_params(config),
+        )
         assert workflow.context_keys == {}
         assert workflow.built is True
 
@@ -1009,6 +1085,7 @@ class TestContextKeyInjection:
             factory.create(
                 source_name='any',
                 config=self._config(workflow_id),
+                params=factory.validate_params(self._config(workflow_id)),
                 context_keys={'rot': _CtxKey},
             )
 

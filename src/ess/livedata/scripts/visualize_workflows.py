@@ -82,7 +82,7 @@ def main() -> None:
         aux_source_names = (
             spec.aux_sources.render(job_id=job_id) if spec.aux_sources else None
         )
-        context_keys = instrument.resolve_context_keys(wid, source_name)
+        context_keys = instrument.declared_context_keys(wid, source_name)
         try:
             workflow = factory.create(
                 source_name=source_name,
