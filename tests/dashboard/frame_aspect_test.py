@@ -99,9 +99,9 @@ class TestHookAcrossUpdates:
         """
         fig, pipe = rendered_dmap
         # Simulate the browser-side CustomJS having letterboxed the frame.
-        fig.min_border_right = 120
+        fig.min_border_left = 120
 
         pipe.send(np.ones((4, 8)))
 
         assert fig.sizing_mode == 'stretch_both'
-        assert fig.min_border_right != 120
+        assert fig.min_border_left != 120

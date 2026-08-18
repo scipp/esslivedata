@@ -43,8 +43,9 @@ Two hook variants exist:
   ``match_aspect`` is **not** set on the figure (that would cause Bokeh to
   pad ranges, creating a circular dependency).
 
-The letterbox pads the right or bottom border, so the space it leaves over
-shows up on the right of and below the plot.
+The letterbox pads the left or bottom border, so the space it leaves over shows
+up to the left of and below the plot, with the plot itself and everything
+attached to it (axes, colorbar, toolbar) staying together.
 """
 
 from __future__ import annotations
@@ -61,9 +62,15 @@ _HOOK_APPLIED_TAG = 'ess-livedata-frame-aspect'
 # every update. A border at this value therefore means "no letterbox applied".
 _HOLOVIEWS_MIN_BORDER = 10
 
-# Letterbox the frame: shrink whichever dimension is too long by padding that
-# side's border. Prefixed by a variant-specific prologue defining ``target``
-# (the desired frame width/height ratio).
+# Letterbox the frame: shrink whichever dimension is too long by padding a
+# border. Prefixed by a variant-specific prologue defining ``target`` (the
+# desired frame width/height ratio).
+#
+# Width is taken off the *left* and height off the *bottom*, so that every part
+# of the plot stays attached to the frame. The toolbar sits in the right border
+# and the title in the top one, and Bokeh centres each in whatever space its
+# border has: padding those sides leaves them floating in the middle of the
+# slack instead of beside the plot.
 #
 # Sizing the frame directly (``frame_width``/``frame_height``) does not work:
 # Bokeh only honours those when they are set before the figure is first
@@ -80,11 +87,11 @@ _FIT_FRAME_JS = """
     try { bbox = Bokeh.index.find_one(fig).frame.bbox; } catch(e) { return; }
     const fw = bbox.width;
     const fh = bbox.height;
-    const padded = fig.min_border_right > BASE_BORDER ||
+    const padded = fig.min_border_left > BASE_BORDER ||
                    fig.min_border_bottom > BASE_BORDER;
 
     const unpad = () => {
-        fig.min_border_right = BASE_BORDER;
+        fig.min_border_left = BASE_BORDER;
         fig.min_border_bottom = BASE_BORDER;
     };
 
@@ -109,9 +116,8 @@ _FIT_FRAME_JS = """
     // Keep a sliver of frame whatever happens, so a bad measurement cannot
     // collapse the plot into a state this callback can no longer see out of.
     if (fw > fh * target) {
-        const border = fig.outer_width - bbox.x - fw;
-        const room = fig.outer_width - bbox.x - 20;
-        fig.min_border_right = Math.round(Math.min(border + fw - fh * target, room));
+        fig.min_border_left = Math.round(Math.min(bbox.x + fw - fh * target,
+                                                  bbox.x + fw - 20));
     } else {
         const border = fig.outer_height - bbox.y - fh;
         const room = fig.outer_height - bbox.y - 20;
