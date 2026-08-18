@@ -49,7 +49,6 @@ from .plot_widgets import (
     create_layer_info_row,
     derive_cell_title,
     get_plot_cell_display_info,
-    get_workflow_display_info,
 )
 from .styles import Colors, StatusColors, StatusPill
 
@@ -598,8 +597,10 @@ class CellWidget:
             config = layer.config
             state = layer_states[layer.layer_id]
 
-            workflow_title, output_title = get_workflow_display_info(
-                self._deps.workflow_registry, config.workflow_id, config.view_name
+            layer_title, _ = get_plot_cell_display_info(
+                config,
+                self._deps.workflow_registry,
+                get_source_title=self._deps.orchestrator.get_source_title,
             )
 
             # Determine status from explicit state enum
@@ -625,8 +626,7 @@ class CellWidget:
                     text_color = Colors.TEXT_MUTED
 
             status_lines.append(
-                f"**{workflow_title} → {output_title}**: "
-                f"<span style='color: {text_color}'>{status}</span>"
+                f"**{layer_title}**: <span style='color: {text_color}'>{status}</span>"
             )
 
         content = "\n\n".join(status_lines)

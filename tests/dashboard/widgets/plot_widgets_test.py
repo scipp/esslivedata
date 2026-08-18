@@ -257,7 +257,7 @@ class TestPlotterTitleInDisplayInfo:
     def test_title_includes_plotter_title(self) -> None:
         config = self._config('rectangles_readback')
         title, _ = get_plot_cell_display_info(config, self._registry)
-        assert 'ROI Rectangles (Readback)' in title
+        assert 'ROI Rectangles' in title
 
     def test_readback_and_request_layers_have_distinct_titles(self) -> None:
         readback, _ = get_plot_cell_display_info(
@@ -272,7 +272,22 @@ class TestPlotterTitleInDisplayInfo:
         _, description = get_plot_cell_display_info(
             self._config('rectangles_readback'), self._registry
         )
-        assert 'Plotter: ROI Rectangles (Readback)' in description
+        assert 'Plotter: ROI Rectangles' in description
+
+    def test_roi_overlay_title_omits_output(self) -> None:
+        # The ROI plotters subscribe to the ROI readback output; naming it
+        # would repeat the plotter for the readback layer and contradict it
+        # for the interactive one.
+        readback, readback_desc = get_plot_cell_display_info(
+            self._config('rectangles_readback'), self._registry
+        )
+        request, request_desc = get_plot_cell_display_info(
+            self._config('rectangles_request'), self._registry
+        )
+        assert readback == 'Detector counts &rarr; ROI Rectangles (src1)'
+        assert request == 'Detector counts &rarr; Edit ROI Rectangles (src1)'
+        assert 'Output:' not in readback_desc
+        assert 'Output:' not in request_desc
 
     def test_plotter_title_suppressed_when_equal_to_output(self) -> None:
         # Output 'Image' rendered by the 'image' plotter (title 'Image').

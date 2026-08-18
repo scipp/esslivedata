@@ -603,10 +603,14 @@ def get_plot_cell_display_info(
     except KeyError:
         plotter_spec = None
     plotter_title = plotter_spec.title if plotter_spec is not None else None
-    # Drop the plotter segment when it merely echoes the output (e.g. an "Image"
-    # output rendered by the "Image" plotter); it only adds information when it
-    # differs (ROI readback/request, correlation over a timeseries).
-    if plotter_title == output_title:
+    # ROI overlays drop the output segment: the read-only display and the
+    # interactive editor both subscribe to the ROI readback output, so naming it
+    # repeats the plotter for one and contradicts it for the other.
+    show_output = plotter_spec is None or not plotter_spec.title_replaces_output
+    # Otherwise drop the plotter segment when it merely echoes the output (e.g.
+    # an "Image" output rendered by the "Image" plotter); it only adds
+    # information when it differs (correlation over a timeseries).
+    if show_output and plotter_title == output_title:
         plotter_title = None
 
     # Build title: "Workflow → Output → Plotter (source, window)"
@@ -630,28 +634,32 @@ def get_plot_cell_display_info(
         detail_parts.append(window_info)
     details = ', '.join(detail_parts)
 
-    view_chain = f'{workflow_title} &rarr; {output_title}'
+    segments = [workflow_title]
+    if show_output:
+        segments.append(output_title)
     if plotter_title:
-        view_chain += f' &rarr; {plotter_title}'
+        segments.append(plotter_title)
+    view_chain = ' &rarr; '.join(segments)
     title = f'{view_chain} ({details})'
 
     # Build description for tooltip using display titles
     sources_str = ', '.join(_title(s) for s in config.source_names)
-    description_parts = [
-        f'Workflow: {workflow_title}',
-        f'Output: {output_title}',
-    ]
+    description_parts = [f'Workflow: {workflow_title}']
+    if show_output:
+        description_parts.append(f'Output: {output_title}')
     if plotter_title:
         description_parts.append(f'Plotter: {plotter_title}')
     description_parts.append(f'Sources: {sources_str}')
     if window_info:
         description_parts.append(f'Window: {window_info}')
 
-    # Append view description from the workflow spec if available
+    # Append view description from the workflow spec if available. Suppressed
+    # alongside the output title: the plotter's own description is then the
+    # authoritative account of what the layer shows.
     workflow_spec = workflow_registry.get(config.workflow_id)
     view = (
         workflow_spec.get_output_view(config.view_name)
-        if workflow_spec is not None and config.view_name
+        if workflow_spec is not None and config.view_name and show_output
         else None
     )
     if view is not None and view.description:
