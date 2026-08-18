@@ -54,6 +54,28 @@ ANNOUNCEMENTS_URL = (
 pn.extension('holoviews', 'modal', notifications=True, template='material')
 hv.extension('bokeh')
 
+# HoloViews defaults its Bokeh renderer to `webgl=True`, which sets
+# `output_backend='webgl'` on every figure. That gives each plot a second, WebGL
+# canvas: Bokeh then resizes, scissors and clears it before every paint
+# (`prepare_webgl`) and blits it over the 2D canvas afterwards (`blit_webgl` ->
+# a full-canvas `drawImage`), per plot, per renderer, per frame. Because that
+# canvas is shared by the whole page, resizing it to each plot's frame
+# reallocates its drawing buffer whenever neighbouring cells differ in size,
+# which ours do. The cost is therefore fixed per figure, whatever it draws,
+# while the saving scales with content -- and our content stays below where the
+# GL path starts to pay: curves are a few hundred points against a break-even
+# near 30k, and detector images are mostly 320^2 or smaller. Bokeh does have a
+# WebGL path for images, it simply does not earn the round trip at these sizes.
+# On a 12-cell grid of mixed cell sizes, a data update costs the browser's main
+# thread 82 ms on the 2D canvas against 134 ms in WebGL; with uniform cell sizes
+# the reallocation term does not arise and the gap is ~9 ms. Any re-measurement
+# has to run on real graphics hardware: without a GPU, Chromium rasterizes WebGL
+# glyphs on the CPU, which inflates the gap by roughly an order of magnitude and
+# hides the reallocation term behind glyph work. Individual figures can still opt
+# in via `backend_opts={'plot.output_backend': 'webgl'}`; see #1218 for where
+# that might be worth doing.
+hv.renderer('bokeh').webgl = False
+
 # HoloViews registers `apply_nodata` as a data-mode compositor for Image, Raster,
 # QuadMesh and ImageStack, implementing the `nodata` plot option: an integer
 # sentinel value is rewritten to NaN, which draws transparent. It cannot fire here
