@@ -29,6 +29,22 @@ ROI request plotters follow the two-stage compute/present pattern:
 
 The presenter handles only HoloViews mechanics. All domain logic (ROI parsing,
 comparison, skip logic, publishing) stays in the plotter via the edit callback.
+
+Coordinate units
+----------------
+Stored geometry is bare numbers, meaning coordinates as read off the plot's
+axes -- the same numbers the static overlays draw. The unit is stamped on at
+parse time from the data and never stored alongside them: it belongs to the
+view a layer is bound to, so persisting it would create a value that goes
+stale as soon as the layer is pointed at another view, plus rules to resolve
+the disagreement. A re-derived unit cannot disagree.
+
+Leaving the unit off is not an option either: ``Interval`` and ``PolygonROI``
+read a missing unit as pixel indices, which would silently displace every ROI
+on a view with physical coordinates.
+
+Units therefore arrive with the data, which is why stored geometry is seeded
+in compute() rather than in __init__.
 """
 
 from __future__ import annotations
@@ -572,10 +588,10 @@ class BaseROIRequestPlotter[
         self._index_offset = self._get_index_offset()
 
         # Live ROI state shared across all sessions of this plotter. Seeded from
-        # params on the first compute(), which is where the coordinate units the
-        # params are expressed in become known. Sessions' edit handlers read and
-        # update this under _roi_lock; new presenters are seeded from it so a
-        # session opened after edits sees the current ROIs.
+        # params on the first compute(), where the axis units become known.
+        # Sessions' edit handlers read and update this under _roi_lock; new
+        # presenters are seeded from it so a session opened after edits sees
+        # the current ROIs.
         self._current_rois: dict[int, ROIType] = {}
         self._seeded_from_params = False
         self._published_initial = False
