@@ -23,7 +23,6 @@ from ess.livedata.workflows.wavelength_lut_workflow import (
 from ess.livedata.workflows.wavelength_lut_workflow_specs import (
     CHOPPER_CASCADE_SOURCE,
     WAVELENGTH_BANDS_OUTPUT,
-    WAVELENGTH_LUT_OUTPUT,
     CascadeBands,
     Pulse,
     SourceOffset,
@@ -113,6 +112,13 @@ def _nxlog(value: float, unit: str | None) -> sc.DataArray:
     )
 
 
+#: The test geometry files carry choppers only, so the component a table is
+#: keyed by -- and the range it covers -- are supplied directly rather than
+#: derived from detector or monitor positions.
+COMPONENT = 'test_detector'
+LTOTAL_RANGES = {COMPONENT: (sc.scalar(5.0, unit='m'), sc.scalar(30.0, unit='m'))}
+
+
 @pytest.fixture
 def no_chopper_geometry(tmp_path: Path) -> Path:
     path = tmp_path / 'no_choppers.nxs'
@@ -123,7 +129,10 @@ def no_chopper_geometry(tmp_path: Path) -> Path:
 def _build_no_chopper_workflow(geom: Path):
     """Build the LUT workflow against a chopper-free geometry file."""
     wf = create_wavelength_lut_workflow(
-        params=_params(), setpoint_keys={}, nexus_filename=str(geom)
+        params=_params(),
+        setpoint_keys={},
+        nexus_filename=str(geom),
+        ltotal_ranges=LTOTAL_RANGES,
     )
     wf.build()
     return wf
@@ -133,7 +142,7 @@ def _build_no_chopper_workflow(geom: Path):
 def lut(no_chopper_geometry: Path) -> sc.DataArray:
     wf = _build_no_chopper_workflow(no_chopper_geometry)
     wf.accumulate(_trigger(), start_time=0, end_time=1)
-    return wf.finalize()[WAVELENGTH_LUT_OUTPUT]
+    return wf.finalize()[COMPONENT]
 
 
 class TestCascadeBands:
@@ -180,11 +189,14 @@ class TestNoChopperWorkflow:
     def test_provenance_coords_attached(self, no_chopper_geometry: Path) -> None:
         params = _params()
         wf = create_wavelength_lut_workflow(
-            params=params, setpoint_keys={}, nexus_filename=str(no_chopper_geometry)
+            params=params,
+            setpoint_keys={},
+            nexus_filename=str(no_chopper_geometry),
+            ltotal_ranges=LTOTAL_RANGES,
         )
         wf.build()
         wf.accumulate(_trigger(), start_time=0, end_time=1)
-        table = wf.finalize()[WAVELENGTH_LUT_OUTPUT]
+        table = wf.finalize()[COMPONENT]
 
         for name in (
             'pulse_period',
@@ -206,10 +218,10 @@ class TestNoChopperWorkflow:
     ) -> None:
         wf = _build_no_chopper_workflow(no_chopper_geometry)
         wf.accumulate(_trigger(), start_time=0, end_time=1)
-        first = wf.finalize()[WAVELENGTH_LUT_OUTPUT]
+        first = wf.finalize()[COMPONENT]
         wf.clear()
         wf.accumulate(_trigger(), start_time=2, end_time=3)
-        second = wf.finalize()[WAVELENGTH_LUT_OUTPUT]
+        second = wf.finalize()[COMPONENT]
         assert first is not second
         assert first.dims == second.dims
         assert first.unit == second.unit
@@ -229,7 +241,10 @@ def _run_chopper_workflow(
     """
     keys = {name: make_chopper_setpoint_keys(name) for name in names}
     wf = create_wavelength_lut_workflow(
-        params=params or _params(), setpoint_keys=keys, nexus_filename=str(geom)
+        params=params or _params(),
+        setpoint_keys=keys,
+        nexus_filename=str(geom),
+        ltotal_ranges=LTOTAL_RANGES,
     )
     context_keys = {}
     for name in names:
@@ -252,7 +267,7 @@ def _run_chopper_lut(
     params: WavelengthLutParams | None = None,
 ) -> sc.DataArray:
     """Build the chopper LUT workflow and return just the lookup-table output."""
-    return _run_chopper_workflow(geom, names, setpoints, params)[WAVELENGTH_LUT_OUTPUT]
+    return _run_chopper_workflow(geom, names, setpoints, params)[COMPONENT]
 
 
 @pytest.fixture
