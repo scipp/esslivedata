@@ -16,6 +16,18 @@ from .specs import DreamMonitorDataParams, PowderWorkflowParams
 
 def setup_factories(instrument: Instrument) -> None:
     """Initialize DREAM-specific factories and workflows."""
+    from ess.livedata.workflows.lut_context import bind_lookup_tables
+
+    # Each detector and monitor binds its own streamed lookup table, gated so
+    # only wavelength-mode jobs wait for it.
+    bind_lookup_tables(
+        specs.projection_handle,
+        source_names=instrument.detector_names,
+        is_monitor=False,
+    )
+    bind_lookup_tables(
+        specs.monitor_handle, source_names=instrument.monitors, is_monitor=True
+    )
     # Lazy imports - all expensive imports go inside the function
     import ess.powder.types  # noqa: F401
     from ess.dream import DreamPowderWorkflow
@@ -42,16 +54,6 @@ def setup_factories(instrument: Instrument) -> None:
     )
 
     from .specs import DreamDetectorViewParams
-
-    def _resolve_lookup_table_filename(instrument_configuration):
-        """Resolve lookup table filename from DREAM instrument configuration."""
-        from ess.dream.workflows import _get_lookup_table_filename_from_configuration
-
-        config = getattr(
-            dream.InstrumentConfiguration,
-            instrument_configuration.value.value,
-        )
-        return _get_lookup_table_filename_from_configuration(config)
 
     # Sciline-based detector view workflow with per-detector geometric projections.
     # Resolution values = base resolution * scale (8), matching the legacy setup.
@@ -103,17 +105,8 @@ def setup_factories(instrument: Instrument) -> None:
         aux_source_names: dict[str, str],
     ) -> StreamProcessorWorkflow:
         """Factory for Sciline-based detector view workflow."""
-        lookup_table_filename = None
-        if params.coordinate_mode.mode == 'wavelength':
-            lookup_table_filename = _resolve_lookup_table_filename(
-                params.instrument_configuration
-            )
-
         return _detector_view_factory.make_workflow(
-            source_name,
-            params,
-            aux_source_names,
-            lookup_table_filename=lookup_table_filename,
+            source_name, params, aux_source_names
         )
 
     # Monitor workflow factory with DREAM-specific TOF configuration
@@ -123,22 +116,17 @@ def setup_factories(instrument: Instrument) -> None:
     def _monitor_workflow_factory(source_name: str, params: DreamMonitorDataParams):
         """Factory for DREAM monitor workflow with TOF lookup table support."""
         mode = params.coordinate_mode.mode
-
-        lookup_table_filename = None
-        geometry_filename = None
-
-        if mode == 'wavelength':
-            lookup_table_filename = _resolve_lookup_table_filename(
-                params.instrument_configuration
-            )
-            geometry_filename = get_nexus_geometry_filename('dream-no-shape')
+        geometry_filename = (
+            get_nexus_geometry_filename('dream-no-shape')
+            if mode == 'wavelength'
+            else None
+        )
 
         return create_monitor_workflow(
             source_name=source_name,
             edges=params.get_active_edges(),
             range_filter=params.get_active_range(),
             coordinate_mode=mode,
-            lookup_table_filename=lookup_table_filename,
             geometry_filename=geometry_filename,
         )
 
