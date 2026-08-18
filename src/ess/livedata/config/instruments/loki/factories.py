@@ -21,6 +21,20 @@ class DetectorCarriageLog(ValueLog):
 def setup_factories(instrument: Instrument) -> None:
     """Initialize LOKI-specific factories and workflows."""
     import ess.loki.data
+    from ess.reduce.unwrap import LookupTableFilename
+
+    from ess.livedata.workflows.lut_context import bind_lookup_tables
+
+    # Each detector and monitor binds its own streamed lookup table, gated so
+    # only wavelength-mode jobs wait for it.
+    bind_lookup_tables(
+        specs.xy_projection_handle,
+        source_names=instrument.detector_names,
+        is_monitor=False,
+    )
+    bind_lookup_tables(
+        specs.monitor_handle, source_names=instrument.monitors, is_monitor=True
+    )
     import sciline
     import sciline.typing
     import scipp as sc
@@ -32,7 +46,6 @@ def setup_factories(instrument: Instrument) -> None:
         SampleRun,
         TransmissionRun,
     )
-    from ess.reduce.unwrap import LookupTableFilename
     from ess.sans import types as sans_types
     from ess.sans.types import (
         BeamCenter,
@@ -75,10 +88,6 @@ def setup_factories(instrument: Instrument) -> None:
 
     _nexus_geometry_filename = get_nexus_geometry_filename('loki')
 
-    def _resolve_lookup_table_filename() -> str:
-        """Resolve lookup table filename lazily to avoid eager downloads."""
-        return str(ess.loki.data.loki_lookup_table_no_choppers())
-
     def _make_base_workflow() -> LokiWorkflow:
         """Create the base LokiWorkflow for I(Q) reduction.
 
@@ -88,7 +97,13 @@ def setup_factories(instrument: Instrument) -> None:
         """
         wf = LokiWorkflow()
         wf[Filename[SampleRun]] = _nexus_geometry_filename
-        wf[LookupTableFilename] = _resolve_lookup_table_filename()
+        # I(Q) still loads its table from a file. Unlike a view, it needs one
+        # table per sciline Component -- the detector plus the incident and
+        # transmission monitor *roles* -- and the monitor playing each role is a
+        # per-job aux selection that a spec-scope ContextBinding, declared at
+        # import time, cannot know. Migrating it needs the job-creation check
+        # ADR 0010 leaves open, so it is out of scope here.
+        wf[LookupTableFilename] = str(ess.loki.data.loki_lookup_table_no_choppers())
         wf[DirectBeam] = None
         wf[CorrectForGravity] = CorrectForGravity(False)
         wf[ReturnEvents] = ReturnEvents(False)
@@ -132,17 +147,8 @@ def setup_factories(instrument: Instrument) -> None:
         params: DetectorViewParams,
         aux_source_names: dict[str, str],
     ) -> StreamProcessorWorkflow:
-        """Factory for LOKI detector view with TOF lookup table support."""
-        lookup_table_filename = None
-        if params.coordinate_mode.mode == 'wavelength':
-            lookup_table_filename = _resolve_lookup_table_filename()
-
-        return _xy_projection.make_workflow(
-            source_name,
-            params,
-            aux_source_names,
-            lookup_table_filename=lookup_table_filename,
-        )
+        """Factory for LOKI detector view; the lookup table arrives as context."""
+        return _xy_projection.make_workflow(source_name, params, aux_source_names)
 
     from ess.livedata.workflows.monitor_workflow import create_monitor_workflow
     from ess.livedata.workflows.monitor_workflow_specs import MonitorDataParams
@@ -151,20 +157,13 @@ def setup_factories(instrument: Instrument) -> None:
     def _monitor_workflow_factory(source_name: str, params: MonitorDataParams):
         """Factory for LOKI monitor workflow with lookup table support."""
         mode = params.coordinate_mode.mode
-
-        lookup_table_filename = None
-        geometry_filename = None
-
-        if mode == 'wavelength':
-            lookup_table_filename = _resolve_lookup_table_filename()
-            geometry_filename = _nexus_geometry_filename
+        geometry_filename = _nexus_geometry_filename if mode == 'wavelength' else None
 
         return create_monitor_workflow(
             source_name=source_name,
             edges=params.get_active_edges(),
             range_filter=params.get_active_range(),
             coordinate_mode=mode,
-            lookup_table_filename=lookup_table_filename,
             geometry_filename=geometry_filename,
         )
 
