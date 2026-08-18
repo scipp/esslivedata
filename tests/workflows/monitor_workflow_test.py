@@ -620,7 +620,11 @@ class TestRegisterMonitorWorkflowSpecs:
             identifier=workflow_id,
             job_id=JobId(source_name='monitor_1', job_number=uuid.uuid4()),
         )
-        workflow = factory.create(source_name='monitor_1', config=config)
+        workflow = factory.create(
+            source_name='monitor_1',
+            config=config,
+            params=factory.validate_params(config),
+        )
         assert workflow is not None
         assert hasattr(workflow, 'accumulate')
 

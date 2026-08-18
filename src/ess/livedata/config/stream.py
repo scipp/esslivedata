@@ -21,7 +21,7 @@ imported, not later.
 
 from __future__ import annotations
 
-from collections.abc import Iterable
+from collections.abc import Callable, Iterable
 from dataclasses import dataclass
 from typing import Any
 
@@ -147,6 +147,19 @@ class ContextBinding:
     stream_name: str
     workflow_key: Any
     dependent_sources: frozenset[str]
+    predicate: Callable[[Any], bool] | None = None
+    """Optional test against the job's validated params model.
+
+    A binding whose predicate returns ``False`` for a job is not wired and does
+    not gate it. This exists because coordinate mode is a parameter: a spec
+    offering both time-of-arrival and wavelength must not gate its TOA jobs on a
+    lookup table they never read (ADR 0010, superseding ADR 0003's
+    param-dependent-context non-goal).
+
+    Only ever *removes* bindings, never adds one, so the declaration-level
+    collision checks and the statically derived Kafka subscriptions stay
+    conservative supersets of any resolved gate.
+    """
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)

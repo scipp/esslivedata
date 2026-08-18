@@ -313,21 +313,18 @@ class Instrument:
             if _is_chain_patch(binding)
         ]
 
-    def resolve_context_keys(
+    def _matching_bindings(
         self, workflow_id: WorkflowId, source_name: str
-    ) -> dict[str, Any]:
-        """Resolve the ``ContextBinding`` mapping for a ``(spec, source)`` pair.
+    ) -> list[ContextBinding]:
+        """Instrument- and spec-scope bindings declared for a ``(spec, source)``.
 
-        Matches instrument- and spec-scope :class:`ContextBinding` records whose
-        ``dependent_sources`` include ``source_name`` and returns
-        ``{stream_name: workflow_key}``. ``skip_instrument_contexts`` filters out
-        instrument-scope entries — a spec that explicitly declares a binding
-        cannot opt out of it via the flag. Context wire names equal their stream
-        names, so the returned keys double as the set of gating context streams.
+        ``skip_instrument_contexts`` filters out instrument-scope entries — a
+        spec that explicitly declares a binding cannot opt out of it via the
+        flag.
 
         Raises :class:`KeyError` for an unregistered ``workflow_id``: an empty
-        result means "this workflow gates on nothing" and must not be
-        conflated with "no such workflow".
+        result means "this workflow gates on nothing" and must not be conflated
+        with "no such workflow".
         """
         registration = self.workflow_factory.registration(workflow_id)
         if registration is None:
@@ -338,10 +335,55 @@ class Instrument:
         instrument_bindings = (
             [] if registration.skip_instrument_contexts else self.context_bindings
         )
-        return {
-            binding.stream_name: binding.workflow_key
+        return [
+            binding
             for binding in (*instrument_bindings, *registration.context_bindings)
             if source_name in binding.dependent_sources
+        ]
+
+    def declared_context_keys(
+        self, workflow_id: WorkflowId, source_name: str
+    ) -> dict[str, Any]:
+        """Every declared context key for a ``(spec, source)`` pair.
+
+        Returns ``{stream_name: workflow_key}``; context wire names equal their
+        stream names, so the keys double as the set of gating context streams.
+
+        Predicates are ignored, making this the superset of what any single job
+        resolves. That is what the static callers want: Kafka subscriptions are
+        derived per spec rather than per job, so a subscription covering a
+        stream that some jobs do not gate on costs nothing. Use
+        :meth:`resolve_context_keys` where a job's params are in hand.
+        """
+        return {
+            binding.stream_name: binding.workflow_key
+            for binding in self._matching_bindings(workflow_id, source_name)
+        }
+
+    def resolve_context_keys(
+        self, workflow_id: WorkflowId, source_name: str, params: Any
+    ) -> dict[str, Any]:
+        """Resolve one job's context keys from its validated params.
+
+        :meth:`declared_context_keys` filtered by each binding's ``predicate``.
+        A predicate can only remove bindings, so the result is always a subset
+        of the declared set.
+
+        Parameters
+        ----------
+        workflow_id:
+            Workflow whose bindings to resolve.
+        source_name:
+            Source the job runs on.
+        params:
+            The job's *validated* params model, as passed to the workflow
+            factory. Predicates read it directly, so an unvalidated dict would
+            silently fail every attribute access.
+        """
+        return {
+            binding.stream_name: binding.workflow_key
+            for binding in self._matching_bindings(workflow_id, source_name)
+            if binding.predicate is None or binding.predicate(params)
         }
 
     @property
