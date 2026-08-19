@@ -125,8 +125,15 @@ class DashboardServices:
         self._start_update_thread()
 
     def stop(self) -> None:
-        """Stop background tasks (message polling and orchestrator updates)."""
+        """Stop background tasks and tear down the orchestrator.
+
+        The orchestrator is shut down after the update thread has stopped, so
+        nothing mutates the plot model while it is torn down. Shutting it down
+        at all is what lands a layout change the debounced write still had
+        pending -- without this, every restart drops the last edits.
+        """
         self._stop_update_thread()
+        self.plot_orchestrator.shutdown()
         self._transport.stop()
 
     def _start_update_thread(self) -> None:
