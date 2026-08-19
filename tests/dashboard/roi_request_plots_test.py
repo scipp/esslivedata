@@ -381,3 +381,65 @@ def test_degenerate_stored_rectangle_is_dropped_not_raised(data_key: DataKey) ->
     )
 
     assert _rebuild(params, data_key)._current_rois == {}
+
+
+def _two_drawn_boxes() -> dict[str, list[float]]:
+    """BoxEdit stream data after a second rectangle is drawn."""
+    return {'x0': [1.0, 10.0], 'x1': [5.0, 15.0], 'y0': [2.0, 12.0], 'y1': [6.0, 16.0]}
+
+
+def test_rendered_element_follows_the_drawn_rois(
+    computed_plotter: RectanglesRequestPlotter,
+) -> None:
+    """Drawn ROIs must reach the element, not only the browser's edit tool.
+
+    A re-render (tab switch, cell rebuilt on job state change) rebuilds the
+    edit tool from the element. An element left at what the presenter was
+    constructed with resyncs that stale set back as an edit, dropping the
+    ROIs the user drew since.
+    """
+    presenter = computed_plotter.create_presenter()
+
+    presenter._handle_edit(_drawn_box())
+    presenter._handle_edit(_two_drawn_boxes())
+
+    assert presenter._pipe.data == computed_plotter._converter.to_hv_data(
+        computed_plotter._current_rois, index_to_color=None
+    )
+    assert len(presenter._pipe.data) == 2
+
+
+def test_an_edit_that_changes_nothing_leaves_the_element_alone(
+    computed_plotter: RectanglesRequestPlotter,
+) -> None:
+    presenter = computed_plotter.create_presenter()
+    presenter._handle_edit(_drawn_box())
+    rendered = presenter._pipe.data
+
+    presenter._handle_edit(_drawn_box())
+
+    assert presenter._pipe.data is rendered
+
+
+def test_rendered_element_follows_a_drawn_polygon(data_key: DataKey) -> None:
+    plotter = _computed_polygon_plotter(PolygonsRequestParams(), data_key)
+    presenter = plotter.create_presenter()
+
+    presenter._handle_edit({'xs': [[0.0, 1.0, 0.5]], 'ys': [[0.0, 0.0, 1.0]]})
+
+    assert presenter._pipe.data == plotter._converter.to_hv_data(
+        plotter._current_rois, index_to_color=None
+    )
+    assert presenter._create_element(presenter._pipe.data)
+
+
+def test_a_polygon_still_being_drawn_does_not_reach_the_element(
+    data_key: DataKey,
+) -> None:
+    """The trailing duplicate vertex is a cursor position, not a vertex."""
+    plotter = _computed_polygon_plotter(PolygonsRequestParams(), data_key)
+    presenter = plotter.create_presenter()
+
+    presenter._handle_edit({'xs': [[0.0, 1.0, 1.0]], 'ys': [[0.0, 0.0, 0.0]]})
+
+    assert presenter._pipe.data == []

@@ -460,8 +460,10 @@ class BaseROIRequestPresenter(PresenterBase, ABC):
     max_roi_count:
         Maximum number of ROIs that can be drawn.
     on_edit:
-        Callback for handling edit events. Receives raw edit stream data.
-        The plotter provides this callback with closure-captured state.
+        Callback for handling edit events. Receives raw edit stream data and
+        returns the accepted ROIs in HoloViews form, or ``None`` if the edit
+        changed nothing. The plotter provides this callback with
+        closure-captured state.
     """
 
     def __init__(
@@ -472,7 +474,7 @@ class BaseROIRequestPresenter(PresenterBase, ABC):
         initial_stream_data: dict,
         style: Any,
         max_roi_count: int,
-        on_edit: Callable[[dict], None],
+        on_edit: Callable[[dict], list | None],
     ) -> None:
         super().__init__(plotter)
         self._style = style
@@ -521,12 +523,25 @@ class BaseROIRequestPresenter(PresenterBase, ABC):
         return self._apply_styling(self._dmap)
 
     def _handle_edit(self, event) -> None:
-        """Forward edit stream events to the plotter's callback."""
+        """Forward edit stream events to the plotter's callback.
+
+        The accepted set is pushed back through the pipe, so that the element
+        this session renders always matches the plotter's live ROIs. Without
+        it the element stays at whatever this presenter was constructed with:
+        drawn ROIs live only in the browser's edit tool, and the next
+        re-render -- a tab switch, a cell rebuilt on job state change --
+        rebuilds that tool from the stale element and syncs the difference
+        back as an edit, silently dropping ROIs the user drew.
+        """
         data = event.new if hasattr(event, 'new') else event
         try:
-            self._on_edit_callback(data or {})
+            accepted = self._on_edit_callback(data or {})
         except Exception as e:
             logger.error("Failed to process ROI edit: %s", e)
+            return
+        # None means the edit changed nothing, so the element already agrees.
+        if accepted is not None:
+            self._pipe.send(accepted)
 
     def _apply_styling(self, dmap: hv.DynamicMap) -> hv.DynamicMap:
         """Apply common styling options to the DynamicMap."""
@@ -734,29 +749,30 @@ class BaseROIRequestPlotter[
             Callback function for handling edit events.
         """
 
-        def handle_edit(stream_data: dict) -> None:
+        def handle_edit(stream_data: dict) -> list | None:
             new_rois = self._converter.parse_stream_data(
                 stream_data,
                 x_unit=self._x_unit,
                 y_unit=self._y_unit,
                 index_offset=self._index_offset,
             )
-            params: ParamsType | None = None
             with self._roi_lock:
                 # Skip if unchanged
                 if new_rois == self._current_rois:
-                    return
+                    return None
                 # Apply subclass-specific skip logic
                 if self._should_skip_edit(new_rois):
-                    return
+                    return None
                 self._current_rois = new_rois
                 self._publish_rois(new_rois)
                 self._params = self._params_with_geometry(new_rois)
                 params = self._params
+                accepted = self._converter.to_hv_data(new_rois, index_to_color=None)
             # Outside the ROI lock: the persister reaches back into the plot
             # orchestrator, which takes its own locks and writes the config store.
-            if params is not None and self._params_persister is not None:
+            if self._params_persister is not None:
                 self._params_persister(params)
+            return accepted
 
         with self._roi_lock:
             if not self._published_initial and self._publish_rois(self._current_rois):
