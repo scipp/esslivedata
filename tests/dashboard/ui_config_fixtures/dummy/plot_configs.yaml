@@ -24,7 +24,6 @@ plot_grids:
           plot_aspect:
             aspect_type: Square
             ratio: 1.0
-            stretch_mode: Fill width
           plot_scale:
             x_scale: linear
             y_scale: linear
@@ -64,7 +63,6 @@ plot_grids:
           plot_aspect:
             aspect_type: Square
             ratio: 1.0
-            stretch_mode: Fill width
           plot_scale:
             x_scale: linear
             y_scale: linear
