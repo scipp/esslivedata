@@ -28,10 +28,13 @@ cooperating parts:
    letterbox; the callback then puts it back, because the rewrite changes the
    frame size and the resulting ``inner_width`` / ``inner_height`` change
    re-triggers the callback within the same patch.  The rule must therefore be
-   idempotent and derive everything it needs from the current layout.  The
-   dashboard's update path does not do this -- data reaches the plot through
-   pipes, leaving figure properties alone, so the letterbox is applied once and
-   then left untouched (measured: no border change across 145 data updates).
+   idempotent and derive everything it needs from the current layout.  Its only
+   state is a browser-side write history on the figure (a loop breaker, see the
+   rule's comments), which such a restore counts toward: a path that re-applied
+   opts more than twice per second would letterbox intermittently.  The
+   dashboard's update path does neither -- data reaches the plot through pipes,
+   leaving figure properties alone, so the letterbox is applied once and then
+   left untouched (measured: no border change across 145 data updates).
 
 Two hook variants exist:
 
@@ -78,17 +81,31 @@ _HOLOVIEWS_MIN_BORDER = 10
 # It is a *minimum*, so it is expressed relative to the side's current size,
 # and restoring it to HoloViews' own value removes the letterbox.
 #
-# Measuring and padding happen on separate passes (see the code): computing and
-# applying in one pass makes the two branches chase each other forever, pegging
-# the browser's main thread.
+# Every write here costs a full layout pass, and this callback fires on every
+# resize step and (for the data-aspect variant) every zoom tick, so the rule is
+# built to converge in as few writes as possible: an already-padded side is
+# adjusted *in place* -- the frame tracks that side's margin 1:1 while the
+# padding binds, so the new padding follows from the current layout with no
+# intermediate unpadded pass. Unpadding is reserved for the cases that need it
+# (binding-axis switch, collapsed frame, stale non-binding padding).
+#
+# The rule converges when the layout honours a computed padding to within the
+# 2 px tolerance. That normally holds, but a relayout can shift the opposite
+# margin (tick labels re-measuring), in which case compute-apply-recompute
+# could alternate between the same values forever, pegging the main thread and
+# flooding the websocket. ``write`` therefore keeps a short history per figure
+# and refuses a value it has already applied twice within the last second: a
+# frame a few pixels off target beats a frozen dashboard. A refusal schedules
+# one delayed re-evaluation, so a rapid gesture that retraced its values (zoom
+# in and back out) still ends on the correct shape even if no further event
+# arrives, and a genuinely non-converging geometry costs a couple of layout
+# passes per second instead of a pegged main thread.
 _FIT_FRAME_JS = """
     if (!fig.document) return;
     let bbox;
     try { bbox = Bokeh.index.find_one(fig).frame.bbox; } catch(e) { return; }
     const fw = bbox.width;
     const fh = bbox.height;
-    const padded = fig.min_border_left > BASE_BORDER ||
-                   fig.min_border_bottom > BASE_BORDER;
 
     const unpad = () => {
         fig.min_border_left = BASE_BORDER;
@@ -99,29 +116,82 @@ _FIT_FRAME_JS = """
     // over from before the window shrank -- has to get its space back first, or
     // the plot stays collapsed: every rule below needs a frame to measure.
     if (fw < 20 || fh < 20) {
-        if (padded) unpad();
+        unpad();
         return;
     }
 
     if (Math.abs(fw - fh * target) < 2) return;
 
-    // Padding must be computed from an unpadded layout: a padded frame no
-    // longer shows how much room the figure has. Unpad now and let the
-    // resulting frame change re-trigger this callback to do the measuring.
-    if (padded) {
+    const write = (prop, value) => {
+        if (fig[prop] === value) return;
+        const hist = fig.__ess_letterbox_writes ??= [];
+        const now = performance.now();
+        while (hist.length && now - hist[0].t > 1000) hist.shift();
+        if (hist.filter((h) => h.prop === prop && h.value === value).length >= 2) {
+            fig.__ess_letterbox_retry ??= setTimeout(() => {
+                fig.__ess_letterbox_retry = null;
+                __letterbox();
+            }, 1100);
+            return;
+        }
+        hist.push({t: now, prop, value});
+        fig[prop] = value;
+    };
+
+    const lp = fig.min_border_left;
+    const bp = fig.min_border_bottom;
+    const leftSpace = bbox.x;
+    const bottomSpace = fig.outer_height - bbox.y - fh;
+
+    // No rule below pads both sides; landing here with both set is a stale
+    // transient. Reset and re-derive from the natural layout.
+    if (lp > BASE_BORDER && bp > BASE_BORDER) {
         unpad();
         return;
     }
 
-    // Keep a sliver of frame whatever happens, so a bad measurement cannot
-    // collapse the plot into a state this callback can no longer see out of.
+    // In-place adjustment of the padded side. A padding that stopped binding
+    // (the margin outgrew it) has no effect on the layout: clear it and fall
+    // through to the natural-layout rule.
+    if (lp > BASE_BORDER) {
+        if (leftSpace <= lp + 1) {
+            const want = Math.round(leftSpace + fw - fh * target);
+            if (want > BASE_BORDER) {
+                write('min_border_left',
+                      Math.min(want, Math.round(leftSpace + fw - 20)));
+            } else {
+                // Reclaiming all padding still cannot widen the frame to the
+                // target: height binds now. The next pass pads the bottom.
+                unpad();
+            }
+            return;
+        }
+        fig.min_border_left = BASE_BORDER;
+    } else if (bp > BASE_BORDER) {
+        if (bottomSpace <= bp + 1) {
+            const want = Math.round(bottomSpace + fh - fw / target);
+            if (want > BASE_BORDER) {
+                write('min_border_bottom',
+                      Math.min(want, Math.round(bottomSpace + fh - 20)));
+            } else {
+                unpad();
+            }
+            return;
+        }
+        fig.min_border_bottom = BASE_BORDER;
+    }
+
+    // Natural layout: pick the binding axis and pad the other side. Keep a
+    // sliver of frame whatever happens, so a bad measurement cannot collapse
+    // the plot into a state this callback can no longer see out of.
     if (fw > fh * target) {
-        fig.min_border_left = Math.round(Math.min(bbox.x + fw - fh * target,
-                                                  bbox.x + fw - 20));
+        write('min_border_left',
+              Math.round(Math.min(leftSpace + fw - fh * target,
+                                  leftSpace + fw - 20)));
     } else {
-        const border = fig.outer_height - bbox.y - fh;
-        const room = fig.outer_height - bbox.y - 20;
-        fig.min_border_bottom = Math.round(Math.min(border + fh - fw / target, room));
+        write('min_border_bottom',
+              Math.round(Math.min(bottomSpace + fh - fw / target,
+                                  bottomSpace + fh - 20)));
     }
 """
 
@@ -151,9 +221,12 @@ def _make_hook(
             return
         fig.tags.append(_HOOK_APPLIED_TAG)
 
+        # Named so the loop breaker's delayed retry can re-invoke the rule.
+        body = prologue + _FIT_FRAME_JS
+        code = f"const __letterbox = () => {{{body}}};\n__letterbox();"
         callback = CustomJS(
             args={"fig": fig, "BASE_BORDER": _HOLOVIEWS_MIN_BORDER, **js_args},
-            code=prologue + _FIT_FRAME_JS,
+            code=code,
         )
         fig.js_on_change("inner_width", callback)
         fig.js_on_change("inner_height", callback)
