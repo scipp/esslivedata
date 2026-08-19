@@ -146,10 +146,15 @@ jobs:
       - run: python -m pip install -r requirements/ci.txt
       - name: Install chromium system libraries
         # The chromium binary itself is installed by the tox env (matching its
-        # playwright version); only the apt-level libraries need sudo here.
+        # playwright version); only the apt-level libraries need sudo here. On
+        # ubuntu-24.04 that resolves to fonts alone -- the runner image already
+        # carries chromium's shared libraries -- so a broken apt mirror must not
+        # cost us the job. Bound the attempt and continue without the fonts;
+        # the browser tests measure layout geometry, not glyphs.
         run: |
           python -m pip install playwright
-          playwright install-deps chromium
+          timeout -k 30 180 playwright install-deps chromium || echo \
+            "::warning title=install-deps::apt failed or timed out; continuing without extra fonts."
       - name: Run browser tests
         shell: bash
         run: |
