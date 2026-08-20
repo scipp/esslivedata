@@ -12,3 +12,23 @@ devices:
   workflow_id: dream/monitor_histogram/1
   source_name: monitor_cave
   output_name: counts_total_cumulative
+- device_name: mantle_detector_counts_total
+  workflow_id: dream/detector_projection/1
+  source_name: mantle_detector
+  output_name: counts_total_cumulative
+- device_name: endcap_backward_detector_counts_total
+  workflow_id: dream/detector_projection/1
+  source_name: endcap_backward_detector
+  output_name: counts_total_cumulative
+- device_name: endcap_forward_detector_counts_total
+  workflow_id: dream/detector_projection/1
+  source_name: endcap_forward_detector
+  output_name: counts_total_cumulative
+- device_name: high_resolution_detector_counts_total
+  workflow_id: dream/detector_projection/1
+  source_name: high_resolution_detector
+  output_name: counts_total_cumulative
+- device_name: sans_detector_counts_total
+  workflow_id: dream/detector_projection/1
+  source_name: sans_detector
+  output_name: counts_total_cumulative

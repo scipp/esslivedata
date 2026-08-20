@@ -24,3 +24,39 @@ devices:
   workflow_id: loki/monitor_histogram/1
   source_name: beam_monitor_m4
   output_name: counts_total_cumulative
+- device_name: loki_detector_0_counts_total
+  workflow_id: loki/detector_xy_projection/1
+  source_name: loki_detector_0
+  output_name: counts_total_cumulative
+- device_name: loki_detector_1_counts_total
+  workflow_id: loki/detector_xy_projection/1
+  source_name: loki_detector_1
+  output_name: counts_total_cumulative
+- device_name: loki_detector_2_counts_total
+  workflow_id: loki/detector_xy_projection/1
+  source_name: loki_detector_2
+  output_name: counts_total_cumulative
+- device_name: loki_detector_3_counts_total
+  workflow_id: loki/detector_xy_projection/1
+  source_name: loki_detector_3
+  output_name: counts_total_cumulative
+- device_name: loki_detector_4_counts_total
+  workflow_id: loki/detector_xy_projection/1
+  source_name: loki_detector_4
+  output_name: counts_total_cumulative
+- device_name: loki_detector_5_counts_total
+  workflow_id: loki/detector_xy_projection/1
+  source_name: loki_detector_5
+  output_name: counts_total_cumulative
+- device_name: loki_detector_6_counts_total
+  workflow_id: loki/detector_xy_projection/1
+  source_name: loki_detector_6
+  output_name: counts_total_cumulative
+- device_name: loki_detector_7_counts_total
+  workflow_id: loki/detector_xy_projection/1
+  source_name: loki_detector_7
+  output_name: counts_total_cumulative
+- device_name: loki_detector_8_counts_total
+  workflow_id: loki/detector_xy_projection/1
+  source_name: loki_detector_8
+  output_name: counts_total_cumulative

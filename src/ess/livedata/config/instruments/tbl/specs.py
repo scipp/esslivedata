@@ -11,6 +11,7 @@ from ess.livedata.config import (
     instrument_registry,
     name_streams,
 )
+from ess.livedata.config.device_contract import COUNTS_TOTAL_DEVICE
 from ess.livedata.config.workflow_spec import DETECTORS
 from ess.livedata.workflows.detector_view_specs import DetectorViewOutputs
 from ess.livedata.workflows.monitor_workflow_specs import (
@@ -65,6 +66,7 @@ instrument.add_logical_view(
     transform=fold_image,
     reduction_dim=['x_bin', 'y_bin'],
     roi_support=True,
+    device_outputs=COUNTS_TOTAL_DEVICE,
 )
 
 instrument.add_logical_view(
@@ -75,6 +77,7 @@ instrument.add_logical_view(
     transform=get_multiblade_view,
     roi_support=True,
     output_ndim=3,
+    device_outputs=COUNTS_TOTAL_DEVICE,
 )
 
 instrument.add_logical_view(
@@ -84,6 +87,7 @@ instrument.add_logical_view(
     source_names=['he3_detector_bank0', 'he3_detector_bank1'],
     transform=get_he3_detector_view,
     roi_support=True,
+    device_outputs=COUNTS_TOTAL_DEVICE,
 )
 
 instrument.add_logical_view(
@@ -94,6 +98,7 @@ instrument.add_logical_view(
     transform=identity,
     reduction_dim='dim_0',
     roi_support=True,
+    device_outputs=COUNTS_TOTAL_DEVICE,
 )
 
 orca_view_handle = instrument.register_spec(
@@ -104,4 +109,5 @@ orca_view_handle = instrument.register_spec(
     description='512x512 image downsampled from full resolution',
     source_names=['orca_detector'],
     outputs=DetectorViewOutputs,
+    device_outputs=COUNTS_TOTAL_DEVICE,
 )

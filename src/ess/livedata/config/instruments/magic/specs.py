@@ -18,6 +18,7 @@ from ess.livedata.config import (
     instrument_registry,
     name_streams,
 )
+from ess.livedata.config.device_contract import COUNTS_TOTAL_DEVICE
 from ess.livedata.config.workflow_spec import DETECTORS
 from ess.livedata.workflows.detector_view_specs import (
     DetectorROIAuxSources,
@@ -126,4 +127,6 @@ projection_handle = instrument.register_spec(
     aux_sources=DetectorROIAuxSources(),
     params=DetectorViewParams,
     outputs=DetectorViewOutputs,
+    # The projection, not the wire or strip view, carries the NICOS counts devices.
+    device_outputs=COUNTS_TOTAL_DEVICE,
 )

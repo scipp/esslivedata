@@ -8,3 +8,7 @@ devices:
   workflow_id: estia/monitor_histogram/1
   source_name: cbm1
   output_name: counts_total_cumulative
+- device_name: multiblade_detector_counts_total
+  workflow_id: estia/estia_multiblade_detector_view/1
+  source_name: multiblade_detector
+  output_name: counts_total_cumulative

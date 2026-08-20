@@ -504,6 +504,7 @@ class Instrument:
         output_ndim: int | None = None,
         reduction_dim: str | list[str] | None = None,
         spectrum_view: SpectrumViewSpec | None = None,
+        device_outputs: dict[str, str] | None = None,
     ) -> SpecHandle:
         """
         Register a logical detector view.
@@ -547,6 +548,10 @@ class Instrument:
             Optional ``SpectrumViewSpec`` enabling a ``spectrum_view`` output
             derived from the cumulative accumulated histogram via a
             per-instrument transform.
+        device_outputs:
+            Outputs of this view exposed to NICOS as derived devices. Pass
+            :data:`~ess.livedata.config.device_contract.COUNTS_TOTAL_DEVICE` on
+            the one view per detector bank whose total is the bank's device.
 
         Returns
         -------
@@ -574,6 +579,7 @@ class Instrument:
             aux_sources=DetectorROIAuxSources() if roi_support else None,
             params=params,
             outputs=outputs,
+            device_outputs=device_outputs,
         )
         self._logical_view_handles[name] = handle
         self._logical_views.append(
