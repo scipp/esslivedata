@@ -72,7 +72,7 @@ _NICOS_TEMPLATE_CSS = """
 _NICOS_TAB_CSS = f"""
     :host(.bk-left) .bk-header {{
         background-color: {_NICOS_TEAL};
-        padding: 8px 0 8px 8px;
+        padding: 0 0 8px 8px;
         border-right: none;
     }}
     :host(.bk-left) > :not(.bk-header):not(style):not(link) {{
