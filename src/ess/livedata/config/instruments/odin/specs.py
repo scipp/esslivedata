@@ -10,6 +10,7 @@ from ess.livedata.config import (
     instrument_registry,
     name_streams,
 )
+from ess.livedata.config.device_contract import COUNTS_TOTAL_DEVICE
 from ess.livedata.workflows.monitor_workflow_specs import (
     TOAOnlyMonitorDataParams,
     register_monitor_workflow_specs,
@@ -41,4 +42,5 @@ instrument.add_logical_view(
     transform=fold_image,
     reduction_dim=['x_bin', 'y_bin'],
     roi_support=True,
+    device_outputs=COUNTS_TOTAL_DEVICE,
 )

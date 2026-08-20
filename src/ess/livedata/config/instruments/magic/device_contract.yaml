@@ -8,3 +8,11 @@ devices:
   workflow_id: magic/monitor_histogram/1
   source_name: beam_monitor_1
   output_name: counts_total_cumulative
+- device_name: magic_detector_a_counts_total
+  workflow_id: magic/detector_projection/1
+  source_name: magic_detector_a
+  output_name: counts_total_cumulative
+- device_name: magic_detector_b_counts_total
+  workflow_id: magic/detector_projection/1
+  source_name: magic_detector_b
+  output_name: counts_total_cumulative

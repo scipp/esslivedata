@@ -56,6 +56,23 @@ if TYPE_CHECKING:
 
 CONTRACT_FILENAME = 'device_contract.yaml'
 
+COUNTS_TOTAL_DEVICE = {'counts_total_cumulative': '{source_name}_counts_total'}
+"""``device_outputs`` declaration exposing a source's cumulative total as a device.
+
+Beam monitors and detector banks both expose their cumulative event total to
+NICOS under one naming convention, ``{source_name}_counts_total``, so a NICOS
+script addresses a monitor and a detector bank the same way. Declaring it from a
+single constant keeps that convention from diverging per instrument.
+
+Device names must be unique across an instrument, so for any given source
+*exactly one* workflow may declare this. Monitors have a single
+``monitor_histogram`` spec and are unambiguous, but a detector bank is typically
+covered by several views (a projection, a strip view, ...) that all produce
+``counts_total_cumulative``; each instrument designates the one whose total is
+the bank's device. Designating a second one for the same source raises
+:class:`DeviceContractError` at construction.
+"""
+
 
 class DeviceContractError(ValueError):
     """Raised when a device contract renders inconsistent device names."""
