@@ -308,7 +308,8 @@ class DashboardBase(ServiceBase, ABC):
             header=header,
         )
         # Inject CSS for offline mode (replaces Material Icons font with Unicode)
-        template.config.raw_css.extend(self.get_raw_css())
+        # and whatever the theme needs from the page around the tabs.
+        template.config.raw_css.extend([*self.get_raw_css(), self._theme.template_css])
         self._start_periodic_callback(session_updater)
         return template
 
