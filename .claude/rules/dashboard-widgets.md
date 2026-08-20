@@ -77,7 +77,7 @@ Where the icon cannot be a widget — a Bokeh tab label is plain text, for insta
 paint it on a `::before` pseudo-element with `mask-image: url(get_icon_data_uri(name,
 color=None))` and `background-color: currentColor`. A mask reads only the alpha channel,
 so the icon inherits the element's text color and follows its active/hover states without
-a second, recolored copy (see `_static_tab_stylesheet` in `plot_grid_tabs.py`).
+a second, recolored copy (see `_tab_stylesheet` in `plot_grid_tabs.py`).
 
 ## Stable CSS hooks for automation
 
@@ -300,6 +300,10 @@ or rgba strings in widget files. The shared module provides:
 
 Widget-specific decorative colors (e.g., output chip colors, grid preview cell colors)
 that are not shared across widgets may stay local.
+
+Chrome that a theme owns — the header background and the main tab strip — is the one
+exception: those colors live in `dashboard/theme.py`, next to the `Theme` that selects
+them. `styles.py` stays theme-independent, so a widget must never read `theme.py`.
 
 Panel does not support CSS custom properties (`var()`) in `styles=` dicts or inline
 HTML `style=` attributes — only in `stylesheets=` parameters. This is why we use

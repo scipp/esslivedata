@@ -26,6 +26,7 @@ from ess.livedata.dashboard.plot_orchestrator import (
 )
 from ess.livedata.dashboard.session_registry import SessionId, SessionRegistry
 from ess.livedata.dashboard.session_updater import SessionUpdater
+from ess.livedata.dashboard.theme import NICOS_THEME
 from ess.livedata.dashboard.widgets.plot_grid_tabs import PlotGridTabs
 from ess.livedata.dashboard.widgets.workflow_status_widget import (
     WorkflowStatusListWidget,
@@ -88,6 +89,33 @@ class TestPlotGridTabsInitialization:
 
         # Should have 4 tabs: Workflows + Manage + 2 grids
         assert len(widget.tabs) == 4
+
+    def test_theme_places_the_tab_strip(
+        self,
+        plot_orchestrator,
+        workflow_registry,
+        plotting_controller,
+        workflow_status_widget,
+        plot_data_service,
+        session_updater,
+    ):
+        """The theme, not the widget, decides which edge the tab strip sits on.
+
+        The strip's CSS is written against one edge (Bokeh and Panel both select
+        tabs per side), so a theme whose placement is not honored renders
+        unstyled tabs rather than failing.
+        """
+        widget = PlotGridTabs(
+            plot_orchestrator=plot_orchestrator,
+            workflow_registry=workflow_registry,
+            plotting_controller=plotting_controller,
+            workflow_status_widget=workflow_status_widget,
+            plot_data_service=plot_data_service,
+            session_updater=session_updater,
+            theme=NICOS_THEME,
+        )
+
+        assert widget.tabs.tabs_location == NICOS_THEME.tabs_location == 'left'
 
     def test_new_grid_appears_on_poll(self, plot_orchestrator, plot_grid_tabs):
         """A grid added after construction appears as a tab on the next poll."""

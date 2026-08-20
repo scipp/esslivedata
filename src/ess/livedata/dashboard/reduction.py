@@ -21,6 +21,7 @@ from ess.livedata.logging_config import configure_logging
 
 from .dashboard import DashboardBase
 from .session_updater import SessionUpdater
+from .theme import THEMES
 from .widgets.log_producer_widget import LogProducerWidget
 from .widgets.plot_grid_tabs import PlotGridTabs
 from .widgets.system_status_widget import SystemStatusWidget
@@ -134,6 +135,7 @@ class ReductionApp(DashboardBase):
         fetch_announcements: bool = True,
         basic_auth_password: str | None = None,
         basic_auth_cookie_secret: str | None = None,
+        theme: str = 'default',
     ):
         super().__init__(
             instrument=instrument,
@@ -147,6 +149,7 @@ class ReductionApp(DashboardBase):
             collapsed_sidebar=collapsed_sidebar,
             basic_auth_password=basic_auth_password,
             basic_auth_cookie_secret=basic_auth_cookie_secret,
+            theme=theme,
         )
         self._fetch_announcements = fetch_announcements
         # Load (and validate) the NICOS derived-device contract once. Fails loud
@@ -231,6 +234,7 @@ class ReductionApp(DashboardBase):
             system_status_widget=system_status_widget,
             plot_data_service=self._services.plot_data_service,
             session_updater=session_updater,
+            theme=self._theme,
         )
 
         # PlotGridTabs registers its own two-tier teardown on the session
@@ -290,6 +294,14 @@ def get_arg_parser() -> argparse.ArgumentParser:
         help='Start with the sidebar collapsed. The sidebar holds announcements '
         'and the version label, so collapsing it gives plots the full window '
         'width -- useful on small screens and for automation/screenshots.',
+    )
+    parser.add_argument(
+        '--theme',
+        choices=sorted(THEMES),
+        default='default',
+        help='Shell look and feel. "nicos" adopts the NICOS client\'s teal '
+        'chrome and moves the main tab strip to a left rail, for running the '
+        'two side by side. Experimental.',
     )
     parser.add_argument(
         '--no-fetch-announcements',
