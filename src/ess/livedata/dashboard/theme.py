@@ -41,9 +41,10 @@ _NICOS_TAB_HOVER_BG = '#e9eaea'
 # The rail has to bleed into the window corners for the teal to read as chrome
 # rather than as a floating panel, so the theme takes the main area's padding
 # away from Panel and re-applies it inside the tab strip, around the content
-# only. Same spacing as Material's own (``.main-content`` in
-# ``panel/template/material/material.css``); it just moves.
-_MAIN_CONTENT_PADDING = '10px 20px 20px 10px'
+# only. Uniform, unlike Material's ``10px 20px 20px 10px`` (``.main-content`` in
+# ``panel/template/material/material.css``): a plot grid fills its tab edge to
+# edge, which makes an asymmetric frame around it plain to see.
+_NICOS_CONTENT_PADDING = '10px'
 
 # Material sizes the main area ``calc(100vh - 84px)``: the top app bar's 64px
 # (``.mdc-top-app-bar__row``, same stylesheet) plus a 20px gap it leaves at the
@@ -83,7 +84,7 @@ _NICOS_TAB_CSS = f"""
     }}
     :host(.bk-left) > :not(.bk-header):not(style):not(link) {{
         box-sizing: border-box;
-        padding: {_MAIN_CONTENT_PADDING};
+        padding: {_NICOS_CONTENT_PADDING};
     }}
 
     :host(.bk-left) .bk-header .bk-tab {{
