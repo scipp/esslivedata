@@ -45,9 +45,15 @@ _NICOS_TAB_HOVER_BG = '#e9eaea'
 # ``panel/template/material/material.css``); it just moves.
 _MAIN_CONTENT_PADDING = '10px 20px 20px 10px'
 
+# Material sizes the main area ``calc(100vh - 84px)``: the top app bar's 64px
+# (``.mdc-top-app-bar__row``, same stylesheet) plus a 20px gap it leaves at the
+# bottom of the window. The gap is white, so a rail that stops short of it does
+# not read as chrome; the theme takes it back and lets the content's own bottom
+# padding do that job instead.
 _NICOS_TEMPLATE_CSS = """
     .main-content {
         padding: 0;
+        height: calc(100vh - 64px);
     }
 """
 
