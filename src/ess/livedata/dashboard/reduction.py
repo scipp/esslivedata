@@ -131,7 +131,7 @@ class ReductionApp(DashboardBase):
         transport: str = 'kafka',
         config_dir: str | None = None,
         auto_start: bool = False,
-        collapsed_sidebar: bool = False,
+        collapsed_sidebar: bool = True,
         fetch_announcements: bool = True,
         basic_auth_password: str | None = None,
         basic_auth_cookie_secret: str | None = None,
@@ -289,11 +289,11 @@ def get_arg_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         '--collapsed-sidebar',
-        action='store_true',
-        default=False,
-        help='Start with the sidebar collapsed. The sidebar holds announcements '
-        'and the version label, so collapsing it gives plots the full window '
-        'width -- useful on small screens and for automation/screenshots.',
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help='Start with the sidebar drawer collapsed, giving plots the full '
+        'window width. It holds announcements and the version label, neither '
+        'of which needs to be on screen while watching plots.',
     )
     parser.add_argument(
         '--theme',

@@ -45,7 +45,7 @@ class DashboardBase(ServiceBase, ABC):
         transport: str = 'kafka',
         config_dir: str | None = None,
         auto_start: bool = False,
-        collapsed_sidebar: bool = False,
+        collapsed_sidebar: bool = True,
         basic_auth_password: str | None = None,
         basic_auth_cookie_secret: str | None = None,
         theme: str = DEFAULT_THEME.name,
