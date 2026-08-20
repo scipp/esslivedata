@@ -1285,7 +1285,6 @@ class WorkflowStatusListWidget:
             *gate_banner,
             self._modal_container,
             sizing_mode='stretch_width',
-            margin=(10, 10),
         )
 
     def _create_header_row(self) -> pn.Row:

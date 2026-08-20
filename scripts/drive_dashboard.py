@@ -393,8 +393,6 @@ def _fake_dashboard(instrument: str, port: int | None = None):
 
     Copies the committed fixture to a writable scratch dir (the dashboard writes
     to its config dir), waits for readiness, and tears the server down on exit.
-    The sidebar starts collapsed: it is static here (announcements are off), so
-    an open drawer would only narrow the plots under test and their screenshots.
     Yields a :class:`FakeDashboard`.
 
     Parameters
@@ -436,7 +434,6 @@ def _fake_dashboard(instrument: str, port: int | None = None):
                     "--config-dir",
                     str(cfg),
                     "--auto-start",
-                    "--collapsed-sidebar",
                     "--no-fetch-announcements",
                 ],
                 cwd=REPO_ROOT,

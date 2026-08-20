@@ -26,6 +26,7 @@ from ess.livedata.dashboard.plot_orchestrator import (
 )
 from ess.livedata.dashboard.session_registry import SessionId, SessionRegistry
 from ess.livedata.dashboard.session_updater import SessionUpdater
+from ess.livedata.dashboard.theme import THEMES
 from ess.livedata.dashboard.widgets.plot_grid_tabs import PlotGridTabs
 from ess.livedata.dashboard.widgets.workflow_status_widget import (
     WorkflowStatusListWidget,
@@ -88,6 +89,37 @@ class TestPlotGridTabsInitialization:
 
         # Should have 4 tabs: Workflows + Manage + 2 grids
         assert len(widget.tabs) == 4
+
+    @pytest.mark.parametrize('theme', THEMES.values(), ids=lambda t: t.name)
+    def test_theme_places_the_tab_strip(
+        self,
+        theme,
+        plot_orchestrator,
+        workflow_registry,
+        plotting_controller,
+        workflow_status_widget,
+        plot_data_service,
+        session_updater,
+    ):
+        """The theme, not the widget, decides which edge the tab strip sits on.
+
+        Every theme is checked, including the default one: a widget that ignored
+        the argument and hardcoded the default would still satisfy a test that
+        only ever passes the default. The strip's CSS is written against one
+        edge (Bokeh and Panel both select tabs per side), so a placement that is
+        not honored renders unstyled tabs rather than failing.
+        """
+        widget = PlotGridTabs(
+            plot_orchestrator=plot_orchestrator,
+            workflow_registry=workflow_registry,
+            plotting_controller=plotting_controller,
+            workflow_status_widget=workflow_status_widget,
+            plot_data_service=plot_data_service,
+            session_updater=session_updater,
+            theme=theme,
+        )
+
+        assert widget.tabs.tabs_location == theme.tabs_location
 
     def test_new_grid_appears_on_poll(self, plot_orchestrator, plot_grid_tabs):
         """A grid added after construction appears as a tab on the next poll."""

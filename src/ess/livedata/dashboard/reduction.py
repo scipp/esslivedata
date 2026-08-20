@@ -21,6 +21,7 @@ from ess.livedata.logging_config import configure_logging
 
 from .dashboard import DashboardBase
 from .session_updater import SessionUpdater
+from .theme import DEFAULT_THEME, THEMES
 from .widgets.log_producer_widget import LogProducerWidget
 from .widgets.plot_grid_tabs import PlotGridTabs
 from .widgets.system_status_widget import SystemStatusWidget
@@ -130,10 +131,11 @@ class ReductionApp(DashboardBase):
         transport: str = 'kafka',
         config_dir: str | None = None,
         auto_start: bool = False,
-        collapsed_sidebar: bool = False,
+        collapsed_sidebar: bool = True,
         fetch_announcements: bool = True,
         basic_auth_password: str | None = None,
         basic_auth_cookie_secret: str | None = None,
+        theme: str = DEFAULT_THEME.name,
     ):
         super().__init__(
             instrument=instrument,
@@ -147,6 +149,7 @@ class ReductionApp(DashboardBase):
             collapsed_sidebar=collapsed_sidebar,
             basic_auth_password=basic_auth_password,
             basic_auth_cookie_secret=basic_auth_cookie_secret,
+            theme=theme,
         )
         self._fetch_announcements = fetch_announcements
         # Load (and validate) the NICOS derived-device contract once. Fails loud
@@ -231,6 +234,7 @@ class ReductionApp(DashboardBase):
             system_status_widget=system_status_widget,
             plot_data_service=self._services.plot_data_service,
             session_updater=session_updater,
+            theme=self._theme,
         )
 
         # PlotGridTabs registers its own two-tier teardown on the session
@@ -285,11 +289,20 @@ def get_arg_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         '--collapsed-sidebar',
-        action='store_true',
-        default=False,
-        help='Start with the sidebar collapsed. The sidebar holds announcements '
-        'and the version label, so collapsing it gives plots the full window '
-        'width -- useful on small screens and for automation/screenshots.',
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help='Start with the sidebar drawer collapsed, giving plots the full '
+        'window width. It holds announcements and the version label, neither '
+        'of which needs to be on screen while watching plots.',
+    )
+    parser.add_argument(
+        '--theme',
+        choices=sorted(THEMES),
+        default=DEFAULT_THEME.name,
+        help='Shell look and feel. "nicos" (the default) adopts the NICOS '
+        'client\'s teal chrome and puts the main tab strip in a left rail, for '
+        'running the two side by side; "classic" is the previous look, with '
+        'the tabs along the top.',
     )
     parser.add_argument(
         '--no-fetch-announcements',

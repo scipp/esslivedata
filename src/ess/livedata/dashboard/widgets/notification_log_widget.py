@@ -38,12 +38,12 @@ class NotificationLogWidget:
         self._last_version: int | None = None
         self._header = pn.pane.HTML(
             "<h3>Notifications</h3>",
-            margin=(10, 10, 5, 10),
+            margin=(10, 0, 5, 0),
         )
         self._content_pane = pn.pane.HTML(
             self._render_empty(),
             sizing_mode="stretch_width",
-            margin=(0, 10),
+            margin=0,
         )
 
     def has_pending_work(self) -> bool:
