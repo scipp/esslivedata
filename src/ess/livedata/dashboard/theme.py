@@ -3,10 +3,10 @@
 """Selectable look and feel for the dashboard shell.
 
 The dashboard runs on the same screens as the NICOS client, so an operator's
-eye moves between the two all day. The ``nicos`` theme is an experiment in
-making that move cheaper: it adopts NICOS's dark teal chrome and moves the main
-tab strip from the top edge to a left rail, matching where NICOS puts its own
-panel selector.
+eye moves between the two all day. The default ``nicos`` theme makes that move
+cheaper: it adopts NICOS's dark teal chrome and puts the main tab strip in a
+left rail, where NICOS puts its own panel selector. ``classic`` is the look
+that preceded it -- Panel Material's, with the tabs along the top.
 
 A theme covers the shell only -- header color, tab placement, tab strip
 palette. Widget-level colors (:mod:`~.widgets.styles`), plot colormaps and the
@@ -20,7 +20,7 @@ from typing import Literal
 
 from .widgets.styles import Colors
 
-_DEFAULT_TAB_CSS = f"""
+_CLASSIC_TAB_CSS = f"""
     .bk-tab {{
         border-bottom: 1px solid {Colors.TAB_BORDER} !important;
     }}
@@ -128,11 +128,11 @@ class Theme:
     """Rules for the page around the tabs, injected as the template's raw CSS."""
 
 
-DEFAULT_THEME = Theme(
-    name='default',
+CLASSIC_THEME = Theme(
+    name='classic',
     header_background='#2596be',
     tabs_location='above',
-    tab_strip_css=_DEFAULT_TAB_CSS,
+    tab_strip_css=_CLASSIC_TAB_CSS,
 )
 
 NICOS_THEME = Theme(
@@ -143,4 +143,5 @@ NICOS_THEME = Theme(
     template_css=_NICOS_TEMPLATE_CSS,
 )
 
-THEMES = {theme.name: theme for theme in (DEFAULT_THEME, NICOS_THEME)}
+THEMES = {theme.name: theme for theme in (NICOS_THEME, CLASSIC_THEME)}
+DEFAULT_THEME = NICOS_THEME

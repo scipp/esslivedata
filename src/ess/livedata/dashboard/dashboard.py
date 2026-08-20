@@ -20,7 +20,7 @@ from .kafka_transport import DashboardKafkaTransport
 from .loop_monitor import start_loop_monitor
 from .session_registry import SessionId
 from .session_updater import SessionUpdater
-from .theme import THEMES
+from .theme import DEFAULT_THEME, THEMES
 from .transport import NullTransport, Transport
 
 # Global throttling for sliders, etc.
@@ -48,7 +48,7 @@ class DashboardBase(ServiceBase, ABC):
         collapsed_sidebar: bool = False,
         basic_auth_password: str | None = None,
         basic_auth_cookie_secret: str | None = None,
-        theme: str = 'default',
+        theme: str = DEFAULT_THEME.name,
     ):
         if auto_start and transport != 'fake':
             raise ValueError(
