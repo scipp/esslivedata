@@ -1,0 +1,1271 @@
+
+<!DOCTYPE html>
+
+
+<html lang="en" data-content_root="../../" >
+
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" /><meta name="viewport" content="width=device-width, initial-scale=1" />
+
+    <title>Declarative session reconciler — migration plan &#8212; ESSlivedata</title>
+  
+  
+  
+  <script data-cfasync="false">
+    document.documentElement.dataset.mode = localStorage.getItem("mode") || "";
+    document.documentElement.dataset.theme = localStorage.getItem("theme") || "";
+  </script>
+  <!--
+    this give us a css class that will be invisible only if js is disabled
+  -->
+  <noscript>
+    <style>
+      .pst-js-only { display: none !important; }
+
+    </style>
+  </noscript>
+  
+  <!-- Loaded before other Sphinx assets -->
+  <link href="../../_static/styles/theme.css?digest=90905a2f556bf617f1a9" rel="stylesheet" />
+<link href="../../_static/styles/pydata-sphinx-theme.css?digest=90905a2f556bf617f1a9" rel="stylesheet" />
+
+    <link rel="stylesheet" type="text/css" href="../../_static/pygments.css?v=03e43079" />
+    <link rel="stylesheet" type="text/css" href="../../_static/copybutton.css?v=76b2166b" />
+    <link rel="stylesheet" type="text/css" href="../../_static/autodoc_pydantic.css" />
+    <link rel="stylesheet" type="text/css" href="../../_static/sphinx-design.min.css?v=95c83b7e" />
+  
+  <!-- So that users can add custom icons -->
+  <script defer src="../../_static/scripts/fontawesome.js?digest=90905a2f556bf617f1a9"></script>
+  <!-- Pre-loaded scripts that we'll load fully later -->
+  <link rel="preload" as="script" href="../../_static/scripts/bootstrap.js?digest=90905a2f556bf617f1a9" />
+<link rel="preload" as="script" href="../../_static/scripts/pydata-sphinx-theme.js?digest=90905a2f556bf617f1a9" />
+
+    <script src="../../_static/documentation_options.js?v=dbc7823d"></script>
+    <script src="../../_static/doctools.js?v=fd6eb6e6"></script>
+    <script src="../../_static/sphinx_highlight.js?v=6ffebe34"></script>
+    <script src="../../_static/clipboard.min.js?v=a7894cd8"></script>
+    <script src="../../_static/copybutton.js?v=f281be69"></script>
+    <script src="../../_static/design-tabs.js?v=f930bc37"></script>
+    <script crossorigin="anonymous" integrity="sha256-Ae2Vz/4ePdIu6ZyI/5ZGsYnb+m0JlOmKPjt6XZ9JJkA=" src="https://cdnjs.cloudflare.com/ajax/libs/require.js/2.3.4/require.min.js"></script>
+    <script type="module">import mermaid from "https://cdn.jsdelivr.net/npm/mermaid@11.12.1/dist/mermaid.esm.min.mjs";
+
+
+
+const initStyles = () => {
+    const defaultStyle = document.createElement('style');
+    defaultStyle.textContent = "pre.mermaid {\n    /* Same as .mermaid-container > pre */\n    display: block;\n    width: 100%;\n}\n\npre.mermaid > svg {\n    /* Same as .mermaid-container > pre > svg */\n    height: 500px;\n    width: 100%;\n    max-width: 100% !important;\n}";
+    document.head.appendChild(defaultStyle);
+
+    const fullscreenStyle = document.createElement('style');
+    fullscreenStyle.textContent = ".mermaid-container {\n    position: relative;\n    display: flex;\n    flex-direction: row;\n    width: 100%;\n}\n\n.mermaid-container > pre {\n    display: block;\n    width: 100%;\n}\n\n.mermaid-container > pre > svg {\n    height: 500px;\n    width: 100%;\n    max-width: 100% !important;\n}\n\n.mermaid-fullscreen-btn {\n    position: absolute;\n    width: 28px;\n    height: 28px;\n    background: rgba(255, 255, 255, 0.95);\n    border: 1px solid rgba(0, 0, 0, 0.3);\n    border-radius: 4px;\n    cursor: pointer;\n    display: flex;\n    align-items: center;\n    justify-content: center;\n    transition: all 0.2s;\n    box-shadow: 0 2px 6px rgba(0, 0, 0, 0.2);\n    font-size: 14px;\n    line-height: 1;\n    padding: 0;\n    color: #333;\n}\n\n.mermaid-fullscreen-btn:hover {\n    opacity: 100% !important;\n    background: rgba(255, 255, 255, 1);\n    box-shadow: 0 3px 10px rgba(0, 0, 0, 0.3);\n    transform: scale(1.1);\n}\n\n.mermaid-fullscreen-btn.dark-theme {\n    background: rgba(50, 50, 50, 0.95);\n    border: 1px solid rgba(255, 255, 255, 0.3);\n    color: #e0e0e0;\n}\n\n.mermaid-fullscreen-btn.dark-theme:hover {\n    background: rgba(60, 60, 60, 1);\n    box-shadow: 0 3px 10px rgba(255, 255, 255, 0.2);\n}\n\n.mermaid-fullscreen-modal {\n    display: none;\n    position: fixed !important;\n    top: 0 !important;\n    left: 0 !important;\n    width: 95vw;\n    height: 100vh;\n    background: rgba(255, 255, 255, 0.98);\n    z-index: 9999;\n    padding: 20px;\n    overflow: auto;\n}\n\n.mermaid-fullscreen-modal.dark-theme {\n    background: rgba(0, 0, 0, 0.98);\n}\n\n.mermaid-fullscreen-modal.active {\n    display: flex;\n    align-items: center;\n    justify-content: center;\n}\n\n.mermaid-container-fullscreen {\n    position: relative;\n    width: 95vw;\n    height: 90vh;\n    max-width: 95vw;\n    max-height: 90vh;\n    background: white;\n    border-radius: 8px;\n    padding: 20px;\n    box-shadow: 0 10px 40px rgba(0, 0, 0, 0.3);\n    overflow: auto;\n    display: flex;\n    align-items: center;\n    justify-content: center;\n}\n\n.mermaid-container-fullscreen.dark-theme {\n    background: #1a1a1a;\n    box-shadow: 0 10px 40px rgba(0, 0, 0, 0.8);\n}\n\n.mermaid-container-fullscreen pre.mermaid {\n    width: 100%;\n    height: 100%;\n    display: flex;\n    align-items: center;\n    justify-content: center;\n}\n\n.mermaid-container-fullscreen .mermaid svg {\n    height: 100% !important;\n    width: 100% !important;\n    cursor: grab;\n}\n\n.mermaid-fullscreen-close {\n    position: fixed !important;\n    top: 20px !important;\n    right: 20px !important;\n    width: 40px;\n    height: 40px;\n    background: rgba(255, 255, 255, 0.95);\n    border: 1px solid rgba(0, 0, 0, 0.2);\n    border-radius: 50%;\n    cursor: pointer;\n    z-index: 10000;\n    display: flex;\n    align-items: center;\n    justify-content: center;\n    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);\n    transition: all 0.2s;\n    font-size: 24px;\n    line-height: 1;\n    color: #333;\n}\n\n.mermaid-fullscreen-close:hover {\n    background: white;\n    box-shadow: 0 6px 16px rgba(0, 0, 0, 0.4);\n    transform: scale(1.1);\n}\n\n.mermaid-fullscreen-close.dark-theme {\n    background: rgba(50, 50, 50, 0.95);\n    border: 1px solid rgba(255, 255, 255, 0.2);\n    color: #e0e0e0;\n}\n\n.mermaid-fullscreen-close.dark-theme:hover {\n    background: rgba(60, 60, 60, 1);\n    box-shadow: 0 6px 16px rgba(255, 255, 255, 0.2);\n}\n\n.mermaid-fullscreen-modal .mermaid-fullscreen-btn {\n    display: none !important;\n}";
+    document.head.appendChild(fullscreenStyle);
+}
+
+// Detect if page has dark background
+const isDarkTheme = () => {
+    // We use a set of heuristics:
+    // 1. Check for common dark mode classes or attributes
+    // 2. Check computed background color brightness
+    if (document.documentElement.classList.contains('dark') ||
+        document.documentElement.getAttribute('data-theme') === 'dark' ||
+        document.body.classList.contains('dark') ||
+        document.body.getAttribute('data-theme') === 'dark') {
+        // console.log("Dark theme detected via class/attribute");
+        return true;
+    }
+    if (document.documentElement.classList.contains('light') ||
+        document.documentElement.getAttribute('data-theme') === 'light' ||
+        document.body.classList.contains('light') ||
+        document.body.getAttribute('data-theme') === 'light') {
+        // console.log("Light theme detected via class/attribute");
+        return false;
+    }
+    if (window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches) {
+        // console.log("Dark theme detected via prefers-color-scheme");
+        return true;
+    }
+    const bgColor = window.getComputedStyle(document.body).backgroundColor;
+    const match = bgColor.match(/rgb\((\d+),\s*(\d+),\s*(\d+)/);
+    if (match) {
+        const r = parseInt(match[1]);
+        const g = parseInt(match[2]);
+        const b = parseInt(match[3]);
+        const brightness = (r * 299 + g * 587 + b * 114) / 1000;
+        // console.log("Background color brightness:", brightness);
+        return brightness < 128;
+    }
+    // console.log("No dark or light theme detected, defaulting to light theme");
+    return false;
+};
+
+let darkTheme = isDarkTheme();
+let modal = null;
+let modalContent = null;
+let previousScrollOffset = [window.scrollX, window.scrollY];
+let _lazyObserver = null;
+let _renderQueue = Promise.resolve();
+let closeModal = () => {};
+
+document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape' && modal?.classList.contains('active')) {
+        closeModal();
+    }
+});
+
+// Apply d3 zoom to each SVG. Idempotent: an SVG already wrapped is skipped,
+// so this is safe to call both for the initial batch and for diagrams that
+// render lazily once they become visible.
+const addZoomToSvgs = (svgs) => {
+    svgs.each(function() {
+        if (this.getAttribute('data-zoom-applied') === 'true') return;
+        var svg = d3.select(this);
+        svg.html("<g class='wrapper'>" + svg.html() + "</g>");
+        var inner = svg.select("g");
+        var zoom = d3.zoom().on("zoom", function(event) {
+            inner.attr("transform", event.transform);
+        });
+        svg.call(zoom);
+        this.setAttribute('data-zoom-applied', 'true');
+    });
+};
+
+const runMermaid = async (rerun) => {
+    console.log("Running mermaid diagrams, rerun =", rerun);
+    // clear all existing mermaid charts
+    let all_mermaids = document.querySelectorAll(".mermaid");
+
+    if (rerun) {
+        // Disconnect any previous lazy rendering observer
+        if (_lazyObserver) {
+            _lazyObserver.disconnect();
+            _lazyObserver = null;
+        }
+
+        all_mermaids.forEach((el) => {
+            el.removeAttribute('data-mermaid-deferred');
+            el.removeAttribute('data-mermaid-render-failed');
+            if(!el.hasAttribute("data-original-code")) {
+                // store original code
+                // console.log(`Storing original code for first run: `, el.innerHTML);
+                el.setAttribute('data-original-code', el.innerHTML);
+            }
+            if(el.getAttribute("data-processed") === "true") {
+                // remove and restore original
+                el.removeAttribute("data-processed");
+                // console.log(`Restoring original code for re-run: `, el.getAttribute('data-original-code'));
+                el.innerHTML = el.getAttribute('data-original-code');
+            } else {
+                // store original code
+                // console.log(`Storing original code for re-run: `, el.innerHTML);
+                el.setAttribute('data-original-code', el.innerHTML);
+            }
+        });
+
+        // Separate visible and hidden elements. Mermaid's layout engine measures
+        // text dimensions via the DOM, which fails for elements hidden by a parent
+        // (e.g., Reveal.js non-active slides, sphinx-design unopened tabs),
+        // producing broken SVGs. Render visible elements now, defer hidden ones.
+        const visible = [];
+        const hidden = [];
+        all_mermaids.forEach((el) => {
+            // offsetParent is null for display:none ancestors.
+            // getClientRects().length > 0 catches position:fixed elements
+            // (which also have null offsetParent but are still visible).
+            if (el.offsetParent !== null || el.getClientRects().length > 0) {
+                visible.push(el);
+            } else {
+                hidden.push(el);
+                el.setAttribute('data-mermaid-deferred', 'true');
+            }
+        });
+
+        if (visible.length > 0) {
+            try {
+                await mermaid.run({ nodes: visible });
+            } catch (e) {
+                console.error("Mermaid rendering failed:", e);
+            }
+        }
+
+        // Lazily render hidden elements when they become visible.
+        // Uses a promise chain (_renderQueue) to serialize rendering,
+        // since IntersectionObserver may report multiple entries at once
+        // and mermaid.run() is not safe to call concurrently.
+        if (hidden.length > 0) {
+            if (typeof IntersectionObserver === 'undefined') {
+                console.warn("IntersectionObserver not available; hidden mermaid diagrams will not render.");
+            } else {
+                _renderQueue = Promise.resolve();
+                _lazyObserver = new IntersectionObserver((entries) => {
+                    for (const entry of entries) {
+                        if (entry.isIntersecting && entry.target.getAttribute("data-processed") !== "true") {
+                            _lazyObserver.unobserve(entry.target);
+                            const el = entry.target;
+                            _renderQueue = _renderQueue.then(async () => {
+                                try {
+                                    await mermaid.run({ nodes: [el] });
+                                    el.removeAttribute('data-mermaid-deferred');
+                                    // Apply zoom to the now-rendered diagram, matching
+                                    // the decoration visible diagrams receive.
+                                    if (false) {
+                                        addZoomToSvgs(d3.selectAll("").select(function() {
+                                            return this.querySelector("svg");
+                                        }));
+                                    }
+                                } catch (e) {
+                                    console.error("Mermaid deferred rendering failed:", e);
+                                    el.removeAttribute('data-mermaid-deferred');
+                                    el.setAttribute('data-mermaid-render-failed', 'true');
+                                }
+                            });
+                        }
+                    }
+                });
+                hidden.forEach((el) => _lazyObserver.observe(el));
+            }
+        }
+    }
+
+    all_mermaids = document.querySelectorAll(".mermaid");
+    // Exclude deferred (hidden) and render-failed elements from completion checks
+    const mermaids_active = document.querySelectorAll(".mermaid:not([data-mermaid-deferred]):not([data-mermaid-render-failed])");
+    const mermaids_processed = document.querySelectorAll(".mermaid:not([data-mermaid-deferred]):not([data-mermaid-render-failed])[data-processed='true']");
+
+    if (false) {
+        const mermaids_to_add_zoom = 0 === -1 ? mermaids_active.length : 0;
+        if(mermaids_to_add_zoom > 0) {
+            var svgs = d3.selectAll("").select(function() {
+                return this.querySelector("svg");
+            });
+            // Wait until every active (visible) diagram has rendered. Deferred
+            // diagrams are excluded, so a fixed d3_node_count that counts a
+            // hidden diagram no longer loops forever waiting for its SVG.
+            if(mermaids_active.length !== mermaids_processed.length) {
+                setTimeout(() => runMermaid(false), 200);
+                return;
+            }
+            addZoomToSvgs(svgs);
+        }
+    } else if(mermaids_active.length !== mermaids_processed.length) {
+        // Wait for mermaid to process all diagrams
+        setTimeout(() => runMermaid(false), 200);
+        return;
+    }
+
+    // Stop here if not adding fullscreen capability
+    if (!true) return;
+
+    if (modal !== null ) {
+        // Destroy existing modal
+        modal.remove();
+        modal = null;
+        modalContent = null;
+    }
+
+    modal = document.createElement('div');
+    modal.className = 'mermaid-fullscreen-modal' + (darkTheme ? ' dark-theme' : '');
+    modal.setAttribute('role', 'dialog');
+    modal.setAttribute('aria-modal', 'true');
+    modal.setAttribute('aria-label', 'Fullscreen diagram viewer');
+    modal.innerHTML = `
+        <button class="mermaid-fullscreen-close${darkTheme ? ' dark-theme' : ''}" aria-label="Close fullscreen">✕</button>
+        <div class="mermaid-container-fullscreen${darkTheme ? ' dark-theme' : ''}"></div>
+    `;
+    document.body.appendChild(modal);
+
+    modalContent = modal.querySelector('.mermaid-container-fullscreen');
+    const closeBtn = modal.querySelector('.mermaid-fullscreen-close');
+
+    closeModal = () => {
+        modal.classList.remove('active');
+        modalContent.innerHTML = '';
+        document.body.style.overflow = ''
+        window.scrollTo({left: previousScrollOffset[0], top: previousScrollOffset[1], behavior: 'instant'});
+    };
+
+    closeBtn.addEventListener('click', closeModal);
+    modal.addEventListener('click', (e) => {
+        if (e.target === modal) closeModal();
+    });
+    document.querySelectorAll('.mermaid').forEach((mermaidDiv) => {
+        if (mermaidDiv.parentNode.classList.contains('mermaid-container') ||
+            mermaidDiv.closest('.mermaid-fullscreen-modal')) {
+            // Already processed, adjust button class if needed
+            const existingBtn = mermaidDiv.parentNode.querySelector('.mermaid-fullscreen-btn');
+            if (existingBtn) {
+                existingBtn.className = 'mermaid-fullscreen-btn' + (darkTheme ? ' dark-theme' : '');
+            }
+            return;
+        }
+
+        const container = document.createElement('div');
+        container.className = 'mermaid-container';
+        mermaidDiv.parentNode.insertBefore(container, mermaidDiv);
+        container.appendChild(mermaidDiv);
+
+        const fullscreenBtn = document.createElement('button');
+        fullscreenBtn.className = 'mermaid-fullscreen-btn' + (darkTheme ? ' dark-theme' : '');
+        fullscreenBtn.setAttribute('aria-label', 'View diagram in fullscreen');
+        fullscreenBtn.textContent = "\u26f6";
+        fullscreenBtn.style.opacity = "50%";
+
+        // Calculate dynamic position based on diagram's margin and padding
+        const diagramStyle = window.getComputedStyle(mermaidDiv);
+        const marginTop = parseFloat(diagramStyle.marginTop) || 0;
+        const marginRight = parseFloat(diagramStyle.marginRight) || 0;
+        const paddingTop = parseFloat(diagramStyle.paddingTop) || 0;
+        const paddingRight = parseFloat(diagramStyle.paddingRight) || 0;
+        fullscreenBtn.style.top = `${marginTop + paddingTop + 4}px`;
+        fullscreenBtn.style.right = `${marginRight + paddingRight + 4}px`;
+
+        fullscreenBtn.addEventListener('click', () => {
+            previousScrollOffset = [window.scrollX, window.scrollY];
+            const clone = mermaidDiv.cloneNode(true);
+            modalContent.innerHTML = '';
+            modalContent.appendChild(clone);
+
+            const svg = clone.querySelector('svg');
+            if (svg) {
+                svg.removeAttribute('width');
+                svg.removeAttribute('height');
+                svg.style.width = '100%';
+                svg.style.height = 'auto';
+                svg.style.maxWidth = '100%';
+                svg.style.display = 'block';
+
+                if (false) {
+                    setTimeout(() => {
+                        const g = svg.querySelector('g');
+                        if (g) {
+                            var svgD3 = d3.select(svg);
+                            svgD3.html("<g class='wrapper'>" + svgD3.html() + "</g>");
+                            var inner = svgD3.select("g");
+                            var zoom = d3.zoom().on("zoom", function(event) {
+                                inner.attr("transform", event.transform);
+                            });
+                            svgD3.call(zoom);
+                        }
+                    }, 100);
+                }
+            }
+
+            modal.classList.add('active');
+            document.body.style.overflow = 'hidden';
+        });
+        container.appendChild(fullscreenBtn);
+    });
+};
+
+
+
+const load = async () => {
+    initStyles();
+
+
+    await runMermaid(true);
+
+    const reRunIfThemeChanges = async () => {
+        const newDarkTheme = isDarkTheme();
+        if (newDarkTheme !== darkTheme) {
+            darkTheme = newDarkTheme;
+            console.log("Theme change detected, re-running mermaid with", darkTheme ? "dark" : "default", "theme");
+            await mermaid.initialize(
+                {...{"startOnLoad": false},
+                ...{ darkMode: darkTheme, theme: darkTheme ? "dark" : "default" },
+                }
+            );
+            await runMermaid(true);
+        }
+    };
+
+    // Update theme classes when theme changes
+    const themeObserver = new MutationObserver(reRunIfThemeChanges);
+    themeObserver.observe(document.documentElement, {
+        attributes: true,
+        attributeFilter: ['class', 'style', 'data-theme']
+    });
+    themeObserver.observe(document.body, {
+        attributes: true,
+        attributeFilter: ['class', 'style', 'data-theme']
+    });
+};
+
+
+
+
+
+console.log("Initializing mermaid with", darkTheme ? "dark" : "default", "theme");
+mermaid.initialize(
+    {...{"startOnLoad": false},
+    ...{ darkMode: darkTheme, theme: darkTheme ? "dark" : "default" },
+    }
+);
+
+window.addEventListener("load", load);
+window.runMermaid = runMermaid;</script>
+    <script>DOCUMENTATION_OPTIONS.pagename = 'developer/proposals/declarative-session-reconciler-migration';</script>
+    <script>DOCUMENTATION_OPTIONS.search_as_you_type = false;</script>
+    <script src="../../_static/anaconda-icon.js?v=461bdc62"></script>
+    <link rel="icon" href="../../_static/favicon.ico"/>
+    <link rel="index" title="Index" href="../../genindex.html" />
+    <link rel="search" title="Search" href="../../search.html" />
+    <link rel="next" title="About" href="../../about/index.html" />
+    <link rel="prev" title="The session reconciler today — detailed analysis" href="declarative-session-reconciler-current-state.html" />
+  <meta name="viewport" content="width=device-width, initial-scale=1"/>
+  <meta name="docsearch:language" content="en"/>
+  <meta name="docsearch:version" content="26.8.0" />
+  
+    
+    <script src="../../_static/searchtools.js"></script>
+    <script src="../../_static/language_data.js"></script>
+    <script src="../../searchindex.js"></script>
+  
+  </head>
+  <body data-default-mode="">
+  
+  
+  <div id="pst-skip-link" class="skip-link d-print-none"><a href="#main-content">Skip to main content</a></div>
+
+  
+  <div id="pst-scroll-pixel-helper"></div>
+  
+  <button type="button" class="btn rounded-pill" id="pst-back-to-top">
+    <i class="fa-solid fa-arrow-up"></i>Back to top</button>
+  
+  
+  
+  
+  <dialog id="pst-search-dialog">
+    
+<form class="bd-search d-flex align-items-center"
+      action="../../search.html"
+      method="get">
+  <i class="fa-solid fa-magnifying-glass"></i>
+  <input type="search"
+         class="form-control"
+         name="q"
+         placeholder="Search the docs ..."
+         aria-label="Search the docs ..."
+         autocomplete="off"
+         autocorrect="off"
+         autocapitalize="off"
+         spellcheck="false"/>
+  <span class="search-button__kbd-shortcut"><kbd class="kbd-shortcut__modifier">Ctrl</kbd>+<kbd>K</kbd></span>
+</form>
+  </dialog>
+
+  <div class="pst-async-banner-revealer d-none">
+  <aside id="bd-header-version-warning" class="d-none d-print-none" aria-label="Version warning"></aside>
+</div>
+
+  
+    <header id="pst-header" class="bd-header navbar navbar-expand-lg bd-navbar d-print-none">
+<div class="bd-header__inner bd-page-width">
+  <button class="pst-navbar-icon sidebar-toggle primary-toggle" aria-label="Site navigation">
+    <span class="fa-solid fa-bars"></span>
+  </button>
+  
+  
+  <div class="col-lg-3 navbar-header-items__start">
+    
+      <div class="navbar-item">
+
+  
+    
+  
+
+<a class="navbar-brand logo" href="../../index.html">
+  
+  
+  
+  
+  
+    
+    
+      
+    
+    
+    <img src="../../_static/logo.svg" class="logo__image only-light" alt="ESSlivedata - Home"/>
+    <img src="../../_static/logo-dark.svg" class="logo__image only-dark pst-js-only" alt="ESSlivedata - Home"/>
+  
+  
+</a></div>
+    
+  </div>
+  
+  <div class="col-lg-9 navbar-header-items">
+    
+    <div class="me-auto navbar-header-items__center">
+      
+        <div class="navbar-item">
+<nav>
+  <ul class="bd-navbar-elements navbar-nav">
+    
+<li class="nav-item ">
+  <a class="nav-link nav-internal" href="../../user-guide/index.html">
+    User Guide
+  </a>
+</li>
+
+
+<li class="nav-item ">
+  <a class="nav-link nav-internal" href="../../api-reference/index.html">
+    API Reference
+  </a>
+</li>
+
+
+<li class="nav-item current active">
+  <a class="nav-link nav-internal" href="../index.html">
+    Development
+  </a>
+</li>
+
+
+<li class="nav-item ">
+  <a class="nav-link nav-internal" href="../../about/index.html">
+    About
+  </a>
+</li>
+
+            <li class="nav-item dropdown">
+                <button class="btn dropdown-toggle nav-item" type="button"
+                data-bs-toggle="dropdown" aria-expanded="false"
+                aria-controls="pst-nav-more-links">
+                    More
+                </button>
+                <ul id="pst-nav-more-links" class="dropdown-menu">
+                    
+<li class=" ">
+  <a class="nav-link dropdown-item nav-external" href="https://scipp.github.io/essreduce">
+    ESSreduce
+  </a>
+</li>
+
+
+<li class=" ">
+  <a class="nav-link dropdown-item nav-external" href="https://scipp.github.io/sciline">
+    Sciline
+  </a>
+</li>
+
+
+<li class=" ">
+  <a class="nav-link dropdown-item nav-external" href="https://scipp.github.io">
+    Scipp
+  </a>
+</li>
+
+                </ul>
+            </li>
+            
+  </ul>
+</nav></div>
+      
+    </div>
+    
+    
+    <div class="navbar-header-items__end">
+      
+        <div class="navbar-item navbar-persistent--container">
+          
+
+<button class="btn btn-sm pst-navbar-icon search-button search-button__button pst-js-only" title="Search" aria-label="Search" data-bs-placement="bottom" data-bs-toggle="tooltip">
+    <i class="fa-solid fa-magnifying-glass fa-lg"></i>
+</button>
+        </div>
+      
+      
+        <div class="navbar-item">
+
+<div class="theme-switch-container dropdown pst-js-only" data-bs-toggle="tooltip" data-bs-placement="bottom" title="Color mode">
+  <button class="btn btn-sm nav-link pst-navbar-icon theme-switch-button dropdown-toggle" aria-label="Color mode" data-bs-toggle="dropdown">
+    <i class="theme-switch fa-solid fa-sun fa-lg fa-fw" data-mode="light" title="Light"></i>
+    <i class="theme-switch fa-solid fa-moon fa-lg fa-fw" data-mode="dark" title="Dark"></i>
+    <i class="theme-switch fa-solid fa-circle-half-stroke fa-lg fa-fw" data-mode="auto" title="System Settings"></i>
+  </button>
+  <ul class="dropdown-menu dropdown-menu-end">
+    <li><button class="dropdown-item d-flex align-items-center theme-change-button" data-mode="auto"><i class="fa-solid fa-circle-half-stroke fa-lg fa-fw me-1"></i>System Settings</button></li>
+    <li><button class="dropdown-item d-flex align-items-center theme-change-button" data-mode="light"><i class="fa-solid fa-sun fa-lg fa-fw me-1"></i>Light</button></li>
+    <li><button class="dropdown-item d-flex align-items-center theme-change-button" data-mode="dark"><i class="fa-solid fa-moon fa-lg fa-fw me-1"></i>Dark</button></li>
+  </ul>
+</div></div>
+      
+        <div class="navbar-item"><ul class="navbar-icon-links"
+    aria-label="Icon Links">
+        <li class="nav-item">
+          
+          
+          
+          
+          
+          
+          
+          
+          <a href="https://github.com/scipp/esslivedata" title="GitHub" class="nav-link pst-navbar-icon" rel="noopener" target="_blank" data-bs-toggle="tooltip" data-bs-placement="bottom"><i class="fa-brands fa-github fa-lg" aria-hidden="true"></i><span class="visually-hidden">GitHub</span></a>
+        </li>
+        <li class="nav-item">
+          
+          
+          
+          
+          
+          
+          
+          
+          <a href="https://pypi.org/project/esslivedata/" title="PyPI" class="nav-link pst-navbar-icon" rel="noopener" target="_blank" data-bs-toggle="tooltip" data-bs-placement="bottom"><i class="fa-brands fa-python fa-lg" aria-hidden="true"></i><span class="visually-hidden">PyPI</span></a>
+        </li>
+        <li class="nav-item">
+          
+          
+          
+          
+          
+          
+          
+          
+          <a href="https://anaconda.org/conda-forge/esslivedata" title="Conda" class="nav-link pst-navbar-icon" rel="noopener" target="_blank" data-bs-toggle="tooltip" data-bs-placement="bottom"><i class="fa-custom fa-lg" data-prefix="fa-custom" data-icon="anaconda" aria-hidden="true"></i><span class="visually-hidden">Conda</span></a>
+        </li>
+</ul></div>
+      
+    </div>
+    
+  </div>
+  
+  
+    <div class="navbar-persistent--mobile">
+
+<button class="btn btn-sm pst-navbar-icon search-button search-button__button pst-js-only" title="Search" aria-label="Search" data-bs-placement="bottom" data-bs-toggle="tooltip">
+    <i class="fa-solid fa-magnifying-glass fa-lg"></i>
+</button>
+    </div>
+  
+
+  
+</div>
+
+    </header>
+  
+
+  <div class="bd-container">
+    <div class="bd-container__inner bd-page-width">
+      
+      
+      
+      <dialog id="pst-primary-sidebar-modal"></dialog>
+      <div id="pst-primary-sidebar" class="bd-sidebar-primary bd-sidebar">
+        
+
+  
+  <div class="sidebar-header-items sidebar-primary__section">
+    
+    
+      <div class="sidebar-header-items__center">
+        
+          
+          
+            <div class="navbar-item">
+<nav>
+  <ul class="bd-navbar-elements navbar-nav">
+    
+<li class="nav-item ">
+  <a class="nav-link nav-internal" href="../../user-guide/index.html">
+    User Guide
+  </a>
+</li>
+
+
+<li class="nav-item ">
+  <a class="nav-link nav-internal" href="../../api-reference/index.html">
+    API Reference
+  </a>
+</li>
+
+
+<li class="nav-item current active">
+  <a class="nav-link nav-internal" href="../index.html">
+    Development
+  </a>
+</li>
+
+
+<li class="nav-item ">
+  <a class="nav-link nav-internal" href="../../about/index.html">
+    About
+  </a>
+</li>
+
+
+<li class="nav-item ">
+  <a class="nav-link nav-external" href="https://scipp.github.io/essreduce">
+    ESSreduce
+  </a>
+</li>
+
+
+<li class="nav-item ">
+  <a class="nav-link nav-external" href="https://scipp.github.io/sciline">
+    Sciline
+  </a>
+</li>
+
+
+<li class="nav-item ">
+  <a class="nav-link nav-external" href="https://scipp.github.io">
+    Scipp
+  </a>
+</li>
+
+  </ul>
+</nav></div>
+          
+        
+      </div>
+    
+    
+    
+      <div class="sidebar-header-items__end">
+        
+          <div class="navbar-item">
+
+<div class="theme-switch-container dropdown pst-js-only" data-bs-toggle="tooltip" data-bs-placement="bottom" title="Color mode">
+  <button class="btn btn-sm nav-link pst-navbar-icon theme-switch-button dropdown-toggle" aria-label="Color mode" data-bs-toggle="dropdown">
+    <i class="theme-switch fa-solid fa-sun fa-lg fa-fw" data-mode="light" title="Light"></i>
+    <i class="theme-switch fa-solid fa-moon fa-lg fa-fw" data-mode="dark" title="Dark"></i>
+    <i class="theme-switch fa-solid fa-circle-half-stroke fa-lg fa-fw" data-mode="auto" title="System Settings"></i>
+  </button>
+  <ul class="dropdown-menu dropdown-menu-end">
+    <li><button class="dropdown-item d-flex align-items-center theme-change-button" data-mode="auto"><i class="fa-solid fa-circle-half-stroke fa-lg fa-fw me-1"></i>System Settings</button></li>
+    <li><button class="dropdown-item d-flex align-items-center theme-change-button" data-mode="light"><i class="fa-solid fa-sun fa-lg fa-fw me-1"></i>Light</button></li>
+    <li><button class="dropdown-item d-flex align-items-center theme-change-button" data-mode="dark"><i class="fa-solid fa-moon fa-lg fa-fw me-1"></i>Dark</button></li>
+  </ul>
+</div></div>
+        
+          <div class="navbar-item"><ul class="navbar-icon-links"
+    aria-label="Icon Links">
+        <li class="nav-item">
+          
+          
+          
+          
+          
+          
+          
+          
+          <a href="https://github.com/scipp/esslivedata" title="GitHub" class="nav-link pst-navbar-icon" rel="noopener" target="_blank" data-bs-toggle="tooltip" data-bs-placement="bottom"><i class="fa-brands fa-github fa-lg" aria-hidden="true"></i><span class="visually-hidden">GitHub</span></a>
+        </li>
+        <li class="nav-item">
+          
+          
+          
+          
+          
+          
+          
+          
+          <a href="https://pypi.org/project/esslivedata/" title="PyPI" class="nav-link pst-navbar-icon" rel="noopener" target="_blank" data-bs-toggle="tooltip" data-bs-placement="bottom"><i class="fa-brands fa-python fa-lg" aria-hidden="true"></i><span class="visually-hidden">PyPI</span></a>
+        </li>
+        <li class="nav-item">
+          
+          
+          
+          
+          
+          
+          
+          
+          <a href="https://anaconda.org/conda-forge/esslivedata" title="Conda" class="nav-link pst-navbar-icon" rel="noopener" target="_blank" data-bs-toggle="tooltip" data-bs-placement="bottom"><i class="fa-custom fa-lg" data-prefix="fa-custom" data-icon="anaconda" aria-hidden="true"></i><span class="visually-hidden">Conda</span></a>
+        </li>
+</ul></div>
+        
+      </div>
+    
+  </div>
+  
+    <div class="sidebar-primary-items__start sidebar-primary__section">
+        <div class="sidebar-primary-item">
+
+<nav class="bd-docs-nav bd-links"
+     aria-label="Section Navigation">
+  <p class="bd-links__title" role="heading" aria-level="1">Section Navigation</p>
+  <div class="bd-toc-item navbar-nav"><ul class="current nav bd-sidenav">
+<li class="toctree-l1"><a class="reference internal" href="../getting-started.html">Getting started</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../glossary.html">Glossary</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../coding-conventions.html">Coding conventions</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../dependency-management.html">Dependency management</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../design/backend-service-architecture.html">Backend Service Architecture</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../design/message-flow-and-transformation.html">Message Flow and Transformation</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../design/dashboard-architecture.html">Livedata Dashboard Architecture</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../design/orchestrator-flow.html">Orchestrator Flow: Plot Creation Lifecycle</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../design/rate-aware-batcher.html">Rate-Aware Message Batcher</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../design/stream-keying.html">Stream Keying</a></li>
+<li class="toctree-l1 has-children"><a class="reference internal" href="../adr/index.html">Architecture Decision Records</a><details><summary><span class="toctree-toggle" role="presentation"><i class="fa-solid fa-chevron-down"></i></span></summary><ul>
+<li class="toctree-l2"><a class="reference internal" href="../adr/0001-in-process-device-stream-synthesis.html">ADR 0001: In-process synthesis of merged device streams</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../adr/0002-context-stream-gating-at-jobmanager.html">ADR 0002: Gate workflow execution at the JobManager on context-stream readiness</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../adr/0003-context-input-declaration-model.html">ADR 0003: Unified declaration model for workflow context bindings</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../adr/0004-uniform-stream-name-keying.html">ADR 0004: Key workflow inputs uniformly by canonical stream name</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../adr/0005-frame-gated-session-flush.html">ADR 0005: Frame-gated per-session plot flush</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../adr/0006-nicos-derived-devices.html">ADR 0006: Expose designated workflow outputs to NICOS as derived devices</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../adr/0007-single-writer-versioned-pull.html">ADR 0007: Single-writer state with versioned pull as the dashboard concurrency model</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../adr/0008-job-adoption-from-heartbeat-observation.html">ADR 0008: Job adoption from heartbeat observation replaces persisted job identity</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../adr/0009-build-time-stream-registry-codegen.html">ADR 0009: Generate the per-instrument stream registry at development time</a></li>
+</ul>
+</details></li>
+<li class="toctree-l1 current active has-children"><a class="reference internal" href="declarative-session-reconciler.html">Proposal: A declarative reconciler for plot-grid sessions</a><details open="open"><summary><span class="toctree-toggle" role="presentation"><i class="fa-solid fa-chevron-down"></i></span></summary><ul class="current">
+<li class="toctree-l2"><a class="reference internal" href="declarative-session-reconciler-current-state.html">The session reconciler today — detailed analysis</a></li>
+<li class="toctree-l2 current active"><a class="current reference internal" href="#">Declarative session reconciler — migration plan</a></li>
+</ul>
+</details></li>
+</ul>
+</div>
+</nav></div>
+        <div class="sidebar-primary-item">
+<div
+    id="pst-page-navigation-heading-2"
+    class="page-toc tocsection onthispage">
+    <i class="fa-solid fa-list"></i> On this page
+  </div>
+  <nav id="pst-page-toc-nav" class="page-toc" aria-labelledby="pst-page-navigation-heading-2">
+    <ul class="pst-show_toc_level nav section-nav flex-column">
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#phase-0-characterization-tests">Phase 0 — characterization tests</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#phase-1-occupancy-from-topology-1219-structural-half">Phase 1 — occupancy from topology (#1219, structural half)</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#phase-2-desired-differ-for-structure-and-materialization">Phase 2 — <code class="docutils literal notranslate"><span class="pre">desired()</span></code> + differ for structure and materialization</a><ul class="nav section-nav flex-column">
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#acceptance-criteria-agree-before-starting-judge-after-1-week">Acceptance criteria (agree before starting, judge after ≤ 1 week)</a></li>
+</ul>
+</li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#test-suite-impact-and-cleanup">Test-suite impact and cleanup</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#phase-3-fold-in-flush-and-freshness-optional">Phase 3 — fold in flush and freshness (optional)</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#phase-4-stable-widget-shell-speculative-spike">Phase 4 — stable widget shell (speculative spike)</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#risks-and-mitigations">Risks and mitigations</a></li>
+</ul>
+  </nav></div>
+    </div>
+  
+  
+  <div class="sidebar-primary-items__end sidebar-primary__section">
+      <div class="sidebar-primary-item">
+
+  <div class="tocsection sourcelink">
+    <a href="../../_sources/developer/proposals/declarative-session-reconciler-migration.md">
+      <i class="fa-solid fa-file-lines"></i> Show Source
+    </a>
+  </div>
+</div>
+  </div>
+
+
+      </div>
+      
+      <main id="main-content" class="bd-main" role="main">
+        
+        
+          <div class="bd-content">
+            <div class="bd-article-container">
+              
+              <div class="bd-header-article d-print-none">
+<div class="header-article-items header-article__inner">
+  
+    <div class="header-article-items__start">
+      
+        <div class="header-article-item">
+
+<nav aria-label="Breadcrumb" class="d-print-none">
+  <ul class="bd-breadcrumbs">
+    
+    <li class="breadcrumb-item breadcrumb-home">
+      <a href="../../index.html" class="nav-link" aria-label="Home">
+        <i class="fa-solid fa-home"></i>
+      </a>
+    </li>
+    
+    <li class="breadcrumb-item"><a href="../index.html" class="nav-link">Development</a></li>
+    
+    
+    <li class="breadcrumb-item"><a href="declarative-session-reconciler.html" class="nav-link">Proposal: A declarative reconciler for plot-grid sessions</a></li>
+    
+    <li class="breadcrumb-item active" aria-current="page"><span class="ellipsis">Declarative session reconciler — migration plan</span></li>
+  </ul>
+</nav>
+</div>
+      
+    </div>
+  
+  
+</div>
+</div>
+              
+              
+              
+                
+<div id="searchbox"></div>
+                <article class="bd-article">
+                  
+  <section class="tex2jax_ignore mathjax_ignore" id="declarative-session-reconciler-migration-plan">
+<h1>Declarative session reconciler — migration plan<a class="headerlink" href="#declarative-session-reconciler-migration-plan" title="Link to this heading">#</a></h1>
+<p>Companion to the
+<a class="reference internal" href="declarative-session-reconciler.html"><span class="std std-doc">declarative session reconciler proposal</span></a>.
+Four phases, each shippable and useful on its own; phase 2 doubles as the
+go/no-go spike for the rest.</p>
+<pre  class="mermaid">
+        flowchart LR
+    P0[&quot;Phase 0&lt;br/&gt;characterization&lt;br/&gt;tests&quot;]
+    P1[&quot;Phase 1&lt;br/&gt;occupancy from&lt;br/&gt;topology&quot;]
+    P2[&quot;Phase 2&lt;br/&gt;desired() + differ&lt;br/&gt;(the spike)&quot;]
+    P3[&quot;Phase 3&lt;br/&gt;fold in flush +&lt;br/&gt;freshness&quot;]
+    P4[&quot;Phase 4&lt;br/&gt;stable widget shell&lt;br/&gt;(speculative)&quot;]
+
+    P0 --&gt; P2
+    P1 --&gt; P2
+    P2 -- &quot;criteria met&quot; --&gt; P3 --&gt; P4
+    P2 -- &quot;criteria missed&quot; --&gt; Stop([&quot;stop, keep 0+1,&lt;br/&gt;write down why&quot;])
+
+    classDef ship fill:#e8f5e9,stroke:#2e7d32,color:#1b5e20;
+    classDef spec fill:#fff3e0,stroke:#ef6c00,color:#e65100;
+    class P0,P1 ship;
+    class P2,P3 spec;
+    class P4 spec;
+    </pre><section id="phase-0-characterization-tests">
+<h2>Phase 0 — characterization tests<a class="headerlink" href="#phase-0-characterization-tests" title="Link to this heading">#</a></h2>
+<p><strong>Status: implemented in <a class="reference external" href="https://github.com/scipp/esslivedata/pull/1229">#1229</a>.</strong></p>
+<p>Lock in what the current pass does before changing how it does it. The tests
+from #1220 (hidden cell not built, reveal builds once, watcher preserves
+pre-warm, deferred rebuild) and #1226 (pipe subscribers severed on dispose,
+subscriber count flat across a rebuild) are the seed; add:</p>
+<ul class="simple">
+<li><p>Tab reconcile: focus preserved across rebuilds, local-creation focus,
+disabled-grid tab omission, mid-removal identity lookups.</p></li>
+<li><p>Orphan sweep: cell removed from topology → widget removed and disposed;
+disabled grid’s cells survive for re-enable.</p></li>
+<li><p>Flush gating: one flush per frame generation, tab-switch flush without a
+generation change does not consume the next frame’s flush.</p></li>
+<li><p>Freshness: pill updates on flush/rebuild, stall aging at the 2 s cadence,
+no double-update beat.</p></li>
+<li><p>Predicate/pass agreement: for each gate, “pass would do work ⇒ predicate
+fires” (this test is only writable per-gate today; under phase 2 it becomes
+a single generic property).</p></li>
+<li><p>Resource symmetry: dispose releases everything build acquired — total
+pipe-subscriber count across a session’s layers is flat across rebuilds and
+removals, and <code class="docutils literal notranslate"><span class="pre">hv.DynamicMap</span></code> callback executions per pass stay flat
+(#1224’s acceptance checks; cheap to instrument in the pass).</p></li>
+</ul>
+<p>Also enumerate the framework-trap invariants that tests cannot easily cover
+as a checklist in the module docstring (they are currently scattered across
+<code class="docutils literal notranslate"><span class="pre">IMPORTANT:</span></code> comments): modal container has one stable parent at top level;
+wake registration deferred until browser load; batching around multi-widget
+updates; disposal breaks toolbar reference cycles and severs pipe
+subscriptions <em>before</em> the replacement renders (holoviews severs all weak
+plot-refresh subscribers on the touched streams, so ordering carries the
+correctness — #1224); markup-pane reveal workaround.</p>
+<p>Value: independent of this proposal — it is the safety net any future change
+to this module needs.</p>
+</section>
+<section id="phase-1-occupancy-from-topology-1219-structural-half">
+<h2>Phase 1 — occupancy from topology (#1219, structural half)<a class="headerlink" href="#phase-1-occupancy-from-topology-1219-structural-half" title="Link to this heading">#</a></h2>
+<p><strong>Status: merged as <a class="reference external" href="https://github.com/scipp/esslivedata/pull/1221">#1221</a>.</strong></p>
+<p><code class="docutils literal notranslate"><span class="pre">PlotGrid</span></code> stops deriving free positions from inserted widgets. Instead it
+receives a callable returning the grid’s topology geometries (wired to the
+orchestrator by <code class="docutils literal notranslate"><span class="pre">PlotGridTabs</span></code>), and the second click of the selection
+gesture re-validates the region before opening the wizard. <code class="docutils literal notranslate"><span class="pre">_occupied_cells</span></code>
+shrinks to “which widget sits at which geometry” (needed for
+removal/replacement) and no longer feeds selection decisions.</p>
+<p>Small, local, already agreed as the right fix in #1219. Kills the
+stale-display path (empty cells offered over positions topology holds). One
+residue is unavoidable by construction: two sessions can still complete the
+wizard <em>simultaneously</em> on the same genuinely-free region, so the loser hits
+the overlap <code class="docutils literal notranslate"><span class="pre">ValueError</span></code> — #1220’s error handler stays necessary as the last
+line of defence, and no occupancy model removes it.</p>
+</section>
+<section id="phase-2-desired-differ-for-structure-and-materialization">
+<h2>Phase 2 — <code class="docutils literal notranslate"><span class="pre">desired()</span></code> + differ for structure and materialization<a class="headerlink" href="#phase-2-desired-differ-for-structure-and-materialization" title="Link to this heading">#</a></h2>
+<p><strong>Status: implemented in <a class="reference external" href="https://github.com/scipp/esslivedata/pull/1230">#1230</a></strong>
+(<code class="docutils literal notranslate"><span class="pre">desired_cells</span></code> in <code class="docutils literal notranslate"><span class="pre">dashboard/cell_plan.py</span></code>; plans compared against the
+build inputs each widget records). Outcome against the criteria below: 2–5
+met cleanly; criterion 1 met with one honest nuance — <code class="docutils literal notranslate"><span class="pre">_last_layer_version</span></code>
+survives, but purely as the wake stamp with no rebuild semantics, and its
+snapshot-early/record-late rule now applies uniformly to all stamps instead
+of being a per-field choreography. The build inputs turned out to need one
+element beyond the sketch below: <code class="docutils literal notranslate"><span class="pre">has_plot</span></code> per layer, because a STOPPED
+layer’s retained data is computed by the reveal’s first-viewer activation
+<em>without</em> a version bump — the one upgrade a counter cannot express.</p>
+<p>The spike. Scope: concerns 1–4 of the current pass (tabs, cell composition,
+layer lifecycle, tokens) move to the new shape; flush (5) and freshness (6)
+stay as they are, driven after the apply step exactly as today.</p>
+<p>Sketch of the types (final naming via the glossary before implementation):</p>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="nd">@dataclass</span><span class="p">(</span><span class="n">frozen</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+<span class="k">class</span><span class="w"> </span><span class="nc">LayerBuildInput</span><span class="p">:</span>
+    <span class="n">layer_id</span><span class="p">:</span> <span class="n">LayerId</span>
+    <span class="n">plotter</span><span class="p">:</span> <span class="nb">object</span> <span class="o">|</span> <span class="kc">None</span>      <span class="c1"># identity comparison only</span>
+    <span class="n">has_plot</span><span class="p">:</span> <span class="nb">bool</span>              <span class="c1"># plotter holds a computed frame</span>
+
+<span class="nd">@dataclass</span><span class="p">(</span><span class="n">frozen</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+<span class="k">class</span><span class="w"> </span><span class="nc">CellPlan</span><span class="p">:</span>
+    <span class="n">grid_id</span><span class="p">:</span> <span class="n">GridId</span>
+    <span class="n">geometry</span><span class="p">:</span> <span class="n">CellGeometry</span>
+    <span class="n">materialize</span><span class="p">:</span> <span class="nb">bool</span>
+    <span class="n">build_inputs</span><span class="p">:</span> <span class="nb">tuple</span><span class="p">[</span><span class="o">...</span><span class="p">]</span>    <span class="c1"># composition + per-layer LayerBuildInput</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">desired</span><span class="p">(</span>
+    <span class="n">topology</span><span class="p">:</span> <span class="n">Mapping</span><span class="p">[</span><span class="n">GridId</span><span class="p">,</span> <span class="n">PlotGridConfig</span><span class="p">],</span>   <span class="c1"># orchestrator snapshot</span>
+    <span class="n">layer_states</span><span class="p">:</span> <span class="n">Mapping</span><span class="p">[</span><span class="n">LayerId</span><span class="p">,</span> <span class="n">LayerSnapshot</span><span class="p">],</span>
+    <span class="n">view</span><span class="p">:</span> <span class="n">SessionView</span><span class="p">,</span>                            <span class="c1"># active grid, modal open</span>
+    <span class="n">watched</span><span class="p">:</span> <span class="n">Callable</span><span class="p">[[</span><span class="n">LayerId</span><span class="p">],</span> <span class="nb">bool</span><span class="p">],</span>           <span class="c1"># other sessions&#39; tokens</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">dict</span><span class="p">[</span><span class="n">CellId</span><span class="p">,</span> <span class="n">CellPlan</span><span class="p">]:</span> <span class="o">...</span>
+</pre></div>
+</div>
+<p>The differ compares <code class="docutils literal notranslate"><span class="pre">CellPlan</span></code>s against the applied record (which stores each
+widget’s <code class="docutils literal notranslate"><span class="pre">build_inputs</span></code>) and emits build/insert/dispose actions; token
+acquire/release is derived from the same plans (materialized-and-visible ⇒
+hold tokens). The wake predicate becomes: input version stamp ≠ stamp at last
+apply, plus the freshness time term.</p>
+<p>Deleted on success: <code class="docutils literal notranslate"><span class="pre">_cell_signatures</span></code>, <code class="docutils literal notranslate"><span class="pre">SessionLayer.last_seen_version</span></code>
+(as a rebuild trigger), <code class="docutils literal notranslate"><span class="pre">_last_layer_version</span></code> and its before/after
+choreography, the rebuild half of <code class="docutils literal notranslate"><span class="pre">_has_pending_work</span></code>, and the
+deliberately-stale-records device from #1220. <code class="docutils literal notranslate"><span class="pre">_cell_grid</span></code> folds into the
+applied record. <code class="docutils literal notranslate"><span class="pre">_tab_composition</span></code> and the tab-focus logic can stay initially
+— tabs are a small, self-contained concern.</p>
+<p>Order-of-operations invariants to carry over explicitly (they do not
+disappear, they become documented steps of the apply stage):</p>
+<ul class="simple">
+<li><p>Token 0→1 computes synchronously; sample time bounds and flush <em>after</em>
+activation so a reveal renders on its own pass.</p></li>
+<li><p>Rebuild+insert runs inside the same batched update as removal, in one pass.</p></li>
+<li><p>Records update only after a successful build (exception ⇒ retry next tick) —
+under the differ this is automatic: a failed build leaves the applied record
+unchanged.</p></li>
+</ul>
+<section id="acceptance-criteria-agree-before-starting-judge-after-1-week">
+<h3>Acceptance criteria (agree before starting, judge after ≤ 1 week)<a class="headerlink" href="#acceptance-criteria-agree-before-starting-judge-after-1-week" title="Link to this heading">#</a></h3>
+<ol class="arabic simple">
+<li><p>≥ half of the bookkeeping fields deleted (measured against the
+<a class="reference internal" href="declarative-session-reconciler-current-state.html"><span class="std std-doc">inventory</span></a>).</p></li>
+<li><p>The hand-mirrored rebuild predicate deleted, replaced by the generic
+stamp comparison.</p></li>
+<li><p>All phase-0 characterization tests and the browser smoke tests pass
+unchanged (behavioral equivalence, not “tests updated to match”).</p></li>
+<li><p>No new framework workaround was needed (a rewrite that trips a new
+Panel/Bokeh trap has negative value).</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">desired()</span></code> has direct unit tests with plain data and no Panel imports.</p></li>
+</ol>
+<p>Any criterion missed → stop, keep phases 0–1, record the reason in this
+document.</p>
+</section>
+</section>
+<section id="test-suite-impact-and-cleanup">
+<h2>Test-suite impact and cleanup<a class="headerlink" href="#test-suite-impact-and-cleanup" title="Link to this heading">#</a></h2>
+<p>The proposal’s testing claim deserves the same scrutiny as its code claim,
+so here is what the suite looks like on each side of phase 2.</p>
+<p><strong>Today</strong> (~2100 lines across <code class="docutils literal notranslate"><span class="pre">plot_grid_tabs_test.py</span></code> and
+<code class="docutils literal notranslate"><span class="pre">plot_grid_tabs_layout_test.py</span></code>):</p>
+<ul class="simple">
+<li><p>Every test pays the full integration price, including pure policy
+questions (“is this cell rebuilt when X changes?”): an eleven-fixture
+service chain (<code class="docutils literal notranslate"><span class="pre">DataService</span></code> → <code class="docutils literal notranslate"><span class="pre">StreamManager</span></code> → <code class="docutils literal notranslate"><span class="pre">PlottingController</span></code> →
+<code class="docutils literal notranslate"><span class="pre">PlotOrchestrator</span></code> → … → <code class="docutils literal notranslate"><span class="pre">PlotGridTabs</span></code>), a Bokeh/HoloViews extension
+load, and eight ad-hoc fake classes, several redefined per test class.</p></li>
+<li><p>The <code class="docutils literal notranslate"><span class="pre">_tick</span></code> helper runs the pass only when <code class="docutils literal notranslate"><span class="pre">_has_pending_work</span></code> fires, so
+every behavioral test silently doubles as a guard on the mirrored
+predicate — deliberate and valuable today, but it means test <em>intent</em>
+(policy? mechanism? predicate?) is not readable from the test, and tests
+for documented predicate holes must bypass the helper and call the pass
+directly.</p></li>
+</ul>
+<p><strong>After phase 2</strong>, tests separate along the same seam as the code:</p>
+<ul class="simple">
+<li><p><strong>Policy tests become plain-data tests of <code class="docutils literal notranslate"><span class="pre">desired()</span></code></strong>: construct
+topology, layer snapshots, and session view as literals; compare the
+returned plans. No fixtures, no Panel import, table-driven; a fake
+plotter reduces to a sentinel object compared by identity. This absorbs
+the bulk of the rebuild/visibility scenarios — including the #1216/#1220
+gate scenarios, which today each need the full stack.</p></li>
+<li><p><strong>Differ tests are a small fixed set</strong> for the generic rules (build,
+rebuild on changed inputs, dispose, deferred no-op, failed build leaves
+the applied record unchanged → retry). Written once; future policy work
+never touches them.</p></li>
+<li><p><strong>Integration tests remain for what is genuinely integration</strong> — tab-strip
+reconcile and focus, widget insertion/disposal, toolbars, overlay
+composition, teardown — but stop re-litigating policy through the UI, so
+they shrink in count while keeping the eleven-fixture chain they
+legitimately need.</p></li>
+<li><p><strong>The predicate guard collapses to one property</strong>: work is pending iff
+input stamps differ from the applied stamp — testable directly, retiring
+both <code class="docutils literal notranslate"><span class="pre">_tick</span></code>’s dual role and the direct-call escape hatch.</p></li>
+</ul>
+<p><strong>Sequencing.</strong> During the spike, none of this happens: criterion 3 freezes
+the existing tests as the equivalence oracle. The reorganization is a
+follow-up after acceptance, and a characterization test is retired only when
+a named <code class="docutils literal notranslate"><span class="pre">desired()</span></code>/differ pair replaces it.</p>
+<p><strong>Outcome.</strong> The reorganization landed after acceptance and matched the
+sketch on three of four points: policy scenarios are plain-data tests of
+<code class="docutils literal notranslate"><span class="pre">desired_cells</span></code>, the surviving integration tests state which mechanism they
+are about (<code class="docutils literal notranslate"><span class="pre">TestCellDiffer</span></code> for the differ rules, <code class="docutils literal notranslate"><span class="pre">TestCellActions</span></code> for
+clicks and cross-session races, <code class="docutils literal notranslate"><span class="pre">TestMaterializationWiring</span></code> for the two
+things only the real chain can show), and the predicate guard collapsed into
+<code class="docutils literal notranslate"><span class="pre">TestWakeGateContract</span></code> — now the only place the gate is exercised, so it
+covers every stamped term explicitly and <em>asserts</em> the two deliberate holes
+(a foreign viewer token, and <code class="docutils literal notranslate"><span class="pre">has_plot</span></code> flipping without a transition) that
+were previously only prose.</p>
+<p>The fourth point came out differently: the differ has no separate unit to
+test, because #1230 kept it inline in the applier — three comparisons over
+the plans, not a function returning actions. Its rules are therefore
+exercised through the real widgets, as a small fixed class. Extracting an
+action-emitting differ purely to make it unit-testable would add an
+intermediate representation nothing else needs; revisit only if a second
+applier ever appears.</p>
+<p><strong>Cleanup worth doing regardless of the go/no-go</strong> (fits phase 0): move the
+eight ad-hoc fakes into shared test helpers, and hoist the fixture chain
+into a <code class="docutils literal notranslate"><span class="pre">conftest.py</span></code> so the phase-0 characterization tests do not copy it a
+third time. Neither depends on the rewrite.</p>
+</section>
+<section id="phase-3-fold-in-flush-and-freshness-optional">
+<h2>Phase 3 — fold in flush and freshness (optional)<a class="headerlink" href="#phase-3-fold-in-flush-and-freshness-optional" title="Link to this heading">#</a></h2>
+<p>Model the data flush as part of the desired state (“grid G should display
+frame generation N”) and freshness as a derived output. Only worth it if
+phase 2 leaves flush/freshness as the odd ones out complicating the tick
+entry points; they are edge-triggered by nature and may legitimately stay a
+small imperative tail. Decide on the phase-2 outcome, same criteria style.</p>
+<p><strong>Decision (post phase 2): not pursued.</strong> The condition above is not met:
+after #1230 the flush/freshness tail is a compact block driven off the same
+plans (it iterates the active grid’s <code class="docutils literal notranslate"><span class="pre">CellPlan</span></code>s and their snapshots), its
+three gates are already uniform stamps recorded like every other pass input,
+and the freshness stall term is inherently wall-clock. Modeling “grid G
+shows generation N” declaratively would add a second applied-state axis
+while deleting nothing. Revisit only if a future feature needs per-cell
+flush policy (e.g. pause).</p>
+</section>
+<section id="phase-4-stable-widget-shell-speculative-spike">
+<h2>Phase 4 — stable widget shell (speculative spike)<a class="headerlink" href="#phase-4-stable-widget-shell-speculative-spike" title="Link to this heading">#</a></h2>
+<p>Today a plotter swap rebuilds the whole <code class="docutils literal notranslate"><span class="pre">CellWidget</span></code> (titlebar, toolbars,
+panes, figure). If the shell were stable and only the figure pane swapped,
+rebuild cost would drop enough that much gating precision becomes
+unnecessary — the differ’s job shrinks further. Risk: Panel pane replacement
+has its own churn and known traps (reveal latch, reparenting); history in
+this codebase says prototype first. Strictly optional; nothing in phases 0–3
+depends on it. The #1224 sever must survive this phase: swapping only the
+figure pane still discards a rendered plot, and the phase-0 subscriber-count
+invariant is the guard that it keeps being released.</p>
+</section>
+<section id="risks-and-mitigations">
+<h2>Risks and mitigations<a class="headerlink" href="#risks-and-mitigations" title="Link to this heading">#</a></h2>
+<div class="pst-scrollable-table-container"><table class="table">
+<thead>
+<tr class="row-odd"><th class="head"><p>Risk</p></th>
+<th class="head"><p>Mitigation</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p>Silently dropping a framework workaround</p></td>
+<td><p>Phase 0 checklist + tests; criterion 4</p></td>
+</tr>
+<tr class="row-odd"><td><p>Behavioral drift hidden by rewritten tests</p></td>
+<td><p>Criterion 3 forbids test rewrites during the spike</p></td>
+</tr>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">desired()</span></code> grows imperative side effects over time</p></td>
+<td><p>Enforce purity: no Panel imports in its module; unit tests construct inputs as plain data</p></td>
+</tr>
+<tr class="row-odd"><td><p>Differ becomes the new dumping ground</p></td>
+<td><p>Differ rules are fixed and generic; policy changes go to <code class="docutils literal notranslate"><span class="pre">desired()</span></code> only — review rule to state in <code class="docutils literal notranslate"><span class="pre">.claude/rules/dashboard-widgets.md</span></code></p></td>
+</tr>
+<tr class="row-even"><td><p>Spike overruns</p></td>
+<td><p>Hard time box; abandoning keeps phases 0–1</p></td>
+</tr>
+</tbody>
+</table>
+</div>
+</section>
+</section>
+
+
+                </article>
+              
+              
+              
+              
+              
+                <footer class="prev-next-footer d-print-none">
+                  
+<div class="prev-next-area">
+    <a class="left-prev"
+       href="declarative-session-reconciler-current-state.html"
+       title="previous page">
+      <i class="fa-solid fa-angle-left"></i>
+      <div class="prev-next-info">
+        <p class="prev-next-subtitle">previous</p>
+        <p class="prev-next-title">The session reconciler today — detailed analysis</p>
+      </div>
+    </a>
+    <a class="right-next"
+       href="../../about/index.html"
+       title="next page">
+      <div class="prev-next-info">
+        <p class="prev-next-subtitle">next</p>
+        <p class="prev-next-title">About</p>
+      </div>
+      <i class="fa-solid fa-angle-right"></i>
+    </a>
+</div>
+                </footer>
+              
+            </div>
+            
+            
+              
+            
+          </div>
+          <footer class="bd-footer-content">
+            
+          </footer>
+        
+      </main>
+    </div>
+  </div>
+  
+  <!-- Scripts loaded after <body> so the DOM is not blocked -->
+  <script defer src="../../_static/scripts/bootstrap.js?digest=90905a2f556bf617f1a9"></script>
+<script defer src="../../_static/scripts/pydata-sphinx-theme.js?digest=90905a2f556bf617f1a9"></script>
+
+  <footer class="bd-footer">
+<div class="bd-footer__inner bd-page-width">
+  
+    <div class="footer-items__start">
+      
+        <div class="footer-item">
+
+  <p class="copyright">
+    
+      © Copyright 2025 Scipp contributors.
+      <br/>
+    
+  </p>
+</div>
+      
+        <div class="footer-item">
+
+  <p class="sphinx-version">
+    Created using <a href="https://www.sphinx-doc.org/">Sphinx</a> 9.0.4.
+    <br/>
+  </p>
+</div>
+      
+    </div>
+  
+  
+  
+    <div class="footer-items__end">
+      
+        <div class="footer-item"><!-- This will display the version of the docs -->
+Current ESSlivedata version: 26.8.0 (<a href="https://github.com/scipp/esslivedata/releases">older versions</a>).</div>
+      
+        <div class="footer-item">
+<p class="theme-version">
+  <!-- # L10n: Setting the PST URL as an argument as this does not need to be localized -->
+  Built with the <a href="https://pydata-sphinx-theme.readthedocs.io/en/stable/index.html">PyData Sphinx Theme</a> 0.20.0.
+</p></div>
+      
+    </div>
+  
+</div>
+
+  </footer>
+  </body>
+</html>
