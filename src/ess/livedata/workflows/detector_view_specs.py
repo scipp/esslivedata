@@ -109,20 +109,23 @@ class DetectorViewParamsBase(pydantic.BaseModel, abc.ABC):
         """Return the range filter for the active coordinate mode, if enabled."""
 
 
-class DetectorViewParams(DetectorViewParamsBase):
-    """Detector-view parameters offering both coordinate modes."""
+class TOAHistogramFields(pydantic.BaseModel):
+    """TOA range filter and histogram edges, shared by every detector-view model.
 
-    # TOA (time-of-arrival) settings
+    Fields only — which mode is *active* stays with the concrete params model,
+    so a both-modes model cannot silently inherit TOA as the answer.
+    """
+
     toa_range: parameter_models.TOARange = pydantic.Field(
         title="Time of Arrival Range",
-        description="Time of arrival range filter for TOA mode.",
+        description="Time of arrival range filter.",
         default=parameter_models.TOARange(),
     )
     toa_edges: parameter_models.TOAEdges = pydantic.Field(
         title="Time of Arrival Edges",
         description=(
             "Time of arrival (TOA) is the time elapsed since the most recent "
-            "source pulse. These edges define the histogram bins in TOA mode. "
+            "source pulse. These edges define the histogram bins. "
             "The default range spans one pulse period of the 14 Hz ESS source "
             f"(0 to {parameter_models.ESS_PULSE_PERIOD_MS} ms); events outside "
             "the range are excluded from the histogram."
@@ -134,6 +137,11 @@ class DetectorViewParams(DetectorViewParamsBase):
             unit=parameter_models.TimeUnit.MS,
         ),
     )
+
+
+class DetectorViewParams(TOAHistogramFields, DetectorViewParamsBase):
+    """Detector-view parameters offering both coordinate modes."""
+
     # Wavelength settings
     wavelength_range: parameter_models.WavelengthRangeFilter = pydantic.Field(
         title="Wavelength Range",
@@ -172,7 +180,7 @@ class DetectorViewParams(DetectorViewParamsBase):
                 )
 
 
-class TOAOnlyDetectorViewParams(DetectorViewParamsBase):
+class TOAOnlyDetectorViewParams(TOAHistogramFields, DetectorViewParamsBase):
     """Detector-view parameters restricted to time-of-arrival."""
 
     coordinate_mode: TOAOnlyCoordinateModeSettings = pydantic.Field(
@@ -180,27 +188,6 @@ class TOAOnlyDetectorViewParams(DetectorViewParamsBase):
         description="Select coordinate system for detector view. Only TOA mode "
         "is available for this workflow.",
         default_factory=TOAOnlyCoordinateModeSettings,
-    )
-    toa_range: parameter_models.TOARange = pydantic.Field(
-        title="Time of Arrival Range",
-        description="Time of arrival range filter.",
-        default=parameter_models.TOARange(),
-    )
-    toa_edges: parameter_models.TOAEdges = pydantic.Field(
-        title="Time of Arrival Edges",
-        description=(
-            "Time of arrival (TOA) is the time elapsed since the most recent "
-            "source pulse. These edges define the histogram bins. "
-            "The default range spans one pulse period of the 14 Hz ESS source "
-            f"(0 to {parameter_models.ESS_PULSE_PERIOD_MS} ms); events outside "
-            "the range are excluded from the histogram."
-        ),
-        default=parameter_models.TOAEdges(
-            start=0.0,
-            stop=parameter_models.ESS_PULSE_PERIOD_MS,
-            num_bins=100,
-            unit=parameter_models.TimeUnit.MS,
-        ),
     )
 
     def get_active_edges(self) -> sc.Variable:
