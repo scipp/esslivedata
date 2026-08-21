@@ -62,8 +62,6 @@ def setup_factories(instrument: Instrument) -> None:
         StreamProcessorWorkflow,
     )
 
-    from .specs import DreamDetectorViewParams
-
     # Sciline-based detector view workflow with per-detector geometric projections.
     # Resolution values = base resolution * scale (8), matching the legacy setup.
     # Pixel noise is shared across all detectors.
@@ -107,16 +105,7 @@ def setup_factories(instrument: Instrument) -> None:
         },
     )
 
-    @specs.projection_handle.attach_factory()
-    def _detector_view_workflow_factory(
-        source_name: str,
-        params: DreamDetectorViewParams,
-        aux_source_names: dict[str, str],
-    ) -> StreamProcessorWorkflow:
-        """Factory for Sciline-based detector view workflow."""
-        return _detector_view_factory.make_workflow(
-            source_name, params, aux_source_names
-        )
+    specs.projection_handle.attach_factory()(_detector_view_factory.make_workflow)
 
     # Monitor workflow factory with DREAM-specific TOF configuration
     from ess.livedata.workflows.monitor_workflow import create_monitor_workflow

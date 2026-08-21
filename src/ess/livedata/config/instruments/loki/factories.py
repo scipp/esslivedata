@@ -172,16 +172,7 @@ def setup_factories(instrument: Instrument) -> None:
         },
     )
 
-    from ess.livedata.workflows.detector_view_specs import DetectorViewParams
-
-    @specs.xy_projection_handle.attach_factory()
-    def _detector_view_workflow_factory(
-        source_name: str,
-        params: DetectorViewParams,
-        aux_source_names: dict[str, str],
-    ) -> StreamProcessorWorkflow:
-        """Factory for LOKI detector view; the lookup table arrives as context."""
-        return _xy_projection.make_workflow(source_name, params, aux_source_names)
+    specs.xy_projection_handle.attach_factory()(_xy_projection.make_workflow)
 
     from ess.livedata.workflows.monitor_workflow import create_monitor_workflow
     from ess.livedata.workflows.monitor_workflow_specs import MonitorDataParams
