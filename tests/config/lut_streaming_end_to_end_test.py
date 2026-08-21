@@ -247,36 +247,62 @@ class TestLokiMotionAndRoles:
         # binding anywhere, rather than a table placed at a guessed distance.
         assert 'beam_monitor_m4' not in loki.lut_components
 
-    def test_nothing_gates_on_a_table_that_is_never_published(
+    def test_monitor_role_bindings_are_declared_as_aux_templates(
         self, loki: Instrument
     ) -> None:
-        """The reason the previous test matters: binding an unpublishable
-        stream would wedge every job that could have selected that monitor."""
-        workflow_id = _spec_id(loki, 'i_of_q')
-
-        declared = loki.declared_context_keys(workflow_id, 'loki_detector_0')
-
-        assert lut_stream_name('beam_monitor_m4') not in declared
-
-    def test_reduction_gates_on_every_candidate_monitor(self, loki: Instrument) -> None:
-        """Which monitor fills the incident or transmission role is a per-job
-        aux selection, so all candidates are bound. They come from the same LUT
-        job and arrive together, so gating on all of them opens the gate at the
-        same instant as gating on one."""
-        workflow_id = _spec_id(loki, 'i_of_q')
-
-        declared = loki.declared_context_keys(workflow_id, 'loki_detector_0')
+        """One binding per *role*, not per candidate monitor: the stream name
+        carries the aux-field placeholder and renders to the job's selection.
+        No per-candidate names exist at declaration level, so an unpublishable
+        table (``beam_monitor_m4``) cannot be gated on by declaration."""
+        declared = loki.declared_context_keys(
+            _spec_id(loki, 'i_of_q'), 'loki_detector_0'
+        )
 
         assert {name for name in declared if name.startswith('wavelength_lut/')} == {
-            lut_stream_name(name)
-            for name in (
-                'loki_detector_0',
-                'beam_monitor_m0',
-                'beam_monitor_m1',
-                'beam_monitor_m2',
-                'beam_monitor_m3',
-            )
+            lut_stream_name('loki_detector_0'),
+            lut_stream_name('{incident_monitor}'),
+            lut_stream_name('{transmission_monitor}'),
         }
+
+    def test_reduction_gates_on_exactly_its_selected_monitors(
+        self, loki: Instrument
+    ) -> None:
+        workflow_id = _spec_id(loki, 'i_of_q')
+        params_model = loki.workflow_factory.registration(workflow_id).spec.params
+
+        resolved = loki.resolve_context_keys(
+            workflow_id,
+            'loki_detector_0',
+            params_model(),
+            aux_source_names={
+                'incident_monitor': 'beam_monitor_m1',
+                'transmission_monitor': 'beam_monitor_m3',
+            },
+        )
+
+        assert {name for name in resolved if name.startswith('wavelength_lut/')} == {
+            lut_stream_name('loki_detector_0'),
+            lut_stream_name('beam_monitor_m1'),
+            lut_stream_name('beam_monitor_m3'),
+        }
+
+    def test_selecting_a_monitor_without_a_table_fails_at_job_creation(
+        self, loki: Instrument
+    ) -> None:
+        """``beam_monitor_m4``'s table is never published. Templated bindings
+        would gate such a selection forever, so the factory rejects it before
+        the job exists."""
+        registration = loki.workflow_factory.registration(_spec_id(loki, 'i_of_q'))
+
+        with pytest.raises(ValueError, match='beam_monitor_m4'):
+            registration.factory(
+                'loki_detector_0',
+                registration.spec.params(),
+                {
+                    'incident_monitor': 'beam_monitor_m4',
+                    'transmission_monitor': 'beam_monitor_m3',
+                },
+            )
 
     def test_reduction_binds_only_its_own_detector(self, loki: Instrument) -> None:
         # The detector is fixed per job; gating on all nine banks' tables would
@@ -295,7 +321,13 @@ class TestLokiMotionAndRoles:
         params_model = loki.workflow_factory.registration(workflow_id).spec.params
 
         resolved = loki.resolve_context_keys(
-            workflow_id, 'loki_detector_0', params_model()
+            workflow_id,
+            'loki_detector_0',
+            params_model(),
+            aux_source_names={
+                'incident_monitor': 'beam_monitor_m1',
+                'transmission_monitor': 'beam_monitor_m3',
+            },
         )
 
         assert lut_stream_name('loki_detector_0') in resolved

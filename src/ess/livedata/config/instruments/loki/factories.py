@@ -2,6 +2,10 @@
 # Copyright (c) 2025 Scipp contributors (https://github.com/scipp)
 """LOKI instrument factory implementations."""
 
+from typing import Any, NewType
+
+import scipp as sc
+
 from ess.livedata.config import Instrument
 from ess.livedata.config.value_log import ValueLog
 
@@ -18,15 +22,25 @@ class DetectorCarriageLog(ValueLog):
     """
 
 
+#: Wire key per I(Q) monitor-role aux field, carrying the selected monitor's
+#: streamed lookup table. The role's ``ContextBinding`` renders its
+#: aux-templated stream name to the job's selection (ADR 0010), so the key is
+#: per role, not per monitor.
+_IQ_MONITOR_LUT_KEYS: dict[str, Any] = {
+    field: NewType(f'{field}_lut', sc.DataArray)
+    for field in ('incident_monitor', 'transmission_monitor')
+}
+
+
 def setup_factories(instrument: Instrument) -> None:
     """Initialize LOKI-specific factories and workflows."""
     from ess.livedata.workflows.lut_context import (
-        bind_all_lookup_tables,
         bind_lookup_tables,
         detector_lookup_table,
         reads_wavelength,
         role_lookup_table_provider,
     )
+    from ess.livedata.workflows.wavelength_lut_workflow_specs import lut_stream_name
 
     # Each detector and monitor binds its own streamed lookup table, gated so
     # only wavelength-mode jobs wait for it.
@@ -44,26 +58,23 @@ def setup_factories(instrument: Instrument) -> None:
         is_monitor=True,
         predicate=reads_wavelength,
     )
-    # I(Q) needs one table per sciline Component -- the detector plus the
-    # incident and transmission monitor *roles* -- and which monitor fills each
-    # role is a per-job aux selection. Every candidate therefore binds its own
-    # key and the factory maps the chosen ones onto the roles.
-    # The detector is fixed per job, so it binds per source like a view does,
-    # just without a predicate: a reduction always reduces to wavelength.
+    # I(Q) needs one table per sciline Component. The detector is fixed per
+    # job, so it binds per source like a view does, just without a predicate:
+    # a reduction always reduces to wavelength.
     bind_lookup_tables(
         specs.i_of_q_handle,
         instrument=instrument,
         source_names=instrument.detector_names,
         is_monitor=False,
     )
-    # The monitors are not: which one fills the incident or transmission role is
-    # a per-job aux selection, so every candidate binds its own key and the
-    # factory maps the chosen ones onto the roles.
-    _iq_monitor_luts = bind_all_lookup_tables(
-        specs.i_of_q_handle,
-        instrument=instrument,
-        source_names=instrument.monitors,
-    )
+    # Which monitor fills the incident or transmission role is a per-job aux
+    # selection, so each role's stream name carries the aux-field placeholder,
+    # rendered from the job's selection when the gate is resolved (ADR 0010).
+    for aux_field, key in _IQ_MONITOR_LUT_KEYS.items():
+        specs.i_of_q_handle.add_context_binding(
+            stream_name=lut_stream_name(f'{{{aux_field}}}'),
+            workflow_key=key,
+        )
     import sciline
     import sciline.typing
     import scipp as sc
@@ -235,18 +246,29 @@ def setup_factories(instrument: Instrument) -> None:
         params: SansWorkflowParams,
         aux_source_names: dict[str, str],
     ) -> StreamProcessorWorkflow:
+        for aux_field in _IQ_MONITOR_LUT_KEYS:
+            monitor = aux_source_names[aux_field]
+            if monitor not in instrument.lut_components:
+                # The gate would wait forever on a stream the LUT workflow
+                # never publishes; fail at job creation instead.
+                raise ValueError(
+                    f"Monitor {monitor!r} selected as {aux_field} has no "
+                    "streamed lookup table: its flight-path range cannot be "
+                    "derived from the geometry artifact (undeclared motion "
+                    "axis), so it cannot be used in a wavelength reduction."
+                )
         wf = _make_base_workflow()
         wf[NeXusDetectorName] = source_name
         wf[NeXusMonitorName[Incident]] = aux_source_names['incident_monitor']
         wf[NeXusMonitorName[Transmission]] = aux_source_names['transmission_monitor']
         wf.insert(detector_lookup_table)
-        # Map the selected monitors' tables onto the roles that consume them.
-        for role, monitor in (
-            (Incident, aux_source_names['incident_monitor']),
-            (Transmission, aux_source_names['transmission_monitor']),
+        # Type each role's streamed table; the aux-templated binding delivers
+        # the selected monitor's table on the role's wire key.
+        for role, aux_field in (
+            (Incident, 'incident_monitor'),
+            (Transmission, 'transmission_monitor'),
         ):
-            if (key := _iq_monitor_luts.get(monitor)) is not None:
-                wf.insert(role_lookup_table_provider(role, key))
+            wf.insert(role_lookup_table_provider(role, _IQ_MONITOR_LUT_KEYS[aux_field]))
         wf[sans_types.QBins] = params.q_edges.get_edges()
         wf[sans_types.WavelengthBins] = params.wavelength_edges.get_edges()
         wf[BeamCenter] = params.beam_center.get_vector()

@@ -11,8 +11,10 @@ inserts the matching provider, which reassembles essreduce's public
 Reassembling rather than round-tripping through essreduce's file loader is
 deliberate. That loader's matching branch is a backwards-compatibility shim for
 tables written before the dataclass existed; depending on it would tie us to a
-deprecated path and silently drop the ``choppers`` field, which the old format
-cannot carry. Chopper provenance travels in the table's identity instead.
+deprecated path. Neither path transports the ``choppers`` field -- the old
+format cannot carry it -- so the reassembled dataclass leaves it at its
+``None`` default; ADR 0010 assigns chopper provenance to the table's identity
+stamp rather than to this field.
 
 The wire value is a single ``DataArray`` because da00 serializes a
 ``DataArray`` and the dataclass has non-array fields (``pulse_stride`` is an
@@ -123,48 +125,16 @@ def bind_lookup_tables(
         )
 
 
-def component_lut_context(component: str) -> Any:
-    """Context key carrying one *named* component's table.
-
-    Views bind by role (:data:`DetectorLutContext`,
-    :data:`MonitorLutContext`) because the component is fixed. A reduction
-    cannot: which physical monitor plays the incident or transmission role is a
-    per-job aux selection, while a ``ContextBinding`` is declared at import
-    time. So every candidate binds its own key here and the factory -- which
-    does see the selection -- maps the chosen one onto the role.
-    """
-    return NewType(f'LutContext_{component}', sc.DataArray)
-
-
-def bind_all_lookup_tables(
-    handle: SpecHandle, *, instrument: Instrument, source_names: Iterable[str]
-) -> dict[str, Any]:
-    """Bind every candidate component's table, each to its own context key.
-
-    Gating on all of them rather than on the selected one costs nothing: every
-    table comes from the same lookup-table job, split out of one result, so
-    they arrive together and the gate opens at the same instant either way. The
-    unselected ones are dead parameters, which
-    :meth:`StreamProcessor.set_context` stores and computes nothing from.
-
-    Returns
-    -------
-    :
-        The context key per component, for the factory to map onto role keys.
-    """
-    keys = {
-        name: component_lut_context(name)
-        for name in sorted(set(source_names) & instrument.lut_components)
-    }
-    for name, key in keys.items():
-        # No predicate: a reduction has no coordinate mode to choose. It always
-        # reduces to wavelength, so it always needs its tables.
-        handle.add_context_binding(stream_name=lut_stream_name(name), workflow_key=key)
-    return keys
-
-
 def role_lookup_table_provider(component_type: type, context_key: Any) -> Any:
-    """Provider mapping one component's context key onto a role's table key."""
+    """Provider reassembling a role's table from its wire context key.
+
+    For consumers whose table is picked per job by an aux selection, e.g.
+    which monitor fills a reduction's incident role. The role's
+    ``ContextBinding`` carries an aux-templated stream name
+    (``wavelength_lut/{incident_monitor}``), so the selected monitor's table
+    arrives on ``context_key`` and this provider types it as the role's
+    ``LookupTable[SampleRun, component_type]``.
+    """
 
     def _impl(wire: sc.DataArray) -> Any:
         return LookupTable[SampleRun, component_type](**_unpack(wire))

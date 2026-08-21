@@ -152,17 +152,29 @@ requires unconditionally.
 
 A reduction needs one table per sciline `Component` — the detector plus the *incident*
 and *transmission* monitor roles — and which physical monitor fills a role is a per-job aux
-selection that an import-time binding cannot know. Every candidate monitor therefore binds
-its own context key, and the factory, which does see the selection, maps the chosen ones
-onto the roles. The unselected keys are dead parameters, which `set_context` stores and
-computes nothing from.
+selection that an import-time binding cannot name. The binding therefore names the aux
+field instead: its stream name carries a placeholder (`wavelength_lut/{incident_monitor}`)
+that gate resolution renders against the job's rendered aux selections, at the same call
+site that already applies the predicate. Each role binds one wire key and the factory
+inserts one provider per role typing that key as the role's table, so the gate covers
+exactly the selected monitors' streams and no dead keys exist.
 
-Gating on every candidate rather than on the selected one costs nothing: all tables come
-from the same LUT job, split out of one result, so they arrive together and the gate opens
-at the same instant either way. The over-gating concern below is about a *second,
-independent* producer and does not apply. This supersedes an earlier plan to bind the
-default monitors and raise at job creation when the selection differed, which would have
-made the aux selector a lie in wavelength mode.
+Rendering keeps the same declared/resolved split the predicate introduced, applied to
+names instead of membership: `declared_context_keys` returns the template, and route
+derivation expands it over the referenced aux field's declared choices, so the statically
+derived subscriptions remain a superset of anything a job can render. Two roles selecting
+one monitor would resolve one stream to two conflicting keys, which resolution rejects at
+job creation. A selection whose table the LUT workflow cannot publish — an unplaceable
+monitor — is rejected by the factory, since a rendered gate on it would wait forever. Only
+aux fields whose rendered names are plain stream names may be referenced; a job-prefixed
+field (ROI) would embed job identity, which context streams must not carry.
+
+This supersedes two earlier shapes: binding the *default* monitors and raising when the
+selection differed, which made the aux selector a lie in wavelength mode; and binding
+every candidate monitor to its own synthesized per-component key with the factory mapping
+the chosen ones onto the roles, which worked — the tables arrive together, so over-gating
+on all candidates opens the gate at the same instant — but left every unselected key a
+dead parameter and restated the candidate list in the factory.
 
 ### The gate is resolved from the job's parameters
 
@@ -251,6 +263,8 @@ event on run transitions, and this is a second trigger on that path.
 | Hand-declare every range | A dozen-plus numbers per instrument that nobody re-checks when an artifact is regenerated. Rejected. |
 | **LUT workflow consumes component motion streams** | Tables would always describe where the component actually is, and the static travel envelope — the one number this design needs from the instrument team — would disappear. It does *not* remove motion from consumers, which still need pixel positions for scattering geometry and for the per-pixel `Ltotal` that indexes the table. Costs: motion joins the LUT job's gating set, so a dead motion PV stops all wavelength reduction; every sample during a move re-emits and clears; and the LUT job's motion value can lag the one the consumer patched into its geometry, so padding is still needed. The strongest alternative; recorded to revisit. |
 | Route the LUT as ungated aux with the file as default (ROI precedent) | Survives a cold start, but leaves reducing with a stale or nominal table as a silent mode — the thing the feature exists to prevent. Rejected in favour of the gate plus explicit limitations. |
+| **Aux-templated stream names for per-job table selection (chosen)** | One binding per role; the placeholder names the aux field and gate resolution renders it from the job's selection. Route derivation expands templates over the field's choices, keeping subscriptions a superset. |
+| Bind every candidate monitor to its own per-component key | Works, since all tables arrive together, but synthesizes a key per candidate, leaves the unselected ones as dead parameters, and restates the candidate list in the factory's role mapping. Superseded by aux-templated names. |
 | **Split the spec into TOA-only and wavelength variants** | ADR 0003's prescribed remedy for the over-gate. Rejected on UX: two specs are two entries in the workflow list, two jobs to run, and — because `DataKey` embeds `workflow_id` — two unrelated output streams, so a plot cannot follow a mode switch. It also duplicates every per-instrument params override. |
 | Reuse `livedata_data` instead of a dedicated topic | Backend services would subscribe to every detector image in the facility. Rejected. |
 | Reset on any received LUT, with no identity | Simplest, and puts the decision at the producer. But a LUT-job restart re-emits an unchanged table, and that restart is the recovery action; a liveness heartbeat would also clear on every beat. Rejected. |
@@ -274,9 +288,11 @@ event on run transitions, and this is a second trigger on that path.
   non-goal, which was decided on YAGNI grounds. Params validation moves up into job
   creation and `WorkflowFactory.create` takes the validated model rather than the raw
   `WorkflowConfig`, so the order is validate → resolve gate → build with one validation
-  site. Resolution splits in two: `declared_context_keys` ignores predicates and serves
-  the static callers (route derivation, the workflow visualizer) that need the superset;
-  `resolve_context_keys` filters it by predicate for the job path.
+  site. Resolution splits in two: `declared_context_keys` ignores predicates and leaves
+  templates unrendered, serving the static callers (route derivation, the workflow
+  visualizer) that need the superset; `resolve_context_keys` filters by predicate and
+  renders stream-name templates for the job path, which therefore also receives the
+  job's rendered aux selections.
 - Specs are unchanged: coordinate mode stays a parameter on one workflow, so output
   identity and any plot built on it survive a mode switch.
 - The file-based table stops being reachable on a migrated instrument, so the streamed
