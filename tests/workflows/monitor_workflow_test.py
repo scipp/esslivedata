@@ -30,6 +30,7 @@ from ess.livedata.parameter_models import (
 from ess.livedata.preprocessors.accumulation_mode import Cumulative, Current
 from ess.livedata.preprocessors.accumulators import make_no_copy_accumulator_pair
 from ess.livedata.workflows.detector_view_specs import CoordinateModeSettings
+from ess.livedata.workflows.lut_context import MonitorLutContext
 from ess.livedata.workflows.monitor_workflow import (
     MONITOR_TRANSFORM,
     accumulated_monitor_histogram,
@@ -51,6 +52,7 @@ from ess.livedata.workflows.monitor_workflow_types import (
     HistogramRangeLow,
     MonitorHistogram,
 )
+from ess.livedata.workflows.wavelength_lut_workflow_specs import lut_stream_name
 
 
 class TestMonitorDataParams:
@@ -311,25 +313,20 @@ class TestCreateMonitorWorkflow:
         )
         assert workflow is not None
 
-    def test_workflow_with_wavelength_mode_requires_lookup_table(self, toa_edges):
-        """Test that wavelength mode requires lookup_table_filename."""
-        with pytest.raises(ValueError, match="lookup_table_filename is required"):
-            create_monitor_workflow(
-                'monitor_1', toa_edges, coordinate_mode='wavelength'
-            )
-
     def test_workflow_with_wavelength_mode_requires_geometry_file(self, toa_edges):
         """Test that wavelength mode requires geometry_filename."""
         with pytest.raises(ValueError, match="geometry_filename is required"):
             create_monitor_workflow(
-                'monitor_1',
-                toa_edges,
-                coordinate_mode='wavelength',
-                lookup_table_filename='/path/to/lookup.h5',
+                'monitor_1', toa_edges, coordinate_mode='wavelength'
             )
 
     def test_context_keys_injected_after_creation(self, toa_edges):
-        """Context bindings are injected post-creation, not via the factory."""
+        """Context bindings are injected post-creation, not via the factory.
+
+        The factory declares no stream names at all -- the lookup-table
+        stream -> key mapping lives on the spec's ContextBinding alone and
+        arrives via injection, so it is declared exactly once (ADR 0010).
+        """
         from ess.livedata.workflows.stream_processor_workflow import (
             StreamProcessorWorkflow,
         )
@@ -338,9 +335,8 @@ class TestCreateMonitorWorkflow:
         assert isinstance(workflow, StreamProcessorWorkflow)
         assert workflow._context_keys == {}
 
-        context_keys = {'position': sc.Variable}
-        workflow.add_context_keys(context_keys)
-        assert workflow._context_keys == context_keys
+        workflow.add_context_keys({'position': sc.Variable})
+        assert workflow._context_keys['position'] is sc.Variable
 
 
 class TestMonitorWorkflowIntegration:
@@ -620,7 +616,11 @@ class TestRegisterMonitorWorkflowSpecs:
             identifier=workflow_id,
             job_id=JobId(source_name='monitor_1', job_number=uuid.uuid4()),
         )
-        workflow = factory.create(source_name='monitor_1', config=config)
+        workflow = factory.create(
+            source_name='monitor_1',
+            config=config,
+            params=factory.validate_params(config),
+        )
         assert workflow is not None
         assert hasattr(workflow, 'accumulate')
 
@@ -628,12 +628,13 @@ class TestRegisterMonitorWorkflowSpecs:
 class TestMonitorWorkflowFactoryCoordinateMode:
     """Tests for coordinate mode in monitor workflow factory."""
 
-    def test_wavelength_mode_requires_geometry_and_lookup_table(self):
-        """Test that wavelength mode requires geometry and lookup table files.
+    def test_wavelength_mode_requires_geometry(self):
+        """Test that wavelength mode requires a geometry file.
 
-        The create_monitor_workflow_factory doesn't provide these parameters,
-        so wavelength mode should raise ValueError. Instrument-specific factories
-        (like DREAM) are responsible for providing these files.
+        The create_monitor_workflow_factory doesn't provide it, so wavelength
+        mode should raise ValueError. Instrument-specific factories (like DREAM)
+        are responsible for supplying it. The lookup table is no longer a file:
+        it arrives as context.
         """
         from ess.livedata.workflows.monitor_workflow_specs import (
             create_monitor_workflow_factory,
@@ -647,7 +648,7 @@ class TestMonitorWorkflowFactoryCoordinateMode:
             ),
         )
 
-        with pytest.raises(ValueError, match="lookup_table_filename is required"):
+        with pytest.raises(ValueError, match="geometry_filename is required"):
             create_monitor_workflow_factory('monitor_1', params)
 
 
@@ -740,9 +741,11 @@ class TestMonitorWorkflowWavelengthModeHistogramInput:
             wavelength_edges,
             coordinate_mode='wavelength',
             geometry_filename=str(geometry_filename),
-            lookup_table_filename=str(lookup_table_filename),
         )
-        workflow.build()
+        # Inject the spec's binding by hand, as WorkflowFactory.create does.
+        workflow.build(
+            context_keys={lut_stream_name('monitor_cave'): MonitorLutContext}
+        )
 
         # Create histogram data like fake_monitors da00 mode produces
         # Using 'frame_time' which is what the production data uses
@@ -752,9 +755,12 @@ class TestMonitorWorkflowWavelengthModeHistogramInput:
             coords={'frame_time': input_edges},
         )
 
-        # Accumulate data
+        # Accumulate data, with the lookup table arriving as context.
         workflow.accumulate(
-            {'monitor_cave': histogram},
+            {
+                'monitor_cave': histogram,
+                lut_stream_name('monitor_cave'): _streamed_lut(lookup_table_filename),
+            },
             start_time=Timestamp.from_ns(0),
             end_time=Timestamp.from_ns(1000),
         )
@@ -774,6 +780,24 @@ class TestMonitorWorkflowWavelengthModeHistogramInput:
         assert results['cumulative'].sum().value > 0
         assert results['current'].sum().value > 0
         assert results['counts_total'].value > 0
+
+
+def _streamed_lut(filename) -> sc.DataArray:
+    """A file-based table in the wire form the LUT workflow publishes.
+
+    The file is a stand-in for the streamed producer here: these tests are about
+    the monitor workflow consuming a table, not about how it was computed.
+    """
+    from ess.reduce.unwrap.lut import load_lookup_table_from_file
+
+    from ess.livedata.workflows.wavelength_lut_workflow import _with_provenance
+    from ess.livedata.workflows.wavelength_lut_workflow_specs import (
+        WavelengthLutParams,
+    )
+
+    return _with_provenance(
+        load_lookup_table_from_file(str(filename)), WavelengthLutParams()
+    )
 
 
 class _MonitorZLog(ValueLog):
@@ -855,7 +879,6 @@ class TestMonitorMotion:
         *,
         wavelength_edges,
         geometry_filename,
-        lookup_table_filename,
         reset_coord=_USE_FACTORY_DEFAULT,
     ):
         """A wavelength monitor workflow whose monitor_cave position is streamed."""
@@ -867,7 +890,6 @@ class TestMonitorMotion:
             wavelength_edges,
             coordinate_mode='wavelength',
             geometry_filename=geometry_filename,
-            lookup_table_filename=lookup_table_filename,
             **extra,
         )
         pipeline = workflow.base_pipeline
@@ -894,14 +916,26 @@ class TestMonitorMotion:
             dependent_sources=frozenset({'monitor_cave'}),
         )
         workflow.build(
-            context_keys={'mon_z': _MonitorZLog}, chain_patch_bindings=[binding]
+            context_keys={
+                'mon_z': _MonitorZLog,
+                lut_stream_name('monitor_cave'): MonitorLutContext,
+            },
+            chain_patch_bindings=[binding],
         )
         return workflow
 
-    def _cycle(self, workflow, z, *, start, end):
-        """Push one window of monitor data with the monitor parked at ``z``."""
+    def _cycle(self, workflow, z, *, start, end, lut):
+        """Push one window of monitor data with the monitor parked at ``z``.
+
+        The lookup table rides along as context, the way the LUT workflow
+        delivers it in production.
+        """
         workflow.accumulate(
-            {'monitor_cave': self._histogram_input(), 'mon_z': self._position_log(z)},
+            {
+                'monitor_cave': self._histogram_input(),
+                'mon_z': self._position_log(z),
+                lut_stream_name('monitor_cave'): lut,
+            },
             start_time=Timestamp.from_ns(start),
             end_time=Timestamp.from_ns(end),
         )
@@ -913,11 +947,12 @@ class TestMonitorMotion:
         files = {
             'wavelength_edges': wavelength_edges,
             'geometry_filename': geometry_filename,
-            'lookup_table_filename': lookup_table_filename,
         }
 
+        lut = _streamed_lut(lookup_table_filename)
+
         def counts_at(z):
-            return self._cycle(self._build(**files), z, start=0, end=1000)[
+            return self._cycle(self._build(**files), z, start=0, end=1000, lut=lut)[
                 'counts_total'
             ].value
 
@@ -946,10 +981,10 @@ class TestMonitorMotion:
         workflow = self._build(
             wavelength_edges=wavelength_edges,
             geometry_filename=geometry_filename,
-            lookup_table_filename=lookup_table_filename,
         )
-        self._cycle(workflow, -4.22, start=0, end=1000)
-        moved = self._cycle(workflow, -24.0, start=1000, end=2000)
+        lut = _streamed_lut(lookup_table_filename)
+        self._cycle(workflow, -4.22, start=0, end=1000, lut=lut)
+        moved = self._cycle(workflow, -24.0, start=1000, end=2000, lut=lut)
         assert sc.allclose(moved['cumulative'].data, moved['current'].data)
 
     def test_disabling_reset_raises_on_move(
@@ -964,12 +999,12 @@ class TestMonitorMotion:
         workflow = self._build(
             wavelength_edges=wavelength_edges,
             geometry_filename=geometry_filename,
-            lookup_table_filename=lookup_table_filename,
             reset_coord=None,
         )
-        self._cycle(workflow, -4.22, start=0, end=1000)
+        lut = _streamed_lut(lookup_table_filename)
+        self._cycle(workflow, -4.22, start=0, end=1000, lut=lut)
         with pytest.raises(sc.DatasetError, match=r'position|monitor_transform'):
-            self._cycle(workflow, -24.0, start=1000, end=2000)
+            self._cycle(workflow, -24.0, start=1000, end=2000, lut=lut)
 
     def test_toa_mode_with_geometry_stamps_reset_signal(self, geometry_filename):
         """Uniform with the detector view: a loaded geometry stamps the reset

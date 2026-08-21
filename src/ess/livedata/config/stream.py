@@ -21,9 +21,12 @@ imported, not later.
 
 from __future__ import annotations
 
-from collections.abc import Iterable
+import string
+from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass
 from typing import Any
+
+import scipp as sc
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -133,7 +136,7 @@ class ContextBinding:
     motion) and spec scope
     (:meth:`ess.livedata.workflows.workflow_factory.SpecHandle.add_context_binding`,
     for context that is a property of one workflow). Both feed the gate and
-    ``set_context``; the wire name is always the declared :attr:`stream_name`
+    ``set_context``; the wire name is always the rendered :attr:`stream_name`
     and there is no cold-start seed.
 
     Bindings live in their own list rather than as a field on :class:`Stream`
@@ -145,8 +148,84 @@ class ContextBinding:
     """
 
     stream_name: str
+    """Internal stream name, or a template rendering to one per job.
+
+    A ``{field}`` placeholder names an aux input of the declaring spec and is
+    replaced by the job's rendered selection for that field when the gate is
+    resolved (ADR 0010). This is how an import-time declaration can bind a
+    stream that a per-job aux selection picks -- e.g. the streamed lookup table
+    of whichever monitor fills a reduction's incident role. Only reference aux
+    fields whose rendered names are plain stream names; a job-prefixed field
+    (such as ROI) would embed job identity in the stream name, which context
+    streams must not carry. Kafka subscriptions stay a superset of any rendered
+    gate because route derivation expands the placeholder over the aux field's
+    declared choices.
+    """
     workflow_key: Any
     dependent_sources: frozenset[str]
+    predicate: Callable[[Any], bool] | None = None
+    """Optional test against the job's validated params model.
+
+    A binding whose predicate returns ``False`` for a job is not wired and does
+    not gate it. This exists because coordinate mode is a parameter: a spec
+    offering both time-of-arrival and wavelength must not gate its TOA jobs on a
+    lookup table they never read (ADR 0010, superseding ADR 0003's
+    param-dependent-context non-goal).
+
+    Only ever *removes* bindings, never adds one, so the declaration-level
+    collision checks and the statically derived Kafka subscriptions stay
+    conservative supersets of any resolved gate.
+    """
+
+
+def stream_name_placeholders(stream_name: str) -> set[str]:
+    """Aux field names referenced by a binding's stream-name template.
+
+    Empty for a plain stream name, which needs no rendering.
+    """
+    return {
+        field
+        for _, field, _, _ in string.Formatter().parse(stream_name)
+        if field is not None
+    }
+
+
+def render_stream_name(stream_name: str, aux_source_names: Mapping[str, str]) -> str:
+    """Render a binding's stream-name template against a job's aux selections.
+
+    A plain name passes through unchanged. A placeholder naming an aux field
+    the job does not have is a wiring mistake and raises rather than gating the
+    job on a stream that can never arrive.
+    """
+    try:
+        return stream_name.format_map(aux_source_names)
+    except (KeyError, IndexError) as exc:
+        raise ValueError(
+            f"Context binding stream name {stream_name!r} references aux field "
+            f"{exc} not among the job's aux selections "
+            f"{sorted(aux_source_names)}"
+        ) from None
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class MotionEnvelope:
+    """How far a component riding one moving axis can travel, and where it rests.
+
+    Declared per NeXus transform path, because that is what the geometry
+    artifact keys a live (f144-driven) transform by, and which components ride
+    the axis is then derivable from their ``depends_on`` chains rather than
+    restated. A component later hung off the axis inherits the envelope instead
+    of silently getting a nominal-only range.
+
+    The artifact stores a live transform as an *empty* NXlog, so it carries no
+    position at all for such a component -- neither the travel nor the resting
+    value can be recovered from it. Both are therefore instrument declarations.
+    """
+
+    nominal: sc.Variable
+    """Axis value the artifact's nominal geometry corresponds to."""
+    travel: sc.Variable
+    """Maximum displacement downstream of the nominal position."""
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)

@@ -321,6 +321,12 @@ class _Key:
     """Sentinel Sciline-key stand-in for binding tests."""
 
 
+class _ModeParams(pydantic.BaseModel):
+    """Stand-in for a params model whose mode decides what context is read."""
+
+    mode: str = 'toa'
+
+
 def _f144(name: str) -> F144Stream:
     return F144Stream(
         source=name,
@@ -621,7 +627,7 @@ class TestContextBindings:
         # No exception.
         instrument.validate()
 
-    def test_resolve_context_keys_matches_instrument_binding_by_source(self):
+    def test_declared_context_keys_matches_instrument_binding_by_source(self):
         instrument = Instrument(
             name='test', detector_names=['det1', 'det2'], streams={'rot': _f144('rot')}
         )
@@ -636,12 +642,12 @@ class TestContextBindings:
             stream_name='rot', workflow_key=_Key, dependent_sources=['det1']
         )
 
-        assert instrument.resolve_context_keys(handle.workflow_id, 'det1') == {
+        assert instrument.declared_context_keys(handle.workflow_id, 'det1') == {
             'rot': _Key
         }
-        assert instrument.resolve_context_keys(handle.workflow_id, 'det2') == {}
+        assert instrument.declared_context_keys(handle.workflow_id, 'det2') == {}
 
-    def test_resolve_context_keys_honours_skip_instrument_contexts(self):
+    def test_declared_context_keys_honours_skip_instrument_contexts(self):
         instrument = Instrument(
             name='test', detector_names=['det1'], streams={'rot': _f144('rot')}
         )
@@ -657,9 +663,9 @@ class TestContextBindings:
         )
         handle.skip_instrument_contexts()
 
-        assert instrument.resolve_context_keys(handle.workflow_id, 'det1') == {}
+        assert instrument.declared_context_keys(handle.workflow_id, 'det1') == {}
 
-    def test_resolve_context_keys_includes_spec_scope_binding(self):
+    def test_declared_context_keys_includes_spec_scope_binding(self):
         instrument = Instrument(
             name='test', detector_names=['det1'], streams={'rot': _f144('rot')}
         )
@@ -673,18 +679,136 @@ class TestContextBindings:
         handle.skip_instrument_contexts()
         handle.add_context_binding(stream_name='rot', workflow_key=_Key)
 
-        assert instrument.resolve_context_keys(handle.workflow_id, 'det1') == {
+        assert instrument.declared_context_keys(handle.workflow_id, 'det1') == {
             'rot': _Key
         }
 
-    def test_resolve_context_keys_raises_for_unregistered_workflow(self):
+    def test_declared_context_keys_raises_for_unregistered_workflow(self):
         instrument = Instrument(name='test', detector_names=['det1'])
         workflow_id = WorkflowId(
             instrument='test', namespace='spec', name='ghost', version=1
         )
 
         with pytest.raises(KeyError, match=r'not.*registered'):
-            instrument.resolve_context_keys(workflow_id, 'det1')
+            instrument.declared_context_keys(workflow_id, 'det1')
+
+    def test_predicate_removes_the_binding_for_a_job_that_does_not_read_it(self):
+        # Coordinate mode is a parameter, so one spec serves both modes; a
+        # time-of-arrival job must not be gated on a table it never reads.
+        instrument = Instrument(
+            name='test', detector_names=['det1'], streams={'rot': _f144('rot')}
+        )
+        handle = instrument.register_spec(
+            name='w',
+            version=1,
+            title='W',
+            source_names=['det1'],
+            params=_ModeParams,
+            outputs=SimpleTestOutputs,
+        )
+        handle.add_context_binding(
+            stream_name='rot',
+            workflow_key=_Key,
+            predicate=lambda params: params.mode == 'wavelength',
+        )
+
+        wid = handle.workflow_id
+        assert instrument.resolve_context_keys(wid, 'det1', _ModeParams()) == {}
+        assert instrument.resolve_context_keys(
+            wid, 'det1', _ModeParams(mode='wavelength')
+        ) == {'rot': _Key}
+
+    def test_declared_keys_stay_a_superset_of_any_resolved_gate(self):
+        # Kafka subscriptions are derived from the declared set, so a predicate
+        # must never widen it.
+        instrument = Instrument(
+            name='test', detector_names=['det1'], streams={'rot': _f144('rot')}
+        )
+        handle = instrument.register_spec(
+            name='w',
+            version=1,
+            title='W',
+            source_names=['det1'],
+            params=_ModeParams,
+            outputs=SimpleTestOutputs,
+        )
+        handle.add_context_binding(
+            stream_name='rot',
+            workflow_key=_Key,
+            predicate=lambda params: params.mode == 'wavelength',
+        )
+
+        declared = instrument.declared_context_keys(handle.workflow_id, 'det1')
+        for mode in ('toa', 'wavelength'):
+            resolved = instrument.resolve_context_keys(
+                handle.workflow_id, 'det1', _ModeParams(mode=mode)
+            )
+            assert set(resolved) <= set(declared)
+        assert declared == {'rot': _Key}
+
+    def _spec_with_templated_binding(self, stream_name: str = 'lut/{mon}'):
+        instrument = Instrument(name='test', detector_names=['det1'])
+        handle = instrument.register_spec(
+            name='w',
+            version=1,
+            title='W',
+            source_names=['det1'],
+            outputs=SimpleTestOutputs,
+        )
+        handle.add_context_binding(stream_name=stream_name, workflow_key=_Key)
+        return instrument, handle
+
+    def test_templated_stream_name_renders_from_aux_selection(self):
+        # An import-time binding can gate on a stream a per-job aux selection
+        # picks: the placeholder names the aux field (ADR 0010).
+        instrument, handle = self._spec_with_templated_binding()
+
+        resolved = instrument.resolve_context_keys(
+            handle.workflow_id, 'det1', None, aux_source_names={'mon': 'mon_a'}
+        )
+
+        assert resolved == {'lut/mon_a': _Key}
+
+    def test_templated_stream_name_missing_aux_field_fails_loud(self):
+        # Silently keeping the placeholder would gate the job on a stream
+        # that can never arrive.
+        instrument, handle = self._spec_with_templated_binding()
+
+        with pytest.raises(ValueError, match='mon'):
+            instrument.resolve_context_keys(
+                handle.workflow_id, 'det1', None, aux_source_names={}
+            )
+
+    def test_declared_context_keys_leave_the_template_unrendered(self):
+        instrument, handle = self._spec_with_templated_binding()
+
+        assert instrument.declared_context_keys(handle.workflow_id, 'det1') == {
+            'lut/{mon}': _Key
+        }
+
+    def test_two_bindings_resolving_one_stream_to_conflicting_keys_raise(self):
+        # E.g. an aux selection picking the same monitor for two roles: one
+        # stream feeds one key, so the selection cannot be honoured.
+        class _OtherKey: ...
+
+        instrument, handle = self._spec_with_templated_binding('lut/{role_a}')
+        handle.add_context_binding(stream_name='lut/{role_b}', workflow_key=_OtherKey)
+
+        distinct = instrument.resolve_context_keys(
+            handle.workflow_id,
+            'det1',
+            None,
+            aux_source_names={'role_a': 'x', 'role_b': 'y'},
+        )
+        assert distinct == {'lut/x': _Key, 'lut/y': _OtherKey}
+
+        with pytest.raises(ValueError, match='conflicting'):
+            instrument.resolve_context_keys(
+                handle.workflow_id,
+                'det1',
+                None,
+                aux_source_names={'role_a': 'x', 'role_b': 'x'},
+            )
 
 
 class TestInstrumentRegisterSpec:
@@ -808,8 +932,11 @@ class TestInstrumentRegisterSpec:
             job_id=JobId(source_name="test_source", job_number=uuid.uuid4()),
             params={"value": 42},
         )
-        processor = instrument.workflow_factory.create(
-            source_name="any-source", config=config
+        workflow_factory = instrument.workflow_factory
+        processor = workflow_factory.create(
+            source_name="any-source",
+            config=config,
+            params=workflow_factory.validate_params(config),
         )
         # Verify processor has the Workflow protocol methods
         assert hasattr(processor, 'accumulate')

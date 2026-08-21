@@ -102,6 +102,7 @@ class SpecHandle:
         stream_name: str,
         workflow_key: Any,
         dependent_sources: Iterable[str] | None = None,
+        predicate: Callable[[Any], bool] | None = None,
     ) -> None:
         """Append a spec-scope :class:`ContextBinding` to the registration.
 
@@ -126,12 +127,17 @@ class SpecHandle:
         :attr:`Instrument.chain_patch_bindings` reads only instrument-scope
         records, so a spec-scope chain-patch context would route the f144
         value to a Sciline parameter that no provider consumes — silent-wrong.
+
+        ``predicate`` narrows the binding to the jobs whose validated params
+        satisfy it, so a spec offering several coordinate modes gates only the
+        jobs that actually read the stream (ADR 0010).
         """
         self._factory._add_context_binding(
             self.workflow_id,
             stream_name=stream_name,
             workflow_key=workflow_key,
             dependent_sources=dependent_sources,
+            predicate=predicate,
         )
 
     def skip_instrument_contexts(self) -> None:
@@ -282,6 +288,7 @@ class WorkflowFactory(Mapping[WorkflowId, WorkflowSpec]):
         stream_name: str,
         workflow_key: Any,
         dependent_sources: Iterable[str] | None,
+        predicate: Callable[[Any], bool] | None = None,
     ) -> None:
         # Chain-patch contexts (ValueLog-typed workflow_key) at spec scope
         # would be silent-wrong: Instrument.chain_patch_bindings reads
@@ -304,6 +311,7 @@ class WorkflowFactory(Mapping[WorkflowId, WorkflowSpec]):
             stream_name=stream_name,
             workflow_key=workflow_key,
             dependent_sources=sources,
+            predicate=predicate,
         )
         self._registrations[workflow_id] = dataclasses.replace(
             reg, context_bindings=(*reg.context_bindings, new_input)
@@ -315,11 +323,29 @@ class WorkflowFactory(Mapping[WorkflowId, WorkflowSpec]):
             reg, skip_instrument_contexts=True
         )
 
+    def validate_params(self, config: WorkflowConfig) -> Any:
+        """Validate a config's raw params against its spec's params model.
+
+        Split out of :meth:`create` because the caller needs the validated model
+        *before* building the workflow, to resolve param-dependent context
+        bindings (ADR 0010). Validating in one place keeps the two uses from
+        drifting and keeps a ``ValidationError`` surfacing from a single site.
+        """
+        workflow_id = config.identifier
+        if workflow_id not in self._registrations:
+            raise KeyError(f"Unknown workflow ID: {workflow_id}")
+        # NoParams forbids extra fields, so params sent to a workflow that takes
+        # none are rejected here rather than silently dropped.
+        return self._registrations[workflow_id].spec.params.model_validate(
+            config.params
+        )
+
     def create(
         self,
         *,
         source_name: str,
         config: WorkflowConfig,
+        params: Any,
         aux_source_names: dict[str, str] | None = None,
         context_keys: dict[str, Any] | None = None,
         chain_patch_bindings: Iterable[ChainPatchBinding] = (),
@@ -332,7 +358,12 @@ class WorkflowFactory(Mapping[WorkflowId, WorkflowSpec]):
         source_name:
             Name of the data source.
         config:
-            Configuration for the workflow, including the identifier and parameters.
+            Configuration for the workflow, including the identifier and the raw
+            parameters.
+        params:
+            The validated params model, from :meth:`validate_params`. Passed in
+            rather than re-derived so that the gate resolution and the workflow
+            see the same object.
         aux_source_names:
             Rendered auxiliary source names (already resolved by JobFactory).
         context_keys:
@@ -353,9 +384,6 @@ class WorkflowFactory(Mapping[WorkflowId, WorkflowSpec]):
 
         reg = self._registrations[workflow_id]
         workflow_spec = reg.spec
-        # NoParams forbids extra fields, so params sent to a workflow that takes
-        # none are rejected here rather than silently dropped.
-        workflow_params = workflow_spec.params.model_validate(config.params)
 
         # Validate aux_sources configuration
         if workflow_spec.aux_sources is None:
@@ -390,7 +418,7 @@ class WorkflowFactory(Mapping[WorkflowId, WorkflowSpec]):
         if 'source_name' in sig.parameters:
             kwargs['source_name'] = source_name
         if 'params' in sig.parameters:
-            kwargs['params'] = workflow_params
+            kwargs['params'] = params
         if 'aux_source_names' in sig.parameters:
             kwargs['aux_source_names'] = aux_source_names or {}
 

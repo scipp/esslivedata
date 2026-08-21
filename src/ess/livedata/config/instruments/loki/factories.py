@@ -2,6 +2,10 @@
 # Copyright (c) 2025 Scipp contributors (https://github.com/scipp)
 """LOKI instrument factory implementations."""
 
+from typing import Any, NewType
+
+import scipp as sc
+
 from ess.livedata.config import Instrument
 from ess.livedata.config.value_log import ValueLog
 
@@ -18,9 +22,59 @@ class DetectorCarriageLog(ValueLog):
     """
 
 
+#: Wire key per I(Q) monitor-role aux field, carrying the selected monitor's
+#: streamed lookup table. The role's ``ContextBinding`` renders its
+#: aux-templated stream name to the job's selection (ADR 0010), so the key is
+#: per role, not per monitor.
+_IQ_MONITOR_LUT_KEYS: dict[str, Any] = {
+    field: NewType(f'{field}_lut', sc.DataArray)
+    for field in ('incident_monitor', 'transmission_monitor')
+}
+
+
 def setup_factories(instrument: Instrument) -> None:
     """Initialize LOKI-specific factories and workflows."""
-    import ess.loki.data
+    from ess.livedata.workflows.lut_context import (
+        bind_lookup_tables,
+        detector_lookup_table,
+        reads_wavelength,
+        role_lookup_table_provider,
+    )
+    from ess.livedata.workflows.wavelength_lut_workflow_specs import lut_stream_name
+
+    # Each detector and monitor binds its own streamed lookup table, gated so
+    # only wavelength-mode jobs wait for it.
+    bind_lookup_tables(
+        specs.xy_projection_handle,
+        instrument=instrument,
+        source_names=instrument.detector_names,
+        is_monitor=False,
+        predicate=reads_wavelength,
+    )
+    bind_lookup_tables(
+        specs.monitor_handle,
+        instrument=instrument,
+        source_names=instrument.monitors,
+        is_monitor=True,
+        predicate=reads_wavelength,
+    )
+    # I(Q) needs one table per sciline Component. The detector is fixed per
+    # job, so it binds per source like a view does, just without a predicate:
+    # a reduction always reduces to wavelength.
+    bind_lookup_tables(
+        specs.i_of_q_handle,
+        instrument=instrument,
+        source_names=instrument.detector_names,
+        is_monitor=False,
+    )
+    # Which monitor fills the incident or transmission role is a per-job aux
+    # selection, so each role's stream name carries the aux-field placeholder,
+    # rendered from the job's selection when the gate is resolved (ADR 0010).
+    for aux_field, key in _IQ_MONITOR_LUT_KEYS.items():
+        specs.i_of_q_handle.add_context_binding(
+            stream_name=lut_stream_name(f'{{{aux_field}}}'),
+            workflow_key=key,
+        )
     import sciline
     import sciline.typing
     import scipp as sc
@@ -32,7 +86,6 @@ def setup_factories(instrument: Instrument) -> None:
         SampleRun,
         TransmissionRun,
     )
-    from ess.reduce.unwrap import LookupTableFilename
     from ess.sans import types as sans_types
     from ess.sans.types import (
         BeamCenter,
@@ -75,10 +128,6 @@ def setup_factories(instrument: Instrument) -> None:
 
     _nexus_geometry_filename = get_nexus_geometry_filename('loki')
 
-    def _resolve_lookup_table_filename() -> str:
-        """Resolve lookup table filename lazily to avoid eager downloads."""
-        return str(ess.loki.data.loki_lookup_table_no_choppers())
-
     def _make_base_workflow() -> LokiWorkflow:
         """Create the base LokiWorkflow for I(Q) reduction.
 
@@ -88,7 +137,6 @@ def setup_factories(instrument: Instrument) -> None:
         """
         wf = LokiWorkflow()
         wf[Filename[SampleRun]] = _nexus_geometry_filename
-        wf[LookupTableFilename] = _resolve_lookup_table_filename()
         wf[DirectBeam] = None
         wf[CorrectForGravity] = CorrectForGravity(False)
         wf[ReturnEvents] = ReturnEvents(False)
@@ -124,25 +172,7 @@ def setup_factories(instrument: Instrument) -> None:
         },
     )
 
-    from ess.livedata.workflows.detector_view_specs import DetectorViewParams
-
-    @specs.xy_projection_handle.attach_factory()
-    def _detector_view_workflow_factory(
-        source_name: str,
-        params: DetectorViewParams,
-        aux_source_names: dict[str, str],
-    ) -> StreamProcessorWorkflow:
-        """Factory for LOKI detector view with TOF lookup table support."""
-        lookup_table_filename = None
-        if params.coordinate_mode.mode == 'wavelength':
-            lookup_table_filename = _resolve_lookup_table_filename()
-
-        return _xy_projection.make_workflow(
-            source_name,
-            params,
-            aux_source_names,
-            lookup_table_filename=lookup_table_filename,
-        )
+    specs.xy_projection_handle.attach_factory()(_xy_projection.make_workflow)
 
     from ess.livedata.workflows.monitor_workflow import create_monitor_workflow
     from ess.livedata.workflows.monitor_workflow_specs import MonitorDataParams
@@ -151,20 +181,13 @@ def setup_factories(instrument: Instrument) -> None:
     def _monitor_workflow_factory(source_name: str, params: MonitorDataParams):
         """Factory for LOKI monitor workflow with lookup table support."""
         mode = params.coordinate_mode.mode
-
-        lookup_table_filename = None
-        geometry_filename = None
-
-        if mode == 'wavelength':
-            lookup_table_filename = _resolve_lookup_table_filename()
-            geometry_filename = _nexus_geometry_filename
+        geometry_filename = _nexus_geometry_filename if mode == 'wavelength' else None
 
         return create_monitor_workflow(
             source_name=source_name,
             edges=params.get_active_edges(),
             range_filter=params.get_active_range(),
             coordinate_mode=mode,
-            lookup_table_filename=lookup_table_filename,
             geometry_filename=geometry_filename,
         )
 
@@ -214,10 +237,29 @@ def setup_factories(instrument: Instrument) -> None:
         params: SansWorkflowParams,
         aux_source_names: dict[str, str],
     ) -> StreamProcessorWorkflow:
+        for aux_field in _IQ_MONITOR_LUT_KEYS:
+            monitor = aux_source_names[aux_field]
+            if monitor not in instrument.lut_components:
+                # The gate would wait forever on a stream the LUT workflow
+                # never publishes; fail at job creation instead.
+                raise ValueError(
+                    f"Monitor {monitor!r} selected as {aux_field} has no "
+                    "streamed lookup table: its flight-path range cannot be "
+                    "derived from the geometry artifact (undeclared motion "
+                    "axis), so it cannot be used in a wavelength reduction."
+                )
         wf = _make_base_workflow()
         wf[NeXusDetectorName] = source_name
         wf[NeXusMonitorName[Incident]] = aux_source_names['incident_monitor']
         wf[NeXusMonitorName[Transmission]] = aux_source_names['transmission_monitor']
+        wf.insert(detector_lookup_table)
+        # Type each role's streamed table; the aux-templated binding delivers
+        # the selected monitor's table on the role's wire key.
+        for role, aux_field in (
+            (Incident, 'incident_monitor'),
+            (Transmission, 'transmission_monitor'),
+        ):
+            wf.insert(role_lookup_table_provider(role, _IQ_MONITOR_LUT_KEYS[aux_field]))
         wf[sans_types.QBins] = params.q_edges.get_edges()
         wf[sans_types.WavelengthBins] = params.wavelength_edges.get_edges()
         wf[BeamCenter] = params.beam_center.get_vector()

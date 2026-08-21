@@ -140,10 +140,11 @@ class JobFactory:
     def create(self, *, job_id: JobId, config: WorkflowConfig) -> Job:
         """Build a Job from its workflow config.
 
-        Resolves the matching instrument- and spec-scope ``ContextBinding``
-        declarations for this ``(spec, source)`` and populates the job's
-        ``context_keys`` (wired into ``set_context``) and ``gating_streams``
-        (the JobManager gates the job until each is available; see ADR 0002).
+        Validates the config's params, then resolves the matching instrument-
+        and spec-scope ``ContextBinding`` declarations for this ``(spec,
+        source, params, aux)`` and populates the job's ``context_keys`` (wired
+        into ``set_context``) and ``gating_streams`` (the JobManager gates the
+        job until each is available; see ADR 0002).
         """
         workflow_id = config.identifier
         if workflow_id is None:
@@ -168,8 +169,13 @@ class JobFactory:
         else:
             rendered_aux_names = dict(config.aux_source_names or {})
 
+        # Validate first: the gate is resolved from the job's own params and
+        # rendered aux selections, so a binding can carry a predicate or an
+        # aux-templated stream name and a job that never reads the stream is
+        # not gated on it (ADR 0010).
+        params = factory.validate_params(config)
         context_keys = self._instrument.resolve_context_keys(
-            workflow_id, job_id.source_name
+            workflow_id, job_id.source_name, params, rendered_aux_names
         )
         # Context wire names equal their stream names — no per-job suffixing.
         context_streams = set(context_keys)
@@ -184,6 +190,7 @@ class JobFactory:
         stream_processor = factory.create(
             source_name=job_id.source_name,
             config=config,
+            params=params,
             aux_source_names=aux_streams,
             context_keys=context_keys,
             chain_patch_bindings=self._instrument.chain_patch_bindings,

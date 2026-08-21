@@ -195,6 +195,11 @@ def test_can_configure_and_stop_workflow_with_detector_and_monitors(
         app.publish_log_message(
             source_name='detector_carriage/value', time=1, value=0.0
         )
+        # i_of_q also gates on the wavelength lookup table of every component
+        # it could reduce -- the detector plus each candidate monitor -- so the
+        # tables must arrive before detector and monitor events do.
+        for component in (source_name, *instrument_registry[instrument].monitors):
+            app.publish_lookup_table(component=component)
         service.step()
 
     app.publish_events(size=2000, time=2)

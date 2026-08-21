@@ -39,6 +39,8 @@ def stream_kind_to_topic(instrument: str, kind: StreamKind) -> str:
             return f'{instrument}_livedata_data'
         case StreamKind.LIVEDATA_NICOS_DATA:
             return f'{instrument}_livedata_nicos_data'
+        case StreamKind.LIVEDATA_CONTEXT:
+            return f'{instrument}_livedata_context'
         case StreamKind.LIVEDATA_ROI:
             return f'{instrument}_livedata_roi'
         case StreamKind.LIVEDATA_COMMANDS:

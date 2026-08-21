@@ -158,6 +158,21 @@ class RoutingAdapterBuilder:
         )
         return self
 
+    def with_livedata_context_route(self) -> Self:
+        """Adds the route for workflow outputs republished as context inputs.
+
+        No ``stream_lut``: the internal stream name *is* the da00 source name,
+        which is the stream name the producing spec rendered from its
+        ``context_outputs`` template and the consuming ``ContextBinding``
+        declares. There is no (topic, source_name) pair to disambiguate, since
+        the topic carries only this kind.
+        """
+        self._routes[self._stream_mapping.topics.livedata_context] = ChainedAdapter(
+            first=KafkaToDa00Adapter(stream_kind=StreamKind.LIVEDATA_CONTEXT),
+            second=Da00ToScippAdapter(),
+        )
+        return self
+
     def with_livedata_roi_route(self) -> Self:
         """Adds the livedata ROI route."""
         self._routes[self._stream_mapping.topics.livedata_roi] = ChainedAdapter(

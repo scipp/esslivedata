@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections import UserDict
-from collections.abc import Callable, Iterable, Sequence
+from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
@@ -19,7 +19,15 @@ from ess.livedata.workflows.workflow_factory import (
     WorkflowFactory,
 )
 
-from .stream import ChainPatchBinding, ContextBinding, Device, F144Stream, Stream
+from .stream import (
+    ChainPatchBinding,
+    ContextBinding,
+    Device,
+    F144Stream,
+    MotionEnvelope,
+    Stream,
+    render_stream_name,
+)
 from .value_log import ValueLog
 from .workflow_spec import (
     DETECTORS,
@@ -126,6 +134,17 @@ class Instrument:
     #: ``DiskChoppers`` and declares per-chopper setpoint context bindings) and
     #: the ``ChopperSynthesizer`` wired into the timeseries service.
     choppers: list[str] = field(default_factory=list)
+    #: Travel envelopes of the instrument's moving axes, keyed by NeXus
+    #: transform path. Needed because the geometry artifact stores an
+    #: f144-driven transform as an empty NXlog, carrying neither the resting
+    #: position nor the travel; both are declarations. Consumed when deriving
+    #: per-component wavelength lookup-table ranges. Which components ride an
+    #: axis is derived from their ``depends_on`` chains, not restated here.
+    motion_envelopes: dict[str, MotionEnvelope] = field(default_factory=dict)
+    #: Components the lookup-table workflow can actually place, filled in when
+    #: its factory is attached. Empty until then, and for chopperless
+    #: instruments.
+    _lut_ranges: dict[str, Any] = field(default_factory=dict, init=False)
     #: Stability tolerance for chopper delay readbacks. The readback stream's
     #: unit is enforced to ``ns`` by ``declare_chopper_setpoint_streams``.
     #: Shared by ``ChopperSynthesizer`` for noise rejection (rolling-window std
@@ -148,6 +167,7 @@ class Instrument:
         default_factory=dict, init=False
     )
     _pixellated_monitors: set[str] = field(default_factory=set, init=False)
+    _factories_loaded: bool = field(default=False, init=False)
 
     def __post_init__(self) -> None:
         """Auto-register standard workflow specs based on instrument metadata."""
@@ -289,6 +309,18 @@ class Instrument:
         self.context_bindings.append(binding)
 
     @property
+    def lut_components(self) -> frozenset[str]:
+        """Components with a wavelength lookup table.
+
+        A component riding a live axis with no declared
+        :class:`MotionEnvelope` cannot be placed from the geometry artifact and
+        so gets no table. Binding its table anyway would gate every job that
+        could have selected it on a stream that never arrives, so consumers
+        bind only these.
+        """
+        return frozenset(self._lut_ranges)
+
+    @property
     def chain_patch_bindings(self) -> list[ChainPatchBinding]:
         """Instrument-scope chain-patch bindings resolved for transform wiring.
 
@@ -313,21 +345,18 @@ class Instrument:
             if _is_chain_patch(binding)
         ]
 
-    def resolve_context_keys(
+    def _matching_bindings(
         self, workflow_id: WorkflowId, source_name: str
-    ) -> dict[str, Any]:
-        """Resolve the ``ContextBinding`` mapping for a ``(spec, source)`` pair.
+    ) -> list[ContextBinding]:
+        """Instrument- and spec-scope bindings declared for a ``(spec, source)``.
 
-        Matches instrument- and spec-scope :class:`ContextBinding` records whose
-        ``dependent_sources`` include ``source_name`` and returns
-        ``{stream_name: workflow_key}``. ``skip_instrument_contexts`` filters out
-        instrument-scope entries — a spec that explicitly declares a binding
-        cannot opt out of it via the flag. Context wire names equal their stream
-        names, so the returned keys double as the set of gating context streams.
+        ``skip_instrument_contexts`` filters out instrument-scope entries — a
+        spec that explicitly declares a binding cannot opt out of it via the
+        flag.
 
         Raises :class:`KeyError` for an unregistered ``workflow_id``: an empty
-        result means "this workflow gates on nothing" and must not be
-        conflated with "no such workflow".
+        result means "this workflow gates on nothing" and must not be conflated
+        with "no such workflow".
         """
         registration = self.workflow_factory.registration(workflow_id)
         if registration is None:
@@ -338,11 +367,84 @@ class Instrument:
         instrument_bindings = (
             [] if registration.skip_instrument_contexts else self.context_bindings
         )
-        return {
-            binding.stream_name: binding.workflow_key
+        return [
+            binding
             for binding in (*instrument_bindings, *registration.context_bindings)
             if source_name in binding.dependent_sources
+        ]
+
+    def declared_context_keys(
+        self, workflow_id: WorkflowId, source_name: str
+    ) -> dict[str, Any]:
+        """Every declared context key for a ``(spec, source)`` pair.
+
+        Returns ``{stream_name: workflow_key}``; context wire names equal their
+        stream names, so the keys double as the set of gating context streams.
+
+        Predicates are ignored and stream-name templates are left unrendered:
+        this is the declaration-level view for static callers (route
+        derivation, the workflow visualizer), which cover any single job's
+        gate — a subscription covering a stream some jobs do not gate on costs
+        nothing. Use :meth:`resolve_context_keys` where a job's params and aux
+        selections are in hand.
+        """
+        return {
+            binding.stream_name: binding.workflow_key
+            for binding in self._matching_bindings(workflow_id, source_name)
         }
+
+    def resolve_context_keys(
+        self,
+        workflow_id: WorkflowId,
+        source_name: str,
+        params: Any,
+        aux_source_names: Mapping[str, str] | None = None,
+    ) -> dict[str, Any]:
+        """Resolve one job's context keys from its validated params and aux.
+
+        :meth:`declared_context_keys` filtered by each binding's ``predicate``,
+        with stream-name templates rendered against the job's aux selections. A
+        predicate can only remove bindings and rendering only substitutes names
+        from the aux field's declared choices, so the result stays covered by
+        the statically derived Kafka subscriptions.
+
+        Parameters
+        ----------
+        workflow_id:
+            Workflow whose bindings to resolve.
+        source_name:
+            Source the job runs on.
+        params:
+            The job's *validated* params model, as passed to the workflow
+            factory. Predicates read it directly, so an unvalidated dict would
+            silently fail every attribute access.
+        aux_source_names:
+            The job's rendered aux selections, for stream-name templates.
+
+        Raises
+        ------
+        ValueError:
+            If two bindings resolve to the same stream with different workflow
+            keys — one stream feeds one key, so e.g. an aux selection picking
+            the same monitor for two roles cannot be honoured.
+        """
+        aux = aux_source_names or {}
+        resolved: dict[str, Any] = {}
+        for binding in self._matching_bindings(workflow_id, source_name):
+            if binding.predicate is not None and not binding.predicate(params):
+                continue
+            stream_name = render_stream_name(binding.stream_name, aux)
+            existing = resolved.get(stream_name)
+            if existing is not None and existing != binding.workflow_key:
+                raise ValueError(
+                    f"Context bindings of {workflow_id} resolve stream "
+                    f"{stream_name!r} to conflicting workflow keys {existing} "
+                    f"and {binding.workflow_key}. If the stream name is "
+                    "templated, the job's aux selections "
+                    f"{dict(aux)} may pick one stream for two roles."
+                )
+            resolved[stream_name] = binding.workflow_key
+        return resolved
 
     @property
     def nexus_file(self) -> str:
@@ -560,6 +662,7 @@ class Instrument:
         """
         from ess.livedata.workflows.detector_view_specs import (
             DetectorROIAuxSources,
+            TOAOnlyDetectorViewParams,
             make_detector_view_outputs,
             make_detector_view_params,
         )
@@ -567,7 +670,12 @@ class Instrument:
         outputs = make_detector_view_outputs(
             output_ndim, roi_support=roi_support, spectrum_view=spectrum_view
         )
-        params = make_detector_view_params(spectrum_view=spectrum_view)
+        # Logical views are TOA-only: they run on ``InstrumentDetectorSource``,
+        # which carries no geometry, so there is no Ltotal to index a wavelength
+        # lookup table with. Offering the mode would fail at job start.
+        params = make_detector_view_params(
+            spectrum_view=spectrum_view, base=TOAOnlyDetectorViewParams
+        )
         handle = self.register_spec(
             group=group,
             service=service,
@@ -611,6 +719,7 @@ class Instrument:
         aux_sources: AuxSources | None = None,
         outputs: type[Any],
         device_outputs: dict[str, str] | None = None,
+        context_outputs: dict[str, str] | None = None,
         reset_on_run_transition: bool = True,
         supports_reset: bool = True,
     ) -> SpecHandle:
@@ -672,6 +781,7 @@ class Instrument:
             aux_sources=aux_sources,
             outputs=outputs,
             device_outputs=device_outputs or {},
+            context_outputs=context_outputs or {},
             reset_on_run_transition=reset_on_run_transition,
             supports_reset=supports_reset,
         )
@@ -687,8 +797,16 @@ class Instrument:
         3. Auto-attaches logical view factories if views were registered
         4. Calls instrument-specific setup_factories(self)
         5. Auto-loads detector_numbers from nexus for unconfigured detectors
+
+        Idempotent: a second call on a loaded instrument is a no-op. The steps
+        append registration state (context bindings, LUT ranges), and the
+        synthesised per-chopper setpoint keys are fresh objects on every run,
+        so re-running would leave duplicate bindings with conflicting keys.
         """
         import importlib
+
+        if self._factories_loaded:
+            return
 
         module = importlib.import_module(f'ess.livedata.config.instruments.{self.name}')
 
@@ -732,10 +850,13 @@ class Instrument:
                 attach_wavelength_lut_factory,
             )
 
-            attach_wavelength_lut_factory(
+            self._lut_ranges = attach_wavelength_lut_factory(
                 self._wavelength_lut_handle,
                 choppers=self.choppers,
                 nexus_filename=str(get_nexus_geometry_filename(self.name)),
+                detectors=self.detector_names,
+                monitors=self.monitors,
+                motion=self.motion_envelopes,
             )
 
         if hasattr(module, 'setup_factories'):
@@ -754,6 +875,7 @@ class Instrument:
                     # the expected path (e.g., monitors lack a detector_number
                     # dataset — they must provide it via configure_pixellated_monitor)
                     pass
+        self._factories_loaded = True
 
     def _attach_default_monitor_factories(self) -> None:
         """Attach the shared monitor workflow factory where none was provided.

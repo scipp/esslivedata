@@ -50,7 +50,7 @@ class DetectorPreprocessorFactory(JobBasedPreprocessorFactoryBase):
                 return ToNXevent_data()
             case StreamKind.AREA_DETECTOR:
                 return Cumulative(clear_on_get=True)
-            case StreamKind.LIVEDATA_ROI:
+            case StreamKind.LIVEDATA_ROI | StreamKind.LIVEDATA_CONTEXT:
                 return LatestValueAccumulator()
             case StreamKind.LOG | StreamKind.DEVICE:
                 return nxlog_for_stream(

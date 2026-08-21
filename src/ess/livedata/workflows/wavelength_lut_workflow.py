@@ -35,6 +35,7 @@ from typing import Any, NewType
 import sciline
 import scipp as sc
 import scippnexus as snx
+import structlog
 from ess.reduce.nexus.types import (
     AnyRun,
     DiskChoppers,
@@ -48,36 +49,37 @@ from ess.reduce.unwrap.lut import (
     ChopperFrameSequence,
     DistanceResolution,
     LookupTable,
-    LtotalRange,
     PulsePeriod,
     PulseStride,
     TimeResolution,
     _estimate_wavelength_by_polygon_centers,
+    make_wavelength_lut_from_polygons,
 )
 
 from ..config.chopper import delay_setpoint_stream, speed_setpoint_stream
+from ..config.stream import MotionEnvelope
 from .dynamic_transforms import synthesise_provider
+from .lut_ranges import LtotalRangeError, component_ltotal_range
 from .stream_processor_workflow import StreamProcessorWorkflow
 from .wavelength_lut_workflow_specs import (
     CHOPPER_CASCADE_SOURCE,
     WAVELENGTH_BANDS_OUTPUT,
-    WAVELENGTH_LUT_OUTPUT,
     WavelengthLutParams,
 )
 from .workflow_factory import SpecHandle, Workflow
 
-#: Component the standalone table is parametrised by. The table is not tied to a
-#: real detector; the choice only fixes the internal Sciline keys (LtotalRange,
-#: LookupTable) and does not appear in the published array.
+logger = structlog.get_logger(__name__)
+
+#: Component the upstream ``LookupTable`` type is parametrised by. Each table is
+#: keyed per component by a synthesised key instead (see
+#: :func:`_component_lut_key`); this only fixes the upstream type parameter and
+#: does not appear in the published array.
 _LUT_COMPONENT = snx.NXdetector
 
 #: The chopper-cascade trigger payload as it reaches the workflow: the
 #: cumulative ``ToNXlog`` timeseries for the synthetic ``chopper_cascade``
 #: stream. The value is ignored; only its presence drives recomputation.
 ChopperCascadeTrigger = NewType('ChopperCascadeTrigger', sc.DataArray)
-
-#: Wavelength lookup-table with provenance coords attached.
-WavelengthLut = NewType('WavelengthLut', sc.DataArray)
 
 #: Per-component wavelength bands evaluated at exact chopper distances, indexed
 #: by a ``distance`` dimension (source + one row per chopper, plus one row per
@@ -174,9 +176,9 @@ def build_disk_choppers_provider(
     return synthesise_provider('_provide_disk_choppers', _impl, annotations)
 
 
-def _attach_provenance(
-    table: LookupTable[AnyRun, _LUT_COMPONENT], params: ParamsKey
-) -> WavelengthLut:
+def _with_provenance(
+    table: LookupTable[AnyRun, _LUT_COMPONENT], params: WavelengthLutParams
+) -> sc.DataArray:
     """Attach the four scalar input parameters as 0-D coords on the result.
 
     Makes the published da00 message self-describing: a consumer can
@@ -193,7 +195,7 @@ def _attach_provenance(
     arr.coords['pulse_stride'] = sc.scalar(int(table.pulse_stride))
     arr.coords['distance_resolution'] = params.distance_resolution.get()
     arr.coords['time_resolution'] = params.time_resolution.get()
-    return WavelengthLut(arr)
+    return arr
 
 
 def make_wavelength_bands_from_frames(
@@ -265,6 +267,74 @@ def make_wavelength_bands_from_frames(
     return WavelengthBands(sc.sort(table, 'distance'))
 
 
+def _component_lut_key(component: str) -> Any:
+    """Distinct Sciline key carrying one component's table.
+
+    ``LookupTable`` is parametrised by ``Component`` (detector vs monitor), not
+    by bank, so N per-component tables in one pipeline need N distinct keys.
+    """
+    return NewType(f'WavelengthLut_{component}', sc.DataArray)
+
+
+def _insert_component_lut_providers(
+    pipeline: sciline.Pipeline,
+    ranges: Mapping[str, tuple[sc.Variable, sc.Variable]],
+) -> dict[str, Any]:
+    """Insert one table provider per component, returning their Sciline keys.
+
+    Every provider consumes the same ``ChopperFrameSequence``, so the cascade is
+    computed once per trigger and only the rasterization -- a handful of
+    distance rows per component -- runs N times.
+    """
+    keys: dict[str, Any] = {}
+    for component, ltotal_range in ranges.items():
+        key = _component_lut_key(component)
+        keys[component] = key
+        pipeline.insert(_make_component_lut_provider(component, ltotal_range, key))
+    return keys
+
+
+def _make_component_lut_provider(
+    component: str, ltotal_range: tuple[sc.Variable, sc.Variable], key: Any
+) -> Callable[..., sc.DataArray]:
+    def _impl(
+        distance_resolution: sc.Variable,
+        time_resolution: sc.Variable,
+        pulse_period: sc.Variable,
+        pulse_stride: int,
+        frames: Any,
+        params: WavelengthLutParams,
+    ) -> sc.DataArray:
+        table = make_wavelength_lut_from_polygons(
+            ltotal_range=ltotal_range,
+            distance_resolution=distance_resolution,
+            time_resolution=time_resolution,
+            pulse_period=pulse_period,
+            pulse_stride=pulse_stride,
+            frames=frames,
+        )
+        return _with_provenance(table, params)
+
+    return synthesise_provider(
+        f'_provide_lut_{_identifier(component)}',
+        _impl,
+        {
+            'distance_resolution': DistanceResolution,
+            'time_resolution': TimeResolution,
+            'pulse_period': PulsePeriod,
+            'pulse_stride': PulseStride[AnyRun],
+            'frames': ChopperFrameSequence[AnyRun],
+            'params': ParamsKey,
+            'return': key,
+        },
+    )
+
+
+def _identifier(component: str) -> str:
+    """Component name reduced to a Python identifier for a synthesised name."""
+    return ''.join(c if c.isalnum() else '_' for c in component)
+
+
 def _build_pipeline(params: WavelengthLutParams) -> sciline.Pipeline:
     wf = GenericUnwrapWorkflow(
         run_types=[AnyRun], monitor_types=[], wavelength_from='analytical'
@@ -276,24 +346,21 @@ def _build_pipeline(params: WavelengthLutParams) -> sciline.Pipeline:
         wf[PulseStride[AnyRun]] = int(params.pulse.stride)
     wf[DistanceResolution] = params.distance_resolution.get()
     wf[TimeResolution] = params.time_resolution.get()
-    wf[LtotalRange[AnyRun, _LUT_COMPONENT]] = (
-        params.distance_range.get_start(),
-        params.distance_range.get_stop(),
-    )
     wf[ParamsKey] = params
-    wf.insert(_attach_provenance)
     # Per-component diagnostic evaluated at exact chopper distances, sidestepping
     # the table's distance resolution. Reuses the analytical ChopperFrameSequence.
     wf.insert(make_wavelength_bands_from_frames)
     return wf
 
 
-def _make_workflow(pipeline: sciline.Pipeline) -> StreamProcessorWorkflow:
+def _make_workflow(
+    pipeline: sciline.Pipeline, lut_keys: Mapping[str, Any]
+) -> StreamProcessorWorkflow:
     return StreamProcessorWorkflow(
         pipeline,
         dynamic_keys={CHOPPER_CASCADE_SOURCE: ChopperCascadeTrigger},
         target_keys={
-            WAVELENGTH_LUT_OUTPUT: WavelengthLut,
+            **lut_keys,
             WAVELENGTH_BANDS_OUTPUT: WavelengthBands,
         },
         accumulators={},
@@ -322,6 +389,7 @@ def create_wavelength_lut_workflow(
     params: WavelengthLutParams,
     setpoint_keys: Mapping[str, ChopperSetpointKeys],
     nexus_filename: str,
+    ltotal_ranges: Mapping[str, tuple[sc.Variable, sc.Variable]],
 ) -> Workflow:
     """Factory for the chopper-equipped wavelength lookup-table workflow.
 
@@ -331,12 +399,15 @@ def create_wavelength_lut_workflow(
     the static ``NXdisk_chopper`` groups (slit edges, radius, axle position)
     and the source position; the pipeline loads both from it. A configured
     chopper missing from the artifact surfaces as a ``KeyError`` at recompute.
+    ``ltotal_ranges`` gives the flight-path range each component's table covers.
     """
     pipeline = _build_pipeline(params)
     pipeline[Filename[AnyRun]] = nexus_filename
     _set_source_position(pipeline, nexus_filename, params.source.get())
     pipeline.insert(build_disk_choppers_provider(setpoint_keys))
-    return _make_workflow(pipeline)
+    return _make_workflow(
+        pipeline, _insert_component_lut_providers(pipeline, ltotal_ranges)
+    )
 
 
 def _set_source_position(
@@ -364,8 +435,14 @@ def _set_source_position(
 
 
 def attach_wavelength_lut_factory(
-    handle: SpecHandle, *, choppers: Sequence[str], nexus_filename: str
-) -> None:
+    handle: SpecHandle,
+    *,
+    choppers: Sequence[str],
+    nexus_filename: str,
+    detectors: Sequence[str],
+    monitors: Sequence[str],
+    motion: Mapping[str, MotionEnvelope],
+) -> dict[str, tuple[sc.Variable, sc.Variable]]:
     """Bind per-chopper setpoint context and attach the LUT factory.
 
     The single per-instrument entry point: from ``factories.py`` an instrument
@@ -378,7 +455,21 @@ def attach_wavelength_lut_factory(
     ``set_context`` value reaches the matching provider parameter. Sharing them
     here enforces that invariant by construction rather than leaving each
     instrument's ``factories.py`` to wire matching keys by hand.
+
+    Each component's flight-path range is derived from the geometry artifact.
+    A component whose range cannot be derived -- one riding a live f144-driven
+    axis with no declared :class:`MotionEnvelope` -- is left without a table.
+
+    Returns
+    -------
+    :
+        The derived ranges, keyed by component. Consumers bind only these, so a
+        component without a table gates nothing rather than blocking every job
+        that could have selected it.
     """
+    ltotal_ranges = _derive_ltotal_ranges(
+        nexus_filename, detectors=detectors, monitors=monitors, motion=motion
+    )
     setpoint_keys = {
         chopper: make_chopper_setpoint_keys(chopper) for chopper in choppers
     }
@@ -393,5 +484,32 @@ def attach_wavelength_lut_factory(
     @handle.attach_factory()
     def _factory(params: WavelengthLutParams) -> Workflow:
         return create_wavelength_lut_workflow(
-            params=params, setpoint_keys=setpoint_keys, nexus_filename=nexus_filename
+            params=params,
+            setpoint_keys=setpoint_keys,
+            nexus_filename=nexus_filename,
+            ltotal_ranges=ltotal_ranges,
         )
+
+    return ltotal_ranges
+
+
+def _derive_ltotal_ranges(
+    nexus_filename: str,
+    *,
+    detectors: Sequence[str],
+    monitors: Sequence[str],
+    motion: Mapping[str, MotionEnvelope],
+) -> dict[str, tuple[sc.Variable, sc.Variable]]:
+    """Derive every component's range, skipping those the artifact cannot place."""
+    ranges: dict[str, tuple[sc.Variable, sc.Variable]] = {}
+    for names, is_monitor in ((detectors, False), (monitors, True)):
+        for name in names:
+            try:
+                ranges[name] = component_ltotal_range(
+                    nexus_filename, name, is_monitor=is_monitor, motion=motion
+                )
+            except LtotalRangeError as exc:
+                logger.warning(
+                    'wavelength_lut_range_underivable', component=name, reason=str(exc)
+                )
+    return ranges
