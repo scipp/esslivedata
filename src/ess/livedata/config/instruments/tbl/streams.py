@@ -24,7 +24,7 @@ detector_fakes = {
 }
 
 # Area detector fakes: detector_name -> (height, width) shape
-# Actual size is 2048x2048 but that would require higher message size limits for dev
+# Actual size is 4096x4096 but that would require higher message size limits for dev
 area_detector_fakes = {'orca_detector': (512, 512)}
 
 
