@@ -25,7 +25,7 @@ from .plotter_registry import (
     plotter_registry,
 )
 from .roi_publisher import ROIPublisher
-from .roi_request_plots import ROIPublisherAware
+from .roi_request_plots import ParamsPersisterAware, ROIPublisherAware
 from .stream_manager import StreamManager
 
 
@@ -230,6 +230,7 @@ class PlottingController:
         self,
         plot_name: str,
         params: dict | pydantic.BaseModel,
+        on_params_changed: Callable[[pydantic.BaseModel], None] | None = None,
     ):
         """
         Create a plotter instance for the given name and parameters.
@@ -240,6 +241,10 @@ class PlottingController:
             The name of the plotter to create.
         params:
             The plotter parameters as a dict or validated Pydantic model.
+        on_params_changed:
+            Callback storing params that the plotter rewrites from user
+            interaction, such as ROIs drawn on the plot. Omit for plotters
+            built speculatively, whose params must not be stored anywhere.
 
         Returns
         -------
@@ -250,6 +255,8 @@ class PlottingController:
         # ROI request plotters need the ROI publisher
         if isinstance(plotter, ROIPublisherAware):
             plotter.set_roi_publisher(self._roi_publisher)
+        if on_params_changed is not None and isinstance(plotter, ParamsPersisterAware):
+            plotter.set_params_persister(on_params_changed)
         return plotter
 
     def is_overlayable(self, plot_name: str, params: dict | pydantic.BaseModel) -> bool:

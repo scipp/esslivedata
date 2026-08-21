@@ -3,7 +3,8 @@
 """Interactive ROI request plotters for user-drawn ROI selection.
 
 These plotters create interactive BoxEdit/PolyDraw elements that allow users
-to draw ROIs visually. Edits are published to Kafka for backend processing.
+to draw ROIs visually. Edits are published to Kafka for backend processing and
+written back into the plotter's params, so that they survive plotter rebuilds.
 
 These plotters subscribe to the ROI readback output stream for source context.
 The readback data itself is not used for display - only the DataKey is needed
@@ -28,6 +29,22 @@ ROI request plotters follow the two-stage compute/present pattern:
 
 The presenter handles only HoloViews mechanics. All domain logic (ROI parsing,
 comparison, skip logic, publishing) stays in the plotter via the edit callback.
+
+Coordinate units
+----------------
+Stored geometry is bare numbers, meaning coordinates as read off the plot's
+axes -- the same numbers the static overlays draw. The unit is stamped on at
+parse time from the data and never stored alongside them: it belongs to the
+view a layer is bound to, so persisting it would create a value that goes
+stale as soon as the layer is pointed at another view, plus rules to resolve
+the disagreement. A re-derived unit cannot disagree.
+
+Leaving the unit off is not an option either: ``Interval`` and ``PolygonROI``
+read a missing unit as pixel indices, which would silently displace every ROI
+on a view with physical coordinates.
+
+Units therefore arrive with the data, which is why stored geometry is seeded
+in compute() rather than in __init__.
 """
 
 from __future__ import annotations
@@ -59,6 +76,22 @@ if TYPE_CHECKING:
 
 logger = structlog.get_logger(__name__)
 
+_COORD_PRECISION = 6
+"""Significant digits kept in stored ROI coordinates.
+
+A coordinate is a cursor pixel mapped onto the axis, so a 2000-pixel axis
+carries barely more than three digits of information and everything past that
+is float noise -- noise the user reads, since the stored string is also the
+params field they edit. Significant digits rather than decimal places: axes
+here run from pixel indices through Q in 1/angstrom to wavelength in m, and a
+fixed number of decimals would erase the small-magnitude ones.
+"""
+
+
+def _format_coord(value: float) -> str:
+    """Format a coordinate for storage, as JSON the coordinate parsers accept."""
+    return f'{value:.{_COORD_PRECISION}g}'
+
 
 @runtime_checkable
 class ROIPublisherAware(Protocol):
@@ -66,6 +99,23 @@ class ROIPublisherAware(Protocol):
 
     def set_roi_publisher(self, publisher: ROIPublisher | None) -> None:
         """Set the ROI publisher for this plotter."""
+        ...
+
+
+@runtime_checkable
+class ParamsPersisterAware(Protocol):
+    """Protocol for plotters that rewrite their own params from user interaction.
+
+    ROI request plotters rewrite their geometry as the user draws. The persister
+    stores the updated params with the layer, so that a plotter rebuilt later
+    (dashboard restart, layer re-added, new job generation) seeds from the last
+    edited state instead of clobbering it with the config-time geometry.
+    """
+
+    def set_params_persister(
+        self, persister: Callable[[pydantic.BaseModel], None]
+    ) -> None:
+        """Set the callback that stores params updated by this plotter."""
         ...
 
 
@@ -322,7 +372,7 @@ class OptionalRectanglesCoordinates(RectanglesCoordinates):
     coordinates: str = pydantic.Field(
         default="",
         title="Coordinates",
-        description='E.g., [0,0,10,10], [20,20,30,30] (leave empty for none)',
+        description='In plot axis units, e.g. [0,0,10,10], [20,20,30,30]',
     )
 
     @pydantic.field_validator('coordinates')
@@ -373,8 +423,8 @@ class RectanglesRequestParams(pydantic.BaseModel):
 
     geometry: OptionalRectanglesCoordinates = pydantic.Field(
         default_factory=OptionalRectanglesCoordinates,
-        title="Initial Coordinates",
-        description="Initial rectangle coordinates. Leave empty for none.",
+        title="Coordinates",
+        description="Rectangles to start from; rewritten as you draw.",
     )
     style: RectanglesRequestStyle = pydantic.Field(
         default_factory=RectanglesRequestStyle,
@@ -410,8 +460,10 @@ class BaseROIRequestPresenter(PresenterBase, ABC):
     max_roi_count:
         Maximum number of ROIs that can be drawn.
     on_edit:
-        Callback for handling edit events. Receives raw edit stream data.
-        The plotter provides this callback with closure-captured state.
+        Callback for handling edit events. Receives raw edit stream data and
+        returns the accepted ROIs in HoloViews form, or ``None`` if the edit
+        changed nothing. The plotter provides this callback with
+        closure-captured state.
     """
 
     def __init__(
@@ -422,7 +474,7 @@ class BaseROIRequestPresenter(PresenterBase, ABC):
         initial_stream_data: dict,
         style: Any,
         max_roi_count: int,
-        on_edit: Callable[[dict], None],
+        on_edit: Callable[[dict], list | None],
     ) -> None:
         super().__init__(plotter)
         self._style = style
@@ -471,12 +523,25 @@ class BaseROIRequestPresenter(PresenterBase, ABC):
         return self._apply_styling(self._dmap)
 
     def _handle_edit(self, event) -> None:
-        """Forward edit stream events to the plotter's callback."""
+        """Forward edit stream events to the plotter's callback.
+
+        The accepted set is pushed back through the pipe, so that the element
+        this session renders always matches the plotter's live ROIs. Without
+        it the element stays at whatever this presenter was constructed with:
+        drawn ROIs live only in the browser's edit tool, and the next
+        re-render -- a tab switch, a cell rebuilt on job state change --
+        rebuilds that tool from the stale element and syncs the difference
+        back as an edit, silently dropping ROIs the user drew.
+        """
         data = event.new if hasattr(event, 'new') else event
         try:
-            self._on_edit_callback(data or {})
+            accepted = self._on_edit_callback(data or {})
         except Exception as e:
             logger.error("Failed to process ROI edit: %s", e)
+            return
+        # None means the edit changed nothing, so the element already agrees.
+        if accepted is not None:
+            self._pipe.send(accepted)
 
     def _apply_styling(self, dmap: hv.DynamicMap) -> hv.DynamicMap:
         """Apply common styling options to the DynamicMap."""
@@ -534,7 +599,8 @@ class BaseROIRequestPlotter[
 
     Implements compute() to extract data-dependent info and create_presenter()
     to create per-session presenters. Domain logic (ROI parsing, comparison,
-    skip logic, publishing) is handled via a closure-based edit callback.
+    skip logic, publishing, persistence) is handled via a closure-based edit
+    callback.
     """
 
     def __init__(
@@ -545,17 +611,20 @@ class BaseROIRequestPlotter[
         super().__init__()
         self._params = params
         self._roi_publisher = roi_publisher
+        self._params_persister: Callable[[pydantic.BaseModel], None] | None = None
         self._converter = self._create_converter()
         self._roi_mapper = get_roi_mapper()
 
         # Initialize static config from params
         self._index_offset = self._get_index_offset()
-        self._initial_rois: dict[int, ROIType] = self._parse_initial_geometry()
 
-        # Live ROI state shared across all sessions of this plotter. Sessions'
-        # edit handlers read and update this under _roi_lock; new presenters are
-        # seeded from it so a session opened after edits sees the current ROIs.
-        self._current_rois: dict[int, ROIType] = dict(self._initial_rois)
+        # Live ROI state shared across all sessions of this plotter. Seeded from
+        # params on the first compute(), where the axis units become known.
+        # Sessions' edit handlers read and update this under _roi_lock; new
+        # presenters are seeded from it so a session opened after edits sees
+        # the current ROIs.
+        self._current_rois: dict[int, ROIType] = {}
+        self._seeded_from_params = False
         self._published_initial = False
         self._roi_lock = threading.Lock()
 
@@ -567,6 +636,12 @@ class BaseROIRequestPlotter[
     def set_roi_publisher(self, publisher: ROIPublisher | None) -> None:
         """Set the ROI publisher for this plotter."""
         self._roi_publisher = publisher
+
+    def set_params_persister(
+        self, persister: Callable[[pydantic.BaseModel], None]
+    ) -> None:
+        """Set the callback that stores params updated by this plotter."""
+        self._params_persister = persister
 
     @abstractmethod
     def _create_converter(self) -> ConverterType:
@@ -582,7 +657,11 @@ class BaseROIRequestPlotter[
 
     @abstractmethod
     def _parse_initial_geometry(self) -> dict[int, ROIType]:
-        """Parse initial geometry from params."""
+        """Parse the geometry stored in params, in the plot's axis units."""
+
+    @abstractmethod
+    def _format_geometry(self, rois: dict[int, ROIType]) -> str:
+        """Serialize ROIs into the coordinate string format params store."""
 
     @abstractmethod
     def _should_skip_edit(self, new_rois: dict[int, ROIType]) -> bool:
@@ -638,6 +717,15 @@ class BaseROIRequestPlotter[
             else None
         )
 
+        # Params hold bare numbers; they mean coordinates on the plot's axes, so
+        # they can only be turned into ROIs once the axis units are known.
+        # Seeding here rather than in __init__ is safe because no presenter can
+        # exist yet: SessionComponents.create builds one only once the layer has
+        # a displayable plot, which this call is what produces.
+        if not self._seeded_from_params:
+            self._current_rois = self._parse_initial_geometry()
+            self._seeded_from_params = True
+
         # Forward data (presenter may use in future)
         self._set_cached_state(primary)
         return primary
@@ -647,8 +735,9 @@ class BaseROIRequestPlotter[
         Create an edit handler over the plotter's shared live ROI state.
 
         The handler parses edit stream data, compares with the shared state,
-        applies skip logic, and publishes changes. All sessions' handlers read
-        and update the same ``_current_rois`` under ``_roi_lock``.
+        applies skip logic, publishes changes and writes them back into the
+        layer's stored params. All sessions' handlers read and update the same
+        ``_current_rois`` under ``_roi_lock``.
 
         Also emits the initial ROI set once per plotter lifetime (on the first
         presenter creation after ``compute()`` has set ``_data_key``), never
@@ -660,7 +749,7 @@ class BaseROIRequestPlotter[
             Callback function for handling edit events.
         """
 
-        def handle_edit(stream_data: dict) -> None:
+        def handle_edit(stream_data: dict) -> list | None:
             new_rois = self._converter.parse_stream_data(
                 stream_data,
                 x_unit=self._x_unit,
@@ -670,18 +759,34 @@ class BaseROIRequestPlotter[
             with self._roi_lock:
                 # Skip if unchanged
                 if new_rois == self._current_rois:
-                    return
+                    return None
                 # Apply subclass-specific skip logic
                 if self._should_skip_edit(new_rois):
-                    return
+                    return None
                 self._current_rois = new_rois
                 self._publish_rois(new_rois)
+                self._params = self._params_with_geometry(new_rois)
+                params = self._params
+                accepted = self._converter.to_hv_data(new_rois, index_to_color=None)
+            # Outside the ROI lock: the persister reaches back into the plot
+            # orchestrator, which takes its own locks and writes the config store.
+            if self._params_persister is not None:
+                self._params_persister(params)
+            return accepted
 
         with self._roi_lock:
             if not self._published_initial and self._publish_rois(self._current_rois):
                 self._published_initial = True
 
         return handle_edit
+
+    def _params_with_geometry(self, rois: dict[int, ROIType]) -> ParamsType:
+        """Return a copy of the params carrying ``rois`` as their geometry."""
+        geometry = type(self._params.geometry).model_validate(
+            self._params.geometry.model_dump()
+            | {'coordinates': self._format_geometry(rois)}
+        )
+        return self._params.model_copy(update={'geometry': geometry})
 
     def _publish_rois(self, rois: dict[int, ROIType]) -> bool:
         """Publish ROIs to Kafka. Returns True if a message was published."""
@@ -727,24 +832,37 @@ class RectanglesRequestPlotter(
         return 0
 
     def _parse_initial_geometry(self) -> dict[int, RectangleROI]:
-        """Parse initial rectangles from params."""
+        """Parse the rectangles stored in params, in the plot's axis units."""
         coords_str = self._params.geometry.coordinates
         if not coords_str or coords_str.strip() == '':
             return {}
 
+        # Construction is inside the try because the stored string is user-facing
+        # and rounded: a hand-edited or degenerate rectangle (min == max after
+        # rounding) fails ``Interval`` validation, which must not take the plot
+        # down with it.
+        rois: dict[int, RectangleROI] = {}
         try:
-            rects = self._params.geometry.parse()
+            for i, (x0, y0, x1, y1) in enumerate(self._params.geometry.parse()):
+                rois[self._index_offset + i] = RectangleROI(
+                    x=Interval(min=min(x0, x1), max=max(x0, x1), unit=self._x_unit),
+                    y=Interval(min=min(y0, y1), max=max(y0, y1), unit=self._y_unit),
+                )
         except Exception:
             logger.warning("Failed to parse initial rectangle coordinates")
             return {}
-
-        rois: dict[int, RectangleROI] = {}
-        for i, (x0, y0, x1, y1) in enumerate(rects):
-            rois[self._index_offset + i] = RectangleROI(
-                x=Interval(min=min(x0, x1), max=max(x0, x1), unit=None),
-                y=Interval(min=min(y0, y1), max=max(y0, y1), unit=None),
-            )
         return rois
+
+    def _format_geometry(self, rois: dict[int, RectangleROI]) -> str:
+        """Serialize rectangles as ``[x0,y0,x1,y1], [x0,y0,x1,y1]``."""
+
+        def corners(roi: RectangleROI) -> str:
+            return (
+                f'{_format_coord(roi.x.min)},{_format_coord(roi.y.min)},'
+                f'{_format_coord(roi.x.max)},{_format_coord(roi.y.max)}'
+            )
+
+        return ', '.join(f'[{corners(rois[i])}]' for i in sorted(rois))
 
     def _should_skip_edit(self, new_rois: dict[int, RectangleROI]) -> bool:
         del new_rois  # Rectangles never skip edits
@@ -801,7 +919,10 @@ class PolygonsCoordinates(pydantic.BaseModel):
     coordinates: str = pydantic.Field(
         default="",
         title="Coordinates",
-        description='E.g., [[0,0],[10,0],[5,10]], [[20,20],[30,20],[30,30],[20,30]]',
+        description=(
+            'In plot axis units, e.g. [[0,0],[10,0],[5,10]], '
+            '[[20,20],[30,20],[30,30],[20,30]]'
+        ),
     )
 
     def parse(self) -> list[tuple[list[float], list[float]]]:
@@ -844,8 +965,8 @@ class PolygonsRequestParams(pydantic.BaseModel):
 
     geometry: PolygonsCoordinates = pydantic.Field(
         default_factory=PolygonsCoordinates,
-        title="Initial Coordinates",
-        description="Initial polygon coordinates. Leave empty for none.",
+        title="Coordinates",
+        description="Polygons to start from; rewritten as you draw.",
     )
     style: PolygonsRequestStyle = pydantic.Field(
         default_factory=PolygonsRequestStyle,
@@ -883,24 +1004,36 @@ class PolygonsRequestPlotter(
         )
 
     def _parse_initial_geometry(self) -> dict[int, PolygonROI]:
-        """Parse initial polygons from params."""
+        """Parse the polygons stored in params, in the plot's axis units."""
         coords_str = self._params.geometry.coordinates
         if not coords_str or coords_str.strip() == '':
             return {}
 
+        # Construction is inside the try for the same reason as for rectangles:
+        # the stored string is user-facing, so a hand-edited polygon that fails
+        # ``PolygonROI`` validation must not take the plot down.
+        rois: dict[int, PolygonROI] = {}
         try:
-            polygons = self._params.geometry.parse()
+            for i, (xs, ys) in enumerate(self._params.geometry.parse()):
+                if len(xs) >= 3:
+                    rois[self._index_offset + i] = PolygonROI(
+                        x=xs, y=ys, x_unit=self._x_unit, y_unit=self._y_unit
+                    )
         except Exception:
             logger.warning("Failed to parse initial polygon coordinates")
             return {}
-
-        rois: dict[int, PolygonROI] = {}
-        for i, (xs, ys) in enumerate(polygons):
-            if len(xs) >= 3:
-                rois[self._index_offset + i] = PolygonROI(
-                    x=xs, y=ys, x_unit=None, y_unit=None
-                )
         return rois
+
+    def _format_geometry(self, rois: dict[int, PolygonROI]) -> str:
+        """Serialize polygons as ``[[x,y],[x,y],[x,y]], [[x,y],...]``."""
+
+        def vertices(roi: PolygonROI) -> str:
+            return ','.join(
+                f'[{_format_coord(x)},{_format_coord(y)}]'
+                for x, y in zip(roi.x, roi.y, strict=True)
+            )
+
+        return ', '.join(f'[{vertices(rois[i])}]' for i in sorted(rois))
 
     def _should_skip_edit(self, new_rois: dict[int, PolygonROI]) -> bool:
         """Skip publishing while user is actively drawing a polygon.
