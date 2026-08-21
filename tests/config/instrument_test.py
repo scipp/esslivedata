@@ -746,6 +746,70 @@ class TestContextBindings:
             assert set(resolved) <= set(declared)
         assert declared == {'rot': _Key}
 
+    def _spec_with_templated_binding(self, stream_name: str = 'lut/{mon}'):
+        instrument = Instrument(name='test', detector_names=['det1'])
+        handle = instrument.register_spec(
+            name='w',
+            version=1,
+            title='W',
+            source_names=['det1'],
+            outputs=SimpleTestOutputs,
+        )
+        handle.add_context_binding(stream_name=stream_name, workflow_key=_Key)
+        return instrument, handle
+
+    def test_templated_stream_name_renders_from_aux_selection(self):
+        # An import-time binding can gate on a stream a per-job aux selection
+        # picks: the placeholder names the aux field (ADR 0010).
+        instrument, handle = self._spec_with_templated_binding()
+
+        resolved = instrument.resolve_context_keys(
+            handle.workflow_id, 'det1', None, aux_source_names={'mon': 'mon_a'}
+        )
+
+        assert resolved == {'lut/mon_a': _Key}
+
+    def test_templated_stream_name_missing_aux_field_fails_loud(self):
+        # Silently keeping the placeholder would gate the job on a stream
+        # that can never arrive.
+        instrument, handle = self._spec_with_templated_binding()
+
+        with pytest.raises(ValueError, match='mon'):
+            instrument.resolve_context_keys(
+                handle.workflow_id, 'det1', None, aux_source_names={}
+            )
+
+    def test_declared_context_keys_leave_the_template_unrendered(self):
+        instrument, handle = self._spec_with_templated_binding()
+
+        assert instrument.declared_context_keys(handle.workflow_id, 'det1') == {
+            'lut/{mon}': _Key
+        }
+
+    def test_two_bindings_resolving_one_stream_to_conflicting_keys_raise(self):
+        # E.g. an aux selection picking the same monitor for two roles: one
+        # stream feeds one key, so the selection cannot be honoured.
+        class _OtherKey: ...
+
+        instrument, handle = self._spec_with_templated_binding('lut/{role_a}')
+        handle.add_context_binding(stream_name='lut/{role_b}', workflow_key=_OtherKey)
+
+        distinct = instrument.resolve_context_keys(
+            handle.workflow_id,
+            'det1',
+            None,
+            aux_source_names={'role_a': 'x', 'role_b': 'y'},
+        )
+        assert distinct == {'lut/x': _Key, 'lut/y': _OtherKey}
+
+        with pytest.raises(ValueError, match='conflicting'):
+            instrument.resolve_context_keys(
+                handle.workflow_id,
+                'det1',
+                None,
+                aux_source_names={'role_a': 'x', 'role_b': 'x'},
+            )
+
 
 class TestInstrumentRegisterSpec:
     """Test the new register_spec() convenience method for two-phase registration."""

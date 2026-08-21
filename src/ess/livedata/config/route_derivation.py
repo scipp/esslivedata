@@ -4,11 +4,39 @@
 
 from __future__ import annotations
 
+import itertools
 from typing import TYPE_CHECKING
+
+from .stream import render_stream_name, stream_name_placeholders
 
 if TYPE_CHECKING:
     from ..kafka.stream_mapping import StreamMapping
     from .instrument import Instrument
+    from .workflow_spec import WorkflowSpec
+
+
+def _expanded_stream_names(stream_name: str, spec: WorkflowSpec) -> set[str]:
+    """Every stream name a binding's template can render to for ``spec``.
+
+    A plain name expands to itself. A ``{field}`` placeholder must name one of
+    the spec's aux inputs — anything else is a declaration error, raised here
+    at startup rather than surfacing as a job gated on a stream that never
+    arrives.
+    """
+    fields = sorted(stream_name_placeholders(stream_name))
+    if not fields:
+        return {stream_name}
+    inputs = spec.aux_sources.inputs if spec.aux_sources is not None else {}
+    if missing := [field for field in fields if field not in inputs]:
+        raise ValueError(
+            f"Context binding stream name {stream_name!r} on spec "
+            f"{spec.name!r} references aux field(s) {missing} the spec does "
+            f"not declare; declared aux inputs: {sorted(inputs)}"
+        )
+    return {
+        render_stream_name(stream_name, dict(zip(fields, combo, strict=True)))
+        for combo in itertools.product(*(inputs[field].choices for field in fields))
+    }
 
 
 def gather_source_names(
@@ -42,9 +70,11 @@ def gather_source_names(
             for aux_input in spec.aux_sources.inputs.values():
                 names.update(aux_input.choices)
         # Spec-level ContextBinding entries are routed by stream name (the
-        # wire name equals the stream name).
+        # wire name equals the rendered stream name). Aux-templated names are
+        # expanded over the referenced fields' declared choices, keeping the
+        # subscription a superset of whatever any single job renders.
         for binding in reg.context_bindings:
-            names.add(binding.stream_name)
+            names.update(_expanded_stream_names(binding.stream_name, spec))
     # Instrument-level ContextBinding entries: include when any spec hosted by
     # this service shares a source with the binding's ``dependent_sources``.
     for binding in instrument.context_bindings:

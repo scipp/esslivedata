@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections import UserDict
-from collections.abc import Callable, Iterable, Sequence
+from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
@@ -26,6 +26,7 @@ from .stream import (
     F144Stream,
     MotionEnvelope,
     Stream,
+    render_stream_name,
 )
 from .value_log import ValueLog
 from .workflow_spec import (
@@ -166,6 +167,7 @@ class Instrument:
         default_factory=dict, init=False
     )
     _pixellated_monitors: set[str] = field(default_factory=set, init=False)
+    _factories_loaded: bool = field(default=False, init=False)
 
     def __post_init__(self) -> None:
         """Auto-register standard workflow specs based on instrument metadata."""
@@ -379,11 +381,12 @@ class Instrument:
         Returns ``{stream_name: workflow_key}``; context wire names equal their
         stream names, so the keys double as the set of gating context streams.
 
-        Predicates are ignored, making this the superset of what any single job
-        resolves. That is what the static callers want: Kafka subscriptions are
-        derived per spec rather than per job, so a subscription covering a
-        stream that some jobs do not gate on costs nothing. Use
-        :meth:`resolve_context_keys` where a job's params are in hand.
+        Predicates are ignored and stream-name templates are left unrendered:
+        this is the declaration-level view for static callers (route
+        derivation, the workflow visualizer), which cover any single job's
+        gate — a subscription covering a stream some jobs do not gate on costs
+        nothing. Use :meth:`resolve_context_keys` where a job's params and aux
+        selections are in hand.
         """
         return {
             binding.stream_name: binding.workflow_key
@@ -391,13 +394,19 @@ class Instrument:
         }
 
     def resolve_context_keys(
-        self, workflow_id: WorkflowId, source_name: str, params: Any
+        self,
+        workflow_id: WorkflowId,
+        source_name: str,
+        params: Any,
+        aux_source_names: Mapping[str, str] | None = None,
     ) -> dict[str, Any]:
-        """Resolve one job's context keys from its validated params.
+        """Resolve one job's context keys from its validated params and aux.
 
-        :meth:`declared_context_keys` filtered by each binding's ``predicate``.
-        A predicate can only remove bindings, so the result is always a subset
-        of the declared set.
+        :meth:`declared_context_keys` filtered by each binding's ``predicate``,
+        with stream-name templates rendered against the job's aux selections. A
+        predicate can only remove bindings and rendering only substitutes names
+        from the aux field's declared choices, so the result stays covered by
+        the statically derived Kafka subscriptions.
 
         Parameters
         ----------
@@ -409,12 +418,33 @@ class Instrument:
             The job's *validated* params model, as passed to the workflow
             factory. Predicates read it directly, so an unvalidated dict would
             silently fail every attribute access.
+        aux_source_names:
+            The job's rendered aux selections, for stream-name templates.
+
+        Raises
+        ------
+        ValueError:
+            If two bindings resolve to the same stream with different workflow
+            keys — one stream feeds one key, so e.g. an aux selection picking
+            the same monitor for two roles cannot be honoured.
         """
-        return {
-            binding.stream_name: binding.workflow_key
-            for binding in self._matching_bindings(workflow_id, source_name)
-            if binding.predicate is None or binding.predicate(params)
-        }
+        aux = aux_source_names or {}
+        resolved: dict[str, Any] = {}
+        for binding in self._matching_bindings(workflow_id, source_name):
+            if binding.predicate is not None and not binding.predicate(params):
+                continue
+            stream_name = render_stream_name(binding.stream_name, aux)
+            existing = resolved.get(stream_name)
+            if existing is not None and existing != binding.workflow_key:
+                raise ValueError(
+                    f"Context bindings of {workflow_id} resolve stream "
+                    f"{stream_name!r} to conflicting workflow keys {existing} "
+                    f"and {binding.workflow_key}. If the stream name is "
+                    "templated, the job's aux selections "
+                    f"{dict(aux)} may pick one stream for two roles."
+                )
+            resolved[stream_name] = binding.workflow_key
+        return resolved
 
     @property
     def nexus_file(self) -> str:
@@ -761,8 +791,16 @@ class Instrument:
         3. Auto-attaches logical view factories if views were registered
         4. Calls instrument-specific setup_factories(self)
         5. Auto-loads detector_numbers from nexus for unconfigured detectors
+
+        Idempotent: a second call on a loaded instrument is a no-op. The steps
+        append registration state (context bindings, LUT ranges), and the
+        synthesised per-chopper setpoint keys are fresh objects on every run,
+        so re-running would leave duplicate bindings with conflicting keys.
         """
         import importlib
+
+        if self._factories_loaded:
+            return
 
         module = importlib.import_module(f'ess.livedata.config.instruments.{self.name}')
 
@@ -831,6 +869,7 @@ class Instrument:
                     # the expected path (e.g., monitors lack a detector_number
                     # dataset — they must provide it via configure_pixellated_monitor)
                     pass
+        self._factories_loaded = True
 
     def _attach_default_monitor_factories(self) -> None:
         """Attach the shared monitor workflow factory where none was provided.
