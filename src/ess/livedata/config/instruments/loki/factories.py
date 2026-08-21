@@ -21,14 +21,12 @@ class DetectorCarriageLog(ValueLog):
 def setup_factories(instrument: Instrument) -> None:
     """Initialize LOKI-specific factories and workflows."""
     from ess.livedata.workflows.lut_context import (
-        DetectorLutContext,
         bind_all_lookup_tables,
         bind_lookup_tables,
         detector_lookup_table,
         reads_wavelength,
         role_lookup_table_provider,
     )
-    from ess.livedata.workflows.wavelength_lut_workflow_specs import lut_stream_name
 
     # Each detector and monitor binds its own streamed lookup table, gated so
     # only wavelength-mode jobs wait for it.
@@ -279,13 +277,6 @@ def setup_factories(instrument: Instrument) -> None:
         return StreamProcessorWorkflow(
             wf,
             dynamic_keys=_dynamic_keys(source_name, aux_source_names),
-            context_keys={
-                lut_stream_name(source_name): DetectorLutContext,
-                **{
-                    lut_stream_name(monitor): key
-                    for monitor, key in _iq_monitor_luts.items()
-                },
-            },
             target_keys=target_keys,
             accumulators=_accumulators,
         )

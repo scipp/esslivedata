@@ -321,21 +321,19 @@ class TestCreateMonitorWorkflow:
             )
 
     def test_context_keys_injected_after_creation(self, toa_edges):
-        """Context bindings are injected post-creation, not via the factory."""
-        from ess.livedata.workflows.lut_context import MonitorLutContext
+        """Context bindings are injected post-creation, not via the factory.
+
+        The factory declares no stream names at all -- the lookup-table
+        stream -> key mapping lives on the spec's ContextBinding alone and
+        arrives via injection, so it is declared exactly once (ADR 0010).
+        """
         from ess.livedata.workflows.stream_processor_workflow import (
             StreamProcessorWorkflow,
-        )
-        from ess.livedata.workflows.wavelength_lut_workflow_specs import (
-            lut_stream_name,
         )
 
         workflow = create_monitor_workflow('monitor_1', toa_edges)
         assert isinstance(workflow, StreamProcessorWorkflow)
-        # The lookup-table key is wired by the factory itself, unconditionally.
-        assert workflow._context_keys == {
-            lut_stream_name('monitor_1'): MonitorLutContext
-        }
+        assert workflow._context_keys == {}
 
         workflow.add_context_keys({'position': sc.Variable})
         assert workflow._context_keys['position'] is sc.Variable
@@ -744,7 +742,10 @@ class TestMonitorWorkflowWavelengthModeHistogramInput:
             coordinate_mode='wavelength',
             geometry_filename=str(geometry_filename),
         )
-        workflow.build()
+        # Inject the spec's binding by hand, as WorkflowFactory.create does.
+        workflow.build(
+            context_keys={lut_stream_name('monitor_cave'): MonitorLutContext}
+        )
 
         # Create histogram data like fake_monitors da00 mode produces
         # Using 'frame_time' which is what the production data uses
