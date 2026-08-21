@@ -65,19 +65,13 @@ class MonitorDataParamsBase(pydantic.BaseModel, abc.ABC):
         return self.coordinate_mode.mode
 
 
-class TOAOnlyMonitorDataParams(MonitorDataParamsBase):
-    """
-    Monitor data parameters restricted to TOA mode only.
+class _MonitorTOAFields(pydantic.BaseModel):
+    """TOA histogram edges and range filter, shared by both monitor models.
 
-    Use this for instruments that don't have TOF lookup tables available.
+    Fields only — which mode is *active* stays with the concrete params model,
+    so a both-modes model cannot silently inherit TOA as the answer.
     """
 
-    coordinate_mode: TOAOnlyCoordinateModeSettings = pydantic.Field(
-        title="Coordinate Mode",
-        description="Select coordinate system for monitor data. "
-        "Only TOA mode is available for this instrument.",
-        default_factory=TOAOnlyCoordinateModeSettings,
-    )
     toa_edges: parameter_models.TOAEdges = pydantic.Field(
         title="Time of Arrival Edges",
         description=_TOA_EDGES_DESCRIPTION,
@@ -94,6 +88,21 @@ class TOAOnlyMonitorDataParams(MonitorDataParamsBase):
         default=parameter_models.TOARange(),
     )
 
+
+class TOAOnlyMonitorDataParams(_MonitorTOAFields, MonitorDataParamsBase):
+    """
+    Monitor data parameters restricted to TOA mode only.
+
+    Use this for instruments that don't have TOF lookup tables available.
+    """
+
+    coordinate_mode: TOAOnlyCoordinateModeSettings = pydantic.Field(
+        title="Coordinate Mode",
+        description="Select coordinate system for monitor data. "
+        "Only TOA mode is available for this instrument.",
+        default_factory=TOAOnlyCoordinateModeSettings,
+    )
+
     def get_active_edges(self) -> sc.Variable:
         """Return the TOA edges."""
         return self.toa_edges.get_edges()
@@ -103,25 +112,9 @@ class TOAOnlyMonitorDataParams(MonitorDataParamsBase):
         return self.toa_range.range if self.toa_range.enabled else None
 
 
-class MonitorDataParams(MonitorDataParamsBase):
+class MonitorDataParams(_MonitorTOAFields, MonitorDataParamsBase):
     """Parameters for monitor histogram workflow offering both coordinate modes."""
 
-    # TOA (time-of-arrival) settings
-    toa_edges: parameter_models.TOAEdges = pydantic.Field(
-        title="Time of Arrival Edges",
-        description=_TOA_EDGES_DESCRIPTION,
-        default=parameter_models.TOAEdges(
-            start=0.0,
-            stop=parameter_models.ESS_PULSE_PERIOD_MS,
-            num_bins=100,
-            unit=parameter_models.TimeUnit.MS,
-        ),
-    )
-    toa_range: parameter_models.TOARange = pydantic.Field(
-        title="Time of Arrival Range",
-        description="Time of arrival range filter for TOA mode.",
-        default=parameter_models.TOARange(),
-    )
     # Wavelength settings
     wavelength_edges: parameter_models.WavelengthEdges = pydantic.Field(
         title="Wavelength Edges",
