@@ -443,3 +443,29 @@ def test_a_polygon_still_being_drawn_does_not_reach_the_element(
     presenter._handle_edit({'xs': [[0.0, 1.0, 1.0]], 'ys': [[0.0, 0.0, 0.0]]})
 
     assert presenter._pipe.data == []
+
+
+@pytest.mark.parametrize(
+    ('plotter_cls', 'params_cls'),
+    [
+        (RectanglesRequestPlotter, RectanglesRequestParams),
+        (PolygonsRequestPlotter, PolygonsRequestParams),
+    ],
+    ids=['rectangles', 'polygons'],
+)
+def test_configured_color_is_the_outline_color(
+    data_key: DataKey, plotter_cls: type, params_cls: type
+) -> None:
+    """The shapes are drawn unfilled, so the color must reach the outline.
+
+    A bare `color` opt reaches only the (invisible) fill of these fillable
+    glyphs, leaving the outline at Bokeh's black default.
+    """
+    params = params_cls.model_validate({'style': {'color': '#ff00ff'}})
+    plotter = plotter_cls.from_params(params)
+    plotter.set_roi_publisher(FakeROIPublisher())
+    plotter.compute({PRIMARY: {data_key: RectangleROI.to_concatenated_data_array({})}})
+
+    figure = hv.render(plotter.create_presenter().present(hv.streams.Pipe(data=[])))
+
+    assert figure.renderers[0].glyph.line_color == '#ff00ff'

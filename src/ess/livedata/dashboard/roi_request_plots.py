@@ -546,7 +546,9 @@ class BaseROIRequestPresenter(PresenterBase, ABC):
     def _apply_styling(self, dmap: hv.DynamicMap) -> hv.DynamicMap:
         """Apply common styling options to the DynamicMap."""
         return dmap.opts(
-            color=self._style.color,
+            # Rectangles/Polygons are fillable glyphs, so a bare `color` would set
+            # only the (invisible) fill and leave the outline at Bokeh's default.
+            line_color=self._style.color,
             # Transparent fill so users can see the underlying image while editing.
             fill_alpha=0,
             line_width=self._style.line_width,
