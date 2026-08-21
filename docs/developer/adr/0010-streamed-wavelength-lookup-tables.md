@@ -198,15 +198,14 @@ change, and the context cache is keyed by stream name alone. The declaration-lev
 collision validators run on declarations rather than resolved sets, so a predicate that
 only *removes* bindings keeps them conservative.
 
-The condition is stated once, in the predicate. The factory wires the table's context key
-unconditionally, because declaring a context key that no provider consumes is a verified
-no-op: `StreamProcessor` registers every context key as a graph node, so a key on a branch
-the targets never reach maps to an empty recompute set, and `set_context` stores a dead
-parameter and computes nothing. A TOA job that never receives the stream does not even
-reach that point, since the workflow only forwards context keys present in the batch. Had
-the factory branched too, the two conditions would have had to agree with nothing to catch
-a disagreement — the existing guard only checks that a workflow with resolved context keys
-implements `SupportsContext`, not that it consumes them.
+The condition is stated once, in the predicate, and so is the stream-name-to-key mapping,
+on the binding: consuming factories declare no context keys of their own, since the
+routing layer injects the resolved bindings into the workflow after creation. A factory
+that repeated the mapping would be a second declaration that has to agree with the binding
+with nothing to catch a disagreement — the same drift ADR 0003 removed between routing and
+graph wiring. What the factory does contribute is the reassembly provider, inserted
+unconditionally: a provider whose input never arrives sits on a branch the targets never
+reach, so for a TOA job it is dead graph and computes nothing.
 
 ### Consumers clear when the LUT's identity changes
 

@@ -24,7 +24,7 @@ from scippnexus import NXmonitor
 from ..config.workflow_spec import Temporality
 from ..preprocessors.accumulation_mode import AccumulationMode, Cumulative, Current
 from .geometry_signal import geometry_signal
-from .lut_context import MonitorLutContext, monitor_lookup_table
+from .lut_context import monitor_lookup_table
 from .monitor_workflow_specs import MonitorHistogramOutputs
 from .monitor_workflow_types import (
     AccumulatedMonitorHistogram,
@@ -35,7 +35,6 @@ from .monitor_workflow_types import (
     MonitorCountsTotal,
     MonitorHistogram,
 )
-from .wavelength_lut_workflow_specs import lut_stream_name
 
 MONITOR_TRANSFORM = 'monitor_transform'
 """Coord name carrying :data:`MonitorGeometry` on the accumulated histogram."""
@@ -297,9 +296,11 @@ def create_monitor_workflow(
         # undetectable without geometry, so there is nothing to reset on.
         workflow[EmptyMonitor[SampleRun, NXmonitor]] = _create_minimal_empty_monitor()
 
-    # The lookup table arrives as context from the LUT workflow, keyed by this
-    # monitor's stream name. Wired unconditionally; the binding's predicate
-    # alone decides whether the job gates on it (ADR 0010).
+    # The lookup table arrives as context from the LUT workflow. The
+    # stream-name -> key mapping lives on the spec's ContextBinding alone and
+    # is injected at job creation, so it is declared exactly once; the
+    # binding's predicate decides whether the job gates on it (ADR 0010). The
+    # provider is inserted unconditionally: in TOA mode nothing reaches it.
     workflow.insert(monitor_lookup_table)
     if coordinate_mode == 'wavelength':
         workflow[LookupTableRelativeErrorThreshold] = {source_name: float('inf')}
@@ -314,7 +315,6 @@ def create_monitor_workflow(
         # For wavelength mode, GenericUnwrapWorkflow providers convert RawMonitor to
         # WavelengthMonitor.
         dynamic_keys={source_name: NeXusData[NXmonitor, SampleRun]},
-        context_keys={lut_stream_name(source_name): MonitorLutContext},
         target_keys={
             'cumulative': AccumulatedMonitorHistogram[Cumulative],
             'current': AccumulatedMonitorHistogram[Current],

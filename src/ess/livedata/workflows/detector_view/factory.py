@@ -23,9 +23,8 @@ from ..detector_view_specs import (
     DetectorViewOutputsBase,
     DetectorViewParamsBase,
 )
-from ..lut_context import DetectorLutContext, detector_lookup_table
+from ..lut_context import detector_lookup_table
 from ..stream_processor_workflow import StreamProcessorWorkflow
-from ..wavelength_lut_workflow_specs import lut_stream_name
 from .data_source import DetectorDataSource, DetectorNumberSource
 from .providers import spectrum_view
 from .types import (
@@ -156,14 +155,13 @@ class DetectorViewFactory:
             coordinate_mode=mode,
         )
 
-        # The lookup table arrives as context from the LUT workflow, keyed by
-        # this source's stream name. Wired unconditionally: a context key no
-        # provider reaches is a no-op, and branching here too would mean two
-        # conditions that have to agree with nothing to catch a disagreement.
-        # Whether the job *gates* on the stream is decided by the binding's
-        # predicate alone (ADR 0010).
+        # The lookup table arrives as context from the LUT workflow. The
+        # stream-name -> key mapping lives on the spec's ContextBinding alone
+        # and is injected at job creation, so it is declared exactly once; the
+        # binding's predicate decides whether the job gates on it (ADR 0010).
+        # The provider is inserted unconditionally: in TOA mode nothing
+        # reaches it.
         workflow.insert(detector_lookup_table)
-        context_keys[lut_stream_name(source_name)] = DetectorLutContext
         if mode == 'wavelength':
             workflow[LookupTableRelativeErrorThreshold] = {source_name: float('inf')}
 
