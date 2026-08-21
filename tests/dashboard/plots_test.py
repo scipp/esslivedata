@@ -1499,8 +1499,8 @@ class TestPlotterOverlayMode:
         """A non-free aspect must reach every sub-figure of a layout-mode plot.
 
         The frame-aspect hook is declared per element type by the plotter, so it
-        lands on each figure of the rendered Layout, switching it to the
-        one-axis responsive mode. Regression: detector images (square + layout)
+        lands on each figure of the rendered Layout, attaching the CustomJS that
+        letterboxes the frame. Regression: detector images (square + layout)
         collapsed to zero height when the hook only ran on a single shared
         figure and was skipped for Layouts.
         """
@@ -1529,7 +1529,8 @@ class TestPlotterOverlayMode:
 
         figures = [m for m in state.references() if isinstance(m, Plot)]
         assert len(figures) == 2
-        assert all(fig.sizing_mode == 'stretch_width' for fig in figures)
+        assert all(fig.sizing_mode == 'stretch_both' for fig in figures)
+        assert all('change:inner_width' in fig.js_property_callbacks for fig in figures)
 
     def test_empty_data_returns_no_data_text(self):
         """Test that empty data returns 'No data' text element in overlay mode."""
@@ -2411,12 +2412,12 @@ class TestOverlay1DPlotter:
         for elem in result:
             assert isinstance(elem, hv.Curve), f"Expected Curve, got {type(elem)}"
 
-    def test_non_free_aspect_switches_figure_to_one_axis_responsive(
+    def test_non_free_aspect_carries_the_aspect_on_the_frame_hook(
         self, data_2d_with_roi_coord, data_key
     ):
         """A non-free aspect makes the plotter declare the frame-aspect hook on
-        its elements, which switches the figure to a one-axis responsive mode
-        (fill-width -> stretch_width) so aspect can be enforced via JS."""
+        its elements. The figure keeps filling its cell on both axes; the aspect
+        is enforced by the hook's CustomJS sizing the frame inside it."""
         from ess.livedata.dashboard.plot_params import PlotAspect, PlotAspectType
 
         params = PlotParams1d()
@@ -2424,8 +2425,9 @@ class TestOverlay1DPlotter:
         plotter = plots.Overlay1DPlotter.from_params(params)
 
         fig = present_figure(plotter, {data_key: data_2d_with_roi_coord})
-        assert fig.sizing_mode == 'stretch_width'
+        assert fig.sizing_mode == 'stretch_both'
         assert fig.aspect_ratio is None
+        assert 'change:inner_width' in fig.js_property_callbacks
 
     def test_free_aspect_renders_responsive_without_aspect(
         self, data_2d_with_roi_coord, data_key

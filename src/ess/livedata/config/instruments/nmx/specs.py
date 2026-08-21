@@ -10,6 +10,7 @@ from ess.livedata.config import (
     instrument_registry,
     name_streams,
 )
+from ess.livedata.config.device_contract import COUNTS_TOTAL_DEVICE
 from ess.livedata.config.workflow_spec import DETECTORS
 from ess.livedata.workflows.detector_view_specs import (
     DetectorROIAuxSources,
@@ -53,4 +54,5 @@ panel_xy_view_handle = instrument.register_spec(
     aux_sources=DetectorROIAuxSources(),
     params=DetectorViewParams,
     outputs=DetectorViewOutputs,
+    device_outputs=COUNTS_TOTAL_DEVICE,
 )

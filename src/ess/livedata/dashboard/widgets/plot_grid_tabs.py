@@ -71,6 +71,7 @@ from ..plot_orchestrator import (
 from ..plots import TimeBounds
 from ..session_layer import SessionLayer
 from ..session_updater import SessionUpdater
+from ..theme import DEFAULT_THEME, Theme
 from .cell import CellDeps, CellWidget
 from .cell_properties_modal import CellPropertiesModal
 from .icons import get_icon_data_uri
@@ -78,7 +79,6 @@ from .modal_escape_closer import ModalEscapeCloser
 from .plot_config_modal import PlotConfigModal
 from .plot_grid import PlotGrid
 from .plot_grid_manager import PlotGridManager
-from .styles import Colors
 
 logger = structlog.get_logger(__name__)
 
@@ -106,7 +106,7 @@ class _PassStamps(NamedTuple):
     generation: int
 
 
-def _static_tab_stylesheet(icons: Sequence[str]) -> str:
+def _tab_stylesheet(icons: Sequence[str], theme: Theme) -> str:
     """CSS distinguishing the fixed leading tabs from the plot-grid tabs.
 
     Bokeh renders a tab label as plain text, so an icon cannot be part of the
@@ -119,6 +119,8 @@ def _static_tab_stylesheet(icons: Sequence[str]) -> str:
     ----------
     icons:
         Icon name per static tab, in tab order.
+    theme:
+        Supplies the strip palette, which depends on where the strip sits.
     """
     masks = '\n'.join(
         f"""
@@ -150,14 +152,7 @@ def _static_tab_stylesheet(icons: Sequence[str]) -> str:
             -webkit-mask-position: center;
         }}
         {masks}
-        .bk-tab {{
-            border-bottom: 1px solid {Colors.TAB_BORDER} !important;
-        }}
-        .bk-tab.bk-active {{
-            background-color: {Colors.TAB_ACTIVE_BG} !important;
-            border: 1px solid {Colors.TAB_BORDER} !important;
-            border-bottom: none !important;
-        }}
+        {theme.tab_strip_css}
         """
 
 
@@ -223,6 +218,9 @@ class PlotGridTabs:
         Shared service for plot data with version tracking.
     session_updater
         This session's updater for periodic callbacks.
+    theme
+        Shell appearance, determining where the tab strip sits and how it is
+        colored.
     """
 
     def __init__(
@@ -235,6 +233,7 @@ class PlotGridTabs:
         *,
         plot_data_service: PlotDataService,
         session_updater: SessionUpdater,
+        theme: Theme = DEFAULT_THEME,
     ) -> None:
         self._orchestrator = plot_orchestrator
         self._workflow_registry = dict(workflow_registry)
@@ -327,7 +326,8 @@ class PlotGridTabs:
         self._tabs = _BatchedTabs(
             sizing_mode='stretch_both',
             dynamic=True,
-            stylesheets=[_static_tab_stylesheet([icon for _, icon, _ in static_tabs])],
+            tabs_location=theme.tabs_location,
+            stylesheets=[_tab_stylesheet([icon for _, icon, _ in static_tabs], theme)],
         )
 
         # Modal container for plot configuration

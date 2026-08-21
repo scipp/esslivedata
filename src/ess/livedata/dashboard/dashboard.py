@@ -20,6 +20,7 @@ from .kafka_transport import DashboardKafkaTransport
 from .loop_monitor import start_loop_monitor
 from .session_registry import SessionId
 from .session_updater import SessionUpdater
+from .theme import DEFAULT_THEME, THEMES
 from .transport import NullTransport, Transport
 
 # Global throttling for sliders, etc.
@@ -44,9 +45,10 @@ class DashboardBase(ServiceBase, ABC):
         transport: str = 'kafka',
         config_dir: str | None = None,
         auto_start: bool = False,
-        collapsed_sidebar: bool = False,
+        collapsed_sidebar: bool = True,
         basic_auth_password: str | None = None,
         basic_auth_cookie_secret: str | None = None,
+        theme: str = DEFAULT_THEME.name,
     ):
         if auto_start and transport != 'fake':
             raise ValueError(
@@ -62,6 +64,9 @@ class DashboardBase(ServiceBase, ABC):
         self._collapsed_sidebar = collapsed_sidebar
         self._basic_auth_password = basic_auth_password
         self._basic_auth_cookie_secret = basic_auth_cookie_secret
+        if theme not in THEMES:
+            raise ValueError(f"Unknown theme {theme!r}; expected one of {[*THEMES]}")
+        self._theme = THEMES[theme]
 
         self._exit_stack = ExitStack()
         self._exit_stack.__enter__()
@@ -141,10 +146,6 @@ class DashboardBase(ServiceBase, ABC):
     def get_dashboard_title(self) -> str:
         """Get the dashboard title. Override for custom titles."""
         return f"{self._instrument.upper()} — Live Data"
-
-    def get_header_background(self) -> str:
-        """Get the header background color. Override for custom colors."""
-        return '#2596be'
 
     def _get_session_id(self) -> SessionId:
         """Get the current session ID from Panel state."""
@@ -303,11 +304,12 @@ class DashboardBase(ServiceBase, ABC):
             sidebar=sidebar_with_heartbeat,
             collapsed_sidebar=self._collapsed_sidebar,
             main=main_content,
-            header_background=self.get_header_background(),
+            header_background=self._theme.header_background,
             header=header,
         )
         # Inject CSS for offline mode (replaces Material Icons font with Unicode)
-        template.config.raw_css.extend(self.get_raw_css())
+        # and whatever the theme needs from the page around the tabs.
+        template.config.raw_css.extend([*self.get_raw_css(), self._theme.template_css])
         self._start_periodic_callback(session_updater)
         return template
 

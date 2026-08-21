@@ -16,3 +16,11 @@ devices:
   workflow_id: beer/monitor_histogram/1
   source_name: hereon
   output_name: counts_total_cumulative
+- device_name: beer_detector_s2_counts_total
+  workflow_id: beer/bank_view/1
+  source_name: beer_detector_s2
+  output_name: counts_total_cumulative
+- device_name: beer_detector_n2_counts_total
+  workflow_id: beer/bank_view/1
+  source_name: beer_detector_n2
+  output_name: counts_total_cumulative

@@ -8,6 +8,7 @@ import pydantic
 import scipp as sc
 
 from ess.livedata.config import F144Stream, Instrument, instrument_registry
+from ess.livedata.config.device_contract import COUNTS_TOTAL_DEVICE
 from ess.livedata.config.workflow_spec import DETECTORS, WorkflowOutputsBase
 from ess.livedata.workflows.detector_view_specs import (
     DetectorROIAuxSources,
@@ -67,6 +68,8 @@ panel_0_view_handle = instrument.register_spec(
     aux_sources=DetectorROIAuxSources(),
     params=DetectorViewParams,
     outputs=DetectorViewOutputs,
+    # The primary panel_0 view, not its 3-D 'layers' counterpart, carries the device.
+    device_outputs=COUNTS_TOTAL_DEVICE,
 )
 
 
@@ -99,6 +102,7 @@ area_panel_view_handle = instrument.register_spec(
     description='Area detector image view',
     source_names=['area_panel'],
     outputs=DetectorViewOutputs,
+    device_outputs=COUNTS_TOTAL_DEVICE,
 )
 
 # Register total counts workflow spec

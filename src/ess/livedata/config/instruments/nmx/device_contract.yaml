@@ -12,3 +12,15 @@ devices:
   workflow_id: nmx/monitor_histogram/1
   source_name: monitor2
   output_name: counts_total_cumulative
+- device_name: detector_panel_0_counts_total
+  workflow_id: nmx/panel_xy/1
+  source_name: detector_panel_0
+  output_name: counts_total_cumulative
+- device_name: detector_panel_1_counts_total
+  workflow_id: nmx/panel_xy/1
+  source_name: detector_panel_1
+  output_name: counts_total_cumulative
+- device_name: detector_panel_2_counts_total
+  workflow_id: nmx/panel_xy/1
+  source_name: detector_panel_2
+  output_name: counts_total_cumulative

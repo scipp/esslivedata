@@ -97,20 +97,6 @@ class PlotAspectType(enum.StrEnum):
     free = 'Free'
 
 
-class StretchMode(enum.StrEnum):
-    """Stretch mode for responsive plots with fixed aspect.
-
-    When using a fixed aspect ratio, choose how the plot fills its container:
-    - 'Fill width': Plot fills container width, height determined by aspect ratio.
-      Use when container is more portrait-ish than the plot.
-    - 'Fill height': Plot fills container height, width determined by aspect ratio.
-      Use when container is more landscape-ish than the plot.
-    """
-
-    width = 'Fill width'
-    height = 'Fill height'
-
-
 class PlotAspect(pydantic.BaseModel):
     aspect_type: PlotAspectType = pydantic.Field(
         default=PlotAspectType.free,
@@ -123,15 +109,6 @@ class PlotAspect(pydantic.BaseModel):
         title="Aspect Ratio",
         ge=0.1,
         le=10.0,
-    )
-    stretch_mode: StretchMode = pydantic.Field(
-        default=StretchMode.width,
-        description=(
-            "How the plot fills its container when using fixed aspect. "
-            "'Fill width' for tall containers, 'Fill height' for wide containers. "
-            "Ignored when aspect type is 'Free'."
-        ),
-        title="Stretch Mode",
     )
 
 

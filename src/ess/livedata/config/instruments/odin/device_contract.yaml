@@ -12,3 +12,7 @@ devices:
   workflow_id: odin/monitor_histogram/1
   source_name: monitor2
   output_name: counts_total_cumulative
+- device_name: timepix3_counts_total
+  workflow_id: odin/odin_detector_xy/1
+  source_name: timepix3
+  output_name: counts_total_cumulative

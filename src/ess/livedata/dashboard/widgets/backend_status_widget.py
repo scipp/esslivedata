@@ -41,7 +41,7 @@ class WorkerUIConstants:
 
     # Margins
     STANDARD_MARGIN = (2, 5)
-    HEADER_MARGIN = (10, 10, 5, 10)
+    HEADER_MARGIN = (10, 0, 5, 0)
 
 
 def _format_duration(seconds: float | None) -> str:
@@ -316,7 +316,7 @@ class BackendStatusWidget:
         # Summary row with clear button
         self._summary = pn.pane.HTML(
             self._format_summary(),
-            margin=(5, 10),
+            margin=(5, 0),
         )
         self._summary_row = pn.Row(
             self._summary,
@@ -365,10 +365,10 @@ class BackendStatusWidget:
             ),
             styles={"border-bottom": f"2px solid {Colors.BORDER}"},
             sizing_mode="stretch_width",
-            margin=(0, 10),
+            margin=0,
         )
 
-        self._worker_list = pn.Column(sizing_mode="stretch_width", margin=(0, 10))
+        self._worker_list = pn.Column(sizing_mode="stretch_width", margin=0)
 
         # Initialize with current worker statuses
         self._update_worker_list()

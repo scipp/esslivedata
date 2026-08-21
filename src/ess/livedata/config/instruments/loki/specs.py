@@ -17,6 +17,7 @@ from ess.livedata.config import (
     instrument_registry,
     name_streams,
 )
+from ess.livedata.config.device_contract import COUNTS_TOTAL_DEVICE
 from ess.livedata.config.workflow_spec import (
     DETECTORS,
     MONITORS,
@@ -268,6 +269,8 @@ xy_projection_handle = instrument.register_spec(
     aux_sources=DetectorROIAuxSources(),
     params=DetectorViewParams,
     outputs=DetectorViewOutputs,
+    # The projection, not the tube view, carries each bank's NICOS counts device.
+    device_outputs=COUNTS_TOTAL_DEVICE,
 )
 
 # Register tube view for all detector banks
