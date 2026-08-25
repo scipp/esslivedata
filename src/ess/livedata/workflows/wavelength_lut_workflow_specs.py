@@ -4,8 +4,6 @@
 
 from __future__ import annotations
 
-from collections.abc import Sequence
-
 import pydantic
 import scipp as sc
 
@@ -20,11 +18,10 @@ from .workflow_factory import SpecHandle
 #: instruments). The workflow uses presence of this signal as its trigger.
 CHOPPER_CASCADE_SOURCE = 'chopper_cascade'
 
-#: Workflow ``name`` in the spec. Tables are keyed by component name, not by
-#: this; see :func:`make_wavelength_lut_outputs`.
+#: Workflow ``name`` in the spec.
 WAVELENGTH_LUT_WORKFLOW_NAME = 'wavelength_lut'
 
-#: Output key for the per-component wavelength bands diagnostic. Field name on
+#: Output key for the wavelength bands diagnostic. Field name on
 #: :class:`WavelengthLutOutputs`.
 WAVELENGTH_BANDS_OUTPUT = 'chopper_cascade_bands'
 
@@ -186,7 +183,7 @@ class WavelengthLutParams(pydantic.BaseModel):
     )
 
 
-def _empty_wavelength_lut_template() -> sc.DataArray:
+def _empty_table_template() -> sc.DataArray:
     """Empty placeholder used by the spec until the first computation."""
     return sc.DataArray(
         sc.zeros(dims=['distance', 'event_time_offset'], shape=[0, 0], unit='angstrom'),
@@ -199,29 +196,55 @@ def _empty_wavelength_lut_template() -> sc.DataArray:
     )
 
 
-def _empty_wavelength_bands_template() -> sc.DataArray:
-    """Empty placeholder used by the spec until the first computation."""
-    return sc.DataArray(
-        sc.zeros(dims=['distance', 'event_time_offset'], shape=[0, 0], unit='angstrom'),
-        coords={
-            'distance': sc.array(dims=['distance'], values=[], unit='m'),
-            'event_time_offset': sc.array(
-                dims=['event_time_offset'], values=[], unit='us'
-            ),
-        },
-    )
+#: Output field and context stream carrying the detectors' shared table.
+DETECTOR_LUT_OUTPUT = 'detector_lut'
+
+#: Output field and context stream carrying the monitors' shared table.
+MONITOR_LUT_OUTPUT = 'monitor_lut'
+
+#: Prefix for the context stream names, keeping the namespace greppable and
+#: collision-free against device and motion stream names.
+LUT_STREAM_PREFIX = 'wavelength_lut'
+
+#: Context stream name per output. Two streams rather than one: a monitor job
+#: has no use for the detectors' dense table, which is the large payload.
+LUT_STREAM_NAMES = {
+    DETECTOR_LUT_OUTPUT: f'{LUT_STREAM_PREFIX}/detectors',
+    MONITOR_LUT_OUTPUT: f'{LUT_STREAM_PREFIX}/monitors',
+}
 
 
-class WavelengthLutOutputsBase(WorkflowOutputsBase):
-    """Outputs shared by every instrument's lookup-table workflow.
+class WavelengthLutOutputs(WorkflowOutputsBase):
+    """Outputs of the lookup-table workflow.
 
-    The per-component tables are added by
-    :func:`make_wavelength_lut_outputs`, since instruments do not share
-    components.
+    Two tables, not one per component: a table is a function of ``distance``
+    and ``event_time_offset`` alone, so components sharing a stretch of
+    beamline share a table (see
+    :mod:`~ess.livedata.workflows.lut_blocks` for how the blocks are laid out).
+    The outputs are therefore the same for every instrument.
     """
 
+    detector_lut: sc.DataArray = pydantic.Field(
+        default_factory=_empty_table_template,
+        title='Wavelength lookup table: detectors',
+        description=(
+            'Wavelength as a function of distance and event-time-offset over the '
+            'flight-path range of every detector, computed from the current '
+            'chopper cascade. One dense block covering all banks.'
+        ),
+    )
+    monitor_lut: sc.DataArray = pydantic.Field(
+        default_factory=_empty_table_template,
+        title='Wavelength lookup table: monitors',
+        description=(
+            'Wavelength as a function of distance and event-time-offset at each '
+            'monitor, computed from the current chopper cascade. A few rows per '
+            'monitor and nothing in between, so the distance axis is not '
+            'uniform: plot with the "Overlay 1D" plotter, one curve per row.'
+        ),
+    )
     chopper_cascade_bands: sc.DataArray = pydantic.Field(
-        default_factory=_empty_wavelength_bands_template,
+        default_factory=_empty_table_template,
         title='Chopper cascade bands',
         description=(
             'Wavelength band transmitted along the beamline: always one curve at '
@@ -233,48 +256,6 @@ class WavelengthLutOutputsBase(WorkflowOutputsBase):
             'this resolves closely-spaced choppers regardless of distance '
             'resolution.'
         ),
-    )
-
-
-#: Prefix for the rendered context stream names, keeping the namespace greppable
-#: and collision-free against device and motion stream names.
-LUT_STREAM_PREFIX = 'wavelength_lut'
-
-
-def lut_stream_name(component: str) -> str:
-    """Context stream name carrying ``component``'s lookup table."""
-    return f'{LUT_STREAM_PREFIX}/{component}'
-
-
-def make_wavelength_lut_outputs(
-    components: Sequence[str],
-) -> type[WavelengthLutOutputsBase]:
-    """Build the outputs model for an instrument's lookup-table workflow.
-
-    One table per component, each covering exactly that component's ``Ltotal``
-    range, so the table stays readable and the polygon rasterization runs over a
-    handful of distance rows instead of hundreds.
-
-    Component names double as output field names, so they must be valid Python
-    identifiers -- which NeXus component names are.
-    """
-    fields = {
-        component: (
-            sc.DataArray,
-            pydantic.Field(
-                default_factory=_empty_wavelength_lut_template,
-                title=f'Wavelength lookup table: {component}',
-                description=(
-                    f'Wavelength as a function of distance and event-time-offset '
-                    f'over the flight-path range of {component}, computed from '
-                    f'the current chopper cascade.'
-                ),
-            ),
-        )
-        for component in components
-    }
-    return pydantic.create_model(
-        'WavelengthLutOutputs', __base__=WavelengthLutOutputsBase, **fields
     )
 
 
@@ -299,12 +280,6 @@ def register_wavelength_lut_workflow_spec(
     stream emitted by ``ChopperSynthesizer``. The factory must be attached
     later via the returned handle.
     """
-    components = [*instrument.detector_names, *instrument.monitors]
-    if len(set(components)) != len(components):
-        raise ValueError(
-            f"{instrument.name}: detector and monitor names must be disjoint to "
-            f"key one lookup table per component; got {components}"
-        )
     return instrument.register_spec(
         group=REDUCTION,
         service='timeseries',
@@ -317,10 +292,8 @@ def register_wavelength_lut_workflow_spec(
         ),
         source_names=[CHOPPER_CASCADE_SOURCE],
         params=params,
-        outputs=make_wavelength_lut_outputs(components),
-        context_outputs={
-            component: lut_stream_name(component) for component in components
-        },
+        outputs=WavelengthLutOutputs,
+        context_outputs=LUT_STREAM_NAMES,
         reset_on_run_transition=False,
         # The LUT is recomputed from the retained chopper-setpoint history on
         # the next trigger regardless, so a reset achieves nothing.

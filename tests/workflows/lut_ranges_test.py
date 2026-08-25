@@ -20,7 +20,6 @@ from ess.livedata.preprocessors.detector_data import get_nexus_geometry_filename
 from ess.livedata.workflows.lut_ranges import (
     LtotalRangeError,
     component_ltotal_range,
-    component_ltotal_ranges,
 )
 
 #: LOKI's carriage range, mirroring the instrument declaration.
@@ -171,26 +170,25 @@ def test_component_riding_a_declared_axis_becomes_placeable(
 
 
 @pytest.mark.slow
-def test_ranges_are_narrow_enough_to_be_worth_splitting(
-    dream_geometry: str,
-) -> None:
-    """The whole point of one table per component: at the default 0.1 m
-    resolution each spans a handful of rows, where one instrument-wide table
-    spanning source to detector would need hundreds."""
-    ranges = component_ltotal_ranges(
-        dream_geometry,
-        detectors=['mantle_detector', 'sans_detector'],
-        monitors=['monitor_bunker', 'monitor_cave'],
-    )
+def test_ranges_are_narrow_enough_to_be_worth_blocking(dream_geometry: str) -> None:
+    """Why the table is blocks rather than one grid: every component spans a
+    handful of rows at the default 0.1 m resolution, while the beamline they sit
+    on spans seventy metres."""
+    ranges = [
+        component_ltotal_range(dream_geometry, name, is_monitor=is_monitor)
+        for name, is_monitor in (
+            ('mantle_detector', False),
+            ('sans_detector', False),
+            ('monitor_bunker', True),
+            ('monitor_cave', True),
+        )
+    ]
 
-    assert set(ranges) == {
-        'mantle_detector',
-        'sans_detector',
-        'monitor_bunker',
-        'monitor_cave',
-    }
-    for start, stop in ranges.values():
+    for start, stop in ranges:
         assert (stop - start) < sc.scalar(2.0, unit='m')
+    assert max(stop for _, stop in ranges) - min(
+        start for start, _ in ranges
+    ) > sc.scalar(70.0, unit='m')
 
 
 @pytest.mark.slow

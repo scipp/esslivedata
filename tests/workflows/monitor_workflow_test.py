@@ -52,7 +52,10 @@ from ess.livedata.workflows.monitor_workflow_types import (
     HistogramRangeLow,
     MonitorHistogram,
 )
-from ess.livedata.workflows.wavelength_lut_workflow_specs import lut_stream_name
+from ess.livedata.workflows.wavelength_lut_workflow_specs import (
+    LUT_STREAM_NAMES,
+    MONITOR_LUT_OUTPUT,
+)
 
 
 class TestMonitorDataParams:
@@ -744,7 +747,7 @@ class TestMonitorWorkflowWavelengthModeHistogramInput:
         )
         # Inject the spec's binding by hand, as WorkflowFactory.create does.
         workflow.build(
-            context_keys={lut_stream_name('monitor_cave'): MonitorLutContext}
+            context_keys={LUT_STREAM_NAMES[MONITOR_LUT_OUTPUT]: MonitorLutContext}
         )
 
         # Create histogram data like fake_monitors da00 mode produces
@@ -759,7 +762,9 @@ class TestMonitorWorkflowWavelengthModeHistogramInput:
         workflow.accumulate(
             {
                 'monitor_cave': histogram,
-                lut_stream_name('monitor_cave'): _streamed_lut(lookup_table_filename),
+                LUT_STREAM_NAMES[MONITOR_LUT_OUTPUT]: _streamed_lut(
+                    lookup_table_filename
+                ),
             },
             start_time=Timestamp.from_ns(0),
             end_time=Timestamp.from_ns(1000),
@@ -790,9 +795,9 @@ def _streamed_lut(filename) -> sc.DataArray:
     """
     from ess.reduce.unwrap.lut import load_lookup_table_from_file
 
-    from ess.livedata.workflows.wavelength_lut_workflow import _flatten_table
+    from ess.livedata.workflows.wavelength_lut_workflow import _flatten_blocks
 
-    return _flatten_table(load_lookup_table_from_file(str(filename)))
+    return _flatten_blocks([load_lookup_table_from_file(str(filename))])
 
 
 class _MonitorZLog(ValueLog):
@@ -913,7 +918,7 @@ class TestMonitorMotion:
         workflow.build(
             context_keys={
                 'mon_z': _MonitorZLog,
-                lut_stream_name('monitor_cave'): MonitorLutContext,
+                LUT_STREAM_NAMES[MONITOR_LUT_OUTPUT]: MonitorLutContext,
             },
             chain_patch_bindings=[binding],
         )
@@ -929,7 +934,7 @@ class TestMonitorMotion:
             {
                 'monitor_cave': self._histogram_input(),
                 'mon_z': self._position_log(z),
-                lut_stream_name('monitor_cave'): lut,
+                LUT_STREAM_NAMES[MONITOR_LUT_OUTPUT]: lut,
             },
             start_time=Timestamp.from_ns(start),
             end_time=Timestamp.from_ns(end),

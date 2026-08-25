@@ -3,15 +3,18 @@
 """Per-component flight-path ranges for the wavelength lookup table.
 
 A lookup table is indexed by ``distance``; a lookup outside its range yields
-``NaN`` silently. Each component therefore gets a table covering exactly its own
-``Ltotal`` span, and that span must be expressed in the same ``Ltotal`` the
-consumer uses at lookup time.
+``NaN`` silently. Each component's ``Ltotal`` span is derived here, and the
+table's blocks are laid out to cover them (see
+:mod:`~ess.livedata.workflows.lut_blocks`). The span must be expressed in the
+same ``Ltotal`` the consumer uses at lookup time -- it is what the consumer
+matches against to find its block.
 
 Rather than re-deriving that definition here, the range is computed by asking
 essreduce for the very providers the consumer runs --
 ``DetectorLtotal`` (scattering geometry, source to sample to pixel) and
 ``MonitorLtotal`` (a straight line from the source). Reusing them is what makes
-the range and the lookup agree by construction rather than by review.
+the range and the lookup agree by construction rather than by review, in the
+producing service and in every consuming one.
 
 Padding is applied on top and is deliberately generous: widening a range adds
 distance rows at fixed resolution, which costs recompute in the LUT job and
@@ -22,7 +25,7 @@ from __future__ import annotations
 
 import copy
 import itertools
-from collections.abc import Iterable, Mapping
+from collections.abc import Mapping
 
 import scipp as sc
 import scippnexus as snx
@@ -38,10 +41,15 @@ from ess.reduce.unwrap.types import DetectorLtotal, MonitorLtotal
 
 from ..config.stream import AxisRange
 
-#: Fraction of a component's own span added at each end, plus a floor, so that a
-#: component whose pixels all sit at one distance (every monitor, and a detector
-#: bank modelled as a point) still gets a table with usable width rather than a
-#: degenerate one.
+#: Fraction of a component's own span added at each end, plus a floor.
+#:
+#: Not what rescues a degenerate range: ``make_wavelength_lut_from_polygons``
+#: already widens every range by two distance-resolution steps at each end --
+#: it has to, since ``sc.arange`` is half-open and a span is rarely a whole
+#: number of steps -- so a component whose pixels all sit at one distance gets a
+#: five-row block from that alone. This floor buys margin in *metres* instead of
+#: in resolution steps, which is what keeps a table usable at a fine resolution,
+#: where two steps would be millimetres.
 _RELATIVE_PAD = 0.01
 _MINIMUM_PAD = sc.scalar(0.1, unit='m')
 
@@ -157,7 +165,7 @@ def component_ltotal_range(
     is_monitor: bool,
     axis_ranges: Mapping[str, AxisRange] | None = None,
 ) -> tuple[sc.Variable, sc.Variable]:
-    """Derive the flight-path range covered by one component's lookup table.
+    """Derive the flight-path range a component's lookup-table block must cover.
 
     Parameters
     ----------
@@ -202,33 +210,3 @@ def component_ltotal_range(
     start, stop = ltotal.min(), ltotal.max()
     pad = sc.max(sc.concat([(stop - start) * _RELATIVE_PAD, _MINIMUM_PAD], 'pad'))
     return start - pad, stop + pad
-
-
-def component_ltotal_ranges(
-    nexus_filename: str,
-    *,
-    detectors: Iterable[str],
-    monitors: Iterable[str],
-    axis_ranges: Mapping[str, AxisRange] | None = None,
-) -> dict[str, tuple[sc.Variable, sc.Variable]]:
-    """Derive the flight-path range of every component, keyed by component name.
-
-    Parameters
-    ----------
-    nexus_filename:
-        Geometry artifact to read component positions from.
-    detectors:
-        Detector names, given the scattering-geometry ``Ltotal``.
-    monitors:
-        Monitor names, given the straight-line ``Ltotal``.
-    axis_ranges:
-        Declared value ranges of the instrument's moving axes; see
-        :func:`component_ltotal_range`.
-    """
-    return {
-        name: component_ltotal_range(
-            nexus_filename, name, is_monitor=is_monitor, axis_ranges=axis_ranges
-        )
-        for names, is_monitor in ((detectors, False), (monitors, True))
-        for name in names
-    }

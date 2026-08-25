@@ -59,10 +59,13 @@ from ess.reduce.unwrap.lut import (
 from ..config.chopper import delay_setpoint_stream, speed_setpoint_stream
 from ..config.stream import AxisRange
 from .dynamic_transforms import synthesise_provider
+from .lut_blocks import Range, blocks_by_gap, one_block
 from .lut_ranges import LtotalRangeError, component_ltotal_range
 from .stream_processor_workflow import StreamProcessorWorkflow
 from .wavelength_lut_workflow_specs import (
     CHOPPER_CASCADE_SOURCE,
+    DETECTOR_LUT_OUTPUT,
+    MONITOR_LUT_OUTPUT,
     WAVELENGTH_BANDS_OUTPUT,
     WavelengthLutParams,
 )
@@ -70,10 +73,9 @@ from .workflow_factory import SpecHandle, Workflow
 
 logger = structlog.get_logger(__name__)
 
-#: Component the upstream ``LookupTable`` type is parametrised by. Each table is
-#: keyed per component by a synthesised key instead (see
-#: :func:`_component_lut_key`); this only fixes the upstream type parameter and
-#: does not appear in the published array.
+#: Component the upstream ``LookupTable`` type is parametrised by. Irrelevant to
+#: what is published: a table is a function of distance and event_time_offset,
+#: and the consumer picks its rows by flight path, not by this parameter.
 _LUT_COMPONENT = snx.NXdetector
 
 #: The chopper-cascade trigger payload as it reaches the workflow: the
@@ -85,6 +87,19 @@ ChopperCascadeTrigger = NewType('ChopperCascadeTrigger', sc.DataArray)
 #: by a ``distance`` dimension (source + one row per chopper, plus one row per
 #: configured cut distance).
 WavelengthBands = NewType('WavelengthBands', sc.DataArray)
+
+#: The two published tables, each a concatenation of uniform blocks (see
+#: :mod:`~ess.livedata.workflows.lut_blocks`). Two keys, not one per component:
+#: a table is a function of ``distance`` and ``event_time_offset`` alone, so
+#: components sharing a stretch of beamline share a table.
+DetectorLut = NewType('DetectorLut', sc.DataArray)
+MonitorLut = NewType('MonitorLut', sc.DataArray)
+
+#: The flight-path ranges each table must cover, one per placeable component.
+#: Sciline parameters rather than closure state, so the table providers stay
+#: plain module-level functions that read as what they compute.
+DetectorLtotalRanges = NewType('DetectorLtotalRanges', tuple)
+MonitorLtotalRanges = NewType('MonitorLtotalRanges', tuple)
 
 #: Sciline key for the user-facing parameter bundle, used by the chopper-cascade
 #: bands provider for settings the upstream pipeline knows nothing about.
@@ -177,25 +192,33 @@ def build_disk_choppers_provider(
     return synthesise_provider('_provide_disk_choppers', _impl, annotations)
 
 
-def _flatten_table(table: LookupTable[AnyRun, _LUT_COMPONENT]) -> sc.DataArray:
-    """Attach the dataclass's four scalar fields as 0-D coords on the array.
+def _flatten_blocks(
+    blocks: Sequence[LookupTable[AnyRun, _LUT_COMPONENT]],
+) -> sc.DataArray:
+    """Concatenate blocks and attach the dataclass's scalar fields as coords.
 
-    Makes the published da00 message self-describing: a consumer can
-    reconstruct the upstream ``LookupTable`` dataclass from the array alone,
-    without out-of-band coordination.
+    Makes the published da00 message self-describing: a consumer can select its
+    block and reconstruct the upstream ``LookupTable`` dataclass from the array
+    alone, without out-of-band coordination. ``distance_resolution`` doubles as
+    the marker that separates the blocks again (see
+    :mod:`~ess.livedata.workflows.lut_blocks`).
 
-    Every coord comes from ``table``, never from the job's parameters, because
-    these fields describe the table that was built rather than what was asked
-    for. The two differ: ``pulse_stride`` may be guessed from the choppers
+    Every coord comes from the built table, never from the job's parameters,
+    because these fields describe the table that was built rather than what was
+    asked for. The two differ: ``pulse_stride`` may be guessed from the choppers
     instead of supplied, and the builder honours the requested time resolution
     only up to fitting a whole number of bins into the frame period. Parameter
     provenance rides on the identity coord instead (ADR 0010).
+
+    The blocks share every scalar field: they are built from one cascade with
+    one set of parameters, differing only in the range they cover.
     """
-    arr = table.array.copy()
-    arr.coords['pulse_period'] = table.pulse_period
-    arr.coords['pulse_stride'] = sc.scalar(int(table.pulse_stride))
-    arr.coords['distance_resolution'] = table.distance_resolution
-    arr.coords['time_resolution'] = table.time_resolution
+    first = blocks[0]
+    arr = sc.concat([block.array for block in blocks], 'distance')
+    arr.coords['pulse_period'] = first.pulse_period
+    arr.coords['pulse_stride'] = sc.scalar(int(first.pulse_stride))
+    arr.coords['distance_resolution'] = first.distance_resolution
+    arr.coords['time_resolution'] = first.time_resolution
     return arr
 
 
@@ -268,70 +291,71 @@ def make_wavelength_bands_from_frames(
     return WavelengthBands(sc.sort(table, 'distance'))
 
 
-def _component_lut_key(component: str) -> Any:
-    """Distinct Sciline key carrying one component's table.
-
-    ``LookupTable`` is parametrised by ``Component`` (detector vs monitor), not
-    by bank, so N per-component tables in one pipeline need N distinct keys.
-    """
-    return NewType(f'WavelengthLut_{component}', sc.DataArray)
-
-
-def _insert_component_lut_providers(
-    pipeline: sciline.Pipeline,
-    ranges: Mapping[str, tuple[sc.Variable, sc.Variable]],
-) -> dict[str, Any]:
-    """Insert one table provider per component, returning their Sciline keys.
-
-    Every provider consumes the same ``ChopperFrameSequence``, so the cascade is
-    computed once per trigger and only the rasterization -- a handful of
-    distance rows per component -- runs N times.
-    """
-    keys: dict[str, Any] = {}
-    for component, ltotal_range in ranges.items():
-        key = _component_lut_key(component)
-        keys[component] = key
-        pipeline.insert(_make_component_lut_provider(component, ltotal_range, key))
-    return keys
+def _build_table(
+    blocks: Sequence[Range],
+    *,
+    distance_resolution: sc.Variable,
+    time_resolution: sc.Variable,
+    pulse_period: sc.Variable,
+    pulse_stride: int,
+    frames: Any,
+) -> sc.DataArray:
+    """Rasterize the cascade onto each block and concatenate the results."""
+    return _flatten_blocks(
+        [
+            make_wavelength_lut_from_polygons(
+                ltotal_range=block,
+                distance_resolution=distance_resolution,
+                time_resolution=time_resolution,
+                pulse_period=pulse_period,
+                pulse_stride=pulse_stride,
+                frames=frames,
+            )
+            for block in blocks
+        ]
+    )
 
 
-def _make_component_lut_provider(
-    component: str, ltotal_range: tuple[sc.Variable, sc.Variable], key: Any
-) -> Callable[..., sc.DataArray]:
-    def _impl(
-        distance_resolution: sc.Variable,
-        time_resolution: sc.Variable,
-        pulse_period: sc.Variable,
-        pulse_stride: int,
-        frames: Any,
-    ) -> sc.DataArray:
-        table = make_wavelength_lut_from_polygons(
-            ltotal_range=ltotal_range,
+def make_detector_lut(
+    ranges: DetectorLtotalRanges,
+    distance_resolution: DistanceResolution,
+    time_resolution: TimeResolution,
+    pulse_period: PulsePeriod,
+    pulse_stride: PulseStride[AnyRun],
+    frames: ChopperFrameSequence[AnyRun],
+) -> DetectorLut:
+    """The detectors' shared table: one dense block spanning every bank."""
+    return DetectorLut(
+        _build_table(
+            one_block(ranges),
             distance_resolution=distance_resolution,
             time_resolution=time_resolution,
             pulse_period=pulse_period,
             pulse_stride=pulse_stride,
             frames=frames,
         )
-        return _flatten_table(table)
-
-    return synthesise_provider(
-        f'_provide_lut_{_identifier(component)}',
-        _impl,
-        {
-            'distance_resolution': DistanceResolution,
-            'time_resolution': TimeResolution,
-            'pulse_period': PulsePeriod,
-            'pulse_stride': PulseStride[AnyRun],
-            'frames': ChopperFrameSequence[AnyRun],
-            'return': key,
-        },
     )
 
 
-def _identifier(component: str) -> str:
-    """Component name reduced to a Python identifier for a synthesised name."""
-    return ''.join(c if c.isalnum() else '_' for c in component)
+def make_monitor_lut(
+    ranges: MonitorLtotalRanges,
+    distance_resolution: DistanceResolution,
+    time_resolution: TimeResolution,
+    pulse_period: PulsePeriod,
+    pulse_stride: PulseStride[AnyRun],
+    frames: ChopperFrameSequence[AnyRun],
+) -> MonitorLut:
+    """The monitors' shared table: one block per monitor, nothing in between."""
+    return MonitorLut(
+        _build_table(
+            blocks_by_gap(ranges, distance_resolution),
+            distance_resolution=distance_resolution,
+            time_resolution=time_resolution,
+            pulse_period=pulse_period,
+            pulse_stride=pulse_stride,
+            frames=frames,
+        )
+    )
 
 
 def _build_pipeline(params: WavelengthLutParams) -> sciline.Pipeline:
@@ -388,7 +412,8 @@ def create_wavelength_lut_workflow(
     params: WavelengthLutParams,
     setpoint_keys: Mapping[str, ChopperSetpointKeys],
     nexus_filename: str,
-    ltotal_ranges: Mapping[str, tuple[sc.Variable, sc.Variable]],
+    detector_ranges: Sequence[Range],
+    monitor_ranges: Sequence[Range],
 ) -> Workflow:
     """Factory for the chopper-equipped wavelength lookup-table workflow.
 
@@ -398,15 +423,26 @@ def create_wavelength_lut_workflow(
     the static ``NXdisk_chopper`` groups (slit edges, radius, axle position)
     and the source position; the pipeline loads both from it. A configured
     chopper missing from the artifact surfaces as a ``KeyError`` at recompute.
-    ``ltotal_ranges`` gives the flight-path range each component's table covers.
+
+    ``detector_ranges`` and ``monitor_ranges`` are the flight-path ranges of the
+    placeable components in each group; the group's table covers them as blocks.
+    A group with no placeable component produces no table and no output: the
+    only consumers are its components, and they bind nothing (ADR 0010).
     """
     pipeline = _build_pipeline(params)
     pipeline[Filename[AnyRun]] = nexus_filename
     _set_source_position(pipeline, nexus_filename, params.source.get())
     pipeline.insert(build_disk_choppers_provider(setpoint_keys))
-    return _make_workflow(
-        pipeline, _insert_component_lut_providers(pipeline, ltotal_ranges)
-    )
+    lut_keys: dict[str, Any] = {}
+    if detector_ranges:
+        pipeline[DetectorLtotalRanges] = tuple(detector_ranges)
+        pipeline.insert(make_detector_lut)
+        lut_keys[DETECTOR_LUT_OUTPUT] = DetectorLut
+    if monitor_ranges:
+        pipeline[MonitorLtotalRanges] = tuple(monitor_ranges)
+        pipeline.insert(make_monitor_lut)
+        lut_keys[MONITOR_LUT_OUTPUT] = MonitorLut
+    return _make_workflow(pipeline, lut_keys)
 
 
 def _set_source_position(
@@ -469,6 +505,10 @@ def attach_wavelength_lut_factory(
     ltotal_ranges = _derive_ltotal_ranges(
         nexus_filename, detectors=detectors, monitors=monitors, axis_ranges=axis_ranges
     )
+    detector_ranges = [
+        ltotal_ranges[name] for name in detectors if name in ltotal_ranges
+    ]
+    monitor_ranges = [ltotal_ranges[name] for name in monitors if name in ltotal_ranges]
     setpoint_keys = {
         chopper: make_chopper_setpoint_keys(chopper) for chopper in choppers
     }
@@ -486,7 +526,8 @@ def attach_wavelength_lut_factory(
             params=params,
             setpoint_keys=setpoint_keys,
             nexus_filename=nexus_filename,
-            ltotal_ranges=ltotal_ranges,
+            detector_ranges=detector_ranges,
+            monitor_ranges=monitor_ranges,
         )
 
     return ltotal_ranges

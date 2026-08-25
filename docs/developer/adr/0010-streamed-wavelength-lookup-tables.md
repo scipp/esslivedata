@@ -47,12 +47,36 @@ cross-service feedback edge.
 
 ## Decision
 
-### One LUT job, one output per component
+### One LUT job, two tables, laid out as blocks
 
-The LUT workflow keeps its single `chopper_cascade` source and gains one output per
-component, each covering exactly that component's `Ltotal` range. The range parameter is
-removed. Per-component messages follow automatically: `UnrollingSinkAdapter` already
-splits a multi-output result into one message per output.
+The LUT workflow keeps its single `chopper_cascade` source and gains two outputs — a
+detector table and a monitor table. The range parameter is removed. One message per output
+follows automatically: `UnrollingSinkAdapter` already splits a multi-output result.
+
+Two, rather than one per component, because a table is a function of `distance` and
+`event_time_offset` alone. It carries no component identity: a per-component table is
+merely a *restriction* of the same function to that component's rows. What varies across
+components is therefore only which stretch of beamline must be covered, and components
+that share a stretch can share a table with nothing lost.
+
+But a single grid spanning every component is mostly empty, which is the objection this
+ADR opened with: monitors sit tens to hundreds of metres upstream of the detectors. So a
+table is a **concatenation of uniform blocks**, one per group of components that sit close
+together. Detectors share one dense block — they surround the sample, so their flight
+paths cluster within a couple of metres, and the gaps between banks cost less than a block
+each would. Each monitor gets its own block, a handful of rows at its flight path and
+nothing in between. On LOKI, four monitors strung over seventeen metres cost twenty-six
+rows in total.
+
+The concatenation is deliberately not a uniform grid, and essreduce's interpolator assumes
+one: `interpolator_numba` locates a row as `int((ltotal - first) / (distance[1] -
+distance[0]))`, reading the wrong row silently — and only under numba, since the scipy
+fallback handles an uneven axis correctly. A consumer must therefore select its own block
+before the table reaches essreduce, and the invariant "a multi-block table never reaches
+`WavelengthInterpolator`" is enforced in one place and tested. Blocks are recoverable from
+the wire because the producer keeps them more than one resolution step apart, merging
+ranges that would land closer; `distance_resolution`, already carried as a coord, is the
+marker that separates them again.
 
 One job, not one per component. A job's identity is `(workflow_id, source_name)` where
 `source_name` *is the stream it consumes*; the LUT job consumes the chopper cascade and
@@ -62,19 +86,26 @@ to express output identity — and would recompute the same cascade once per com
 one chance per job to drift on the shared parameters. Consistency across components is the
 point of the feature.
 
-The outputs class is built per instrument, since instruments do not share components. This
-mirrors the existing per-instrument parameter override and stays dashboard-safe: no
-science imports.
+The outputs class is static and shared by every instrument, since the outputs are the two
+groups rather than an instrument's component list.
 
-Per-component tables are ordinary outputs. Nothing auto-plots them; a user who wants one
-adds a plot. That visibility is worth having — "why is this component empty" is answered by
-its table, which today is unreadable because the relevant rows are buried in tens of metres
-of empty distance.
+The tables are ordinary outputs. Nothing auto-plots them; a user who wants one adds a plot.
+That visibility is worth having — "why is this component empty" is answered by its table,
+which today is unreadable because the relevant rows are buried in tens of metres of empty
+distance. Two outputs is also what makes them usable in the UI: a list that grew with the
+component count was a plot picker nobody wanted to read. The monitor table plots as an
+overlay of one curve per row, the same shape as the chopper-cascade-bands diagnostic.
 
 ### Ranges are derived generically, padded for motion
 
 Each component's range is computed from the registered geometry artifact by one generic
-walk to its pixels. The `Ltotal` definition a consumer uses at lookup time does vary —
+walk to its pixels; the ranges are what the blocks are laid out to cover, and what a
+consumer matches its own `Ltotal` against to find its block. Both sides derive them from
+the same artifact with the same essreduce providers, in different services — an agreement
+they never exchange, and which a test therefore pins by re-deriving every range the way a
+consumer would and asserting a block covers it.
+
+The `Ltotal` definition a consumer uses at lookup time does vary —
 scattering geometry (source to sample to pixel) for most detectors, a straight line for
 monitors, and source-to-sample alone for indirect geometry, where the analyser and
 detector legs are excluded — but the differences are metres against flight paths of tens
@@ -101,10 +132,11 @@ approximately, and the component falls into the no-table case below. The first i
 with one will have to design for it deliberately instead of inheriting a table too narrow
 for its swing.
 
-A component riding an axis nobody declared cannot be placed at all, and gets no table.
-Nothing binds such a component: gating on a stream that is never published would leave the
-job waiting forever, and for an aux-selectable monitor it would take down every job that
-merely *could* have selected it.
+A component riding an axis nobody declared cannot be placed at all, so no block covers it.
+Nothing binds such a component: its jobs would open their gate on the group's table and
+then fail at every recompute, having no block to select. An aux-selectable monitor in that
+state is rejected by the factory at job creation instead, since the job's own source may
+well be placeable.
 
 Over-padding is cheap and under-padding is silent, so the bias is deliberate. Widening a
 range adds distance rows at fixed `DistanceResolution`; it costs recompute in the LUT job
@@ -143,53 +175,60 @@ is what lets a relaunched LUT job transparently resume feeding its consumers.
 
 ### Consumers bind the LUT as gated context
 
-A spec-scope `ContextBinding` per consuming source, using `dependent_sources` to select
-which component's stream that source receives. No new sciline type parameter is needed:
-`Component` is fixed for detectors and carries no per-bank identity, but a job already
-handles one bank, so per-component delivery is a routing concern rather than a typing one.
-A reduction job binds its detector and monitor tables as distinct keys.
+One spec-scope `ContextBinding` per spec and group, with `dependent_sources` naming the
+jobs that gate on it — the spec's placeable sources. A reduction binds both groups.
+
+The binding no longer selects *which* table a source receives, because there is one per
+group; what a job still has to select is its block, and it selects that by flight path. The
+provider takes the job's own `DetectorLtotal` or `MonitorLtotal` — already in its graph,
+computed from geometry rather than from stream data — and takes the block containing its
+midpoint. Midpoint rather than full containment: a pixel beyond the table's range is a
+documented `NaN`, and demanding full coverage would turn one stray pixel into a failed job.
+
+Selecting by flight path rather than by name is what keeps component identity off the wire
+entirely. The job already knows its `Ltotal`, the table already carries its distances, and
+the two meet without either side naming a bank or a monitor.
 
 The bound key is essreduce's public `LookupTable[RunType, Component]` dataclass, so
 `Component` distinguishes a job's detector and monitor tables with no new type parameter.
-The wire value is a single `DataArray` carrying the table plus its scalar fields as
-coords, because da00 serializes a `DataArray` and the dataclass has non-array fields
-(`pulse_stride` is an `int`, `choppers` a `DataGroup`). A small provider reassembles the
-dataclass from those coords. Every coord is taken from the built table, never from the
-job's parameters: these fields describe the table, and the two can differ — the stride may
-be guessed from the choppers, and the builder honours the requested time resolution only
-up to fitting a whole number of bins into the frame period. Parameter provenance rides on
-the identity coord below. The provider does not route through
+The wire value is a single `DataArray` carrying the table plus its scalar fields as coords,
+because da00 serializes a `DataArray` and the dataclass has non-array fields (`pulse_stride`
+is an `int`, `choppers` a `DataGroup`). A small provider selects the job's block and
+reassembles the dataclass from that block's coords. Every coord is taken from the built
+table, never from the job's parameters: these fields describe the table, and the two can
+differ — the stride may be guessed from the choppers, and the builder honours the requested
+time resolution only up to fitting a whole number of bins into the frame period. Parameter
+provenance rides on the identity coord below. The provider does not route through
 `load_lookup_table_from_file`, whose matching branch is a backwards-compatibility shim for
 tables predating the dataclass — depending on it would tie us to a deprecated path and
-silently drop `choppers`, which that format cannot carry. Chopper provenance travels in
-the identity coord instead. da00 round-trips variances, which the uncertainty mask
-requires unconditionally.
+silently drop `choppers`, which that format cannot carry. Chopper provenance travels in the
+identity coord instead. da00 round-trips variances, which the uncertainty mask requires
+unconditionally.
 
-A reduction needs one table per sciline `Component` — the detector plus the *incident*
-and *transmission* monitor roles — and which physical monitor fills a role is a per-job aux
-selection that an import-time binding cannot name. The binding therefore names the aux
-field instead: its stream name carries a placeholder (`wavelength_lut/{incident_monitor}`)
-that gate resolution renders against the job's rendered aux selections, at the same call
-site that already applies the predicate. Each role binds one wire key and the factory
-inserts one provider per role typing that key as the role's table, so the gate covers
-exactly the selected monitors' streams and no dead keys exist.
+A reduction needs one table per sciline `Component` — the detector plus the *incident* and
+*transmission* monitor roles — and which physical monitor fills a role is a per-job aux
+selection that an import-time binding cannot name. Under the shared monitor table it does
+not have to: both roles bind the one monitor stream, and a provider generic in
+`MonitorType` serves all three monitor roles an instrument has — the plain `NXmonitor` of a
+monitor view and a reduction's two. Sciline instantiates it per role, and each instance
+picks its block via that role's own `MonitorLtotal`. Which monitor fills a role is settled
+by geometry the job already holds, not by the stream it binds.
 
-Rendering keeps the same declared/resolved split the predicate introduced, applied to
-names instead of membership: `declared_context_keys` returns the template, and route
-derivation expands it over the referenced aux field's declared choices, so the statically
-derived subscriptions remain a superset of anything a job can render. Two roles selecting
-one monitor would resolve one stream to two conflicting keys, which resolution rejects at
-job creation. A selection whose table the LUT workflow cannot publish — an unplaceable
-monitor — is rejected by the factory, since a rendered gate on it would wait forever. Only
-aux fields whose rendered names are plain stream names may be referenced; a job-prefixed
-field (ROI) would embed job identity, which context streams must not carry.
+A selection whose monitor has no block — an unplaceable one — is rejected by the factory at
+job creation. The gate would open on the shared table's arrival and the job would then fail
+at every recompute, which is a worse failure than never starting.
 
-This supersedes two earlier shapes: binding the *default* monitors and raising when the
-selection differed, which made the aux selector a lie in wavelength mode; and binding
-every candidate monitor to its own synthesized per-component key with the factory mapping
-the chosen ones onto the roles, which worked — the tables arrive together, so over-gating
-on all candidates opens the gate at the same instant — but left every unselected key a
-dead parameter and restated the candidate list in the factory.
+This supersedes three earlier shapes: binding the *default* monitors and raising when the
+selection differed, which made the aux selector a lie in wavelength mode; binding every
+candidate monitor to its own synthesized per-component key, which left every unselected key
+a dead parameter and restated the candidate list in the factory; and aux-templated stream
+names (`wavelength_lut/{incident_monitor}`), where the binding named the aux field and gate
+resolution rendered it against the job's selection. The template mechanism worked and was
+the most intricate thing in this ADR — declared-versus-resolved names, route derivation
+expanding a template over an aux field's declared choices to keep subscriptions a superset,
+and a collision check for two roles selecting one monitor. Sharing the table removes the
+problem it solved rather than solving it better. The mechanism has no remaining user in the
+codebase.
 
 ### The gate is resolved from the job's parameters
 
@@ -241,7 +280,7 @@ changed: data accumulated either side of it are not the same measurement. Consum
 
 Consumers do not compare tables. The producer stamps an **identity coord** alongside the
 scalar fields, derived from the inputs that determine the table — the chopper
-setpoints, pulse period and stride, resolutions, source offset and component range — each
+setpoints, pulse period and stride, resolutions, source offset and block ranges — each
 rounded to a declared precision. Consumers clear when that scalar changes.
 
 Clearing on *any* received LUT would be simpler, and correctly locates the decision at the
@@ -270,16 +309,21 @@ event on run transitions, and this is a second trigger on that path.
 
 | Option | Notes |
 |---|---|
-| **Per-component tables, one job, many outputs (chosen)** | Removes the range parameter, cuts recompute by one to two orders of magnitude depending on how much motion padding a component carries, makes each table readable, and maps onto the per-output mirror unchanged. |
-| One instrument-wide table, range = union over all components | Also removes the range parameter, with far less plumbing, but spans an order of magnitude in distance with almost all rows empty. Rejected. |
+| **Two tables laid out as blocks — detectors dense, a block per monitor (chosen)** | Removes the range parameter, keeps the rows a per-component table would have had, and reduces the outputs, streams, bindings and sciline keys from one per component to one per group. A table carries no component identity, so sharing one costs nothing; the consumer selects its block by flight path. |
+| One table per component, one job, many outputs | The first shape of this decision, and it worked. But it generates the outputs model per instrument, multiplies streams and bindings by the component count, gives the dashboard a plot list that grows with the instrument, and forces per-job table selection to be expressed in *stream names* — the aux-templating machinery below. All to publish N restrictions of one function. Superseded. |
+| One instrument-wide table, one uniform grid | Also removes the range parameter, with far less plumbing, but spans an order of magnitude in distance with almost all rows empty: BIFROST's monitors alone are 155 m apart. Rejected — and it is what the block layout exists to avoid. |
+| Merge every component into one *block* set, monitors included | One stream instead of two. Rejected: a monitor job would receive the detectors' dense block, which at a fine resolution is the megabyte-scale payload, to read a few rows of its own. |
+| Cluster detectors by gap rather than one dense block | Would adapt to an instrument whose banks are far apart, using the same merge primitive the monitors use. Rejected for now: the layout would silently reshuffle when a geometry artifact is regenerated, and no current instrument needs it. The primitive is there if one does. |
+| One row per monitor (a monitor is a point) | Attractive, and wrong: `WavelengthInterpolator` needs two nodes *bracketing* the flight path, and a single node is a zero-width grid that returns `NaN` for every lookup. The upstream builder also pads every block by two resolution steps of its own, so a five-row block is the floor without a bespoke second build path. Rejected — the saving is kilobytes. |
 | One job per component | Requires synthetic trigger streams to give each job a `source_name`, recomputes the cascade per component, and multiplies the ways shared parameters can drift. Rejected. |
 | **Derive every range generically from the geometry artifact, padded (chosen)** | The `Ltotal` rule does differ across geometries, but by metres against flight paths of tens to hundreds of metres, and padding is free apart from recompute. One derivation, no per-component declarations. |
 | Declare the `Ltotal` rule per component | Exact where padding is merely sufficient, and buys that exactness with a per-component declaration that nobody re-checks when the geometry changes. Rejected. |
 | Hand-declare every range | A dozen-plus numbers per instrument that nobody re-checks when an artifact is regenerated. Rejected. |
 | **LUT workflow consumes component motion streams** | Tables would always describe where the component actually is, and the static travel envelope — the one number this design needs from the instrument team — would disappear. It does *not* remove motion from consumers, which still need pixel positions for scattering geometry and for the per-pixel `Ltotal` that indexes the table. Costs: motion joins the LUT job's gating set, so a dead motion PV stops all wavelength reduction; every sample during a move re-emits and clears; and the LUT job's motion value can lag the one the consumer patched into its geometry, so padding is still needed. The strongest alternative; recorded to revisit. |
 | Route the LUT as ungated aux with the file as default (ROI precedent) | Survives a cold start, but leaves reducing with a stale or nominal table as a silent mode — the thing the feature exists to prevent. Rejected in favour of the gate plus explicit limitations. |
-| **Aux-templated stream names for per-job table selection (chosen)** | One binding per role; the placeholder names the aux field and gate resolution renders it from the job's selection. Route derivation expands templates over the field's choices, keeping subscriptions a superset. |
-| Bind every candidate monitor to its own per-component key | Works, since all tables arrive together, but synthesizes a key per candidate, leaves the unselected ones as dead parameters, and restates the candidate list in the factory's role mapping. Superseded by aux-templated names. |
+| **Both monitor roles bind the shared table and select by `MonitorLtotal` (chosen)** | One binding, one generic provider serving every monitor role, and no per-job identity on the wire. Which monitor fills a role is settled by geometry the job already holds. |
+| Aux-templated stream names for per-job table selection | One binding per role, the placeholder naming the aux field, gate resolution rendering it from the job's selection, and route derivation expanding templates over the field's declared choices to keep subscriptions a superset. It worked, and was the most intricate mechanism in this ADR. Sharing the monitor table removes the problem instead of solving it; the mechanism now has no user. Superseded. |
+| Bind every candidate monitor to its own per-component key | Works, since all tables arrive together, but synthesizes a key per candidate, leaves the unselected ones as dead parameters, and restates the candidate list in the factory's role mapping. Superseded. |
 | **Split the spec into TOA-only and wavelength variants** | ADR 0003's prescribed remedy for the over-gate. Rejected on UX: two specs are two entries in the workflow list, two jobs to run, and — because `DataKey` embeds `workflow_id` — two unrelated output streams, so a plot cannot follow a mode switch. It also duplicates every per-instrument params override. |
 | Reuse `livedata_data` instead of a dedicated topic | Backend services would subscribe to every detector image in the facility. Rejected. |
 | Reset on any received LUT, with no identity | Simplest, and puts the decision at the producer. But a LUT-job restart re-emits an unchanged table, and that restart is the recovery action; a liveness heartbeat would also clear on every beat. Rejected. |
@@ -292,6 +336,15 @@ event on run transitions, and this is a second trigger on that path.
 
 - `WorkflowSpec` gains `context_outputs`; `ContextBinding` gains an opt-in clear flag; the
   LUT carries an identity coord alongside its scalar fields.
+- A published table is a concatenation of uniform blocks, and handing a multi-block table
+  to essreduce's interpolator is silently wrong under numba while correct under the scipy
+  fallback. `numba` is not a declared dependency, so the test suite exercises the tolerant
+  path: the guard is the block selection itself plus a test asserting the selected block is
+  uniform, not a test that would fail on the mistake. An upstream `searchsorted` fallback
+  for non-uniform axes would remove the trap and let the selection go away.
+- The aux-templated stream-name mechanism (`render_stream_name`, placeholder expansion in
+  route derivation) loses its only user and should be removed unless something else claims
+  it.
 - A new `StreamKind`, topic, sink route, ingest route and preprocessor case. The ingest
   half is the genuinely new mechanism, with no precedent in ADR 0006.
 - Route derivation will gather the LUT stream names and then drop them, since they appear

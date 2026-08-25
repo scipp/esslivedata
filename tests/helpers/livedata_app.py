@@ -132,15 +132,16 @@ class LivedataApp:
         )
         self.consumer.add_message(message)
 
-    def publish_lookup_table(self, *, component: str, time: float = 1.0) -> None:
-        """Publish a wavelength lookup table on the context topic.
+    def publish_lookup_tables(self, *, time: float = 1.0) -> None:
+        """Publish the detector and monitor lookup tables on the context topic.
 
-        Opens the gate of any job bound to ``component``'s table. The table
-        itself is a minimal placeholder: what these tests exercise is the
-        routing and gating, not the wavelength values.
+        Opens the gate of any job bound to either table. The tables themselves
+        are a minimal placeholder: what these tests exercise is the routing and
+        gating, not the wavelength values. One block spanning every component
+        is a legitimate table, so both streams carry the same array.
         """
         from ess.livedata.workflows.wavelength_lut_workflow_specs import (
-            lut_stream_name,
+            LUT_STREAM_NAMES,
         )
 
         table = sc.DataArray(
@@ -159,22 +160,25 @@ class LivedataApp:
                 ),
                 'pulse_period': sc.scalar(1 / 14, unit='s'),
                 'pulse_stride': sc.scalar(1),
-                'distance_resolution': sc.scalar(0.1, unit='m'),
+                # Must match the row spacing: a consumer splits the table into
+                # blocks wherever the rows step further than this.
+                'distance_resolution': sc.scalar(1e4, unit='m'),
                 'time_resolution': sc.scalar(250.0, unit='us'),
             },
         )
-        message = FakeKafkaMessage(
-            value=dataarray_da00.serialise_da00(
-                source_name=lut_stream_name(component),
-                timestamp_ns=int(time * 1_000_000_000),
-                data=scipp_to_da00(table),
-            ),
-            topic=stream_kind_to_topic(
-                instrument=self.instrument, kind=StreamKind.LIVEDATA_CONTEXT
-            ),
-            timestamp=int(time * 1_000_000_000),
-        )
-        self.consumer.add_message(message)
+        for stream_name in LUT_STREAM_NAMES.values():
+            message = FakeKafkaMessage(
+                value=dataarray_da00.serialise_da00(
+                    source_name=stream_name,
+                    timestamp_ns=int(time * 1_000_000_000),
+                    data=scipp_to_da00(table),
+                ),
+                topic=stream_kind_to_topic(
+                    instrument=self.instrument, kind=StreamKind.LIVEDATA_CONTEXT
+                ),
+                timestamp=int(time * 1_000_000_000),
+            )
+            self.consumer.add_message(message)
 
     def publish_monitor_events(
         self, *, size: int, time: int, reuse_events: bool = False

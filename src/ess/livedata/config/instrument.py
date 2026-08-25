@@ -310,12 +310,12 @@ class Instrument:
 
     @property
     def lut_components(self) -> frozenset[str]:
-        """Components with a wavelength lookup table.
+        """Components covered by a block of a wavelength lookup table.
 
         A component riding a live axis with no declared :class:`AxisRange`
-        cannot be placed from the geometry artifact and so gets no table.
-        Binding its table anyway would gate every job that could have selected
-        it on a stream that never arrives, so consumers bind only these.
+        cannot be placed from the geometry artifact, so no block covers it.
+        Binding the table anyway would gate every job that could have selected
+        it and then fail at every recompute, so consumers bind only these.
         """
         return frozenset(self._lut_ranges)
 
