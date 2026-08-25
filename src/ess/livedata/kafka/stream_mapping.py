@@ -2,7 +2,7 @@
 # Copyright (c) 2025 Scipp contributors (https://github.com/scipp)
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, fields
 
 KafkaTopic = str
 
@@ -34,6 +34,17 @@ class LivedataTopics:
     def filewriter(self) -> KafkaTopic:
         """Returns the filewriter topic for run start/stop messages."""
         return f"{self.instrument}_filewriter"
+
+    @property
+    def all_topics(self) -> set[KafkaTopic]:
+        """Returns every infrastructure topic.
+
+        Derived from the fields so that adding a topic cannot leave topic
+        creation (see :func:`ess.livedata.scripts.dev.ensure_topics_exist`)
+        behind.
+        """
+        names = {field.name for field in fields(self)} - {'instrument'}
+        return {getattr(self, name) for name in names} | {self.filewriter}
 
 
 class StreamMapping:
