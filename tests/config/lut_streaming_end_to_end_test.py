@@ -304,6 +304,18 @@ class TestLokiMotionAndRoles:
                 },
             )
 
+    def test_default_monitor_selection_is_placeable(self, loki: Instrument) -> None:
+        """A default naming an unplaceable monitor would break I(Q) for anyone
+        who never touches the monitor selectors, so the defaults must stay on
+        the placeable side of the guard above."""
+        aux_sources = loki.workflow_factory.registration(
+            _spec_id(loki, 'i_of_q')
+        ).spec.aux_sources
+
+        defaults = {inp.default for inp in aux_sources.inputs.values()}
+
+        assert defaults <= loki.lut_components
+
     def test_reduction_binds_only_its_own_detector(self, loki: Instrument) -> None:
         # The detector is fixed per job; gating on all nine banks' tables would
         # be over-gating with no upside.

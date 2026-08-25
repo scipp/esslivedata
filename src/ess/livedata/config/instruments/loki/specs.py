@@ -304,8 +304,13 @@ i_of_q_handle = instrument.register_spec(
     description=(
         'SANS I(Q) reduction for LOKI. Converts detector event data into'
         ' scattered intensity as a function of momentum transfer Q.'
-        ' Direct-beam normalization (flat/efficiency correction) is not applied and '
-        'currently the transmission does not take into a account and empty run.'
+        ' Direct-beam normalization (flat/efficiency correction) is not applied,'
+        ' and the transmission calculation does not take an empty run into account.'
+        ' Beam Monitor 4 cannot be used as transmission monitor: the geometry'
+        ' artifact drives its position from a live motion stream but does not'
+        ' identify that stream, so the monitor cannot be placed and gets no'
+        ' wavelength lookup table. Selecting it is rejected when the job is'
+        ' started; use Beam Monitor 3.'
     ),
     source_names=detector_names,
     aux_sources=loki_aux_sources,
