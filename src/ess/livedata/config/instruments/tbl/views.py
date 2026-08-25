@@ -33,3 +33,18 @@ def get_he3_detector_view(da: sc.DataArray, source_name: str) -> sc.DataArray:
 def identity(da: sc.DataArray, source_name: str) -> sc.DataArray:
     """Identity transform (no-op)."""
     return da
+
+
+def get_he3_spectrum(histogram: sc.DataArray) -> sc.DataArray:
+    """Per-tube, per-pixel He3 spectra.
+
+    A bank is 4 tubes of 100 pixels, small enough to publish without any spatial
+    reduction. The copy decouples the published result from the cumulative
+    accumulator's buffer, which the next update mutates in place.
+    """
+    return histogram.copy()
+
+
+def get_multiblade_spectrum(histogram: sc.DataArray) -> sc.DataArray:
+    """Sum over the ``strip`` axis (constant scattering angle)."""
+    return histogram.sum('strip')
