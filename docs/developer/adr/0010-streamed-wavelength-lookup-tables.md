@@ -60,7 +60,9 @@ components is therefore only which stretch of beamline must be covered, and comp
 that share a stretch can share a table with nothing lost.
 
 But a single grid spanning every component is mostly empty, which is the objection this
-ADR opened with: monitors sit tens to hundreds of metres upstream of the detectors. So a
+ADR opened with: monitors sit tens to hundreds of metres upstream of the detectors, and
+empty is not free — BIFROST's 155 m span is 1550 rows of 286 event-time-offset bins at a
+0.1 m resolution, a 3.5 MB message against a broker's 1 MB default, and 35 MB at 0.01 m. So a
 table is a **concatenation of uniform blocks**, one per group of components that sit close
 together. Detectors share one dense block — they surround the sample, so their flight
 paths cluster within a couple of metres, and the gaps between banks cost less than a block
@@ -73,10 +75,12 @@ one: `interpolator_numba` locates a row as `int((ltotal - first) / (distance[1] 
 distance[0]))`, reading the wrong row silently — and only under numba, since the scipy
 fallback handles an uneven axis correctly. A consumer must therefore select its own block
 before the table reaches essreduce, and the invariant "a multi-block table never reaches
-`WavelengthInterpolator`" is enforced in one place and tested. Blocks are recoverable from
-the wire because the producer keeps them more than one resolution step apart, merging
-ranges that would land closer; `distance_resolution`, already carried as a coord, is the
-marker that separates them again.
+`WavelengthInterpolator`" is enforced in one place and tested. The wire says outright which
+rows form a block, in a `block` coord alongside the scalar fields. The alternative — the
+consumer inferring the boundaries from where the row spacing jumps — is a threshold on a
+float difference, tuned against the padding the table builder happens to add, and it forbids
+the producer from ever emitting two blocks that overlap or abut, which two close monitors
+otherwise would.
 
 One job, not one per component. A job's identity is `(workflow_id, source_name)` where
 `source_name` *is the stream it consumes*; the LUT job consumes the chopper cascade and
@@ -315,7 +319,7 @@ event on run transitions, and this is a second trigger on that path.
 | One table per component, one job, many outputs | The first shape of this decision, and it worked. But it generates the outputs model per instrument, multiplies streams and bindings by the component count, gives the dashboard a plot list that grows with the instrument, and forces per-job table selection to be expressed in *stream names* — the aux-templating machinery below. All to publish N restrictions of one function. Superseded. |
 | One instrument-wide table, one uniform grid | Also removes the range parameter, with far less plumbing, but spans an order of magnitude in distance with almost all rows empty: BIFROST's monitors alone are 155 m apart. Rejected — and it is what the block layout exists to avoid. |
 | Merge every component into one *block* set, monitors included | One stream instead of two. Rejected: a monitor job would receive the detectors' dense block, which at a fine resolution is the megabyte-scale payload, to read a few rows of its own. |
-| Cluster detectors by gap rather than one dense block | Would adapt to an instrument whose banks are far apart, using the same merge primitive the monitors use. Rejected for now: the layout would silently reshuffle when a geometry artifact is regenerated, and no current instrument needs it. The primitive is there if one does. |
+| Cluster detectors by gap rather than one dense block | Would adapt to an instrument whose banks are far apart, the way a block per monitor already does. Rejected for now: the layout would silently reshuffle when a geometry artifact is regenerated, and no current instrument needs it. |
 | One row per monitor (a monitor is a point) | Attractive, and wrong: `WavelengthInterpolator` needs two nodes *bracketing* the flight path, and a single node is a zero-width grid that returns `NaN` for every lookup. The upstream builder also pads every block by two resolution steps of its own, so a five-row block is the floor without a bespoke second build path. Rejected — the saving is kilobytes. |
 | One job per component | Requires synthetic trigger streams to give each job a `source_name`, recomputes the cascade per component, and multiplies the ways shared parameters can drift. Rejected. |
 | **Derive every range generically from the geometry artifact, padded (chosen)** | The `Ltotal` rule does differ across geometries, but by metres against flight paths of tens to hundreds of metres, and padding is free apart from recompute. One derivation, no per-component declarations. |
@@ -342,8 +346,10 @@ event on run transitions, and this is a second trigger on that path.
   to essreduce's interpolator is silently wrong under numba while correct under the scipy
   fallback. `numba` is not a declared dependency, so the test suite exercises the tolerant
   path: the guard is the block selection itself plus a test asserting the selected block is
-  uniform, not a test that would fail on the mistake. An upstream `searchsorted` fallback
-  for non-uniform axes would remove the trap and let the selection go away.
+  uniform, not a test that would fail on the mistake. An upstream fallback for non-uniform
+  axes would remove the trap, but not the selection: rows exist only where components are,
+  so interpolating across a gap would silently return a value where the block boundary
+  correctly gives `NaN`.
 - The aux-templated stream-name mechanism (`render_stream_name`, placeholder expansion in
   route derivation) lost its only user and is removed. Stream names are plain again on both
   sides of the mirror, which is what the statically derived Kafka subscriptions want.

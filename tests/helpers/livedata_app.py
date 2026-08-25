@@ -158,10 +158,9 @@ class LivedataApp:
                 'event_time_offset': sc.array(
                     dims=['event_time_offset'], values=[0.0, 1e9], unit='ns'
                 ),
+                'block': sc.zeros(dims=['distance'], shape=[2], dtype='int64'),
                 'pulse_period': sc.scalar(1 / 14, unit='s'),
                 'pulse_stride': sc.scalar(1),
-                # Must match the row spacing: a consumer splits the table into
-                # blocks wherever the rows step further than this.
                 'distance_resolution': sc.scalar(1e4, unit='m'),
                 'time_resolution': sc.scalar(250.0, unit='us'),
             },

@@ -58,7 +58,7 @@ from ess.reduce.unwrap.lut import (
 from ..config.chopper import delay_setpoint_stream, speed_setpoint_stream
 from ..config.stream import AxisRange
 from .dynamic_transforms import synthesise_provider
-from .lut_blocks import Range, blocks_by_gap, one_block, pack_blocks
+from .lut_blocks import Range, one_block, pack_blocks
 from .lut_ranges import LtotalRangeError, component_ltotal_range
 from .stream_processor_workflow import StreamProcessorWorkflow
 from .wavelength_lut_workflow_specs import (
@@ -309,10 +309,18 @@ def make_monitor_lut(
     pulse_stride: PulseStride[AnyRun],
     frames: ChopperFrameSequence[AnyRun],
 ) -> MonitorLut:
-    """The monitors' shared table: one block per monitor, nothing in between."""
+    """The monitors' shared table: one block per monitor, nothing in between.
+
+    They are strung out along the beamline, so a block each keeps the table to
+    a few rows per monitor instead of a uniform grid over the tens or hundreds
+    of metres between them. Two monitors close enough for their padded ranges
+    to overlap yield overlapping blocks, which costs a few duplicated rows and
+    nothing else: a job takes the first block covering its flight path, and
+    both describe the same cascade.
+    """
     return MonitorLut(
         _build_table(
-            blocks_by_gap(ranges, distance_resolution),
+            list(ranges),
             distance_resolution=distance_resolution,
             time_resolution=time_resolution,
             pulse_period=pulse_period,

@@ -5,13 +5,17 @@
 A lookup table is a uniform grid in ``distance``, so one table per component
 would be the obvious layout -- and is a poor one: components an instrument
 apart get near-identical tables (detectors sit within a couple of metres of
-each other), while a single grid spanning everything would be mostly empty
-(monitors sit tens to hundreds of metres upstream of the detectors).
+each other), while a single grid spanning everything would be mostly empty.
+Empty is not free: BIFROST's monitors are 155 m from its detectors, which at a
+0.1 m resolution is 1550 rows of 286 event-time-offset bins, a 3.5 MB message
+where a few tens of kilobytes carry the information -- and 35 MB at a 0.01 m
+resolution. A broker's default message limit is 1 MB.
 
-A table instead carries one uniform *block* per group of components that sit
-close together, concatenated along ``distance``. The detectors share one dense
-block; each monitor gets its own, so the monitor table is a handful of rows at
-each monitor's flight path and nothing in between.
+A table therefore carries rows only where components are: one uniform *block*
+per group of components that sit close together, concatenated along
+``distance``. The detectors share one dense block; each monitor gets its own,
+so the monitor table is a handful of rows at each monitor's flight path and
+nothing in between.
 
 This module owns both halves of the wire format: :func:`pack_blocks` builds
 the published ``DataArray`` from the blocks, :func:`unpack_block` takes it
@@ -26,11 +30,11 @@ uneven axis correctly. A consumer must therefore select its own block with
 :func:`select_block` and never hand a whole multi-block table to
 ``WavelengthInterpolator``.
 
-What makes that recoverable from the wire is the gap: blocks are separated by
-more than :data:`_SPLIT_FACTOR` resolution steps, while rows *within* a block
-are exactly one step apart. The producer guarantees it by merging ranges that
-would land closer (see :func:`blocks_by_gap`), leaving :data:`_MERGE_FACTOR`
-resolution steps of headroom over what the consumer needs to see.
+The wire says outright which rows form a block, in the :data:`_BLOCK_COORD`
+coord, rather than leaving the consumer to infer it from where the row spacing
+jumps. Inferring it would be a threshold on a float difference, tuned against
+the padding the table builder happens to add, and it would forbid the producer
+from ever emitting two blocks that overlap or abut.
 """
 
 from __future__ import annotations
@@ -46,17 +50,10 @@ from ess.reduce.unwrap import LookupTable
 #: Flight-path interval a single block covers, ``(start, stop)``.
 Range = tuple[sc.Variable, sc.Variable]
 
-#: Ranges closer than this many resolution steps are merged into one block.
-#: Larger than :data:`_SPLIT_FACTOR` because the table builder pads each block
-#: by two steps at each end: the *rows* of two blocks are four steps closer
-#: than their ranges.
-_MERGE_FACTOR = 6.0
-
-#: A jump of more than this many resolution steps between consecutive rows
-#: starts a new block. Rows within a block are exactly one step apart, so
-#: anything above one separates blocks; the margin absorbs float error in the
-#: builder's ``arange``.
-_SPLIT_FACTOR = 1.5
+#: Coord numbering the rows of each block consecutively from zero. Not a
+#: ``LookupTable`` field -- purely the wire's block structure, dropped again on
+#: the way in.
+_BLOCK_COORD = 'block'
 
 
 def one_block(ranges: Iterable[Range]) -> list[Range]:
@@ -68,24 +65,6 @@ def one_block(ranges: Iterable[Range]) -> list[Range]:
     """
     lower, upper = zip(*ranges, strict=True)
     return [(min(lower, key=_metres), max(upper, key=_metres))]
-
-
-def blocks_by_gap(ranges: Iterable[Range], resolution: sc.Variable) -> list[Range]:
-    """One block per range, merging any that would sit too close to tell apart.
-
-    The layout for monitors: they are strung out along the beamline, so a block
-    each keeps the table to a few rows per monitor instead of a uniform grid
-    over the tens or hundreds of metres between them.
-    """
-    min_gap = _MERGE_FACTOR * _metres(resolution)
-    blocks: list[Range] = []
-    for lower, upper in sorted(ranges, key=lambda r: _metres(r[0])):
-        if blocks and _metres(lower) - _metres(blocks[-1][1]) <= min_gap:
-            previous = blocks[-1]
-            blocks[-1] = (previous[0], max(previous[1], upper, key=_metres))
-        else:
-            blocks.append((lower, upper))
-    return blocks
 
 
 def select_block(table: sc.DataArray, ltotal: sc.Variable) -> sc.DataArray:
@@ -103,53 +82,49 @@ def select_block(table: sc.DataArray, ltotal: sc.Variable) -> sc.DataArray:
         different beamline than the one being reduced.
     """
     distance = table.coords['distance']
-    resolution = table.coords['distance_resolution'].to(unit=distance.unit)
     midpoint = 0.5 * (
         ltotal.nanmin().to(unit=distance.unit) + ltotal.nanmax().to(unit=distance.unit)
     )
-    for start, stop in _block_bounds(distance, resolution):
+    for start, stop in _block_bounds(table):
         block = table['distance', start:stop]
         bounds = block.coords['distance']
         if bounds[0] <= midpoint <= bounds[-1]:
             return block
     raise ValueError(
         f"No block of the streamed lookup table covers {midpoint:c}: the table "
-        f"spans {_describe_blocks(distance, resolution)}. The table was built "
-        "from a different geometry than the one this job reduces."
+        f"spans {_describe_blocks(table)}. The table was built from a different "
+        "geometry than the one this job reduces."
     )
-
-
-def _block_bounds(
-    distance: sc.Variable, resolution: sc.Variable
-) -> list[tuple[int, int]]:
-    """Half-open row index ranges of the table's uniform blocks."""
-    if len(distance) == 0:
-        return []
-    steps = distance.values[1:] - distance.values[:-1]
-    splits = np.flatnonzero(steps > _SPLIT_FACTOR * resolution.value) + 1
-    edges = [0, *splits.tolist(), len(distance)]
-    return list(itertools.pairwise(edges))
-
-
-def _describe_blocks(distance: sc.Variable, resolution: sc.Variable) -> str:
-    return ', '.join(
-        f"[{distance[start].value}, {distance[stop - 1].value}] {distance.unit}"
-        for start, stop in _block_bounds(distance, resolution)
-    )
-
-
-def _metres(value: sc.Variable) -> float:
-    return value.to(unit='m').value
 
 
 def block_ranges(table: sc.DataArray) -> Sequence[Range]:
     """The flight-path range of each block, for diagnostics and tests."""
     distance = table.coords['distance']
-    resolution = table.coords['distance_resolution'].to(unit=distance.unit)
     return [
-        (distance[start], distance[stop - 1])
-        for start, stop in _block_bounds(distance, resolution)
+        (distance[start], distance[stop - 1]) for start, stop in _block_bounds(table)
     ]
+
+
+def _block_bounds(table: sc.DataArray) -> list[tuple[int, int]]:
+    """Half-open row index ranges of the table's uniform blocks."""
+    block = table.coords[_BLOCK_COORD].values
+    if len(block) == 0:
+        return []
+    splits = np.flatnonzero(block[1:] != block[:-1]) + 1
+    edges = [0, *splits.tolist(), len(block)]
+    return list(itertools.pairwise(edges))
+
+
+def _describe_blocks(table: sc.DataArray) -> str:
+    distance = table.coords['distance']
+    return ', '.join(
+        f"[{distance[start].value}, {distance[stop - 1].value}] {distance.unit}"
+        for start, stop in _block_bounds(table)
+    )
+
+
+def _metres(value: sc.Variable) -> float:
+    return value.to(unit='m').value
 
 
 #: Non-array ``LookupTable`` fields, carried on the wire as 0-D coords. The
@@ -167,9 +142,6 @@ _SCALAR_FIELDS = (
 def pack_blocks(blocks: Sequence[LookupTable]) -> sc.DataArray:
     """Concatenate blocks into the table as published.
 
-    ``distance_resolution`` does double duty: it is a ``LookupTable`` field and
-    it is what lets :func:`select_block` tell the blocks apart again.
-
     Every coord comes from the built table, never from the job's parameters,
     because these fields describe the table that was built rather than what was
     asked for. The two differ: ``pulse_stride`` may be guessed from the choppers
@@ -184,6 +156,13 @@ def pack_blocks(blocks: Sequence[LookupTable]) -> sc.DataArray:
     """
     first = blocks[0]
     table = sc.concat([block.array for block in blocks], 'distance')
+    table.coords[_BLOCK_COORD] = sc.concat(
+        [
+            sc.full(dims=['distance'], shape=[block.array.sizes['distance']], value=i)
+            for i, block in enumerate(blocks)
+        ],
+        'distance',
+    )
     table.coords['pulse_period'] = first.pulse_period
     table.coords['pulse_stride'] = sc.scalar(int(first.pulse_stride))
     table.coords['distance_resolution'] = first.distance_resolution
@@ -198,15 +177,16 @@ def unpack_block(table: sc.DataArray, ltotal: sc.Variable) -> dict[str, Any]:
     ``ltotal``. Returned as a field mapping rather than a ``LookupTable`` so the
     caller supplies the run and component the key is parametrised by.
     """
-    if missing := [name for name in _SCALAR_FIELDS if name not in table.coords]:
+    expected = (*_SCALAR_FIELDS, _BLOCK_COORD)
+    if missing := [name for name in expected if name not in table.coords]:
         raise ValueError(
-            f"Streamed lookup table is missing scalar-field coord(s) {missing}; "
-            f"got coords {sorted(table.coords)}. The producer attaches these, so "
-            "this indicates a table from an incompatible producer version."
+            f"Streamed lookup table is missing coord(s) {missing}; got coords "
+            f"{sorted(table.coords)}. The producer attaches these, so this "
+            "indicates a table from an incompatible producer version."
         )
     block = select_block(table, ltotal)
     return {
-        'array': block.drop_coords(list(_SCALAR_FIELDS)),
+        'array': block.drop_coords(list(expected)),
         'pulse_period': block.coords['pulse_period'],
         'pulse_stride': int(block.coords['pulse_stride'].value),
         'distance_resolution': block.coords['distance_resolution'],

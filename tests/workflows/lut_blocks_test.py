@@ -2,9 +2,9 @@
 # Copyright (c) 2025 Scipp contributors (https://github.com/scipp)
 """Tests for the block layout of a streamed wavelength lookup table.
 
-The producer decides how many blocks a table has; the consumer has to recover
-them from the ``distance`` coord alone. These tests pin the two ends of that
-contract against each other.
+The producer decides how many blocks a table has and says so on the wire; the
+consumer selects the one covering its flight path. These tests pin the two ends
+of that contract against each other.
 """
 
 from __future__ import annotations
@@ -14,12 +14,9 @@ import scipp as sc
 
 from ess.livedata.workflows.lut_blocks import (
     block_ranges,
-    blocks_by_gap,
     one_block,
     select_block,
 )
-
-RESOLUTION = sc.scalar(0.1, unit='m')
 
 
 def _range(lower: float, upper: float) -> tuple[sc.Variable, sc.Variable]:
@@ -29,14 +26,17 @@ def _range(lower: float, upper: float) -> tuple[sc.Variable, sc.Variable]:
 def _table(*blocks: tuple[float, float], resolution: float = 0.1) -> sc.DataArray:
     """A table built the way the producer builds one: block per range."""
     rows = []
-    for lower, upper in blocks:
+    ids = []
+    for index, (lower, upper) in enumerate(blocks):
         count = round((upper - lower) / resolution) + 1
         rows.append(sc.linspace('distance', lower, upper, count, unit='m'))
+        ids.append(sc.full(dims=['distance'], shape=[count], value=index))
     distance = sc.concat(rows, 'distance')
     return sc.DataArray(
         sc.zeros(sizes={**distance.sizes, 'event_time_offset': 2}, unit='angstrom'),
         coords={
             'distance': distance,
+            'block': sc.concat(ids, 'distance'),
             'distance_resolution': sc.scalar(resolution, unit='m'),
         },
     )
@@ -54,31 +54,6 @@ class TestOneBlock:
         assert one_block([_range(24.8, 25.4), _range(28.4, 43.8)]) == [
             _range(24.8, 43.8)
         ]
-
-
-class TestBlocksByGap:
-    def test_keeps_distant_ranges_apart(self) -> None:
-        # The monitor layout: metres apart, so a block each.
-        blocks = blocks_by_gap([_range(6.7, 6.9), _range(15.1, 15.3)], RESOLUTION)
-
-        assert blocks == [_range(6.7, 6.9), _range(15.1, 15.3)]
-
-    def test_orders_blocks_by_flight_path(self) -> None:
-        blocks = blocks_by_gap([_range(15.1, 15.3), _range(6.7, 6.9)], RESOLUTION)
-
-        assert blocks == [_range(6.7, 6.9), _range(15.1, 15.3)]
-
-    def test_merges_ranges_too_close_to_stay_distinguishable(self) -> None:
-        # Their padded rows would run into each other, leaving the consumer
-        # unable to tell where one block ends -- so they become one block.
-        blocks = blocks_by_gap([_range(6.7, 6.9), _range(7.0, 7.2)], RESOLUTION)
-
-        assert blocks == [_range(6.7, 7.2)]
-
-    def test_merges_overlapping_ranges(self) -> None:
-        blocks = blocks_by_gap([_range(6.7, 7.4), _range(6.8, 7.0)], RESOLUTION)
-
-        assert blocks == [_range(6.7, 7.4)]
 
 
 class TestSelectBlock:
@@ -115,3 +90,14 @@ class TestSelectBlock:
 
         with pytest.raises(ValueError, match='No block'):
             select_block(table, sc.scalar(10.0, unit='m'))
+
+    def test_abutting_blocks_stay_distinct(self) -> None:
+        # Two monitors close enough that their rows run into each other. The
+        # wire says where the boundary is, so nothing has to be inferred from
+        # the row spacing and the producer need not merge them.
+        table = _table((6.7, 6.9), (6.9, 7.1))
+
+        assert len(block_ranges(table)) == 2
+        block = select_block(table, sc.scalar(7.0, unit='m'))
+        assert block.coords['distance'][0].value == pytest.approx(6.9)
+        assert block.coords['distance'][-1].value == pytest.approx(7.1)
