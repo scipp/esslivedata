@@ -11,7 +11,18 @@ import scipp as sc
 
 
 def get_multiblade_view(da: sc.DataArray, source_name: str) -> sc.DataArray:
-    """Transform to fold detector data into strip, blade, and wire dimensions."""
+    """Fold detector_number into strip, blade, and wire dimensions.
+
+    ``blade`` enumerates the inclined plates of the Multi-Blade cassette and runs
+    along the stacking direction; ``strip`` and ``wire`` are coordinates within a
+    single plate. On ESTIA the plates are vertical and stacked horizontally, so
+    strips run vertically.
+
+    The dimension order differs from TBL's fold of the same hardware, because the
+    two geometry files enumerate ``detector_number`` differently: ESTIA runs wires
+    fastest and strips slowest, TBL runs strips fastest and blades slowest. Both
+    were verified against their geometry files; see ``tbl.views.get_multiblade_view``.
+    """
     from ess.estia.beamline import DETECTOR_BANK_SIZES
 
     return da.fold(dim=da.dim, sizes=DETECTOR_BANK_SIZES[source_name])
