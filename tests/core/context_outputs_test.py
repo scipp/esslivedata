@@ -129,8 +129,8 @@ def test_renders_one_stream_per_source_name() -> None:
 
     resolved = resolve_context_streams({spec.get_id(): spec})
 
-    assert resolved[(str(spec.get_id()), 'a')] == (('table', 'wavelength_lut/a'),)
-    assert resolved[(str(spec.get_id()), 'b')] == (('table', 'wavelength_lut/b'),)
+    assert resolved[(spec.get_id(), 'a')] == (('table', 'wavelength_lut/a'),)
+    assert resolved[(spec.get_id(), 'b')] == (('table', 'wavelength_lut/b'),)
 
 
 def test_literal_template_over_multiple_sources_collides() -> None:

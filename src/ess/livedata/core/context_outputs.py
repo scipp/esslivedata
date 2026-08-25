@@ -45,7 +45,7 @@ class ContextOutputError(ValueError):
 
 def resolve_context_streams(
     registry: Mapping[WorkflowId, WorkflowSpec],
-) -> dict[tuple[str, str], tuple[tuple[str, str], ...]]:
+) -> dict[tuple[WorkflowId, str], tuple[tuple[str, str], ...]]:
     """Resolve every ``context_outputs`` declaration in a workflow registry.
 
     Renders each declared stream-name template once per source name the spec
@@ -72,7 +72,7 @@ def resolve_context_streams(
         If a template has an unknown placeholder, or if two declarations render
         the same stream name.
     """
-    resolved: dict[tuple[str, str], list[tuple[str, str]]] = {}
+    resolved: dict[tuple[WorkflowId, str], list[tuple[str, str]]] = {}
     seen: dict[str, tuple[str, str, str]] = {}
     for workflow_id, spec in registry.items():
         for output_name, template in spec.context_outputs.items():
@@ -91,7 +91,7 @@ def resolve_context_streams(
                         f"by {previous} and {key}"
                     )
                 seen[stream_name] = key
-                resolved.setdefault((str(workflow_id), source_name), []).append(
+                resolved.setdefault((workflow_id, source_name), []).append(
                     (output_name, stream_name)
                 )
     return {key: tuple(pairs) for key, pairs in resolved.items()}
@@ -133,7 +133,7 @@ class ContextOutputExtractor:
         for result in results:
             if result.data is None:
                 continue
-            key = (str(result.workflow_id), result.job_id.source_name)
+            key = (result.workflow_id, result.job_id.source_name)
             for output_name, stream_name in self._streams.get(key, ()):
                 value = result.data.get(output_name)
                 if value is None:
