@@ -477,7 +477,7 @@ def attach_wavelength_lut_factory(
     detectors: Sequence[str],
     monitors: Sequence[str],
     axis_ranges: Mapping[str, AxisRange],
-) -> dict[str, tuple[sc.Variable, sc.Variable]]:
+) -> frozenset[str]:
     """Bind per-chopper setpoint context and attach the LUT factory.
 
     The single per-instrument entry point: from ``factories.py`` an instrument
@@ -498,17 +498,16 @@ def attach_wavelength_lut_factory(
     Returns
     -------
     :
-        The derived ranges, keyed by component. Consumers bind only these, so a
-        component without a table gates nothing rather than blocking every job
-        that could have selected it.
+        The components a block of a published table covers. Consumers bind only
+        these, so a component without a table gates nothing rather than blocking
+        every job that could have selected it.
     """
-    ltotal_ranges = _derive_ltotal_ranges(
-        nexus_filename, detectors=detectors, monitors=monitors, axis_ranges=axis_ranges
+    detector_ranges = _derive_ltotal_ranges(
+        nexus_filename, detectors, is_monitor=False, axis_ranges=axis_ranges
     )
-    detector_ranges = [
-        ltotal_ranges[name] for name in detectors if name in ltotal_ranges
-    ]
-    monitor_ranges = [ltotal_ranges[name] for name in monitors if name in ltotal_ranges]
+    monitor_ranges = _derive_ltotal_ranges(
+        nexus_filename, monitors, is_monitor=True, axis_ranges=axis_ranges
+    )
     setpoint_keys = {
         chopper: make_chopper_setpoint_keys(chopper) for chopper in choppers
     }
@@ -526,30 +525,29 @@ def attach_wavelength_lut_factory(
             params=params,
             setpoint_keys=setpoint_keys,
             nexus_filename=nexus_filename,
-            detector_ranges=detector_ranges,
-            monitor_ranges=monitor_ranges,
+            detector_ranges=list(detector_ranges.values()),
+            monitor_ranges=list(monitor_ranges.values()),
         )
 
-    return ltotal_ranges
+    return frozenset(detector_ranges) | frozenset(monitor_ranges)
 
 
 def _derive_ltotal_ranges(
     nexus_filename: str,
+    components: Sequence[str],
     *,
-    detectors: Sequence[str],
-    monitors: Sequence[str],
+    is_monitor: bool,
     axis_ranges: Mapping[str, AxisRange],
-) -> dict[str, tuple[sc.Variable, sc.Variable]]:
-    """Derive every component's range, skipping those the artifact cannot place."""
-    ranges: dict[str, tuple[sc.Variable, sc.Variable]] = {}
-    for names, is_monitor in ((detectors, False), (monitors, True)):
-        for name in names:
-            try:
-                ranges[name] = component_ltotal_range(
-                    nexus_filename, name, is_monitor=is_monitor, axis_ranges=axis_ranges
-                )
-            except LtotalRangeError as exc:
-                logger.warning(
-                    'wavelength_lut_range_underivable', component=name, reason=str(exc)
-                )
+) -> dict[str, Range]:
+    """Derive a group's ranges, skipping components the artifact cannot place."""
+    ranges: dict[str, Range] = {}
+    for name in components:
+        try:
+            ranges[name] = component_ltotal_range(
+                nexus_filename, name, is_monitor=is_monitor, axis_ranges=axis_ranges
+            )
+        except LtotalRangeError as exc:
+            logger.warning(
+                'wavelength_lut_range_underivable', component=name, reason=str(exc)
+            )
     return ranges

@@ -143,7 +143,7 @@ class Instrument:
     #: Components the lookup-table workflow can actually place, filled in when
     #: its factory is attached. Empty until then, and for chopperless
     #: instruments.
-    _lut_ranges: dict[str, Any] = field(default_factory=dict, init=False)
+    _lut_components: frozenset[str] = field(default_factory=frozenset, init=False)
     #: Stability tolerance for chopper delay readbacks. The readback stream's
     #: unit is enforced to ``ns`` by ``declare_chopper_setpoint_streams``.
     #: Shared by ``ChopperSynthesizer`` for noise rejection (rolling-window std
@@ -316,7 +316,7 @@ class Instrument:
         Binding the table anyway would gate every job that could have selected
         it and then fail at every recompute, so consumers bind only these.
         """
-        return frozenset(self._lut_ranges)
+        return self._lut_components
 
     @property
     def chain_patch_bindings(self) -> list[ChainPatchBinding]:
@@ -825,7 +825,7 @@ class Instrument:
                 attach_wavelength_lut_factory,
             )
 
-            self._lut_ranges = attach_wavelength_lut_factory(
+            self._lut_components = attach_wavelength_lut_factory(
                 self._wavelength_lut_handle,
                 choppers=self.choppers,
                 nexus_filename=str(get_nexus_geometry_filename(self.name)),
