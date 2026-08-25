@@ -37,28 +37,28 @@ def setup_factories(instrument: Instrument) -> None:
     bind_lookup_tables(
         specs.xy_projection_handle,
         instrument=instrument,
-        source_names=instrument.detector_names,
         is_monitor=False,
         predicate=reads_wavelength,
     )
     bind_lookup_tables(
         specs.monitor_handle,
         instrument=instrument,
-        source_names=instrument.monitors,
         is_monitor=True,
         predicate=reads_wavelength,
     )
     # I(Q) reads both tables: its detector and its two monitor roles. No
     # predicate -- a reduction always reduces to wavelength -- and no per-role
     # binding, since a role's monitor is picked out of the shared monitor table
-    # by its own flight path rather than by a stream name (ADR 0010).
-    for is_monitor in (False, True):
-        bind_lookup_tables(
-            specs.i_of_q_handle,
-            instrument=instrument,
-            source_names=instrument.detector_names,
-            is_monitor=is_monitor,
-        )
+    # by its own flight path rather than by a stream name (ADR 0010). The
+    # monitor table binds on the detector sources: the monitors themselves
+    # arrive as an aux selection, so they are not the jobs' source names.
+    bind_lookup_tables(specs.i_of_q_handle, instrument=instrument, is_monitor=False)
+    bind_lookup_tables(
+        specs.i_of_q_handle,
+        instrument=instrument,
+        is_monitor=True,
+        source_names=instrument.detector_names,
+    )
     import sciline
     import sciline.typing
     import scipp as sc

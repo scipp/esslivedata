@@ -80,8 +80,8 @@ def bind_lookup_tables(
     handle: SpecHandle,
     *,
     instrument: Instrument,
-    source_names: Iterable[str],
     is_monitor: bool,
+    source_names: Iterable[str] | None = None,
     predicate: Callable[[Any], bool] | None = None,
 ) -> None:
     """Bind a group's streamed lookup table as gated context.
@@ -103,12 +103,14 @@ def bind_lookup_tables(
         Spec to bind the table to.
     instrument:
         Instrument whose ``lut_components`` decide what is placeable.
-    source_names:
-        The spec's sources this binding applies to. Not necessarily the
-        components reading the table: a reduction's monitors arrive as an aux
-        selection, so its monitor-table binding applies to its detector jobs.
     is_monitor:
         Select the monitor table over the detector one.
+    source_names:
+        The spec's sources this binding applies to, defaulting to the table's
+        own group -- what a view of that group runs on. A spec reading another
+        group's table passes its own sources instead: LOKI's I(Q) picks its
+        monitors by aux selection, so its monitor-table binding applies to its
+        detector jobs.
     predicate:
         Narrows the binding to the jobs that actually read the table. Views
         pass :func:`reads_wavelength`; a reduction passes nothing, since it has
@@ -117,6 +119,8 @@ def bind_lookup_tables(
     group = instrument.monitors if is_monitor else instrument.detector_names
     if not set(group) & instrument.lut_components:
         return
+    if source_names is None:
+        source_names = group
     if not (gated := sorted(set(source_names) & instrument.lut_components)):
         return
     output = MONITOR_LUT_OUTPUT if is_monitor else DETECTOR_LUT_OUTPUT

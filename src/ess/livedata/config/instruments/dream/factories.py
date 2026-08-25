@@ -21,19 +21,17 @@ def setup_factories(instrument: Instrument) -> None:
         reads_wavelength,
     )
 
-    # Each detector and monitor binds its own streamed lookup table, gated so
-    # only wavelength-mode jobs wait for it.
+    # Detector and monitor views bind their group's streamed lookup table, gated
+    # so only wavelength-mode jobs wait for it.
     bind_lookup_tables(
         specs.projection_handle,
         instrument=instrument,
-        source_names=instrument.detector_names,
         is_monitor=False,
         predicate=reads_wavelength,
     )
     bind_lookup_tables(
         specs.monitor_handle,
         instrument=instrument,
-        source_names=instrument.monitors,
         is_monitor=True,
         predicate=reads_wavelength,
     )
