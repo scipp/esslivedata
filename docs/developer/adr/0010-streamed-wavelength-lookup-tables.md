@@ -82,13 +82,24 @@ to hundreds of metres. Padding absorbs them. Declaring the rule per component wo
 exactness the table's distance resolution does not reward, at the cost of a per-component
 declaration nobody re-checks.
 
-Motion is the one thing the artifact cannot supply, and it withholds more than expected:
-a live f144-driven transform is stored as an *empty* NXlog, so neither the travel envelope
-nor the component's resting position can be recovered from it. Instruments therefore
-declare both, as one `MotionEnvelope` per moving axis keyed by NeXus transform path. Which
-components ride an axis stays derived — a component is affected precisely when the axis
-appears in its `depends_on` chain — so one hung off it later inherits the envelope
-instead of silently getting a nominal-only range.
+Motion is the one thing the artifact cannot supply: a live f144-driven transform is stored
+as an *empty* NXlog, so the component riding it has no position at all until something
+supplies an axis value. Instruments therefore declare one `AxisRange` per moving axis,
+keyed by NeXus transform path. Both bounds are axis values in the axis's own units, so the
+transform keeps supplying the direction and sense of the motion: the range is derived by
+evaluating the geometry at the bounds, not by assuming which way along the beam the axis
+travels. Which components ride an axis stays derived — a component is affected precisely
+when the axis appears in its `depends_on` chain — so one hung off it later inherits the
+range instead of silently being placed as if the axis did not exist.
+
+This brackets translations and refuses rotations. Pixel positions are affine in a
+translation's value, so `Ltotal` is convex and its maximum is attained at one corner of the
+box the bounds span; evaluating the corners is therefore exact at the top end and the
+padding absorbs the interior minimum a component traversing the sample plane could have.
+An angle has no such property, so a live rotation axis is rejected rather than covered
+approximately, and the component falls into the no-table case below. The first instrument
+with one will have to design for it deliberately instead of inheriting a table too narrow
+for its swing.
 
 A component riding an axis nobody declared cannot be placed at all, and gets no table.
 Nothing binds such a component: gating on a stream that is never published would leave the
@@ -298,7 +309,7 @@ event on run transitions, and this is a second trigger on that path.
 - The file-based table stops being reachable on a migrated instrument, so the streamed
   table cannot be A/B'd against it side by side within one instrument. The LUT job
   publishes its tables as ordinary outputs, which is the comparison surface instead.
-- `Instrument` gains `motion_envelopes` and, once the LUT factory is attached, the set of
+- `Instrument` gains `axis_ranges` and, once the LUT factory is attached, the set of
   components it could place. Consumers bind against that set rather than against the full
   component list.
 - DREAM and LOKI migrate first; they are the only instruments offering wavelength mode

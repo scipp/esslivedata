@@ -11,8 +11,8 @@ import scipp as sc
 
 from ess.livedata import parameter_models
 from ess.livedata.config import (
+    AxisRange,
     Instrument,
-    MotionEnvelope,
     SourceMetadata,
     filter_authorized_streams,
     instrument_registry,
@@ -199,12 +199,12 @@ instrument = Instrument(
     ],
     choppers=['bw_chopper1', 'bw_chopper2', 'fo_chopper1', 'fo_chopper2'],
     # The rear bank rides the detector carriage, whose transform the geometry
-    # artifact stores as an empty NXlog. Zero is the carriage's base position;
-    # from there it travels up to 15 m downstream, away from the sample.
-    motion_envelopes={
-        '/entry/instrument/detector_carriage/value': MotionEnvelope(
-            nominal=sc.scalar(0.0, unit='mm'),
-            travel=sc.scalar(15.0, unit='m'),
+    # artifact stores as an empty NXlog. The carriage runs from its base
+    # position out to 15 m, moving away from the sample.
+    axis_ranges={
+        '/entry/instrument/detector_carriage/value': AxisRange(
+            lower=sc.scalar(0.0, unit='m'),
+            upper=sc.scalar(15.0, unit='m'),
         )
     },
     streams=streams,

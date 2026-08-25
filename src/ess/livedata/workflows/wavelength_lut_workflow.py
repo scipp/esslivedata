@@ -57,7 +57,7 @@ from ess.reduce.unwrap.lut import (
 )
 
 from ..config.chopper import delay_setpoint_stream, speed_setpoint_stream
-from ..config.stream import MotionEnvelope
+from ..config.stream import AxisRange
 from .dynamic_transforms import synthesise_provider
 from .lut_ranges import LtotalRangeError, component_ltotal_range
 from .stream_processor_workflow import StreamProcessorWorkflow
@@ -441,7 +441,7 @@ def attach_wavelength_lut_factory(
     nexus_filename: str,
     detectors: Sequence[str],
     monitors: Sequence[str],
-    motion: Mapping[str, MotionEnvelope],
+    axis_ranges: Mapping[str, AxisRange],
 ) -> dict[str, tuple[sc.Variable, sc.Variable]]:
     """Bind per-chopper setpoint context and attach the LUT factory.
 
@@ -458,7 +458,7 @@ def attach_wavelength_lut_factory(
 
     Each component's flight-path range is derived from the geometry artifact.
     A component whose range cannot be derived -- one riding a live f144-driven
-    axis with no declared :class:`MotionEnvelope` -- is left without a table.
+    axis with no declared :class:`AxisRange` -- is left without a table.
 
     Returns
     -------
@@ -468,7 +468,7 @@ def attach_wavelength_lut_factory(
         that could have selected it.
     """
     ltotal_ranges = _derive_ltotal_ranges(
-        nexus_filename, detectors=detectors, monitors=monitors, motion=motion
+        nexus_filename, detectors=detectors, monitors=monitors, axis_ranges=axis_ranges
     )
     setpoint_keys = {
         chopper: make_chopper_setpoint_keys(chopper) for chopper in choppers
@@ -498,7 +498,7 @@ def _derive_ltotal_ranges(
     *,
     detectors: Sequence[str],
     monitors: Sequence[str],
-    motion: Mapping[str, MotionEnvelope],
+    axis_ranges: Mapping[str, AxisRange],
 ) -> dict[str, tuple[sc.Variable, sc.Variable]]:
     """Derive every component's range, skipping those the artifact cannot place."""
     ranges: dict[str, tuple[sc.Variable, sc.Variable]] = {}
@@ -506,7 +506,7 @@ def _derive_ltotal_ranges(
         for name in names:
             try:
                 ranges[name] = component_ltotal_range(
-                    nexus_filename, name, is_monitor=is_monitor, motion=motion
+                    nexus_filename, name, is_monitor=is_monitor, axis_ranges=axis_ranges
                 )
             except LtotalRangeError as exc:
                 logger.warning(

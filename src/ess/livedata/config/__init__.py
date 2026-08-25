@@ -3,21 +3,21 @@
 
 from .instrument import Instrument, SourceMetadata, instrument_registry
 from .stream import (
+    AxisRange,
     ContextBinding,
     Device,
     F144Stream,
-    MotionEnvelope,
     Stream,
     filter_authorized_streams,
     name_streams,
 )
 
 __all__ = [
+    'AxisRange',
     'ContextBinding',
     'Device',
     'F144Stream',
     'Instrument',
-    'MotionEnvelope',
     'SourceMetadata',
     'Stream',
     'filter_authorized_streams',

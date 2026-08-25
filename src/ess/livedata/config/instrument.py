@@ -20,11 +20,11 @@ from ess.livedata.workflows.workflow_factory import (
 )
 
 from .stream import (
+    AxisRange,
     ChainPatchBinding,
     ContextBinding,
     Device,
     F144Stream,
-    MotionEnvelope,
     Stream,
     render_stream_name,
 )
@@ -134,13 +134,13 @@ class Instrument:
     #: ``DiskChoppers`` and declares per-chopper setpoint context bindings) and
     #: the ``ChopperSynthesizer`` wired into the timeseries service.
     choppers: list[str] = field(default_factory=list)
-    #: Travel envelopes of the instrument's moving axes, keyed by NeXus
-    #: transform path. Needed because the geometry artifact stores an
-    #: f144-driven transform as an empty NXlog, carrying neither the resting
-    #: position nor the travel; both are declarations. Consumed when deriving
-    #: per-component wavelength lookup-table ranges. Which components ride an
-    #: axis is derived from their ``depends_on`` chains, not restated here.
-    motion_envelopes: dict[str, MotionEnvelope] = field(default_factory=dict)
+    #: Value ranges of the instrument's moving axes, keyed by NeXus transform
+    #: path. Needed because the geometry artifact stores an f144-driven
+    #: transform as an empty NXlog, carrying no value at all; the range is
+    #: therefore a declaration. Consumed when deriving per-component wavelength
+    #: lookup-table ranges. Which components ride an axis is derived from their
+    #: ``depends_on`` chains, not restated here.
+    axis_ranges: dict[str, AxisRange] = field(default_factory=dict)
     #: Components the lookup-table workflow can actually place, filled in when
     #: its factory is attached. Empty until then, and for chopperless
     #: instruments.
@@ -312,11 +312,10 @@ class Instrument:
     def lut_components(self) -> frozenset[str]:
         """Components with a wavelength lookup table.
 
-        A component riding a live axis with no declared
-        :class:`MotionEnvelope` cannot be placed from the geometry artifact and
-        so gets no table. Binding its table anyway would gate every job that
-        could have selected it on a stream that never arrives, so consumers
-        bind only these.
+        A component riding a live axis with no declared :class:`AxisRange`
+        cannot be placed from the geometry artifact and so gets no table.
+        Binding its table anyway would gate every job that could have selected
+        it on a stream that never arrives, so consumers bind only these.
         """
         return frozenset(self._lut_ranges)
 
@@ -856,7 +855,7 @@ class Instrument:
                 nexus_filename=str(get_nexus_geometry_filename(self.name)),
                 detectors=self.detector_names,
                 monitors=self.monitors,
-                motion=self.motion_envelopes,
+                axis_ranges=self.axis_ranges,
             )
 
         if hasattr(module, 'setup_factories'):
