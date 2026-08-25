@@ -306,20 +306,14 @@ class TestLokiMotionAndRoles:
             MONITOR_STREAM,
         }
 
-    def test_reduction_gates_on_both_tables_whatever_it_selects(
-        self, loki: Instrument
-    ) -> None:
+    def test_reduction_gates_on_both_tables(self, loki: Instrument) -> None:
+        # Both monitor roles read the shared table, so the gate no longer
+        # depends on which monitors the job selects.
         workflow_id = _spec_id(loki, 'i_of_q')
         params_model = loki.workflow_factory.registration(workflow_id).spec.params
 
         resolved = loki.resolve_context_keys(
-            workflow_id,
-            'loki_detector_0',
-            params_model(),
-            aux_source_names={
-                'incident_monitor': 'beam_monitor_m1',
-                'transmission_monitor': 'beam_monitor_m3',
-            },
+            workflow_id, 'loki_detector_0', params_model()
         )
 
         assert {name for name in resolved if name.startswith('wavelength_lut/')} == {
@@ -364,13 +358,7 @@ class TestLokiMotionAndRoles:
         params_model = loki.workflow_factory.registration(workflow_id).spec.params
 
         resolved = loki.resolve_context_keys(
-            workflow_id,
-            'loki_detector_0',
-            params_model(),
-            aux_source_names={
-                'incident_monitor': 'beam_monitor_m1',
-                'transmission_monitor': 'beam_monitor_m3',
-            },
+            workflow_id, 'loki_detector_0', params_model()
         )
 
         assert DETECTOR_STREAM in resolved

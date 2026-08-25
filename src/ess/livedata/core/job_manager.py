@@ -169,13 +169,12 @@ class JobFactory:
         else:
             rendered_aux_names = dict(config.aux_source_names or {})
 
-        # Validate first: the gate is resolved from the job's own params and
-        # rendered aux selections, so a binding can carry a predicate or an
-        # aux-templated stream name and a job that never reads the stream is
+        # Validate first: the gate is resolved from the job's own params, so a
+        # binding can carry a predicate and a job that never reads the stream is
         # not gated on it (ADR 0010).
         params = factory.validate_params(config)
         context_keys = self._instrument.resolve_context_keys(
-            workflow_id, job_id.source_name, params, rendered_aux_names
+            workflow_id, job_id.source_name, params
         )
         # Context wire names equal their stream names — no per-job suffixing.
         context_streams = set(context_keys)

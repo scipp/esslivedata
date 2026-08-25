@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections import UserDict
-from collections.abc import Callable, Iterable, Mapping, Sequence
+from collections.abc import Callable, Iterable, Sequence
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
@@ -26,7 +26,6 @@ from .stream import (
     Device,
     F144Stream,
     Stream,
-    render_stream_name,
 )
 from .value_log import ValueLog
 from .workflow_spec import (
@@ -380,12 +379,11 @@ class Instrument:
         Returns ``{stream_name: workflow_key}``; context wire names equal their
         stream names, so the keys double as the set of gating context streams.
 
-        Predicates are ignored and stream-name templates are left unrendered:
-        this is the declaration-level view for static callers (route
-        derivation, the workflow visualizer), which cover any single job's
-        gate — a subscription covering a stream some jobs do not gate on costs
-        nothing. Use :meth:`resolve_context_keys` where a job's params and aux
-        selections are in hand.
+        Predicates are ignored: this is the declaration-level view for static
+        callers (route derivation, the workflow visualizer), which covers any
+        single job's gate — a subscription covering a stream some jobs do not
+        gate on costs nothing. Use :meth:`resolve_context_keys` where a job's
+        params are in hand.
         """
         return {
             binding.stream_name: binding.workflow_key
@@ -397,15 +395,12 @@ class Instrument:
         workflow_id: WorkflowId,
         source_name: str,
         params: Any,
-        aux_source_names: Mapping[str, str] | None = None,
     ) -> dict[str, Any]:
-        """Resolve one job's context keys from its validated params and aux.
+        """Resolve one job's context keys from its validated params.
 
-        :meth:`declared_context_keys` filtered by each binding's ``predicate``,
-        with stream-name templates rendered against the job's aux selections. A
-        predicate can only remove bindings and rendering only substitutes names
-        from the aux field's declared choices, so the result stays covered by
-        the statically derived Kafka subscriptions.
+        :meth:`declared_context_keys` filtered by each binding's ``predicate``.
+        A predicate can only remove bindings, so the result stays covered by the
+        statically derived Kafka subscriptions.
 
         Parameters
         ----------
@@ -417,32 +412,26 @@ class Instrument:
             The job's *validated* params model, as passed to the workflow
             factory. Predicates read it directly, so an unvalidated dict would
             silently fail every attribute access.
-        aux_source_names:
-            The job's rendered aux selections, for stream-name templates.
 
         Raises
         ------
         ValueError:
             If two bindings resolve to the same stream with different workflow
-            keys — one stream feeds one key, so e.g. an aux selection picking
-            the same monitor for two roles cannot be honoured.
+            keys. One stream feeds one key, so this is a declaration mistake:
+            two bindings naming the same stream for different purposes.
         """
-        aux = aux_source_names or {}
         resolved: dict[str, Any] = {}
         for binding in self._matching_bindings(workflow_id, source_name):
             if binding.predicate is not None and not binding.predicate(params):
                 continue
-            stream_name = render_stream_name(binding.stream_name, aux)
-            existing = resolved.get(stream_name)
+            existing = resolved.get(binding.stream_name)
             if existing is not None and existing != binding.workflow_key:
                 raise ValueError(
                     f"Context bindings of {workflow_id} resolve stream "
-                    f"{stream_name!r} to conflicting workflow keys {existing} "
-                    f"and {binding.workflow_key}. If the stream name is "
-                    "templated, the job's aux selections "
-                    f"{dict(aux)} may pick one stream for two roles."
+                    f"{binding.stream_name!r} to conflicting workflow keys "
+                    f"{existing} and {binding.workflow_key}."
                 )
-            resolved[stream_name] = binding.workflow_key
+            resolved[binding.stream_name] = binding.workflow_key
         return resolved
 
     @property

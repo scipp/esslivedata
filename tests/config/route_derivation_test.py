@@ -165,49 +165,32 @@ class TestGatherSourceNames:
         handle.add_context_binding(stream_name='carriage', workflow_key=object)
         assert gather_source_names(instrument, "detector_data") == {'det_a', 'carriage'}
 
-    def test_templated_context_stream_expands_over_aux_choices(self) -> None:
-        """An aux-templated binding renders per job, so the subscription must
-        cover every choice the referenced aux field offers."""
-        instrument = Instrument(name="test", detector_names=["det_a"])
+    def test_spec_context_binding_is_subscribed_for_every_source(self) -> None:
+        """A binding's stream name is fixed at declaration time, so one
+        subscription covers every job the spec can run."""
+        instrument = Instrument(name="test", detector_names=["det_a", "det_b"])
         handle = instrument.register_spec(
             group=REDUCTION,
             name="reduction",
             version=1,
             title="Reduction",
-            source_names=["det_a"],
+            source_names=["det_a", "det_b"],
             aux_sources=AuxSources(
                 {"mon": AuxInput(choices=("m1", "m2"), default="m1")}
             ),
             outputs=DefaultOutputs,
         )
         handle.add_context_binding(
-            stream_name='wavelength_lut/{mon}', workflow_key=object
+            stream_name='wavelength_lut/monitors', workflow_key=object
         )
 
         assert gather_source_names(instrument, "data_reduction") == {
             'det_a',
+            'det_b',
             'm1',
             'm2',
-            'wavelength_lut/m1',
-            'wavelength_lut/m2',
+            'wavelength_lut/monitors',
         }
-
-    def test_template_referencing_unknown_aux_field_raises(self) -> None:
-        instrument = Instrument(name="test", detector_names=["det_a"])
-        handle = instrument.register_spec(
-            group=DETECTORS,
-            name="view",
-            version=1,
-            title="View",
-            source_names=["det_a"],
-            outputs=DefaultOutputs,
-        )
-        handle.add_context_binding(
-            stream_name='wavelength_lut/{ghost}', workflow_key=object
-        )
-
-        with pytest.raises(ValueError, match='ghost'):
-            gather_source_names(instrument, "detector_data")
 
 
 class TestResolveStreamNames:
