@@ -358,11 +358,11 @@ event on run transitions, and this is a second trigger on that path.
   non-goal, which was decided on YAGNI grounds. Params validation moves up into job
   creation and `WorkflowFactory.create` takes the validated model rather than the raw
   `WorkflowConfig`, so the order is validate → resolve gate → build with one validation
-  site. Resolution splits in two: `declared_context_keys` ignores predicates and leaves
-  templates unrendered, serving the static callers (route derivation, the workflow
-  visualizer) that need the superset; `resolve_context_keys` filters by predicate and
-  renders stream-name templates for the job path, which therefore also receives the
-  job's rendered aux selections.
+  site. Resolution splits in two: `declared_context_keys` ignores predicates, serving the
+  static callers (route derivation, the workflow visualizer) that need the superset;
+  `resolve_context_keys` filters by predicate for the job path. Both are plain filters of
+  the declarations — a predicate only ever removes a binding — so every way two bindings
+  can disagree is a registration-time check on `Instrument.validate`, not a per-job one.
 - Specs are unchanged: coordinate mode stays a parameter on one workflow, so output
   identity and any plot built on it survive a mode switch.
 - The file-based table stops being reachable on a migrated instrument, so the streamed

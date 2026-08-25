@@ -400,7 +400,9 @@ class Instrument:
 
         :meth:`declared_context_keys` filtered by each binding's ``predicate``.
         A predicate can only remove bindings, so the result stays covered by the
-        statically derived Kafka subscriptions.
+        statically derived Kafka subscriptions. Two bindings naming one stream
+        for different keys is a declaration mistake and is rejected at
+        registration by :meth:`validate`, not here.
 
         Parameters
         ----------
@@ -412,27 +414,12 @@ class Instrument:
             The job's *validated* params model, as passed to the workflow
             factory. Predicates read it directly, so an unvalidated dict would
             silently fail every attribute access.
-
-        Raises
-        ------
-        ValueError:
-            If two bindings resolve to the same stream with different workflow
-            keys. One stream feeds one key, so this is a declaration mistake:
-            two bindings naming the same stream for different purposes.
         """
-        resolved: dict[str, Any] = {}
-        for binding in self._matching_bindings(workflow_id, source_name):
-            if binding.predicate is not None and not binding.predicate(params):
-                continue
-            existing = resolved.get(binding.stream_name)
-            if existing is not None and existing != binding.workflow_key:
-                raise ValueError(
-                    f"Context bindings of {workflow_id} resolve stream "
-                    f"{binding.stream_name!r} to conflicting workflow keys "
-                    f"{existing} and {binding.workflow_key}."
-                )
-            resolved[binding.stream_name] = binding.workflow_key
-        return resolved
+        return {
+            binding.stream_name: binding.workflow_key
+            for binding in self._matching_bindings(workflow_id, source_name)
+            if binding.predicate is None or binding.predicate(params)
+        }
 
     @property
     def nexus_file(self) -> str:
@@ -896,11 +883,11 @@ class Instrument:
         synthetic instrument assembled in a test can be checked without the
         package-import and NeXus-loading machinery. Raises :class:`ValueError`
         on the first violation. The order matches ``load_factories``: unknown
-        dependent sources are reported before the finer wire-name and
+        dependent sources are reported before the finer binding and
         chain-patch checks, since those assume the sources are real.
         """
         self._validate_binding_dependent_sources()
-        self._validate_context_binding_wire_name_collisions()
+        self._validate_context_binding_declarations()
         self._validate_chain_patch_value_log_uniqueness()
 
     def _validate_binding_dependent_sources(self) -> None:
@@ -962,15 +949,21 @@ class Instrument:
             by_key[binding.workflow_key] = binding.stream_name
             by_stream[binding.stream_name] = binding.workflow_key
 
-    def _validate_context_binding_wire_name_collisions(self) -> None:
-        """Raise if context-stream wire names collide.
+    def _validate_context_binding_declarations(self) -> None:
+        """Raise if context bindings that apply together disagree.
 
-        Two collisions are detected:
+        Three collisions are detected, all of them properties of the
+        declarations alone: a stream name is fixed at declaration time and a
+        predicate can only remove a binding, so no job can create or avoid one.
 
+        - **Conflicting keys.** Two bindings naming one stream for different
+          Sciline keys. The gate maps each name to one key, so one of the two
+          would silently win.
         - **Instrument-vs-spec.** For every (spec, source) pair where both
           instrument-level and spec-level :class:`ContextBinding` entries
           apply, the ``stream_name`` (which equals the wire name) must be
-          unique across the two scopes.
+          unique across the two scopes. Rejected even where the keys agree:
+          the redundancy means one scope is unaware of the other.
         - **Context-vs-aux.** A context wire name must not match any
           ``aux_sources`` field name on the spec: at ``JobFactory.create``
           time the context and aux mappings are merged into a single
@@ -986,6 +979,18 @@ class Instrument:
                 [] if reg.skip_instrument_contexts else self.context_bindings
             )
             for source in spec.source_names:
+                keys: dict[str, Any] = {}
+                for binding in self._matching_bindings(spec.get_id(), source):
+                    previous = keys.setdefault(
+                        binding.stream_name, binding.workflow_key
+                    )
+                    if previous != binding.workflow_key:
+                        raise ValueError(
+                            f"ContextBindings of spec {spec.name!r} on source "
+                            f"{source!r} name stream {binding.stream_name!r} for "
+                            f"conflicting workflow keys {previous} and "
+                            f"{binding.workflow_key}"
+                        )
                 instrument_names: set[str] = {
                     binding.stream_name
                     for binding in instrument_bindings

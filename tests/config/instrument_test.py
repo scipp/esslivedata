@@ -747,8 +747,8 @@ class TestContextBindings:
         assert declared == {'rot': _Key}
 
     def test_two_bindings_naming_one_stream_with_different_keys_raise(self):
-        # One stream feeds one key, so this is a declaration mistake rather
-        # than something a job can resolve.
+        # One stream feeds one key. Nothing a job selects reaches a stream name,
+        # so this is a declaration mistake and is caught at registration.
         class _OtherKey: ...
 
         instrument = Instrument(name='test', detector_names=['det1'])
@@ -762,8 +762,8 @@ class TestContextBindings:
         handle.add_context_binding(stream_name='lut', workflow_key=_Key)
         handle.add_context_binding(stream_name='lut', workflow_key=_OtherKey)
 
-        with pytest.raises(ValueError, match='conflicting'):
-            instrument.resolve_context_keys(handle.workflow_id, 'det1', None)
+        with pytest.raises(ValueError, match='conflicting workflow keys'):
+            instrument.validate()
 
 
 class TestInstrumentRegisterSpec:
