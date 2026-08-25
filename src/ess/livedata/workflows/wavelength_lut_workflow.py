@@ -64,6 +64,7 @@ from .stream_processor_workflow import StreamProcessorWorkflow
 from .wavelength_lut_workflow_specs import (
     CHOPPER_CASCADE_SOURCE,
     WAVELENGTH_BANDS_OUTPUT,
+    WAVELENGTH_LUT_OUTPUT,
     WavelengthLutParams,
 )
 from .workflow_factory import SpecHandle, Workflow
@@ -360,7 +361,8 @@ def _make_workflow(
         pipeline,
         dynamic_keys={CHOPPER_CASCADE_SOURCE: ChopperCascadeTrigger},
         target_keys={
-            **lut_keys,
+            # Subject-keyed: one table per component from the one job.
+            WAVELENGTH_LUT_OUTPUT: dict(lut_keys),
             WAVELENGTH_BANDS_OUTPUT: WavelengthBands,
         },
         accumulators={},

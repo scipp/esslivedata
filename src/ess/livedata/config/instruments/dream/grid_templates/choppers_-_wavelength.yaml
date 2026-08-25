@@ -50,8 +50,8 @@ cells:
       primary:
         workflow_id: dream/wavelength_lut/1
         source_names:
-        - chopper_cascade
-        view_name: mantle_detector
+        - mantle_detector
+        view_name: lookup_table
     plot_name: image
     params:
       layout:

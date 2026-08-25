@@ -23,6 +23,7 @@ from ess.livedata.workflows.wavelength_lut_workflow import (
 from ess.livedata.workflows.wavelength_lut_workflow_specs import (
     CHOPPER_CASCADE_SOURCE,
     WAVELENGTH_BANDS_OUTPUT,
+    WAVELENGTH_LUT_OUTPUT,
     CascadeBands,
     Pulse,
     SourceOffset,
@@ -142,7 +143,7 @@ def _build_no_chopper_workflow(geom: Path):
 def lut(no_chopper_geometry: Path) -> sc.DataArray:
     wf = _build_no_chopper_workflow(no_chopper_geometry)
     wf.accumulate(_trigger(), start_time=0, end_time=1)
-    return wf.finalize()[COMPONENT]
+    return wf.finalize()[WAVELENGTH_LUT_OUTPUT][COMPONENT]
 
 
 class TestCascadeBands:
@@ -196,7 +197,7 @@ class TestNoChopperWorkflow:
         )
         wf.build()
         wf.accumulate(_trigger(), start_time=0, end_time=1)
-        table = wf.finalize()[COMPONENT]
+        table = wf.finalize()[WAVELENGTH_LUT_OUTPUT][COMPONENT]
 
         for name in (
             'pulse_period',
@@ -218,10 +219,10 @@ class TestNoChopperWorkflow:
     ) -> None:
         wf = _build_no_chopper_workflow(no_chopper_geometry)
         wf.accumulate(_trigger(), start_time=0, end_time=1)
-        first = wf.finalize()[COMPONENT]
+        first = wf.finalize()[WAVELENGTH_LUT_OUTPUT][COMPONENT]
         wf.clear()
         wf.accumulate(_trigger(), start_time=2, end_time=3)
-        second = wf.finalize()[COMPONENT]
+        second = wf.finalize()[WAVELENGTH_LUT_OUTPUT][COMPONENT]
         assert first is not second
         assert first.dims == second.dims
         assert first.unit == second.unit
@@ -267,7 +268,9 @@ def _run_chopper_lut(
     params: WavelengthLutParams | None = None,
 ) -> sc.DataArray:
     """Build the chopper LUT workflow and return just the lookup-table output."""
-    return _run_chopper_workflow(geom, names, setpoints, params)[COMPONENT]
+    return _run_chopper_workflow(geom, names, setpoints, params)[WAVELENGTH_LUT_OUTPUT][
+        COMPONENT
+    ]
 
 
 @pytest.fixture

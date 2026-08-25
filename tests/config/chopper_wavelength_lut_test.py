@@ -31,6 +31,7 @@ from ess.livedata.core.timestamp import Timestamp
 from ess.livedata.workflows.wavelength_lut_workflow_specs import (
     CHOPPER_CASCADE_SOURCE,
     WAVELENGTH_BANDS_OUTPUT,
+    WAVELENGTH_LUT_OUTPUT,
     CascadeBands,
     WavelengthLutParams,
 )
@@ -53,11 +54,7 @@ def _any_component_table(result) -> sc.DataArray:
     artifact can place, so the tests assert on the shape of a table rather than
     on a particular component having one.
     """
-    tables = {
-        name: value
-        for name, value in result.data.items()
-        if name != WAVELENGTH_BANDS_OUTPUT
-    }
+    tables = result.data[WAVELENGTH_LUT_OUTPUT]
     assert tables, f'no per-component tables in result: {list(result.data)}'
     return next(iter(tables.values()))
 

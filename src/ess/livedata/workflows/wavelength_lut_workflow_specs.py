@@ -4,8 +4,6 @@
 
 from __future__ import annotations
 
-from collections.abc import Sequence
-
 import pydantic
 import scipp as sc
 
@@ -20,9 +18,13 @@ from .workflow_factory import SpecHandle
 #: instruments). The workflow uses presence of this signal as its trigger.
 CHOPPER_CASCADE_SOURCE = 'chopper_cascade'
 
-#: Workflow ``name`` in the spec. Tables are keyed by component name, not by
-#: this; see :func:`make_wavelength_lut_outputs`.
+#: Workflow ``name`` in the spec.
 WAVELENGTH_LUT_WORKFLOW_NAME = 'wavelength_lut'
+
+#: Output key for the per-component tables. Subject-keyed: one table per
+#: component, keyed by component name. Field name on
+#: :class:`WavelengthLutOutputs`.
+WAVELENGTH_LUT_OUTPUT = 'lookup_table'
 
 #: Output key for the per-component wavelength bands diagnostic. Field name on
 #: :class:`WavelengthLutOutputs`.
@@ -212,14 +214,25 @@ def _empty_wavelength_bands_template() -> sc.DataArray:
     )
 
 
-class WavelengthLutOutputsBase(WorkflowOutputsBase):
-    """Outputs shared by every instrument's lookup-table workflow.
+class WavelengthLutOutputs(WorkflowOutputsBase):
+    """Outputs of the wavelength lookup-table workflow.
 
-    The per-component tables are added by
-    :func:`make_wavelength_lut_outputs`, since instruments do not share
-    components.
+    ``lookup_table`` is subject-keyed: the job consumes the chopper cascade and
+    computes one table per component, each covering exactly that component's
+    ``Ltotal`` range. The subjects are the instrument's components, declared on
+    the spec, so the tables are selected on the source axis (where multi-select
+    lives) rather than as a list of component-named outputs.
     """
 
+    lookup_table: sc.DataArray = pydantic.Field(
+        default_factory=_empty_wavelength_lut_template,
+        title='Wavelength lookup table',
+        description=(
+            'Wavelength as a function of distance and event-time-offset over '
+            'the flight-path range of the selected component, computed from '
+            'the current chopper cascade.'
+        ),
+    )
     chopper_cascade_bands: sc.DataArray = pydantic.Field(
         default_factory=_empty_wavelength_bands_template,
         title='Chopper cascade bands',
@@ -244,38 +257,6 @@ LUT_STREAM_PREFIX = 'wavelength_lut'
 def lut_stream_name(component: str) -> str:
     """Context stream name carrying ``component``'s lookup table."""
     return f'{LUT_STREAM_PREFIX}/{component}'
-
-
-def make_wavelength_lut_outputs(
-    components: Sequence[str],
-) -> type[WavelengthLutOutputsBase]:
-    """Build the outputs model for an instrument's lookup-table workflow.
-
-    One table per component, each covering exactly that component's ``Ltotal``
-    range, so the table stays readable and the polygon rasterization runs over a
-    handful of distance rows instead of hundreds.
-
-    Component names double as output field names, so they must be valid Python
-    identifiers -- which NeXus component names are.
-    """
-    fields = {
-        component: (
-            sc.DataArray,
-            pydantic.Field(
-                default_factory=_empty_wavelength_lut_template,
-                title=f'Wavelength lookup table: {component}',
-                description=(
-                    f'Wavelength as a function of distance and event-time-offset '
-                    f'over the flight-path range of {component}, computed from '
-                    f'the current chopper cascade.'
-                ),
-            ),
-        )
-        for component in components
-    }
-    return pydantic.create_model(
-        'WavelengthLutOutputs', __base__=WavelengthLutOutputsBase, **fields
-    )
 
 
 def register_wavelength_lut_workflow_spec(
@@ -317,10 +298,9 @@ def register_wavelength_lut_workflow_spec(
         ),
         source_names=[CHOPPER_CASCADE_SOURCE],
         params=params,
-        outputs=make_wavelength_lut_outputs(components),
-        context_outputs={
-            component: lut_stream_name(component) for component in components
-        },
+        outputs=WavelengthLutOutputs,
+        output_subjects={WAVELENGTH_LUT_OUTPUT: components},
+        context_outputs={WAVELENGTH_LUT_OUTPUT: lut_stream_name('{subject}')},
         reset_on_run_transition=False,
         # The LUT is recomputed from the retained chopper-setpoint history on
         # the next trigger regardless, so a reset achieves nothing.
