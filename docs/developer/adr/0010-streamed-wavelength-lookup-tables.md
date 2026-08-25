@@ -156,11 +156,13 @@ a component out of its table.
 Modelled on ADR 0006 but named for the seam rather than for the LUT, because an output fed
 back as another workflow's input recurs — a fitted beam centre, a live calibration.
 
-A `context_outputs` field on `WorkflowSpec` maps an output field name to a stream-name
-template, validated exactly as `device_outputs` is. A new `StreamKind` and topic carry it,
-routed to the existing da00 serializer, with the wire `source_name` being the rendered
-stream name. A dedicated topic rather than `livedata_data`: backend services must not
-subscribe to every detector image in the facility to receive a lookup table.
+A `context_outputs` field on `WorkflowSpec` maps an output field name to a stream name,
+plain and fixed at declaration time: a context stream carries no job identity (ADR 0006),
+so a spec declaring context outputs has exactly one source name, and unlike `device_outputs`
+the name is never templated over the sources. A new `StreamKind` and topic carry it, routed
+to the existing da00 serializer, with the wire `source_name` being that stream name. A
+dedicated topic rather than `livedata_data`: backend services must not subscribe to every
+detector image in the facility to receive a lookup table.
 
 The **ingest** half has no ADR 0006 analogue. It is a da00 adapter with no stream lookup
 table, so the internal stream name is the da00 source name — the shape the ROI route
@@ -227,8 +229,8 @@ resolution rendered it against the job's selection. The template mechanism worke
 the most intricate thing in this ADR — declared-versus-resolved names, route derivation
 expanding a template over an aux field's declared choices to keep subscriptions a superset,
 and a collision check for two roles selecting one monitor. Sharing the table removes the
-problem it solved rather than solving it better. The mechanism has no remaining user in the
-codebase.
+problem it solved rather than solving it better, and the mechanism, having lost its only
+user, is gone.
 
 ### The gate is resolved from the job's parameters
 
@@ -343,8 +345,8 @@ event on run transitions, and this is a second trigger on that path.
   uniform, not a test that would fail on the mistake. An upstream `searchsorted` fallback
   for non-uniform axes would remove the trap and let the selection go away.
 - The aux-templated stream-name mechanism (`render_stream_name`, placeholder expansion in
-  route derivation) loses its only user and should be removed unless something else claims
-  it.
+  route derivation) lost its only user and is removed. Stream names are plain again on both
+  sides of the mirror, which is what the statically derived Kafka subscriptions want.
 - A new `StreamKind`, topic, sink route, ingest route and preprocessor case. The ingest
   half is the genuinely new mechanism, with no precedent in ADR 0006.
 - Route derivation will gather the LUT stream names and then drop them, since they appear

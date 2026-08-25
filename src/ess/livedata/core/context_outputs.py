@@ -21,8 +21,8 @@ properties, for the same reasons:
   relaunched producer transparently resume feeding its consumers.
 
 It differs in what happens downstream: a mirrored device is publish-only,
-whereas a context output is consumed again by this system, so its rendered
-stream name shares a namespace with device and motion stream names. Names are
+whereas a context output is consumed again by this system, so its stream
+name shares a namespace with device and motion stream names. Names are
 therefore prefixed by convention (``wavelength_lut/…``) and checked for
 collisions across the whole registry at startup.
 """
@@ -48,11 +48,11 @@ def resolve_context_streams(
 ) -> dict[tuple[WorkflowId, str], tuple[tuple[str, str], ...]]:
     """Resolve every ``context_outputs`` declaration in a workflow registry.
 
-    Renders each declared stream-name template once per source name the spec
-    declares, and checks that no two declarations render the same name. The
-    check spans the whole registry because the rendered names share one
-    namespace: two specs publishing the same name would interleave silently at
-    the consumer.
+    Checks that no two declarations claim the same stream name. The check spans
+    the whole registry because the names share one namespace: two specs
+    publishing the same name would interleave silently at the consumer. That a
+    single spec cannot collide with itself is
+    :attr:`WorkflowSpec.context_outputs`'s single-source rule.
 
     Parameters
     ----------
@@ -69,39 +69,31 @@ def resolve_context_streams(
     Raises
     ------
     ContextOutputError:
-        If a template has an unknown placeholder, or if two declarations render
-        the same stream name.
+        If two declarations claim the same stream name.
     """
-    resolved: dict[tuple[WorkflowId, str], list[tuple[str, str]]] = {}
-    seen: dict[str, tuple[str, str, str]] = {}
+    resolved: dict[tuple[WorkflowId, str], tuple[tuple[str, str], ...]] = {}
+    seen: dict[str, tuple[str, str]] = {}
     for workflow_id, spec in registry.items():
-        for output_name, template in spec.context_outputs.items():
-            for source_name in spec.source_names:
-                try:
-                    stream_name = template.format(source_name=source_name)
-                except (KeyError, IndexError) as exc:
-                    raise ContextOutputError(
-                        f"Invalid context_outputs template {template!r} on "
-                        f"{workflow_id}: unknown placeholder {exc}"
-                    ) from exc
-                key = (str(workflow_id), source_name, output_name)
-                if (previous := seen.get(stream_name)) is not None:
-                    raise ContextOutputError(
-                        f"Duplicate context stream name {stream_name!r} rendered "
-                        f"by {previous} and {key}"
-                    )
-                seen[stream_name] = key
-                resolved.setdefault((workflow_id, source_name), []).append(
-                    (output_name, stream_name)
+        if not spec.context_outputs:
+            continue
+        (source_name,) = spec.source_names
+        for output_name, stream_name in spec.context_outputs.items():
+            key = (str(workflow_id), output_name)
+            if (previous := seen.get(stream_name)) is not None:
+                raise ContextOutputError(
+                    f"Duplicate context stream name {stream_name!r} declared "
+                    f"by {previous} and {key}"
                 )
-    return {key: tuple(pairs) for key, pairs in resolved.items()}
+            seen[stream_name] = key
+        resolved[(workflow_id, source_name)] = tuple(spec.context_outputs.items())
+    return resolved
 
 
 class ContextOutputExtractor:
     """Builds context-stream messages from job results.
 
-    Resolving the registry in the constructor makes a colliding or malformed
-    declaration a startup failure rather than a surprise on the first result.
+    Resolving the registry in the constructor makes a colliding declaration a
+    startup failure rather than a surprise on the first result.
 
     Parameters
     ----------
@@ -124,8 +116,7 @@ class ContextOutputExtractor:
         Returns
         -------
         :
-            One message per designated output, keyed by its rendered stream name
-            on the
+            One message per designated output, keyed by its stream name on the
             :attr:`~ess.livedata.core.message.StreamKind.LIVEDATA_CONTEXT`
             stream.
         """

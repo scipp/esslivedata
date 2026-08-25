@@ -508,12 +508,11 @@ class WorkflowSpec(BaseModel):
         default_factory=dict,
         description=(
             "Outputs republished as context input streams for other workflows, "
-            "mapping output field name to a stream-name template. The template is "
-            "formatted with ``{source_name}`` once per entry in ``source_names``; "
-            "include the placeholder whenever more than one source is declared, "
-            "otherwise the rendered names collide. A consuming workflow binds the "
-            "rendered name with a ``ContextBinding``; see "
-            ":mod:`ess.livedata.core.context_outputs`."
+            "mapping output field name to a stream name. The name is plain and "
+            "fixed at declaration time: a context stream carries no job identity "
+            "(ADR 0006), so a spec declaring context outputs must have exactly "
+            "one source name. A consuming workflow binds the name with a "
+            "``ContextBinding``; see :mod:`ess.livedata.core.context_outputs`."
         ),
     )
 
@@ -531,6 +530,13 @@ class WorkflowSpec(BaseModel):
                     f"{sorted(unknown)}; declared outputs: "
                     f"{sorted(self.outputs.model_fields)}"
                 )
+        if self.context_outputs and len(self.source_names) != 1:
+            raise ValueError(
+                f"context_outputs requires exactly one source name, got "
+                f"{sorted(self.source_names)}. Context stream names carry no "
+                f"job identity, so every job of a multi-source spec would "
+                f"publish the same names."
+            )
         return self
 
     @field_validator('outputs', mode='after')

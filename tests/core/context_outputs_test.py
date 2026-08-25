@@ -86,7 +86,7 @@ def _spec(
 def spec() -> WorkflowSpec:
     return _spec(
         source_names=['chopper_cascade'],
-        context_outputs={'table': 'wavelength_lut/{source_name}'},
+        context_outputs={'table': 'wavelength_lut/chopper_cascade'},
     )
 
 
@@ -118,31 +118,27 @@ def result(spec: WorkflowSpec) -> JobResult:
 
 def test_context_outputs_validator_rejects_unknown_field() -> None:
     with pytest.raises(ValidationError, match='unknown output field'):
-        _spec(source_names=['a'], context_outputs={'no_such': 'lut/{source_name}'})
+        _spec(source_names=['a'], context_outputs={'no_such': 'lut/x'})
 
 
-def test_renders_one_stream_per_source_name() -> None:
-    spec = _spec(
-        source_names=['a', 'b'],
-        context_outputs={'table': 'wavelength_lut/{source_name}'},
-    )
+def test_context_outputs_validator_rejects_multiple_source_names() -> None:
+    # A stream name carries no job identity, so two jobs of one spec would
+    # publish the same names.
+    with pytest.raises(ValidationError, match='exactly one source name'):
+        _spec(source_names=['a', 'b'], context_outputs={'table': 'lut/x'})
+
+
+def test_resolves_declared_names_for_the_spec_source() -> None:
+    spec = _spec(source_names=['a'], context_outputs={'table': 'wavelength_lut/x'})
 
     resolved = resolve_context_streams({spec.get_id(): spec})
 
-    assert resolved[(spec.get_id(), 'a')] == (('table', 'wavelength_lut/a'),)
-    assert resolved[(spec.get_id(), 'b')] == (('table', 'wavelength_lut/b'),)
-
-
-def test_literal_template_over_multiple_sources_collides() -> None:
-    spec = _spec(source_names=['a', 'b'], context_outputs={'table': 'fixed_name'})
-
-    with pytest.raises(ContextOutputError, match='Duplicate context stream name'):
-        resolve_context_streams({spec.get_id(): spec})
+    assert resolved == {(spec.get_id(), 'a'): (('table', 'wavelength_lut/x'),)}
 
 
 def test_collision_across_specs_is_rejected() -> None:
-    # The rendered names share one namespace, so the check must span the whole
-    # registry rather than each spec in isolation.
+    # The names share one namespace, so the check must span the whole registry
+    # rather than each spec in isolation.
     first = _spec(
         source_names=['a'], context_outputs={'table': 'wavelength_lut/x'}, name='one'
     )
@@ -152,13 +148,6 @@ def test_collision_across_specs_is_rejected() -> None:
 
     with pytest.raises(ContextOutputError, match='Duplicate context stream name'):
         resolve_context_streams({s.get_id(): s for s in (first, second)})
-
-
-def test_bad_placeholder_in_template_raises() -> None:
-    spec = _spec(source_names=['a'], context_outputs={'table': '{nope}/x'})
-
-    with pytest.raises(ContextOutputError, match='placeholder'):
-        resolve_context_streams({spec.get_id(): spec})
 
 
 def test_extracts_only_designated_output(
