@@ -21,11 +21,8 @@ from ess.livedata.workflows.lut_context import (
     detector_lookup_table,
     monitor_lookup_table,
 )
-from ess.livedata.workflows.wavelength_lut_workflow import _with_provenance
-from ess.livedata.workflows.wavelength_lut_workflow_specs import (
-    WavelengthLutParams,
-    lut_stream_name,
-)
+from ess.livedata.workflows.wavelength_lut_workflow import _flatten_table
+from ess.livedata.workflows.wavelength_lut_workflow_specs import lut_stream_name
 
 
 @pytest.fixture
@@ -55,7 +52,7 @@ def table() -> LookupTableType:
 @pytest.fixture
 def wire(table: LookupTableType) -> sc.DataArray:
     """The table as it goes on the wire, flattened by the producer."""
-    return _with_provenance(table, WavelengthLutParams())
+    return _flatten_table(table)
 
 
 def test_round_trip_restores_the_dataclass(
@@ -70,7 +67,7 @@ def test_round_trip_restores_the_dataclass(
     assert sc.identical(restored.time_resolution, table.time_resolution)
 
 
-def test_round_trip_drops_the_provenance_coords_from_the_array(
+def test_round_trip_drops_the_scalar_field_coords_from_the_array(
     wire: sc.DataArray,
 ) -> None:
     # They ride along on the wire but are dataclass fields, not table axes;
@@ -88,7 +85,7 @@ def test_detector_and_monitor_reassemble_to_distinct_keys(
     assert isinstance(monitor_lookup_table(wire), LookupTable)
 
 
-def test_missing_provenance_coord_fails_loud(wire: sc.DataArray) -> None:
+def test_missing_scalar_field_coord_fails_loud(wire: sc.DataArray) -> None:
     truncated = wire.drop_coords(['pulse_stride'])
 
     with pytest.raises(ValueError, match='pulse_stride'):

@@ -130,7 +130,7 @@ def test_every_placeable_component_publishes_a_table(
     assert set(ingested) == expected
 
 
-def test_tables_survive_the_wire_with_their_provenance(
+def test_tables_survive_the_wire_with_their_scalar_fields(
     ingested: dict[str, sc.DataArray],
 ) -> None:
     table = ingested[lut_stream_name(MONITOR)]

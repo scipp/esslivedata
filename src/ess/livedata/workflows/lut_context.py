@@ -37,8 +37,13 @@ from .dynamic_transforms import synthesise_provider
 from .wavelength_lut_workflow_specs import lut_stream_name
 from .workflow_factory import SpecHandle
 
-#: Provenance scalars the producer attaches as coords, in dataclass field order.
-_PROVENANCE = ('pulse_period', 'pulse_stride', 'distance_resolution', 'time_resolution')
+#: Scalar dataclass fields the producer attaches as coords, in field order.
+_SCALAR_FIELDS = (
+    'pulse_period',
+    'pulse_stride',
+    'distance_resolution',
+    'time_resolution',
+)
 
 #: Context key carrying a detector's streamed table, as it arrives on the wire.
 DetectorLutContext = NewType('DetectorLutContext', sc.DataArray)
@@ -49,14 +54,14 @@ MonitorLutContext = NewType('MonitorLutContext', sc.DataArray)
 
 def _unpack(array: sc.DataArray) -> dict:
     """Split a wire table into the ``LookupTable`` dataclass fields."""
-    if missing := [name for name in _PROVENANCE if name not in array.coords]:
+    if missing := [name for name in _SCALAR_FIELDS if name not in array.coords]:
         raise ValueError(
-            f"Streamed lookup table is missing provenance coord(s) {missing}; "
+            f"Streamed lookup table is missing scalar-field coord(s) {missing}; "
             f"got coords {sorted(array.coords)}. The producer attaches these, so "
             "this indicates a table from an incompatible producer version."
         )
     return {
-        'array': array.drop_coords(list(_PROVENANCE)),
+        'array': array.drop_coords(list(_SCALAR_FIELDS)),
         'pulse_period': array.coords['pulse_period'],
         'pulse_stride': int(array.coords['pulse_stride'].value),
         'distance_resolution': array.coords['distance_resolution'],

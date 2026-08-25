@@ -12,7 +12,7 @@ import pydantic
 import pytest
 import scipp as sc
 import scippnexus as snx
-from scipp.testing import assert_identical
+from scipp.testing import assert_allclose, assert_identical
 
 from ess.livedata.config.chopper import delay_setpoint_stream, speed_setpoint_stream
 from ess.livedata.kafka.scipp_da00_compat import da00_to_scipp, scipp_to_da00
@@ -186,7 +186,14 @@ class TestNoChopperWorkflow:
         # Some finite wavelength values are expected; not all NaN.
         assert np.isfinite(lut.values).any()
 
-    def test_provenance_coords_attached(self, no_chopper_geometry: Path) -> None:
+    def test_scalar_field_coords_describe_the_built_table(
+        self, no_chopper_geometry: Path
+    ) -> None:
+        """The coords are the ``LookupTable`` dataclass fields, which describe the
+        table that was built -- not the parameters that were requested. For the
+        time axis the two differ: the builder fits a whole number of bins into
+        the frame period, so the achieved resolution is finer than the request.
+        """
         params = _params()
         wf = create_wavelength_lut_workflow(
             params=params,
@@ -205,12 +212,19 @@ class TestNoChopperWorkflow:
             'time_resolution',
         ):
             assert name in table.coords, name
-        assert_identical(table.coords['pulse_period'], params.pulse.get_period())
+
+        distance = table.coords['distance']
+        time_offset = table.coords['event_time_offset']
+        assert_identical(table.coords['distance_resolution'], distance[1] - distance[0])
         assert_identical(
-            table.coords['distance_resolution'],
-            params.distance_resolution.get(),
+            table.coords['time_resolution'], time_offset[1] - time_offset[0]
         )
-        assert_identical(table.coords['time_resolution'], params.time_resolution.get())
+        assert not sc.identical(
+            table.coords['time_resolution'], params.time_resolution.get()
+        )
+        assert_allclose(
+            table.coords['pulse_period'].to(unit='s'), params.pulse.get_period()
+        )
         assert int(table.coords['pulse_stride'].value) == params.pulse.stride
 
     def test_clear_then_retrigger_produces_fresh_table(

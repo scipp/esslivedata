@@ -790,14 +790,9 @@ def _streamed_lut(filename) -> sc.DataArray:
     """
     from ess.reduce.unwrap.lut import load_lookup_table_from_file
 
-    from ess.livedata.workflows.wavelength_lut_workflow import _with_provenance
-    from ess.livedata.workflows.wavelength_lut_workflow_specs import (
-        WavelengthLutParams,
-    )
+    from ess.livedata.workflows.wavelength_lut_workflow import _flatten_table
 
-    return _with_provenance(
-        load_lookup_table_from_file(str(filename)), WavelengthLutParams()
-    )
+    return _flatten_table(load_lookup_table_from_file(str(filename)))
 
 
 class _MonitorZLog(ValueLog):

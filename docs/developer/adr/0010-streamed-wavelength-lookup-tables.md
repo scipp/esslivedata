@@ -151,10 +151,14 @@ A reduction job binds its detector and monitor tables as distinct keys.
 
 The bound key is essreduce's public `LookupTable[RunType, Component]` dataclass, so
 `Component` distinguishes a job's detector and monitor tables with no new type parameter.
-The wire value is a single `DataArray` carrying the table plus its provenance scalars as
+The wire value is a single `DataArray` carrying the table plus its scalar fields as
 coords, because da00 serializes a `DataArray` and the dataclass has non-array fields
 (`pulse_stride` is an `int`, `choppers` a `DataGroup`). A small provider reassembles the
-dataclass from those coords. It does not route through
+dataclass from those coords. Every coord is taken from the built table, never from the
+job's parameters: these fields describe the table, and the two can differ — the stride may
+be guessed from the choppers, and the builder honours the requested time resolution only
+up to fitting a whole number of bins into the frame period. Parameter provenance rides on
+the identity coord below. The provider does not route through
 `load_lookup_table_from_file`, whose matching branch is a backwards-compatibility shim for
 tables predating the dataclass — depending on it would tie us to a deprecated path and
 silently drop `choppers`, which that format cannot carry. Chopper provenance travels in
@@ -236,7 +240,7 @@ A new LUT means the chopper phasing changed, so the wavelength for a given time-
 changed: data accumulated either side of it are not the same measurement. Consumers clear.
 
 Consumers do not compare tables. The producer stamps an **identity coord** alongside the
-provenance scalars, derived from the inputs that determine the table — the chopper
+scalar fields, derived from the inputs that determine the table — the chopper
 setpoints, pulse period and stride, resolutions, source offset and component range — each
 rounded to a declared precision. Consumers clear when that scalar changes.
 
@@ -287,7 +291,7 @@ event on run transitions, and this is a second trigger on that path.
 ## Consequences
 
 - `WorkflowSpec` gains `context_outputs`; `ContextBinding` gains an opt-in clear flag; the
-  LUT carries an identity coord alongside its provenance scalars.
+  LUT carries an identity coord alongside its scalar fields.
 - A new `StreamKind`, topic, sink route, ingest route and preprocessor case. The ingest
   half is the genuinely new mechanism, with no precedent in ADR 0006.
 - Route derivation will gather the LUT stream names and then drop them, since they appear

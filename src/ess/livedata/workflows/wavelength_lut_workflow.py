@@ -86,9 +86,10 @@ ChopperCascadeTrigger = NewType('ChopperCascadeTrigger', sc.DataArray)
 #: configured cut distance).
 WavelengthBands = NewType('WavelengthBands', sc.DataArray)
 
-#: Sciline key for the user-facing parameter bundle, used by the provenance
-#: provider. Distinct from the individual parameter keys (PulsePeriod, etc.)
-#: that the upstream pipeline consumes (and may unit-convert internally).
+#: Sciline key for the user-facing parameter bundle, used by the chopper-cascade
+#: bands provider for settings the upstream pipeline knows nothing about.
+#: Distinct from the individual parameter keys (PulsePeriod, etc.) that the
+#: upstream pipeline consumes (and may unit-convert internally).
 ParamsKey = NewType('ParamsKey', WavelengthLutParams)
 
 
@@ -176,25 +177,25 @@ def build_disk_choppers_provider(
     return synthesise_provider('_provide_disk_choppers', _impl, annotations)
 
 
-def _with_provenance(
-    table: LookupTable[AnyRun, _LUT_COMPONENT], params: WavelengthLutParams
-) -> sc.DataArray:
-    """Attach the four scalar input parameters as 0-D coords on the result.
+def _flatten_table(table: LookupTable[AnyRun, _LUT_COMPONENT]) -> sc.DataArray:
+    """Attach the dataclass's four scalar fields as 0-D coords on the array.
 
     Makes the published da00 message self-describing: a consumer can
     reconstruct the upstream ``LookupTable`` dataclass from the array alone,
-    without out-of-band coordination on parameter values. Pulling from
-    ``params`` (not ``table``) keeps the units user-facing — the upstream
-    pipeline may convert internally. The stride is the exception: it is read
-    back from ``table`` so the coord reflects the value actually used, which
-    with auto-detection is guessed from the choppers rather than supplied by
-    ``params``.
+    without out-of-band coordination.
+
+    Every coord comes from ``table``, never from the job's parameters, because
+    these fields describe the table that was built rather than what was asked
+    for. The two differ: ``pulse_stride`` may be guessed from the choppers
+    instead of supplied, and the builder honours the requested time resolution
+    only up to fitting a whole number of bins into the frame period. Parameter
+    provenance rides on the identity coord instead (ADR 0010).
     """
     arr = table.array.copy()
-    arr.coords['pulse_period'] = params.pulse.get_period()
+    arr.coords['pulse_period'] = table.pulse_period
     arr.coords['pulse_stride'] = sc.scalar(int(table.pulse_stride))
-    arr.coords['distance_resolution'] = params.distance_resolution.get()
-    arr.coords['time_resolution'] = params.time_resolution.get()
+    arr.coords['distance_resolution'] = table.distance_resolution
+    arr.coords['time_resolution'] = table.time_resolution
     return arr
 
 
@@ -303,7 +304,6 @@ def _make_component_lut_provider(
         pulse_period: sc.Variable,
         pulse_stride: int,
         frames: Any,
-        params: WavelengthLutParams,
     ) -> sc.DataArray:
         table = make_wavelength_lut_from_polygons(
             ltotal_range=ltotal_range,
@@ -313,7 +313,7 @@ def _make_component_lut_provider(
             pulse_stride=pulse_stride,
             frames=frames,
         )
-        return _with_provenance(table, params)
+        return _flatten_table(table)
 
     return synthesise_provider(
         f'_provide_lut_{_identifier(component)}',
@@ -324,7 +324,6 @@ def _make_component_lut_provider(
             'pulse_period': PulsePeriod,
             'pulse_stride': PulseStride[AnyRun],
             'frames': ChopperFrameSequence[AnyRun],
-            'params': ParamsKey,
             'return': key,
         },
     )
