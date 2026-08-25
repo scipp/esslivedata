@@ -270,8 +270,9 @@ def test_shipped_template_data_sources_resolve(
     assert workflow_id in registry, f'{workflow_id} is not a registered workflow'
     spec = registry[workflow_id]
 
-    assert set(source_names) <= set(spec.source_names), (
-        f'{workflow_id} sources {source_names} are not a subset of {spec.source_names}'
+    available_sources = spec.sources_for_output(view_name)
+    assert set(source_names) <= set(available_sources), (
+        f'{workflow_id} sources {source_names} are not a subset of {available_sources}'
     )
 
     view = spec.get_output_view(view_name)

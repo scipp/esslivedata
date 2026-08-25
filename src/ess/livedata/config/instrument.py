@@ -714,6 +714,7 @@ class Instrument:
         outputs: type[Any],
         device_outputs: dict[str, str] | None = None,
         context_outputs: dict[str, str] | None = None,
+        output_subjects: dict[str, list[str]] | None = None,
         reset_on_run_transition: bool = True,
         supports_reset: bool = True,
     ) -> SpecHandle:
@@ -776,6 +777,7 @@ class Instrument:
             outputs=outputs,
             device_outputs=device_outputs or {},
             context_outputs=context_outputs or {},
+            output_subjects=output_subjects or {},
             reset_on_run_transition=reset_on_run_transition,
             supports_reset=supports_reset,
         )

@@ -241,13 +241,19 @@ class _Job:
         """Wire-facing state, derived from health as the backend derives it."""
         return JobState.active if self.error_message is None else JobState.error
 
-    def output_templates(self) -> Mapping[str, sc.DataArray]:
-        """Templates for every output field that declares one."""
-        return {
-            name: field.default_factory()
+    def output_templates(self) -> list[tuple[str, str | None, sc.DataArray]]:
+        """``(output_name, subject, template)`` for every output declaring one.
+
+        A subject-keyed output yields one entry per subject, mirroring the one
+        message per subject the real backend publishes; ``subject`` is ``None``
+        for an ordinary output.
+        """
+        return [
+            (name, subject, field.default_factory())
             for name, field in self.spec.outputs.model_fields.items()
             if field.default_factory is not None
-        }
+            for subject in self.spec.output_subjects.get(name) or [None]
+        ]
 
 
 class FakeBackend:
@@ -370,11 +376,12 @@ class FakeBackend:
         variants = roi_variants(job.rois)
         now = Timestamp.from_ns(timestamp_ns)
         messages = []
-        for output_name, template in job.output_templates().items():
+        for output_name, subject, template in job.output_templates():
             key = ResultKey(
                 workflow_id=job.config.identifier,
                 job_id=job.config.job_id,
                 output_name=output_name,
+                subject=subject,
             )
             stream = StreamId(kind=StreamKind.LIVEDATA_DATA, name=key.model_dump_json())
             if output_name in _ROI_READBACK_KEYS:

@@ -34,7 +34,8 @@ class TestJobResult:
         assert result.stream_name == (
             '{"workflow_id":{"instrument":"TEST",'
             '"name":"test_workflow","version":1},"job_id":{"source_name":"test_source",'
-            '"job_number":"' + str(job_number) + '"},"output_name":"result"}'
+            '"job_number":"' + str(job_number) + '"},"output_name":"result",'
+            '"subject":null}'
         )
 
 

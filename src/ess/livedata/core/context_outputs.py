@@ -45,14 +45,14 @@ class ContextOutputError(ValueError):
 
 def resolve_context_streams(
     registry: Mapping[WorkflowId, WorkflowSpec],
-) -> dict[tuple[str, str], tuple[tuple[str, str], ...]]:
+) -> dict[tuple[str, str], tuple[tuple[str, str, str | None], ...]]:
     """Resolve every ``context_outputs`` declaration in a workflow registry.
 
     Renders each declared stream-name template once per source name the spec
-    declares, and checks that no two declarations render the same name. The
-    check spans the whole registry because the rendered names share one
-    namespace: two specs publishing the same name would interleave silently at
-    the consumer.
+    declares — or, for a subject-keyed output, once per subject — and checks
+    that no two declarations render the same name. The check spans the whole
+    registry because the rendered names share one namespace: two specs
+    publishing the same name would interleave silently at the consumer.
 
     Parameters
     ----------
@@ -64,7 +64,9 @@ def resolve_context_streams(
     -------
     :
         Mapping from ``(workflow_id, source_name)`` to the
-        ``(output_name, stream_name)`` pairs that job republishes.
+        ``(output_name, stream_name, subject)`` triples that job republishes.
+        ``subject`` is ``None`` unless the output is subject-keyed, in which
+        case it selects the entry to publish under ``stream_name``.
 
     Raises
     ------
@@ -72,29 +74,37 @@ def resolve_context_streams(
         If a template has an unknown placeholder, or if two declarations render
         the same stream name.
     """
-    resolved: dict[tuple[str, str], list[tuple[str, str]]] = {}
+    resolved: dict[tuple[str, str], list[tuple[str, str, str | None]]] = {}
     seen: dict[str, tuple[str, str, str]] = {}
     for workflow_id, spec in registry.items():
         for output_name, template in spec.context_outputs.items():
+            # A subject-keyed output publishes one stream per subject rather
+            # than one per source: the job has a single source, but its results
+            # describe many entities. Rendering over subjects keeps one stream
+            # name per published table either way.
+            subjects = spec.output_subjects.get(output_name)
             for source_name in spec.source_names:
-                try:
-                    stream_name = template.format(source_name=source_name)
-                except (KeyError, IndexError) as exc:
-                    raise ContextOutputError(
-                        f"Invalid context_outputs template {template!r} on "
-                        f"{workflow_id}: unknown placeholder {exc}"
-                    ) from exc
-                key = (str(workflow_id), source_name, output_name)
-                if (previous := seen.get(stream_name)) is not None:
-                    raise ContextOutputError(
-                        f"Duplicate context stream name {stream_name!r} rendered "
-                        f"by {previous} and {key}"
+                for subject in subjects or [None]:
+                    try:
+                        stream_name = template.format(
+                            source_name=source_name, subject=subject
+                        )
+                    except (KeyError, IndexError) as exc:
+                        raise ContextOutputError(
+                            f"Invalid context_outputs template {template!r} on "
+                            f"{workflow_id}: unknown placeholder {exc}"
+                        ) from exc
+                    key = (str(workflow_id), subject or source_name, output_name)
+                    if (previous := seen.get(stream_name)) is not None:
+                        raise ContextOutputError(
+                            f"Duplicate context stream name {stream_name!r} "
+                            f"rendered by {previous} and {key}"
+                        )
+                    seen[stream_name] = key
+                    resolved.setdefault((str(workflow_id), source_name), []).append(
+                        (output_name, stream_name, subject)
                     )
-                seen[stream_name] = key
-                resolved.setdefault((str(workflow_id), source_name), []).append(
-                    (output_name, stream_name)
-                )
-    return {key: tuple(pairs) for key, pairs in resolved.items()}
+    return {key: tuple(entries) for key, entries in resolved.items()}
 
 
 class ContextOutputExtractor:
@@ -134,8 +144,10 @@ class ContextOutputExtractor:
             if result.data is None:
                 continue
             key = (str(result.workflow_id), result.job_id.source_name)
-            for output_name, stream_name in self._streams.get(key, ()):
+            for output_name, stream_name, subject in self._streams.get(key, ()):
                 value = result.data.get(output_name)
+                if subject is not None:
+                    value = None if value is None else value.get(subject)
                 if value is None:
                     continue
                 messages.append(

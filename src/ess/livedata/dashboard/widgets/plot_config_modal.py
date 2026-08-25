@@ -1153,10 +1153,15 @@ class SpecBasedConfigurationStep(WizardStep[PlotterSelection | None, PlotConfig]
             if workflow_spec is None:
                 show_error('Workflow spec not found')
                 return
-            if not workflow_spec.source_names:
+            # The sources an output is available for are a property of the
+            # output, not of the workflow: a subject-keyed output describes
+            # entities other than the job's own source.
+            source_names = workflow_spec.sources_for_output(
+                self._plotter_selection.view_name
+            )
+            if not source_names:
                 show_error('No sources available for workflow')
                 return
-            source_names = workflow_spec.source_names
 
         try:
             plot_spec = self._plotting_controller.get_spec(

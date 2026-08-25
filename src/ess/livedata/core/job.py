@@ -253,12 +253,16 @@ def _add_time_coords(
             return val
         return val.assign_coords(start_time=start_coord, time=time_coord)
 
-    return sc.DataGroup(
-        {
-            key: (maybe_add_coords(val) if isinstance(val, sc.DataArray) else val)
-            for key, val in data.items()
-        }
-    )
+    def stamp(val):
+        if isinstance(val, sc.DataArray):
+            return maybe_add_coords(val)
+        # A subject-keyed output nests one DataGroup level; its entries are
+        # ordinary outputs and are stamped with the same job bounds.
+        if isinstance(val, sc.DataGroup):
+            return sc.DataGroup({key: stamp(item) for key, item in val.items()})
+        return val
+
+    return sc.DataGroup({key: stamp(val) for key, val in data.items()})
 
 
 class Job:

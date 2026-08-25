@@ -183,13 +183,24 @@ class UnrollingSinkAdapter[T](MessageSink[T | sc.DataGroup[T]]):
             if isinstance(msg.value, sc.DataGroup):
                 result_key = ResultKey.model_validate_json(msg.stream.name)
                 for name, value in msg.value.items():
-                    key = ResultKey(
-                        workflow_id=result_key.workflow_id,
-                        job_id=result_key.job_id,
-                        output_name=name,
+                    # A nested DataGroup is a subject-keyed output: one job
+                    # computing a quantity about several entities (see
+                    # WorkflowSpec.output_subjects). Outputs are DataArrays, so
+                    # the nesting is unambiguous and needs no spec lookup here.
+                    subjects = (
+                        value.items()
+                        if isinstance(value, sc.DataGroup)
+                        else [(None, value)]
                     )
-                    stream = replace(msg.stream, name=key.model_dump_json())
-                    unrolled.append(replace(msg, stream=stream, value=value))
+                    for subject, item in subjects:
+                        key = ResultKey(
+                            workflow_id=result_key.workflow_id,
+                            job_id=result_key.job_id,
+                            output_name=name,
+                            subject=subject,
+                        )
+                        stream = replace(msg.stream, name=key.model_dump_json())
+                        unrolled.append(replace(msg, stream=stream, value=item))
             else:
                 unrolled.append(msg)
         self._sink.publish_messages(unrolled)

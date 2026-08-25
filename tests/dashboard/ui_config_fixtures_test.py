@@ -71,9 +71,11 @@ class TestPlotConfigsFixture:
         for layer in _layers(instrument):
             for ds in layer['data_sources'].values():
                 spec = registry[WorkflowId.from_string(ds['workflow_id'])]
-                assert set(ds['source_names']) <= set(spec.source_names)
                 view_names = {v.name for v in spec.get_output_views()}
                 assert ds['view_name'] in view_names
+                assert set(ds['source_names']) <= set(
+                    spec.sources_for_output(ds['view_name'])
+                )
 
     def test_plotters_accept_the_data_they_are_pointed_at(
         self, instrument: str

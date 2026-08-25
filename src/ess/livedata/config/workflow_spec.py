@@ -362,13 +362,23 @@ class ResultKey(BaseModel, frozen=True):
     output_name: str = Field(
         default='result', description="Name of the workflow output"
     )
+    subject: str | None = Field(
+        default=None,
+        description=(
+            "Entity this result describes, when it is not the job's own source. "
+            "A job's results normally describe the source it consumes, and the "
+            "two names coincide; an output declared in "
+            "``WorkflowSpec.output_subjects`` instead yields one result per "
+            "subject, all from the one job. ``None`` means the job's source."
+        ),
+    )
 
     @property
     def data_key(self) -> DataKey:
         """Stable dashboard key for this result, stripping the job_number."""
         return DataKey(
             workflow_id=self.workflow_id,
-            source_name=self.job_id.source_name,
+            source_name=self.subject or self.job_id.source_name,
             output_name=self.output_name,
         )
 
@@ -517,12 +527,38 @@ class WorkflowSpec(BaseModel):
         ),
     )
 
+    output_subjects: dict[str, list[str]] = Field(
+        default_factory=dict,
+        description=(
+            "Outputs that describe entities other than the job's own source, "
+            "mapping output field name to the subjects it covers. A job's "
+            "results normally describe the source it consumes, so the two "
+            "coincide and this stays empty. Where they diverge — one job "
+            "computing a quantity *about* many components — the workflow "
+            "returns a ``DataGroup`` keyed by subject for that field, and each "
+            "entry is published under its own subject. The dashboard keys such "
+            "results by subject, so they are selected on the source axis, where "
+            "multi-select lives."
+        ),
+    )
+
+    def sources_for_output(self, view_name: str) -> list[str]:
+        """Source names the given output view is available for.
+
+        The subjects declared for the view's backing field, falling back to the
+        workflow's own ``source_names`` — which is what every output of an
+        ordinary workflow describes.
+        """
+        subjects = self.output_subjects.get(self.field_for(view_name, 'since_start'))
+        return list(subjects) if subjects else list(self.source_names)
+
     @model_validator(mode='after')
     def validate_designated_outputs(self) -> WorkflowSpec:
         """Validate that every designated output is a real output field."""
         for field_name, declared in (
             ('device_outputs', self.device_outputs),
             ('context_outputs', self.context_outputs),
+            ('output_subjects', self.output_subjects),
         ):
             unknown = set(declared) - set(self.outputs.model_fields)
             if unknown:
@@ -931,8 +967,8 @@ def find_timeseries_outputs(
 
         results.extend(
             (workflow_id, source_name, view_name)
-            for source_name in spec.source_names
             for view_name in timeseries_views
+            for source_name in spec.sources_for_output(view_name)
         )
 
     return results

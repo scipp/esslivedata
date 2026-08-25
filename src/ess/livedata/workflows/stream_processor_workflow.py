@@ -14,6 +14,7 @@ if TYPE_CHECKING:
 
 import sciline
 import sciline.typing
+import scipp as sc
 from ess.reduce import streaming
 
 from ess.livedata.config.value_log import ValueLog
@@ -74,7 +75,11 @@ class StreamProcessorWorkflow(Workflow):
             before the graph is built because ``StreamProcessor`` bakes them
             into the pruned/precomputed pipeline at construction.
         target_keys:
-            Mapping from output names to sciline keys for target outputs.
+            Mapping from output names to sciline keys for target outputs. An
+            entry may instead map to a ``{subject: key}`` mapping, declaring a
+            subject-keyed output: one output name covering several entities,
+            which ``finalize`` returns as a ``DataGroup`` and the sink publishes
+            as one message per subject. See ``WorkflowSpec.output_subjects``.
         window_outputs:
             Output names representing the current window (delta since last finalize).
             These receive their own ``start_time``/``time`` coords, bounding the
@@ -166,9 +171,17 @@ class StreamProcessorWorkflow(Workflow):
             self._base_workflow,
             dynamic_keys=tuple(self._dynamic_keys.values()),
             context_keys=tuple(self._context_keys.values()),
-            target_keys=tuple(self._target_keys.values()),
+            target_keys=tuple(self._flat_target_keys()),
             **self._kwargs,
         )
+
+    def _flat_target_keys(self) -> list[sciline.typing.Key]:
+        """Every sciline target, flattening subject-keyed outputs."""
+        return [
+            key
+            for target in self._target_keys.values()
+            for key in (target.values() if isinstance(target, Mapping) else [target])
+        ]
 
     @property
     def _processor(self) -> streaming.StreamProcessor:
@@ -224,7 +237,17 @@ class StreamProcessorWorkflow(Workflow):
 
     def finalize(self) -> dict[str, Any]:
         targets = self._processor.finalize()
-        results = {name: targets[key] for name, key in self._target_keys.items()}
+        # A Mapping target is a subject-keyed output: one output name covering
+        # several entities, published one message per subject. See
+        # WorkflowSpec.output_subjects.
+        results = {
+            name: (
+                sc.DataGroup({subject: targets[key] for subject, key in target.items()})
+                if isinstance(target, Mapping)
+                else targets[target]
+            )
+            for name, target in self._target_keys.items()
+        }
 
         # Add time coords to window outputs
         if self._window_outputs and self._current_start_time is not None:
