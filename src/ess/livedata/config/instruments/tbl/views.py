@@ -46,5 +46,11 @@ def get_he3_spectrum(histogram: sc.DataArray) -> sc.DataArray:
 
 
 def get_multiblade_spectrum(histogram: sc.DataArray) -> sc.DataArray:
-    """Sum over the ``strip`` axis (constant scattering angle)."""
+    """Sum over the ``strip`` axis, the detector's coarse direction.
+
+    The inclined blades make ``blade`` and ``wire`` interleave into 448 effective
+    channels at ~0.33 mm pitch along the stacking axis, an order of magnitude finer
+    than the 4 mm strip pitch across the face. Summing strips is what keeps the
+    resolution the multiblade exists to provide.
+    """
     return histogram.sum('strip')
