@@ -33,3 +33,24 @@ def get_he3_detector_view(da: sc.DataArray, source_name: str) -> sc.DataArray:
 def identity(da: sc.DataArray, source_name: str) -> sc.DataArray:
     """Identity transform (no-op)."""
     return da
+
+
+def get_he3_spectrum(histogram: sc.DataArray) -> sc.DataArray:
+    """Per-tube, per-pixel He3 spectra.
+
+    A bank is 4 tubes of 100 pixels, small enough to publish without any spatial
+    reduction. The copy decouples the published result from the cumulative
+    accumulator's buffer, which the next update mutates in place.
+    """
+    return histogram.copy()
+
+
+def get_multiblade_spectrum(histogram: sc.DataArray) -> sc.DataArray:
+    """Sum over the ``strip`` axis, the detector's coarse direction.
+
+    The inclined blades make ``blade`` and ``wire`` interleave into 448 effective
+    channels at ~0.33 mm pitch along the stacking axis, an order of magnitude finer
+    than the 4 mm strip pitch across the face. Summing strips is what keeps the
+    resolution the multiblade exists to provide.
+    """
+    return histogram.sum('strip')

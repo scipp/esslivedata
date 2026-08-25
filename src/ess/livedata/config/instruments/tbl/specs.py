@@ -13,14 +13,24 @@ from ess.livedata.config import (
 )
 from ess.livedata.config.device_contract import COUNTS_TOTAL_DEVICE
 from ess.livedata.config.workflow_spec import DETECTORS
-from ess.livedata.workflows.detector_view_specs import DetectorViewOutputs
+from ess.livedata.workflows.detector_view_specs import (
+    DetectorViewOutputs,
+    SpectrumViewSpec,
+)
 from ess.livedata.workflows.monitor_workflow_specs import (
     TOAOnlyMonitorDataParams,
     register_monitor_workflow_specs,
 )
 
 from .streams_parsed import PARSED_STREAMS
-from .views import fold_image, get_he3_detector_view, get_multiblade_view, identity
+from .views import (
+    fold_image,
+    get_he3_detector_view,
+    get_he3_spectrum,
+    get_multiblade_spectrum,
+    get_multiblade_view,
+    identity,
+)
 
 detector_names = [
     'timepix3_detector',
@@ -75,8 +85,14 @@ instrument.add_logical_view(
     description='Counts folded into blade, wire, and strip dimensions',
     source_names=['multiblade_detector'],
     transform=get_multiblade_view,
-    roi_support=True,
+    # ROI geometries are rectangles and polygons on a 2D screen; this view is 3D.
+    roi_support=False,
     output_ndim=3,
+    spectrum_view=SpectrumViewSpec(
+        transform=get_multiblade_spectrum,
+        output_dims=['blade', 'wire'],
+        extra_description='Summed across strips, yielding per-blade, per-wire spectra.',
+    ),
     device_outputs=COUNTS_TOTAL_DEVICE,
 )
 
@@ -87,6 +103,11 @@ instrument.add_logical_view(
     source_names=['he3_detector_bank0', 'he3_detector_bank1'],
     transform=get_he3_detector_view,
     roi_support=True,
+    spectrum_view=SpectrumViewSpec(
+        transform=get_he3_spectrum,
+        output_dims=['tube', 'pixel'],
+        extra_description='Per-tube, per-pixel spectra, without spatial reduction.',
+    ),
     device_outputs=COUNTS_TOTAL_DEVICE,
 )
 
