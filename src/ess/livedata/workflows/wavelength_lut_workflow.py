@@ -48,7 +48,6 @@ from ess.reduce.unwrap import GenericUnwrapWorkflow
 from ess.reduce.unwrap.lut import (
     ChopperFrameSequence,
     DistanceResolution,
-    LookupTable,
     PulsePeriod,
     PulseStride,
     TimeResolution,
@@ -59,7 +58,7 @@ from ess.reduce.unwrap.lut import (
 from ..config.chopper import delay_setpoint_stream, speed_setpoint_stream
 from ..config.stream import AxisRange
 from .dynamic_transforms import synthesise_provider
-from .lut_blocks import Range, blocks_by_gap, one_block
+from .lut_blocks import Range, blocks_by_gap, one_block, pack_blocks
 from .lut_ranges import LtotalRangeError, component_ltotal_range
 from .stream_processor_workflow import StreamProcessorWorkflow
 from .wavelength_lut_workflow_specs import (
@@ -72,11 +71,6 @@ from .wavelength_lut_workflow_specs import (
 from .workflow_factory import SpecHandle, Workflow
 
 logger = structlog.get_logger(__name__)
-
-#: Component the upstream ``LookupTable`` type is parametrised by. Irrelevant to
-#: what is published: a table is a function of distance and event_time_offset,
-#: and the consumer picks its rows by flight path, not by this parameter.
-_LUT_COMPONENT = snx.NXdetector
 
 #: The chopper-cascade trigger payload as it reaches the workflow: the
 #: cumulative ``ToNXlog`` timeseries for the synthetic ``chopper_cascade``
@@ -192,36 +186,6 @@ def build_disk_choppers_provider(
     return synthesise_provider('_provide_disk_choppers', _impl, annotations)
 
 
-def _flatten_blocks(
-    blocks: Sequence[LookupTable[AnyRun, _LUT_COMPONENT]],
-) -> sc.DataArray:
-    """Concatenate blocks and attach the dataclass's scalar fields as coords.
-
-    Makes the published da00 message self-describing: a consumer can select its
-    block and reconstruct the upstream ``LookupTable`` dataclass from the array
-    alone, without out-of-band coordination. ``distance_resolution`` doubles as
-    the marker that separates the blocks again (see
-    :mod:`~ess.livedata.workflows.lut_blocks`).
-
-    Every coord comes from the built table, never from the job's parameters,
-    because these fields describe the table that was built rather than what was
-    asked for. The two differ: ``pulse_stride`` may be guessed from the choppers
-    instead of supplied, and the builder honours the requested time resolution
-    only up to fitting a whole number of bins into the frame period. Parameter
-    provenance rides on the identity coord instead (ADR 0010).
-
-    The blocks share every scalar field: they are built from one cascade with
-    one set of parameters, differing only in the range they cover.
-    """
-    first = blocks[0]
-    arr = sc.concat([block.array for block in blocks], 'distance')
-    arr.coords['pulse_period'] = first.pulse_period
-    arr.coords['pulse_stride'] = sc.scalar(int(first.pulse_stride))
-    arr.coords['distance_resolution'] = first.distance_resolution
-    arr.coords['time_resolution'] = first.time_resolution
-    return arr
-
-
 def make_wavelength_bands_from_frames(
     pulse_period: PulsePeriod,
     pulse_stride: PulseStride[AnyRun],
@@ -301,7 +265,7 @@ def _build_table(
     frames: Any,
 ) -> sc.DataArray:
     """Rasterize the cascade onto each block and concatenate the results."""
-    return _flatten_blocks(
+    return pack_blocks(
         [
             make_wavelength_lut_from_polygons(
                 ltotal_range=block,

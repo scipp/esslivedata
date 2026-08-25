@@ -23,10 +23,9 @@ format cannot carry it -- so the reassembled dataclass leaves it at its
 ``None`` default; ADR 0010 assigns chopper provenance to the table's identity
 stamp rather than to this field.
 
-The wire value is a single ``DataArray`` because da00 serializes a
-``DataArray`` and the dataclass has non-array fields (``pulse_stride`` is an
-``int``). The producer attaches the remaining fields as 0-D coords; this module
-is the inverse of that.
+The wire value is a single ``DataArray``; taking it apart is
+:func:`~ess.livedata.workflows.lut_blocks.unpack_block`, which owns that format
+jointly with the producer-side packing.
 """
 
 from __future__ import annotations
@@ -41,21 +40,13 @@ from ess.reduce.unwrap import LookupTable
 from ess.reduce.unwrap.types import DetectorLtotal, MonitorLtotal
 
 from ..config.instrument import Instrument
-from .lut_blocks import select_block
+from .lut_blocks import unpack_block
 from .wavelength_lut_workflow_specs import (
     DETECTOR_LUT_OUTPUT,
     LUT_STREAM_NAMES,
     MONITOR_LUT_OUTPUT,
 )
 from .workflow_factory import SpecHandle
-
-#: Scalar dataclass fields the producer attaches as coords, in field order.
-_SCALAR_FIELDS = (
-    'pulse_period',
-    'pulse_stride',
-    'distance_resolution',
-    'time_resolution',
-)
 
 #: Context key carrying the detectors' streamed table, as it arrives on the wire.
 DetectorLutContext = NewType('DetectorLutContext', sc.DataArray)
@@ -64,29 +55,11 @@ DetectorLutContext = NewType('DetectorLutContext', sc.DataArray)
 MonitorLutContext = NewType('MonitorLutContext', sc.DataArray)
 
 
-def _unpack(wire: sc.DataArray, ltotal: sc.Variable) -> dict:
-    """Split this job's block of a wire table into ``LookupTable`` fields."""
-    if missing := [name for name in _SCALAR_FIELDS if name not in wire.coords]:
-        raise ValueError(
-            f"Streamed lookup table is missing scalar-field coord(s) {missing}; "
-            f"got coords {sorted(wire.coords)}. The producer attaches these, so "
-            "this indicates a table from an incompatible producer version."
-        )
-    block = select_block(wire, ltotal)
-    return {
-        'array': block.drop_coords(list(_SCALAR_FIELDS)),
-        'pulse_period': block.coords['pulse_period'],
-        'pulse_stride': int(block.coords['pulse_stride'].value),
-        'distance_resolution': block.coords['distance_resolution'],
-        'time_resolution': block.coords['time_resolution'],
-    }
-
-
 def detector_lookup_table(
     wire: DetectorLutContext, ltotal: DetectorLtotal[SampleRun]
 ) -> LookupTable[SampleRun, snx.NXdetector]:
     """Reassemble a detector's lookup table from the detector context stream."""
-    return LookupTable[SampleRun, snx.NXdetector](**_unpack(wire, ltotal))
+    return LookupTable[SampleRun, snx.NXdetector](**unpack_block(wire, ltotal))
 
 
 def monitor_lookup_table(
@@ -100,7 +73,7 @@ def monitor_lookup_table(
     its own block via its own ``MonitorLtotal``, so which monitor fills a role
     is settled by the geometry the job already has, not by the stream it binds.
     """
-    return LookupTable[SampleRun, MonitorType](**_unpack(wire, ltotal))
+    return LookupTable[SampleRun, MonitorType](**unpack_block(wire, ltotal))
 
 
 def bind_lookup_tables(

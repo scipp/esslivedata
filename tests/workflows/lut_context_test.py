@@ -18,11 +18,11 @@ from ess.reduce.nexus.types import SampleRun
 from ess.reduce.unwrap import LookupTable
 from ess.reduce.unwrap.types import LookupTable as LookupTableType
 
+from ess.livedata.workflows.lut_blocks import pack_blocks
 from ess.livedata.workflows.lut_context import (
     detector_lookup_table,
     monitor_lookup_table,
 )
-from ess.livedata.workflows.wavelength_lut_workflow import _flatten_blocks
 from ess.livedata.workflows.wavelength_lut_workflow_specs import LUT_STREAM_NAMES
 
 
@@ -59,13 +59,13 @@ def table() -> LookupTableType:
 @pytest.fixture
 def wire(table: LookupTableType) -> sc.DataArray:
     """A single-block table as it goes on the wire, flattened by the producer."""
-    return _flatten_blocks([table])
+    return pack_blocks([table])
 
 
 @pytest.fixture
 def two_block_wire() -> sc.DataArray:
     """A monitor-shaped table: two blocks, far apart in flight path."""
-    return _flatten_blocks([_block(start=10.0, rows=4), _block(start=70.0, rows=4)])
+    return pack_blocks([_block(start=10.0, rows=4), _block(start=70.0, rows=4)])
 
 
 def _ltotal(value: float) -> sc.Variable:

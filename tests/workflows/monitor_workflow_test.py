@@ -795,9 +795,9 @@ def _streamed_lut(filename) -> sc.DataArray:
     """
     from ess.reduce.unwrap.lut import load_lookup_table_from_file
 
-    from ess.livedata.workflows.wavelength_lut_workflow import _flatten_blocks
+    from ess.livedata.workflows.lut_blocks import pack_blocks
 
-    return _flatten_blocks([load_lookup_table_from_file(str(filename))])
+    return pack_blocks([load_lookup_table_from_file(str(filename))])
 
 
 class _MonitorZLog(ValueLog):

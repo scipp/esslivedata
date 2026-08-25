@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: BSD-3-Clause
 # Copyright (c) 2025 Scipp contributors (https://github.com/scipp)
-"""Block structure of a streamed wavelength lookup table.
+"""Block structure and wire format of a streamed wavelength lookup table.
 
 A lookup table is a uniform grid in ``distance``, so one table per component
 would be the obvious layout -- and is a poor one: components an instrument
@@ -12,6 +12,11 @@ A table instead carries one uniform *block* per group of components that sit
 close together, concatenated along ``distance``. The detectors share one dense
 block; each monitor gets its own, so the monitor table is a handful of rows at
 each monitor's flight path and nothing in between.
+
+This module owns both halves of the wire format: :func:`pack_blocks` builds
+the published ``DataArray`` from the blocks, :func:`unpack_block` takes it
+apart again into one job's ``LookupTable``. They are inverses, and live
+together so what the wire carries is written down once.
 
 The concatenation is deliberately *not* a uniform grid, and essreduce's
 interpolator assumes one: ``interpolator_numba`` locates a row as
@@ -32,9 +37,11 @@ from __future__ import annotations
 
 import itertools
 from collections.abc import Iterable, Sequence
+from typing import Any
 
 import numpy as np
 import scipp as sc
+from ess.reduce.unwrap import LookupTable
 
 #: Flight-path interval a single block covers, ``(start, stop)``.
 Range = tuple[sc.Variable, sc.Variable]
@@ -143,3 +150,65 @@ def block_ranges(table: sc.DataArray) -> Sequence[Range]:
         (distance[start], distance[stop - 1])
         for start, stop in _block_bounds(distance, resolution)
     ]
+
+
+#: Non-array ``LookupTable`` fields, carried on the wire as 0-D coords. The
+#: dataclass cannot be serialized as such -- da00 transports a ``DataArray``,
+#: and ``pulse_stride`` is an ``int`` -- so the array carries them itself,
+#: making the published message self-describing.
+_SCALAR_FIELDS = (
+    'pulse_period',
+    'pulse_stride',
+    'distance_resolution',
+    'time_resolution',
+)
+
+
+def pack_blocks(blocks: Sequence[LookupTable]) -> sc.DataArray:
+    """Concatenate blocks into the table as published.
+
+    ``distance_resolution`` does double duty: it is a ``LookupTable`` field and
+    it is what lets :func:`select_block` tell the blocks apart again.
+
+    Every coord comes from the built table, never from the job's parameters,
+    because these fields describe the table that was built rather than what was
+    asked for. The two differ: ``pulse_stride`` may be guessed from the choppers
+    instead of supplied, and the builder honours the requested time resolution
+    only up to fitting a whole number of bins into the frame period. Parameter
+    provenance rides on the identity coord instead (ADR 0010).
+
+    The blocks share every scalar field: they are built from one cascade with
+    one set of parameters, differing only in the range they cover. Which
+    component the upstream ``LookupTable`` type is parametrised by is irrelevant
+    to what is published, since the consumer picks its rows by flight path.
+    """
+    first = blocks[0]
+    table = sc.concat([block.array for block in blocks], 'distance')
+    table.coords['pulse_period'] = first.pulse_period
+    table.coords['pulse_stride'] = sc.scalar(int(first.pulse_stride))
+    table.coords['distance_resolution'] = first.distance_resolution
+    table.coords['time_resolution'] = first.time_resolution
+    return table
+
+
+def unpack_block(table: sc.DataArray, ltotal: sc.Variable) -> dict[str, Any]:
+    """Split one job's block of a published table into ``LookupTable`` fields.
+
+    The inverse of :func:`pack_blocks`, restricted to the block covering
+    ``ltotal``. Returned as a field mapping rather than a ``LookupTable`` so the
+    caller supplies the run and component the key is parametrised by.
+    """
+    if missing := [name for name in _SCALAR_FIELDS if name not in table.coords]:
+        raise ValueError(
+            f"Streamed lookup table is missing scalar-field coord(s) {missing}; "
+            f"got coords {sorted(table.coords)}. The producer attaches these, so "
+            "this indicates a table from an incompatible producer version."
+        )
+    block = select_block(table, ltotal)
+    return {
+        'array': block.drop_coords(list(_SCALAR_FIELDS)),
+        'pulse_period': block.coords['pulse_period'],
+        'pulse_stride': int(block.coords['pulse_stride'].value),
+        'distance_resolution': block.coords['distance_resolution'],
+        'time_resolution': block.coords['time_resolution'],
+    }
