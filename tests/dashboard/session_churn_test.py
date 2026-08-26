@@ -57,6 +57,12 @@ import pytest
 pytest.importorskip("playwright.sync_api")
 from playwright.sync_api import Browser, BrowserContext
 
+from ess.livedata.dashboard.dashboard import DEFAULT_UNUSED_SESSION_LIFETIME
+from ess.livedata.dashboard.session_registry import (
+    SESSION_REAPED_MSG,
+    SESSION_REGISTERED_MSG,
+    SESSION_UNREGISTERED_MSG,
+)
 from tests.helpers.browser import (
     Dashboard,
     assert_updating,
@@ -91,8 +97,17 @@ REGISTRATION_TIMEOUT_SECONDS = 30
 # heartbeating the moment it closes, so if the registry gets there first the
 # teardown is logged as a stale reap rather than an unregister. Production keeps
 # them a factor of four apart; keep that shape.
-UNUSED_SESSION_LIFETIME_SECONDS = 10
-SESSION_STALE_TIMEOUT_SECONDS = 30
+# Only the registry timeout is shortened. Bokeh's lifetime is left at its
+# default: shortening it is what the clean-close path would need, but it is also
+# what risks reaping a session before its websocket is up, and this test already
+# has an open flake in that shape (a browser that registers no session at all).
+# Not worth trading a reliable assertion for a faster one.
+UNUSED_SESSION_LIFETIME_SECONDS = DEFAULT_UNUSED_SESSION_LIFETIME
+# Bokeh's worst case is lifetime plus one poll interval; the registry must sit
+# clear of that or it reaps a cleanly-closed session first and the teardown is
+# logged as a stale reap. Production leaves ~30 s of headroom over the same
+# worst case, which is the least this can be shortened to and keep that shape.
+SESSION_STALE_TIMEOUT_SECONDS = 3 * UNUSED_SESSION_LIFETIME_SECONDS
 
 # Closing the websocket does not unregister the session immediately: Bokeh
 # discards it once it has been unused for UNUSED_SESSION_LIFETIME_SECONDS,
@@ -104,11 +119,22 @@ CLEAN_CLOSE_TIMEOUT_SECONDS = 3 * UNUSED_SESSION_LIFETIME_SECONDS
 # The registry reaps from the background update thread, between its other work.
 REAP_TIMEOUT_SECONDS = 2 * SESSION_STALE_TIMEOUT_SECONDS
 
-# Session ids as SessionRegistry logs them. The console renderer wraps each
-# message in ANSI escapes, which terminate the id capture on their own.
-_REGISTERED = re.compile(r"Registered new session: ([\w-]+)")
-_UNREGISTERED = re.compile(r"Unregistered session: ([\w-]+)")
-_REAPED = re.compile(r"Cleaned up stale session: ([\w-]+)")
+
+def _id_pattern(message: str) -> re.Pattern[str]:
+    """Capture the session id out of one of SessionRegistry's log messages.
+
+    Built from the message the registry actually logs, so rewording it updates
+    this with it. The console renderer wraps each message in ANSI escapes, which
+    terminate the id capture on their own, so only the text up to the id matters.
+    """
+    prefix, _, _ = message.partition("%s")
+    return re.compile(re.escape(prefix) + r"([\w-]+)")
+
+
+# Session ids as SessionRegistry logs them.
+_REGISTERED = _id_pattern(SESSION_REGISTERED_MSG)
+_UNREGISTERED = _id_pattern(SESSION_UNREGISTERED_MSG)
+_REAPED = _id_pattern(SESSION_REAPED_MSG)
 
 
 def _ids(pattern: re.Pattern[str], text: str) -> set[str]:
@@ -203,7 +229,6 @@ def test_session_churn_returns_to_baseline_and_server_stays_usable() -> None:
         fake_dashboard(
             "dummy",
             session_stale_timeout_seconds=SESSION_STALE_TIMEOUT_SECONDS,
-            unused_session_lifetime_seconds=UNUSED_SESSION_LIFETIME_SECONDS,
         ) as fake,
         open_browser() as browser,
     ):
