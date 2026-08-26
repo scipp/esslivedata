@@ -1017,13 +1017,21 @@ class FakeContextWorkflow:
     def __init__(self) -> None:
         self.context_keys: dict[str, type] = {}
         self.chain_patch_bindings: list = []
+        self.context_streams: dict[type, str] = {}
         self.built = False
 
-    def build(self, *, context_keys=None, chain_patch_bindings=()) -> None:
+    def build(
+        self, *, context_keys=None, chain_patch_bindings=(), context_streams=None
+    ) -> None:
         if context_keys:
             self.context_keys.update(context_keys)
         self.chain_patch_bindings = list(chain_patch_bindings)
+        self.context_streams = dict(context_streams or {})
         self.built = True
+
+    @property
+    def requested_context_streams(self) -> frozenset[str]:
+        return frozenset()
 
     def accumulate(self, data, *, start_time, end_time) -> None: ...
     def finalize(self) -> dict:

@@ -155,12 +155,12 @@ class DetectorViewFactory:
             coordinate_mode=mode,
         )
 
-        # The lookup table arrives as context from the LUT workflow. The
-        # stream-name -> key mapping lives on the spec's ContextBinding alone
-        # and is injected at job creation, so it is declared exactly once; the
-        # binding's predicate decides whether the job gates on it (ADR 0010).
-        # The provider is inserted unconditionally: in TOA mode nothing
-        # reaches it.
+        # The lookup table arrives as context from the LUT workflow. Inserting
+        # the provider is the whole of the wiring: the instrument declares which
+        # stream carries its key, and the build gates the job on that stream
+        # only if the targets reach the provider. Hence the unconditional insert
+        # -- in TOA mode nothing reaches it, so the job neither waits for the
+        # table nor needs one (ADR 0010).
         workflow.insert(detector_lookup_table)
         if mode == 'wavelength':
             workflow[LookupTableRelativeErrorThreshold] = {source_name: float('inf')}

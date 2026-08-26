@@ -3,10 +3,12 @@
 """Consumption of a streamed wavelength lookup table as workflow context.
 
 The lookup-table workflow publishes two tables as context streams (ADR 0010):
-one for the detectors, one for the monitors. A consuming workflow binds the
-stream name with a ``ContextBinding`` whose ``workflow_key`` is one of the
-context keys here, and inserts the matching provider, which selects the block
-covering its own flight path (see
+one for the detectors, one for the monitors. A consuming workflow inserts the
+matching provider and says nothing else: the provider takes one of the context
+keys here as its argument, the instrument declares which stream carries that
+key (:func:`declare_lut_context_streams`), and the workflow build derives the
+job's gate from whether its graph reaches the provider at all. Each provider
+selects the block covering its own flight path (see
 :mod:`~ess.livedata.workflows.lut_blocks`) and reassembles essreduce's public
 :class:`~ess.reduce.unwrap.LookupTable` dataclass from it.
 
@@ -30,8 +32,7 @@ jointly with the producer-side packing.
 
 from __future__ import annotations
 
-from collections.abc import Callable, Iterable
-from typing import Any, NewType
+from typing import NewType
 
 import scipp as sc
 import scippnexus as snx
@@ -46,7 +47,6 @@ from .wavelength_lut_workflow_specs import (
     LUT_STREAM_NAMES,
     MONITOR_LUT_OUTPUT,
 )
-from .workflow_factory import SpecHandle
 
 #: Context key carrying the detectors' streamed table, as it arrives on the wire.
 DetectorLutContext = NewType('DetectorLutContext', sc.DataArray)
@@ -76,68 +76,37 @@ def monitor_lookup_table(
     return LookupTable[SampleRun, MonitorType](**unpack_block(wire, ltotal))
 
 
-def bind_lookup_tables(
-    handle: SpecHandle,
-    *,
-    instrument: Instrument,
-    is_monitor: bool,
-    source_names: Iterable[str] | None = None,
-    predicate: Callable[[Any], bool] | None = None,
-) -> None:
-    """Bind a group's streamed lookup table as gated context.
+def declare_lut_context_streams(instrument: Instrument) -> None:
+    """Declare the streamed tables as context streams consuming graphs can request.
 
-    One ``ContextBinding`` per spec and group, replacing what used to be one per
-    component: the table is shared, so the only per-job question left is which
-    jobs gate on it. The predicate keeps time-of-arrival jobs ungated: the table
-    is published by an operator-started job that re-emits only on chopper
-    change, and making TOA -- the mode you fall back to when everything else is
-    broken -- depend on it would be the wrong trade (ADR 0010).
+    One declaration per group, and none per spec: a workflow reaches the table
+    by inserting :func:`detector_lookup_table` or :func:`monitor_lookup_table`,
+    and the build derives the stream from the graph that provider ends up in
+    (see :meth:`~ess.livedata.config.instrument.Instrument.declare_context_stream`).
+    Time-of-arrival jobs therefore stay ungated without anyone saying so: their
+    graph reduces straight from ``event_time_offset``, so the provider is
+    unreachable and the table is not requested. That is the property ADR 0010
+    asks for -- the mode you fall back to when everything else is broken must
+    not wait on an operator-started job -- and it holds by construction rather
+    than by something each spec has to remember to say.
 
-    Two ways a job ends up unbound rather than gated forever: the group has no
-    placeable component, so the stream is never published; or the job's own
-    source is unplaceable, so no block of the table would cover it.
+    A group with no placeable component publishes no table, so its stream is
+    not declared and a job whose graph asks for it fails at job creation on the
+    unsatisfied key, rather than waiting forever for a stream nobody publishes.
 
-    Parameters
-    ----------
-    handle:
-        Spec to bind the table to.
-    instrument:
-        Instrument whose ``lut_components`` decide what is placeable.
-    is_monitor:
-        Select the monitor table over the detector one.
-    source_names:
-        The spec's sources this binding applies to, defaulting to the table's
-        own group -- what a view of that group runs on. A spec reading another
-        group's table passes its own sources instead: LOKI's I(Q) picks its
-        monitors by aux selection, so its monitor-table binding applies to its
-        detector jobs.
-    predicate:
-        Narrows the binding to the jobs that actually read the table. Views
-        pass :func:`reads_wavelength`; a reduction passes nothing, since it has
-        no coordinate mode to choose and always needs its tables.
+    A placeable *group* does not make every component in it placeable. A job on
+    an unplaceable source gates normally, receives the table, and fails when
+    :func:`~ess.livedata.workflows.lut_blocks.select_block` finds no block
+    covering its flight path, reporting that distance against the table's
+    coverage. A consumer that can rule this out earlier should: LOKI's I(Q)
+    rejects an unplaceable monitor selection in its factory, where the aux
+    selection is in hand.
     """
-    group = instrument.monitors if is_monitor else instrument.detector_names
-    if not set(group) & instrument.lut_components:
-        return
-    if source_names is None:
-        source_names = group
-    if not (gated := sorted(set(source_names) & instrument.lut_components)):
-        return
-    output = MONITOR_LUT_OUTPUT if is_monitor else DETECTOR_LUT_OUTPUT
-    handle.add_context_binding(
-        stream_name=LUT_STREAM_NAMES[output],
-        workflow_key=MonitorLutContext if is_monitor else DetectorLutContext,
-        dependent_sources=gated,
-        predicate=predicate,
-    )
-
-
-def reads_wavelength(params: Any) -> bool:
-    """Whether a job's params select the wavelength coordinate mode.
-
-    Deliberately not tolerant of a params model without a coordinate mode: such
-    a spec has no mode to choose, so routing it through here is a wiring
-    mistake. Reading a missing field as "not wavelength" would leave the job
-    ungated and hand its providers a table that never arrives.
-    """
-    return params.coordinate_mode.mode == 'wavelength'
+    for group, key, output in (
+        (instrument.detector_names, DetectorLutContext, DETECTOR_LUT_OUTPUT),
+        (instrument.monitors, MonitorLutContext, MONITOR_LUT_OUTPUT),
+    ):
+        if set(group) & instrument.lut_components:
+            instrument.declare_context_stream(
+                workflow_key=key, stream_name=LUT_STREAM_NAMES[output]
+            )

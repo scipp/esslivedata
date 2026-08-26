@@ -91,6 +91,7 @@ class StreamProcessorWorkflow(Workflow):
         self._current_start_time: Timestamp | None = None
         self._current_end_time: Timestamp | None = None
         self._stream_processor: streaming.StreamProcessor | None = None
+        self._requested_context_streams: set[str] = set()
 
     def add_context_keys(self, context_keys: Mapping[str, sciline.typing.Key]) -> None:
         """Merge additional context bindings before the graph is built.
@@ -134,11 +135,25 @@ class StreamProcessorWorkflow(Workflow):
             )
         return self._base_workflow
 
+    @property
+    def requested_context_streams(self) -> frozenset[str]:
+        """Declared context streams the built graph turned out to require.
+
+        Empty before :meth:`build`. The routing layer reads this back off the
+        workflow instead of predicting it: whether a job consumes the streamed
+        lookup table follows from the graph its params produce, and only the
+        graph knows (see :meth:`build`). Factory-supplied context (ROI requests)
+        is deliberately not included -- those are auxiliary inputs a job may
+        never receive, so gating on them would deadlock.
+        """
+        return frozenset(self._requested_context_streams)
+
     def build(
         self,
         *,
         context_keys: Mapping[str, sciline.typing.Key] | None = None,
         chain_patch_bindings: Iterable[ChainPatchBinding] = (),
+        context_streams: Mapping[sciline.typing.Key, str] | None = None,
     ) -> None:
         """Materialize the wrapped ``StreamProcessor`` from its inputs.
 
@@ -149,12 +164,23 @@ class StreamProcessorWorkflow(Workflow):
         than on first ``accumulate``) keeps graph validation and the static-node
         precompute at job-creation time.
 
+        ``context_streams`` are the instrument's declared context streams (key →
+        wire name). Unlike ``context_keys``, which the routing layer has already
+        narrowed to this job, these are offered to every job and kept only where
+        the graph asks for the key: an entry is taken up when its key is an
+        ancestor of a target key,
+        which is precisely the condition under which ``finalize`` would fail
+        without it. Insertion alone is not enough — a provider the targets cannot
+        reach is pruned — so a factory may insert unconditionally and let the
+        params decide, which is what the wavelength/time-of-arrival modes need
+        (ADR 0010).
+
         Idempotent: a second call is a no-op and must not supply bindings, since
         they could no longer take effect once the graph is built.
         """
         bindings = list(chain_patch_bindings)
         if self._stream_processor is not None:
-            if context_keys or bindings:
+            if context_keys or bindings or context_streams:
                 raise RuntimeError(
                     "Cannot inject bindings: the StreamProcessor is already built."
                 )
@@ -162,6 +188,14 @@ class StreamProcessorWorkflow(Workflow):
         if context_keys:
             self.add_context_keys(context_keys)
         wire_dynamic_transforms(self, bindings)
+        # After wiring: chain patches add providers, so the graph is only
+        # complete here.
+        if context_streams:
+            requested = self._required_keys() & set(context_streams)
+            self._requested_context_streams = {
+                context_streams[key] for key in requested
+            }
+            self.add_context_keys({context_streams[key]: key for key in requested})
         self._stream_processor = streaming.StreamProcessor(
             self._base_workflow,
             dynamic_keys=tuple(self._dynamic_keys.values()),
@@ -169,6 +203,26 @@ class StreamProcessorWorkflow(Workflow):
             target_keys=tuple(self._target_keys.values()),
             **self._kwargs,
         )
+
+    def _required_keys(self) -> set[sciline.typing.Key]:
+        """Every key a target key depends on, directly or transitively.
+
+        Walks the pipeline's data graph backwards from the targets. Keys with no
+        provider and no value are nodes like any other, so a key the graph asks
+        for is found here whether or not anything can supply it -- one nothing
+        supplies then fails the ``StreamProcessor`` construction below, naming
+        it. Providers the targets cannot reach are excluded, matching the
+        pruning ``StreamProcessor`` applies to the same targets.
+        """
+        graph = self._base_workflow.underlying_graph
+        required: set[sciline.typing.Key] = set()
+        pending = [key for key in self._target_keys.values() if key in graph]
+        while pending:
+            for key in graph.predecessors(pending.pop()):
+                if key not in required:
+                    required.add(key)
+                    pending.append(key)
+        return required
 
     @property
     def _processor(self) -> streaming.StreamProcessor:

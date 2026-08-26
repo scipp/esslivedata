@@ -144,6 +144,9 @@ class Instrument:
     #: its factory is attached. Empty until then, and for chopperless
     #: instruments.
     _lut_components: frozenset[str] = field(default_factory=frozenset, init=False)
+    #: Context streams a workflow can request by asking for the key, filled in
+    #: by :meth:`declare_context_stream`.
+    _context_streams: dict[Any, str] = field(default_factory=dict, init=False)
     #: Stability tolerance for chopper delay readbacks. The readback stream's
     #: unit is enforced to ``ns`` by ``declare_chopper_setpoint_streams``.
     #: Shared by ``ChopperSynthesizer`` for noise rejection (rolling-window std
@@ -307,14 +310,59 @@ class Instrument:
         self._validate_binding_stream_name(binding)
         self.context_bindings.append(binding)
 
+    def declare_context_stream(self, *, workflow_key: Any, stream_name: str) -> None:
+        """Register a context stream workflows may request by asking for its key.
+
+        The counterpart to :meth:`add_context_binding` for streams a workflow
+        *pulls* rather than has *pushed* into it. A binding names the specs and
+        sources it applies to, because a chain patch is injected into a graph
+        that never mentions it. A declared context stream names nothing: the
+        consuming graph asks for ``workflow_key``, and the workflow build
+        (``StreamProcessorWorkflow.build``) reads that request off the finished
+        graph. Which specs, which sources and which params consume it therefore
+        need no declaration at all -- the
+        streamed wavelength lookup table (ADR 0010) is the motivating case, where
+        the same graph feeds a job either through the table or straight from
+        time-of-arrival depending on its params.
+
+        Declare only streams that are actually published: a job whose graph asks
+        for an undeclared key fails at creation on the unsatisfied key, whereas
+        gating on a stream nobody publishes would leave it ``pending_context``
+        forever.
+        """
+        if (previous := self._context_streams.get(workflow_key)) not in (
+            None,
+            stream_name,
+        ):
+            raise ValueError(
+                f"Context stream for workflow key {workflow_key} already "
+                f"declared as {previous!r}, cannot redeclare as {stream_name!r}"
+            )
+        for key, name in self._context_streams.items():
+            if name == stream_name and key != workflow_key:
+                raise ValueError(
+                    f"Context stream {stream_name!r} already declared for "
+                    f"workflow key {key}, cannot also serve {workflow_key}"
+                )
+        self._context_streams[workflow_key] = stream_name
+
+    @property
+    def context_streams(self) -> dict[Any, str]:
+        """Declared context streams, as workflow key -> wire name.
+
+        Handed to every workflow build, which keeps whichever entries its graph
+        turns out to need (see :meth:`declare_context_stream`).
+        """
+        return dict(self._context_streams)
+
     @property
     def lut_components(self) -> frozenset[str]:
         """Components covered by a block of a wavelength lookup table.
 
         A component riding a live axis with no declared :class:`AxisRange`
-        cannot be placed from the geometry artifact, so no block covers it.
-        Binding the table anyway would gate every job that could have selected
-        it and then fail at every recompute, so consumers bind only these.
+        cannot be placed from the geometry artifact, so no block covers it. A
+        group with no such component publishes no table, which is what decides
+        whether its context stream is declared at all.
         """
         return self._lut_components
 
@@ -377,48 +425,18 @@ class Instrument:
         """Every declared context key for a ``(spec, source)`` pair.
 
         Returns ``{stream_name: workflow_key}``; context wire names equal their
-        stream names, so the keys double as the set of gating context streams.
+        stream names, so the keys double as the set of gating context streams a
+        binding contributes. A binding applies to every job on a dependent
+        source, which is why this needs no params: a stream only some of a
+        spec's jobs consume is declared with :meth:`declare_context_stream`
+        instead, and resolved per job against the graph it builds.
 
-        Predicates are ignored: this is the declaration-level view for static
-        callers (route derivation, the workflow visualizer), which covers any
-        single job's gate — a subscription covering a stream some jobs do not
-        gate on costs nothing. Use :meth:`resolve_context_keys` where a job's
-        params are in hand.
+        Two bindings naming one stream for different keys is a declaration
+        mistake and is rejected at registration by :meth:`validate`, not here.
         """
         return {
             binding.stream_name: binding.workflow_key
             for binding in self._matching_bindings(workflow_id, source_name)
-        }
-
-    def resolve_context_keys(
-        self,
-        workflow_id: WorkflowId,
-        source_name: str,
-        params: Any,
-    ) -> dict[str, Any]:
-        """Resolve one job's context keys from its validated params.
-
-        :meth:`declared_context_keys` filtered by each binding's ``predicate``.
-        A predicate can only remove bindings, so the result stays covered by the
-        statically derived Kafka subscriptions. Two bindings naming one stream
-        for different keys is a declaration mistake and is rejected at
-        registration by :meth:`validate`, not here.
-
-        Parameters
-        ----------
-        workflow_id:
-            Workflow whose bindings to resolve.
-        source_name:
-            Source the job runs on.
-        params:
-            The job's *validated* params model, as passed to the workflow
-            factory. Predicates read it directly, so an unvalidated dict would
-            silently fail every attribute access.
-        """
-        return {
-            binding.stream_name: binding.workflow_key
-            for binding in self._matching_bindings(workflow_id, source_name)
-            if binding.predicate is None or binding.predicate(params)
         }
 
     @property
@@ -821,6 +839,9 @@ class Instrument:
             from ess.livedata.preprocessors.detector_data import (
                 get_nexus_geometry_filename,
             )
+            from ess.livedata.workflows.lut_context import (
+                declare_lut_context_streams,
+            )
             from ess.livedata.workflows.wavelength_lut_workflow import (
                 attach_wavelength_lut_factory,
             )
@@ -833,6 +854,9 @@ class Instrument:
                 monitors=self.monitors,
                 axis_ranges=self.axis_ranges,
             )
+            # Before setup_factories: a consuming spec neither declares nor
+            # inherits anything here, it just inserts a provider taking the key.
+            declare_lut_context_streams(self)
 
         if hasattr(module, 'setup_factories'):
             module.setup_factories(self)
@@ -954,7 +978,8 @@ class Instrument:
 
         Three collisions are detected, all of them properties of the
         declarations alone: a stream name is fixed at declaration time and a
-        predicate can only remove a binding, so no job can create or avoid one.
+        binding applies to every job on a dependent source, so no job can create
+        or avoid one.
 
         - **Conflicting keys.** Two bindings naming one stream for different
           Sciline keys. The gate maps each name to one key, so one of the two

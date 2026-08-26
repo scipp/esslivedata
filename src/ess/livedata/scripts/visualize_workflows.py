@@ -87,9 +87,11 @@ def main() -> None:
             workflow = factory.create(
                 source_name=source_name,
                 config=config,
+                params=factory.validate_params(config),
                 aux_source_names=aux_source_names,
                 context_keys=context_keys,
                 chain_patch_bindings=instrument.chain_patch_bindings,
+                context_streams=instrument.context_streams,
             )
         except Exception as e:
             logger.warning(

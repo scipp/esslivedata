@@ -321,12 +321,6 @@ class _Key:
     """Sentinel Sciline-key stand-in for binding tests."""
 
 
-class _ModeParams(pydantic.BaseModel):
-    """Stand-in for a params model whose mode decides what context is read."""
-
-    mode: str = 'toa'
-
-
 def _f144(name: str) -> F144Stream:
     return F144Stream(
         source=name,
@@ -692,60 +686,6 @@ class TestContextBindings:
         with pytest.raises(KeyError, match=r'not.*registered'):
             instrument.declared_context_keys(workflow_id, 'det1')
 
-    def test_predicate_removes_the_binding_for_a_job_that_does_not_read_it(self):
-        # Coordinate mode is a parameter, so one spec serves both modes; a
-        # time-of-arrival job must not be gated on a table it never reads.
-        instrument = Instrument(
-            name='test', detector_names=['det1'], streams={'rot': _f144('rot')}
-        )
-        handle = instrument.register_spec(
-            name='w',
-            version=1,
-            title='W',
-            source_names=['det1'],
-            params=_ModeParams,
-            outputs=SimpleTestOutputs,
-        )
-        handle.add_context_binding(
-            stream_name='rot',
-            workflow_key=_Key,
-            predicate=lambda params: params.mode == 'wavelength',
-        )
-
-        wid = handle.workflow_id
-        assert instrument.resolve_context_keys(wid, 'det1', _ModeParams()) == {}
-        assert instrument.resolve_context_keys(
-            wid, 'det1', _ModeParams(mode='wavelength')
-        ) == {'rot': _Key}
-
-    def test_declared_keys_stay_a_superset_of_any_resolved_gate(self):
-        # Kafka subscriptions are derived from the declared set, so a predicate
-        # must never widen it.
-        instrument = Instrument(
-            name='test', detector_names=['det1'], streams={'rot': _f144('rot')}
-        )
-        handle = instrument.register_spec(
-            name='w',
-            version=1,
-            title='W',
-            source_names=['det1'],
-            params=_ModeParams,
-            outputs=SimpleTestOutputs,
-        )
-        handle.add_context_binding(
-            stream_name='rot',
-            workflow_key=_Key,
-            predicate=lambda params: params.mode == 'wavelength',
-        )
-
-        declared = instrument.declared_context_keys(handle.workflow_id, 'det1')
-        for mode in ('toa', 'wavelength'):
-            resolved = instrument.resolve_context_keys(
-                handle.workflow_id, 'det1', _ModeParams(mode=mode)
-            )
-            assert set(resolved) <= set(declared)
-        assert declared == {'rot': _Key}
-
     def test_two_bindings_naming_one_stream_with_different_keys_raise(self):
         # One stream feeds one key. Nothing a job selects reaches a stream name,
         # so this is a declaration mistake and is caught at registration.
@@ -764,6 +704,55 @@ class TestContextBindings:
 
         with pytest.raises(ValueError, match='conflicting workflow keys'):
             instrument.validate()
+
+
+class TestDeclaredContextStreams:
+    """Streams a workflow requests by asking for their key.
+
+    No spec, source or params are named: what consumes the stream is settled by
+    the graph a job builds, so the only thing that can go wrong here is the
+    declaration disagreeing with itself.
+    """
+
+    def test_declared_stream_is_offered_by_key(self):
+        instrument = Instrument(name='test')
+
+        instrument.declare_context_stream(workflow_key=_Key, stream_name='lut')
+
+        assert instrument.context_streams == {_Key: 'lut'}
+
+    def test_redeclaring_the_same_pair_is_idempotent(self):
+        """Instrument modules are imported once but ``load_factories`` may run
+        again in a long-lived process; a repeated declaration is not a mistake.
+        """
+        instrument = Instrument(name='test')
+
+        instrument.declare_context_stream(workflow_key=_Key, stream_name='lut')
+        instrument.declare_context_stream(workflow_key=_Key, stream_name='lut')
+
+        assert instrument.context_streams == {_Key: 'lut'}
+
+    def test_one_key_cannot_take_two_streams(self):
+        class _OtherKey: ...
+
+        instrument = Instrument(name='test')
+        instrument.declare_context_stream(workflow_key=_Key, stream_name='lut')
+
+        with pytest.raises(ValueError, match='already declared'):
+            instrument.declare_context_stream(
+                workflow_key=_Key, stream_name='other_lut'
+            )
+
+    def test_one_stream_cannot_serve_two_keys(self):
+        # The reverse mapping is what routes an arriving value, so it has to be
+        # a function too.
+        class _OtherKey: ...
+
+        instrument = Instrument(name='test')
+        instrument.declare_context_stream(workflow_key=_Key, stream_name='lut')
+
+        with pytest.raises(ValueError, match='already declared'):
+            instrument.declare_context_stream(workflow_key=_OtherKey, stream_name='lut')
 
 
 class TestInstrumentRegisterSpec:

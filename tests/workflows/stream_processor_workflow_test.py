@@ -389,6 +389,96 @@ CurrentOutput = NewType('CurrentOutput', sc.DataArray)
 CumulativeOutput = NewType('CumulativeOutput', sc.DataArray)
 
 
+class TestDeclaredContextStreamDerivation:
+    """Declared context streams are taken up only where the graph asks for them.
+
+    The routing layer offers every declared stream to every job; which ones a
+    job consumes -- and therefore waits for -- is read back off the built graph.
+    This is what lets one factory serve both a mode that needs a streamed input
+    and one that does not, without either the spec or the factory restating
+    which is which (ADR 0010).
+    """
+
+    @pytest.fixture
+    def dead_context_provider(self, base_workflow_no_context) -> sciline.Pipeline:
+        """A context-consuming provider the target keys cannot reach.
+
+        The shape of a time-of-arrival job: the lookup-table provider is
+        inserted unconditionally, but the params built a graph that reduces
+        without it.
+        """
+
+        def process_context(context: Context, static: Static) -> ProcessedContext:
+            return ProcessedContext(context * static)
+
+        base_workflow_no_context.insert(process_context)
+        return base_workflow_no_context
+
+    def _workflow(self, pipeline: sciline.Pipeline) -> StreamProcessorWorkflow:
+        return StreamProcessorWorkflow(
+            pipeline,
+            dynamic_keys={'streamed': Streamed},
+            target_keys={'output': Output},
+            accumulators=(ProcessedStreamed,),
+        )
+
+    def test_requested_streams_are_empty_before_build(self, base_workflow_with_context):
+        workflow = self._workflow(base_workflow_with_context)
+
+        assert workflow.requested_context_streams == frozenset()
+
+    def test_stream_is_requested_and_consumed_when_the_targets_reach_its_key(
+        self, base_workflow_with_context
+    ):
+        workflow = self._workflow(base_workflow_with_context)
+
+        workflow.build(context_streams={Context: 'ctx'})
+
+        assert workflow.requested_context_streams == frozenset({'ctx'})
+        # Requested means wired: the value arrives under the declared wire name.
+        workflow.accumulate(
+            {'ctx': Context(5), 'streamed': Streamed(10)},
+            start_time=Timestamp.from_ns(1000),
+            end_time=Timestamp.from_ns(2000),
+        )
+        assert workflow.finalize() == {'output': Output(20)}
+
+    def test_stream_is_not_requested_when_its_provider_is_unreachable(
+        self, dead_context_provider
+    ):
+        workflow = self._workflow(dead_context_provider)
+
+        workflow.build(context_streams={Context: 'ctx'})
+
+        # Nothing to wait for, and nothing missing either: the job runs on its
+        # dynamic input alone.
+        assert workflow.requested_context_streams == frozenset()
+        workflow.accumulate(
+            {'streamed': Streamed(10)},
+            start_time=Timestamp.from_ns(1000),
+            end_time=Timestamp.from_ns(2000),
+        )
+        assert workflow.finalize() == {'output': Output(12)}
+
+    def test_key_the_graph_needs_but_nobody_declared_fails_the_build(
+        self, base_workflow_with_context
+    ):
+        """The other half of deriving the gate: a graph asking for a stream that
+        is not declared -- because nothing publishes it -- fails here, rather
+        than waiting for a stream that will never arrive."""
+        workflow = self._workflow(base_workflow_with_context)
+
+        with pytest.raises(sciline.UnsatisfiedRequirement, match='Context'):
+            workflow.build(context_streams={Static: 'other'})
+
+    def test_declaring_streams_after_build_raises(self, dead_context_provider):
+        workflow = self._workflow(dead_context_provider)
+        workflow.build()
+
+        with pytest.raises(RuntimeError, match='already built'):
+            workflow.build(context_streams={Context: 'ctx'})
+
+
 class TestWindowOutputs:
     """Tests for window_outputs feature that adds time coords."""
 

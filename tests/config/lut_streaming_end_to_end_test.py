@@ -70,17 +70,41 @@ def _spec_id(instrument: Instrument, name: str):
     return next(w for w in instrument.workflow_factory if w.name == name)
 
 
-def _run_lut_job(instrument: Instrument):
-    """Run the lookup-table job once and return its result."""
-    workflow_id = _spec_id(instrument, 'wavelength_lut')
-    job_id = JobId(source_name=CHOPPER_CASCADE_SOURCE, job_number=uuid.uuid4())
+def _params_model(instrument: Instrument, name: str):
+    registration = instrument.workflow_factory.registration(_spec_id(instrument, name))
+    return registration.spec.params
+
+
+def _create_job(
+    instrument: Instrument,
+    name: str,
+    source_name: str,
+    params=None,
+    aux_source_names: dict[str, str] | None = None,
+):
+    """Create a job the way the backend does, params and all.
+
+    Job creation is where a gate is decided, so a test that wants to know what
+    a job waits for has to build one: which context streams a job requests is a
+    property of the graph its params produce, not of its spec (ADR 0010).
+    """
+    workflow_id = _spec_id(instrument, name)
+    job_id = JobId(source_name=source_name, job_number=uuid.uuid4())
     config = WorkflowConfig.from_params(
-        workflow_id=workflow_id, job_id=job_id, params=None, aux_source_names=None
+        workflow_id=workflow_id,
+        job_id=job_id,
+        params=None if params is None else params.model_dump(),
+        aux_source_names=aux_source_names,
     )
     service = instrument.workflow_factory.get_service(workflow_id)
-    job = JobFactory(instrument, service_name=service).create(
+    return JobFactory(instrument, service_name=service).create(
         job_id=job_id, config=config
     )
+
+
+def _run_lut_job(instrument: Instrument):
+    """Run the lookup-table job once and return its result."""
+    job = _create_job(instrument, 'wavelength_lut', CHOPPER_CASCADE_SOURCE)
     aux = {}
     for chopper in instrument.choppers:
         aux[speed_setpoint_stream(chopper)] = _nxlog(
@@ -208,18 +232,20 @@ def test_every_placeable_component_has_a_block_covering_it(
 def test_wavelength_job_gates_on_its_table_and_toa_job_does_not(
     dream: Instrument,
 ) -> None:
-    workflow_id = _spec_id(dream, 'monitor_histogram')
-    params_model = dream.workflow_factory.registration(workflow_id).spec.params
+    """Nothing declares this: one params model reaches the table provider and
+    the other reduces straight from time of arrival, and the gate follows."""
+    params_model = _params_model(dream, 'monitor_histogram')
 
-    toa = dream.resolve_context_keys(workflow_id, MONITOR, params_model())
-    wavelength = dream.resolve_context_keys(
-        workflow_id,
+    toa = _create_job(dream, 'monitor_histogram', MONITOR, params_model())
+    wavelength = _create_job(
+        dream,
+        'monitor_histogram',
         MONITOR,
         params_model(coordinate_mode=CoordinateModeSettings(mode='wavelength')),
     )
 
-    assert toa == {}
-    assert set(wavelength) == {MONITOR_STREAM}
+    assert toa.gating_streams == set()
+    assert wavelength.gating_streams == {MONITOR_STREAM}
 
 
 def test_wavelength_monitor_job_consumes_the_streamed_table(
@@ -227,19 +253,13 @@ def test_wavelength_monitor_job_consumes_the_streamed_table(
 ) -> None:
     """The whole chain: a job created in wavelength mode takes the table that
     came off the wire as context and reduces with it, with no file anywhere."""
-    workflow_id = _spec_id(dream, 'monitor_histogram')
-    params_model = dream.workflow_factory.registration(workflow_id).spec.params
-    job_id = JobId(source_name=MONITOR, job_number=uuid.uuid4())
-    config = WorkflowConfig.from_params(
-        workflow_id=workflow_id,
-        job_id=job_id,
-        params=params_model(
-            coordinate_mode=CoordinateModeSettings(mode='wavelength')
-        ).model_dump(),
-        aux_source_names=None,
+    params_model = _params_model(dream, 'monitor_histogram')
+    job = _create_job(
+        dream,
+        'monitor_histogram',
+        MONITOR,
+        params_model(coordinate_mode=CoordinateModeSettings(mode='wavelength')),
     )
-    service = dream.workflow_factory.get_service(workflow_id)
-    job = JobFactory(dream, service_name=service).create(job_id=job_id, config=config)
 
     assert job.gating_streams == {MONITOR_STREAM}
 
@@ -293,33 +313,41 @@ class TestLokiMotionAndRoles:
         # binding anywhere, rather than a table placed at a guessed distance.
         assert 'beam_monitor_m4' not in loki.lut_components
 
-    def test_reduction_binds_one_stream_per_group(self, loki: Instrument) -> None:
-        """Both monitor roles read the shared monitor table, so the reduction
-        declares two streams whatever it selects -- and an unpublishable table
-        (``beam_monitor_m4``) cannot be gated on by declaration at all."""
-        declared = loki.declared_context_keys(
-            _spec_id(loki, 'i_of_q'), 'loki_detector_0'
+    @pytest.mark.parametrize(
+        'monitors',
+        [
+            {
+                'incident_monitor': 'beam_monitor_m2',
+                'transmission_monitor': 'beam_monitor_m3',
+            },
+            {
+                'incident_monitor': 'beam_monitor_m1',
+                'transmission_monitor': 'beam_monitor_m3',
+            },
+        ],
+        ids=['default_monitors', 'other_incident_monitor'],
+    )
+    def test_reduction_gates_on_one_stream_per_group(
+        self, loki: Instrument, monitors: dict[str, str]
+    ) -> None:
+        """Two streams for three components, whichever monitors are selected.
+
+        Both monitor roles read blocks of the shared monitor table, so the gate
+        is a property of the groups the graph reaches, not of the aux selection.
+        A reduction has no coordinate mode to opt out with either: it always
+        reduces to wavelength, so it always waits for both tables.
+        """
+        job = _create_job(
+            loki,
+            'i_of_q',
+            'loki_detector_0',
+            _params_model(loki, 'i_of_q')(),
+            aux_source_names=monitors,
         )
 
-        assert {name for name in declared if name.startswith('wavelength_lut/')} == {
-            DETECTOR_STREAM,
-            MONITOR_STREAM,
-        }
-
-    def test_reduction_gates_on_both_tables(self, loki: Instrument) -> None:
-        # Both monitor roles read the shared table, so the gate no longer
-        # depends on which monitors the job selects.
-        workflow_id = _spec_id(loki, 'i_of_q')
-        params_model = loki.workflow_factory.registration(workflow_id).spec.params
-
-        resolved = loki.resolve_context_keys(
-            workflow_id, 'loki_detector_0', params_model()
-        )
-
-        assert {name for name in resolved if name.startswith('wavelength_lut/')} == {
-            DETECTOR_STREAM,
-            MONITOR_STREAM,
-        }
+        assert {
+            name for name in job.gating_streams if name.startswith('wavelength_lut/')
+        } == {DETECTOR_STREAM, MONITOR_STREAM}
 
     def test_selecting_a_monitor_without_a_table_fails_at_job_creation(
         self, loki: Instrument
@@ -350,15 +378,3 @@ class TestLokiMotionAndRoles:
         defaults = {inp.default for inp in aux_sources.inputs.values()}
 
         assert defaults <= loki.lut_components
-
-    def test_reduction_has_no_coordinate_mode_so_always_gates(
-        self, loki: Instrument
-    ) -> None:
-        workflow_id = _spec_id(loki, 'i_of_q')
-        params_model = loki.workflow_factory.registration(workflow_id).spec.params
-
-        resolved = loki.resolve_context_keys(
-            workflow_id, 'loki_detector_0', params_model()
-        )
-
-        assert DETECTOR_STREAM in resolved

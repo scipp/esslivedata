@@ -2036,6 +2036,76 @@ class TestJobFactoryContextBinding:
         assert captured['proc'].context_keys == {'rot': _RotLog}
 
 
+class TestJobFactoryDeclaredContextStreams:
+    """A job gates on the declared context streams its workflow asks for.
+
+    The complement of :class:`TestJobFactoryContextBinding`: a binding names the
+    jobs it applies to up front, whereas a declared stream is offered to every
+    job and kept by the ones whose graph needs it. The factory therefore learns
+    the gate from the workflow it just built, not from the declarations.
+    """
+
+    def _register(self, instrument, proc: FakeProcessor):
+        handle = instrument.register_spec(
+            name='w',
+            version=1,
+            title='W',
+            description='',
+            source_names=['detector1'],
+            outputs=SimpleTestOutputs,
+        )
+        handle.attach_factory()(lambda: proc)
+        return handle
+
+    def _create(self, instrument, handle):
+        job_id = JobId(source_name='detector1', job_number=uuid.uuid4())
+        config = WorkflowConfig(identifier=handle.workflow_id, job_id=job_id)
+        return JobFactory(instrument, service_name='data_reduction').create(
+            job_id=job_id, config=config
+        )
+
+    def test_requested_stream_gates_the_job_and_is_routed_to_it(self) -> None:
+        instrument = _build_instrument_with_streams()
+        instrument.declare_context_stream(workflow_key=_CtxKeyA, stream_name='lut')
+        proc = FakeProcessor()
+        proc.requests_context_streams = {_CtxKeyA}
+        handle = self._register(instrument, proc)
+
+        job = self._create(instrument, handle)
+
+        assert job.missing_context(set()) == {'lut'}
+        assert job.missing_context({'lut'}) == set()
+        assert 'lut' in job.input_stream_names
+
+    def test_declared_stream_the_workflow_ignores_does_not_gate(self) -> None:
+        """Every job is offered the declaration; only asking for it costs a gate."""
+        instrument = _build_instrument_with_streams()
+        instrument.declare_context_stream(workflow_key=_CtxKeyA, stream_name='lut')
+        proc = FakeProcessor()
+        handle = self._register(instrument, proc)
+
+        job = self._create(instrument, handle)
+
+        assert proc.offered_context_streams == {_CtxKeyA: 'lut'}
+        assert job.missing_context(set()) == set()
+        assert 'lut' not in job.input_stream_names
+
+    def test_requested_streams_add_to_bound_ones(self) -> None:
+        """The two mechanisms coexist on one job: a pushed chain patch and a
+        pulled table gate it alike."""
+        instrument = _build_instrument_with_streams()
+        instrument.declare_context_stream(workflow_key=_CtxKeyA, stream_name='lut')
+        proc = FakeProcessor()
+        proc.requests_context_streams = {_CtxKeyA}
+        handle = self._register(instrument, proc)
+        handle.add_context_binding(stream_name='temp', workflow_key=_CtxKeyB)
+
+        job = self._create(instrument, handle)
+
+        assert job.missing_context(set()) == {'lut', 'temp'}
+        assert proc.context_keys == {'lut': _CtxKeyA, 'temp': _CtxKeyB}
+
+
 class ThreadTrackingProcessor(FakeProcessor):
     """Processor that records which thread called accumulate and finalize."""
 

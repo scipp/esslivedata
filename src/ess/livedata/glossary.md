@@ -176,6 +176,13 @@ The naming stack, from the Kafka wire inwards (see ADR 0004 and
   streams have a value (ADR 0002).
 - **ContextBinding** — declaration mapping a context stream to a Sciline
   workflow key for given dependent sources (`config/stream.py`, ADR 0003).
+  Used where the value is *pushed* into a graph that never names it, e.g. a
+  chain patch.
+- **Declared context stream** — instrument-level mapping from a Sciline
+  workflow key to the wire name carrying it, named by no spec or source
+  (`Instrument.declare_context_stream`, ADR 0010). Used where a graph *pulls*
+  the value by asking for the key: the workflow build keeps the declaration
+  when the key is reachable from a target key, and the job gates on it.
 - **Device** — a synthesized in-process stream merging EPICS substreams
   (RBV/VAL/DMOV → value/target/idle) into one consistent record
   (`config/stream.py`, ADR 0001/0006).

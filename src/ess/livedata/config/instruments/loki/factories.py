@@ -25,40 +25,6 @@ _IQ_MONITOR_ROLES = ('incident_monitor', 'transmission_monitor')
 
 def setup_factories(instrument: Instrument) -> None:
     """Initialize LOKI-specific factories and workflows."""
-    from ess.livedata.workflows.lut_context import (
-        bind_lookup_tables,
-        detector_lookup_table,
-        monitor_lookup_table,
-        reads_wavelength,
-    )
-
-    # Detector and monitor views bind their group's streamed lookup table,
-    # gated so only wavelength-mode jobs wait for it.
-    bind_lookup_tables(
-        specs.xy_projection_handle,
-        instrument=instrument,
-        is_monitor=False,
-        predicate=reads_wavelength,
-    )
-    bind_lookup_tables(
-        specs.monitor_handle,
-        instrument=instrument,
-        is_monitor=True,
-        predicate=reads_wavelength,
-    )
-    # I(Q) reads both tables: its detector and its two monitor roles. No
-    # predicate -- a reduction always reduces to wavelength -- and no per-role
-    # binding, since a role's monitor is picked out of the shared monitor table
-    # by its own flight path rather than by a stream name (ADR 0010). The
-    # monitor table binds on the detector sources: the monitors themselves
-    # arrive as an aux selection, so they are not the jobs' source names.
-    bind_lookup_tables(specs.i_of_q_handle, instrument=instrument, is_monitor=False)
-    bind_lookup_tables(
-        specs.i_of_q_handle,
-        instrument=instrument,
-        is_monitor=True,
-        source_names=instrument.detector_names,
-    )
     import sciline
     import sciline.typing
     import scipp as sc
@@ -93,6 +59,10 @@ def setup_factories(instrument: Instrument) -> None:
         DetectorViewFactory,
         GeometricViewConfig,
         NeXusDetectorSource,
+    )
+    from ess.livedata.workflows.lut_context import (
+        detector_lookup_table,
+        monitor_lookup_table,
     )
     from ess.livedata.workflows.stream_processor_workflow import (
         StreamProcessorWorkflow,

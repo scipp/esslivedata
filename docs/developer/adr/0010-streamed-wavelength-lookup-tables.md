@@ -137,10 +137,12 @@ with one will have to design for it deliberately instead of inheriting a table t
 for its swing.
 
 A component riding an axis nobody declared cannot be placed at all, so no block covers it.
-Nothing binds such a component: its jobs would open their gate on the group's table and
-then fail at every recompute, having no block to select. An aux-selectable monitor in that
-state is rejected by the factory at job creation instead, since the job's own source may
-well be placeable.
+A job on such a source gates like any other and then fails at its first recompute, having
+no block to select — reporting its flight path against the table's coverage. Where the
+component is an aux selection rather than the job's own source, the factory rejects it at
+job creation instead: the selector is the thing at fault and the job's own source may well
+be placeable. A group with no placeable component at all publishes no table, so its stream
+is never declared and a job asking for the key fails at creation.
 
 Over-padding is cheap and under-padding is silent, so the bias is deliberate. Widening a
 range adds distance rows at fixed `DistanceResolution`; it costs recompute in the LUT job
@@ -179,12 +181,27 @@ collision-free against device names. Job identity is excluded, per ADR 0006: a
 `ContextBinding` is declared at import time and cannot know a job number, and excluding it
 is what lets a relaunched LUT job transparently resume feeding its consumers.
 
-### Consumers bind the LUT as gated context
+### Consumers request the LUT as gated context
 
-One spec-scope `ContextBinding` per spec and group, with `dependent_sources` naming the
-jobs that gate on it — the spec's placeable sources. A reduction binds both groups.
+The instrument declares one context stream per published group table — a workflow key and
+the wire name that carries it — and nothing else. No spec, source or params are named. A
+consuming factory inserts the reassembly provider, whose argument is that key, and the
+workflow build reads the request off the finished graph: a declared stream is taken up when
+its key is an ancestor of a target key, which is exactly the condition under which the job
+could not compute without it. The gate is then the set of streams the job requested.
 
-The binding no longer selects *which* table a source receives, because there is one per
+Deriving the gate rather than declaring it is what keeps insertion and gating from
+disagreeing. They are two statements of one fact — this graph consumes that table — and as
+separate declarations they can drift: a spec that inserts the provider without a binding
+fails at job creation on an unsatisfied key, and one that binds without inserting waits
+forever for a stream it would never read. Neither is expressible now.
+
+It also removes what the declaration form could not express without contortion. A binding
+had to name the jobs it applied to, so a reduction that reads the monitor table while
+running on detector sources had to declare that mismatch explicitly; the graph simply asks
+for the key.
+
+The request no longer selects *which* table a source receives, because there is one per
 group; what a job still has to select is its block, and it selects that by flight path. The
 provider takes the job's own `DetectorLtotal` or `MonitorLtotal` — already in its graph,
 computed from geometry rather than from stream data — and takes the block containing its
@@ -214,11 +231,11 @@ unconditionally.
 A reduction needs one table per sciline `Component` — the detector plus the *incident* and
 *transmission* monitor roles — and which physical monitor fills a role is a per-job aux
 selection that an import-time binding cannot name. Under the shared monitor table it does
-not have to: both roles bind the one monitor stream, and a provider generic in
+not have to: both roles read the one monitor table, and a provider generic in
 `MonitorType` serves all three monitor roles an instrument has — the plain `NXmonitor` of a
 monitor view and a reduction's two. Sciline instantiates it per role, and each instance
 picks its block via that role's own `MonitorLtotal`. Which monitor fills a role is settled
-by geometry the job already holds, not by the stream it binds.
+by geometry the job already holds, not by the stream it reads.
 
 A selection whose monitor has no block — an unplaceable one — is rejected by the factory at
 job creation. The gate would open on the shared table's arrival and the job would then fail
@@ -257,27 +274,25 @@ or keeps two. Coordinate mode is a property of how you are currently looking at 
 not of which detector you are looking at, and the spec split makes the workflow list encode
 the wrong one.
 
-So the gate becomes parameter-dependent instead: a `ContextBinding` carries a predicate
-over the job's validated params. A TOA job resolves an empty gating set; a wavelength job
-gates on its component's table. The workflow stays unified and coordinate mode stays a
-parameter.
+So the gate becomes parameter-dependent instead — and, because it is derived from the
+graph, without anything having to say so. The factory inserts the reassembly provider
+unconditionally; a TOA job's params build a graph that reduces straight from
+`event_time_offset`, leaving the provider on a branch no target reaches, so the job
+requests nothing and gates on nothing. A wavelength job's graph runs through it and gates
+on its group's table. The workflow stays unified and coordinate mode stays a parameter.
 
 This is affordable because the gate is already a per-job quantity. It is resolved at a
-single call site, inside job creation, which already holds the full `WorkflowConfig`;
-nothing consumes the gating set earlier. Kafka subscriptions are derived statically per
-spec and are a superset of any per-job gate, so narrowing the gate needs no subscription
-change, and the context cache is keyed by stream name alone. The declaration-level
-collision validators run on declarations rather than resolved sets, so a predicate that
-only *removes* bindings keeps them conservative.
+single call site, inside job creation, which already builds the workflow; nothing consumes
+the gating set earlier. Kafka subscriptions are derived statically per spec and are a
+superset of any per-job gate, so narrowing the gate needs no subscription change, and the
+context cache is keyed by stream name alone.
 
-The condition is stated once, in the predicate, and so is the stream-name-to-key mapping,
-on the binding: consuming factories declare no context keys of their own, since the
-routing layer injects the resolved bindings into the workflow after creation. A factory
-that repeated the mapping would be a second declaration that has to agree with the binding
-with nothing to catch a disagreement — the same drift ADR 0003 removed between routing and
-graph wiring. What the factory does contribute is the reassembly provider, inserted
-unconditionally: a provider whose input never arrives sits on a branch the targets never
-reach, so for a TOA job it is dead graph and computes nothing.
+Nothing states the condition — not a predicate, not a conditional insert. The mode's
+consequence for the gate is a property of the graph the mode builds, and reading it off
+there is the only statement of it. The stream-name-to-key mapping is likewise stated once,
+on the instrument's declaration; a factory that repeated it would be a second declaration
+that has to agree with the first, with nothing to catch a disagreement — the same drift
+ADR 0003 removed between routing and graph wiring.
 
 ### Consumers clear when the LUT's identity changes
 
@@ -327,9 +342,11 @@ event on run transitions, and this is a second trigger on that path.
 | Hand-declare every range | A dozen-plus numbers per instrument that nobody re-checks when an artifact is regenerated. Rejected. |
 | **LUT workflow consumes component motion streams** | Tables would always describe where the component actually is, and the static travel envelope — the one number this design needs from the instrument team — would disappear. It does *not* remove motion from consumers, which still need pixel positions for scattering geometry and for the per-pixel `Ltotal` that indexes the table. Costs: motion joins the LUT job's gating set, so a dead motion PV stops all wavelength reduction; every sample during a move re-emits and clears; and the LUT job's motion value can lag the one the consumer patched into its geometry, so padding is still needed. The strongest alternative; recorded to revisit. |
 | Route the LUT as ungated aux with the file as default (ROI precedent) | Survives a cold start, but leaves reducing with a stale or nominal table as a silent mode — the thing the feature exists to prevent. Rejected in favour of the gate plus explicit limitations. |
-| **Both monitor roles bind the shared table and select by `MonitorLtotal` (chosen)** | One binding, one generic provider serving every monitor role, and no per-job identity on the wire. Which monitor fills a role is settled by geometry the job already holds. |
+| **Both monitor roles read the shared table and select by `MonitorLtotal` (chosen)** | One stream, one generic provider serving every monitor role, and no per-job identity on the wire. Which monitor fills a role is settled by geometry the job already holds. |
 | Aux-templated stream names for per-job table selection | One binding per role, the placeholder naming the aux field, gate resolution rendering it from the job's selection, and route derivation expanding templates over the field's declared choices to keep subscriptions a superset. It worked, and was the most intricate mechanism in this ADR. Sharing the monitor table removes the problem instead of solving it; the mechanism now has no user. Superseded. |
 | Bind every candidate monitor to its own per-component key | Works, since all tables arrive together, but synthesizes a key per candidate, leaves the unselected ones as dead parameters, and restates the candidate list in the factory's role mapping. Superseded. |
+| **Derive the gate from the built graph (chosen)** | The instrument declares a stream per key; a workflow requests it by inserting a provider that takes the key, and the build keeps the declaration where the targets reach the provider. Insertion and gating become one statement, so they cannot drift, and no spec restates which sources, params or aux selections consume a table. |
+| A per-spec `ContextBinding` carrying a predicate over the job's params | The first shape of this decision, and it worked: `bind_lookup_tables` per spec and group, with `dependent_sources` narrowing to placeable sources and a `reads_wavelength` predicate keeping TOA jobs ungated. It states in a declaration what the graph already knows, so the two can disagree — silently, in the direction that leaves a job `pending_context` forever — and it forces a spec reading another group's table to declare the mismatch (LOKI's I(Q) binding the monitor table against its *detector* sources). Superseded. |
 | **Split the spec into TOA-only and wavelength variants** | ADR 0003's prescribed remedy for the over-gate. Rejected on UX: two specs are two entries in the workflow list, two jobs to run, and — because `DataKey` embeds `workflow_id` — two unrelated output streams, so a plot cannot follow a mode switch. It also duplicates every per-instrument params override. |
 | Reuse `livedata_data` instead of a dedicated topic | Backend services would subscribe to every detector image in the facility. Rejected. |
 | Reset on any received LUT, with no identity | Simplest, and puts the decision at the producer. But a LUT-job restart re-emits an unchanged table, and that restart is the recovery action; a liveness heartbeat would also clear on every beat. Rejected. |
@@ -359,24 +376,25 @@ event on run transitions, and this is a second trigger on that path.
   in no stream lookup table. Harmless, because the context route is added unconditionally
   rather than derived from the mapping, but it needs a test pinning that — it reads as a
   bug otherwise.
-- `ContextBinding` gains a predicate over the job's params, and the gate resolution
-  takes the validated params model. This supersedes ADR 0003's param-dependent-context
-  non-goal, which was decided on YAGNI grounds. Params validation moves up into job
-  creation and `WorkflowFactory.create` takes the validated model rather than the raw
-  `WorkflowConfig`, so the order is validate → resolve gate → build with one validation
-  site. Resolution splits in two: `declared_context_keys` ignores predicates, serving the
-  static callers (route derivation, the workflow visualizer) that need the superset;
-  `resolve_context_keys` filters by predicate for the job path. Both are plain filters of
-  the declarations — a predicate only ever removes a binding — so every way two bindings
-  can disagree is a registration-time check on `Instrument.validate`, not a per-job one.
+- `Instrument` gains declared context streams (workflow key → wire name) alongside
+  `ContextBinding`. The two are not redundant: a binding is *pushed* into a graph that
+  never mentions it (a chain patch), so it must name the specs and sources it applies to;
+  a declared stream is *pulled* by a graph that names its key, so it names nothing. Only
+  the pulled kind can be derived, which is why the LUT moves and motion does not. This
+  supersedes ADR 0003's param-dependent-context non-goal, decided on YAGNI grounds.
+- Job creation becomes validate → build → read the gate off the workflow, rather than
+  validate → resolve the gate → build. `WorkflowFactory.create` takes the validated params
+  model rather than the raw `WorkflowConfig`, and `SupportsContext` gains the declared
+  streams as an input and the requested ones as an output. Nothing consumed the gating set
+  before the build, so the reordering costs nothing.
 - Specs are unchanged: coordinate mode stays a parameter on one workflow, so output
   identity and any plot built on it survive a mode switch.
 - The file-based table stops being reachable on a migrated instrument, so the streamed
   table cannot be A/B'd against it side by side within one instrument. The LUT job
   publishes its tables as ordinary outputs, which is the comparison surface instead.
 - `Instrument` gains `axis_ranges` and, once the LUT factory is attached, the set of
-  components it could place. Consumers bind against that set rather than against the full
-  component list.
+  components it could place. That set decides which group tables get published, and
+  therefore which context streams are declared at all.
 - DREAM and LOKI migrate first; they are the only instruments offering wavelength mode
   today. The detector- and monitor-view factories lose their lookup-table filename
   argument outright rather than defaulting it, so a view has no file path left to fall

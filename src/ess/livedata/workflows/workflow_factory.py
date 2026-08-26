@@ -41,11 +41,14 @@ class SupportsContext(Protocol):
     Workflows wrapping ``ess.reduce.streaming.StreamProcessor`` defer building
     their graph so the routing layer (:meth:`WorkflowFactory.create`) can inject
     per-job bindings the factory does not know: context streams (motion/geometry/
-    ROI) and f144-driven chain-patch transforms. :meth:`build` takes both and
+    ROI) and f144-driven chain-patch transforms. :meth:`build` takes them and
     materializes the workflow in one call, so the caller need not sequence
     separate configuration steps and factories need not thread these through
-    their signature. (Aux-role resolution is not among these: factories key
-    ``dynamic_keys`` by canonical stream name directly, via the
+    their signature. It also reports back, via
+    :attr:`requested_context_streams`, which of the instrument's declared
+    context streams the finished graph asks for -- the routing layer cannot know
+    that before the graph exists. (Aux-role resolution is not among these:
+    factories key ``dynamic_keys`` by canonical stream name directly, via the
     ``aux_source_names`` map passed to the factory.)
     """
 
@@ -54,7 +57,11 @@ class SupportsContext(Protocol):
         *,
         context_keys: Mapping[str, Any] | None = None,
         chain_patch_bindings: Iterable[ChainPatchBinding] = (),
+        context_streams: Mapping[Any, str] | None = None,
     ) -> None: ...
+
+    @property
+    def requested_context_streams(self) -> frozenset[str]: ...
 
 
 @dataclass(frozen=True)
@@ -102,7 +109,6 @@ class SpecHandle:
         stream_name: str,
         workflow_key: Any,
         dependent_sources: Iterable[str] | None = None,
-        predicate: Callable[[Any], bool] | None = None,
     ) -> None:
         """Append a spec-scope :class:`ContextBinding` to the registration.
 
@@ -128,16 +134,17 @@ class SpecHandle:
         records, so a spec-scope chain-patch context would route the f144
         value to a Sciline parameter that no provider consumes — silent-wrong.
 
-        ``predicate`` narrows the binding to the jobs whose validated params
-        satisfy it, so a spec offering several coordinate modes gates only the
-        jobs that actually read the stream (ADR 0010).
+        A binding applies to every job on a dependent source. A stream only
+        *some* of a spec's jobs consume — one a params model can switch on — is
+        not a binding but a declared context stream on the instrument, which the
+        build derives per job from the graph (see
+        :meth:`Instrument.declare_context_stream`).
         """
         self._factory._add_context_binding(
             self.workflow_id,
             stream_name=stream_name,
             workflow_key=workflow_key,
             dependent_sources=dependent_sources,
-            predicate=predicate,
         )
 
     def skip_instrument_contexts(self) -> None:
@@ -288,7 +295,6 @@ class WorkflowFactory(Mapping[WorkflowId, WorkflowSpec]):
         stream_name: str,
         workflow_key: Any,
         dependent_sources: Iterable[str] | None,
-        predicate: Callable[[Any], bool] | None = None,
     ) -> None:
         # Chain-patch contexts (ValueLog-typed workflow_key) at spec scope
         # would be silent-wrong: Instrument.chain_patch_bindings reads
@@ -311,7 +317,6 @@ class WorkflowFactory(Mapping[WorkflowId, WorkflowSpec]):
             stream_name=stream_name,
             workflow_key=workflow_key,
             dependent_sources=sources,
-            predicate=predicate,
         )
         self._registrations[workflow_id] = dataclasses.replace(
             reg, context_bindings=(*reg.context_bindings, new_input)
@@ -349,6 +354,7 @@ class WorkflowFactory(Mapping[WorkflowId, WorkflowSpec]):
         aux_source_names: dict[str, str] | None = None,
         context_keys: dict[str, Any] | None = None,
         chain_patch_bindings: Iterable[ChainPatchBinding] = (),
+        context_streams: Mapping[Any, str] | None = None,
     ) -> Workflow:
         """
         Create a workflow instance using the registered factory.
@@ -377,6 +383,11 @@ class WorkflowFactory(Mapping[WorkflowId, WorkflowSpec]):
             :meth:`SupportsContext.build`, which wires them as f144-driven
             dynamic transforms while materializing the graph. Only applied to
             workflows that defer their build (:class:`SupportsContext`).
+        context_streams:
+            The instrument's declared context streams (workflow key → wire
+            name). Passed to :meth:`SupportsContext.build`, which keeps the
+            entries the built graph asks for and reports them back as
+            :attr:`SupportsContext.requested_context_streams`.
         """
         workflow_id = config.identifier
         if workflow_id not in self._registrations:
@@ -433,6 +444,7 @@ class WorkflowFactory(Mapping[WorkflowId, WorkflowSpec]):
             workflow.build(
                 context_keys=context_keys,
                 chain_patch_bindings=chain_patch_bindings,
+                context_streams=context_streams,
             )
         elif context_keys:
             # No symmetric check for chain_patch_bindings: context_keys are
