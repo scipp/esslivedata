@@ -10,6 +10,7 @@ from typing import Any, ClassVar
 import holoviews as hv
 import pydantic
 
+from ess.livedata.dashboard.plot_params import LegendPosition
 from ess.livedata.dashboard.plots import PresenterBase, TimeBounds
 from ess.livedata.dashboard.range_hook import Axis
 
@@ -67,6 +68,12 @@ class FakePlotter:
     @property
     def autoscale_axes(self) -> frozenset[Axis]:
         return self.AUTOSCALE_AXES
+
+    @property
+    def legend_position(self) -> LegendPosition | None:
+        # Mirror a plotter drawing no legend: the cell takes its placement from
+        # whichever layer does.
+        return None
 
     @property
     def time_bounds(self) -> TimeBounds | None:

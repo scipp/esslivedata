@@ -80,6 +80,38 @@ class Line1dParams(pydantic.BaseModel):
     )
 
 
+class LegendPosition(enum.StrEnum):
+    """Enumeration of legend placements relative to the plot frame.
+
+    Member names are the HoloViews ``legend_position`` values, apart from
+    ``hidden``, which drops the legend instead of placing it; the human-readable
+    member values are what the config widget offers. Placements outside the frame
+    keep the legend clear of the data at the cost of shrinking the frame.
+    """
+
+    top_right = 'Inside, top right'
+    top_left = 'Inside, top left'
+    bottom_right = 'Inside, bottom right'
+    bottom_left = 'Inside, bottom left'
+    right = 'Beside, right of plot'
+    bottom = 'Beside, below plot'
+    hidden = 'Hidden'
+
+
+class LegendParams(pydantic.BaseModel):
+    """Parameters for legend placement."""
+
+    position: LegendPosition = pydantic.Field(
+        default=LegendPosition.top_right,
+        description=(
+            "Where to draw the legend of an overlay. Placing it beside the plot "
+            "keeps it off the data, at the cost of a smaller plot area; hiding "
+            "it frees the space entirely, leaving the curves unlabelled."
+        ),
+        title="Position",
+    )
+
+
 class CombineMode(enum.StrEnum):
     """Enumeration of combine modes for multiple datasets."""
 
@@ -276,6 +308,13 @@ class PlotDisplayParams1d(PlotParamsBase):
     line: Line1dParams = pydantic.Field(
         default_factory=Line1dParams,
         description="1D line rendering options.",
+    )
+    legend: LegendParams = pydantic.Field(
+        default_factory=LegendParams,
+        description=(
+            "Legend options. The legend lists one entry per overlaid curve; it "
+            "is absent when a plot shows a single curve or uses layout mode."
+        ),
     )
 
 

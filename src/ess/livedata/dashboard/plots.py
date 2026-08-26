@@ -30,6 +30,7 @@ from .frame_aspect import make_frame_aspect_opts
 from .plot_params import (
     CombineMode,
     LayoutParams,
+    LegendPosition,
     PlotAspect,
     PlotDisplayParams1d,
     PlotParams1d,
@@ -237,6 +238,19 @@ def _typed_opts(element_types: Iterable[type], **options: Any) -> list[hv.Option
     than applied generically.
     """
     return [getattr(hv.opts, t.__name__)(**options) for t in element_types]
+
+
+def legend_overlay_opts(position: LegendPosition | None) -> dict[str, Any]:
+    """HoloViews overlay opts realizing a legend placement.
+
+    Empty for a layer that draws no legend, so that a cell fusing several layers
+    takes its legend from whichever of them does.
+    """
+    if position is None:
+        return {}
+    if position is LegendPosition.hidden:
+        return {'show_legend': False}
+    return {'legend_position': position.name}
 
 
 @dataclass(frozen=True)
@@ -513,11 +527,22 @@ class Plotter:
         """
         return self.layout_params.combine_mode != CombineMode.layout
 
+    @property
+    def legend_position(self) -> LegendPosition | None:
+        """Where this layer wants its legend, or None if it draws none.
+
+        The cell needs this because a multi-layer cell collates the layers into
+        an outer ``hv.Overlay`` that owns the legend, discarding the inner
+        overlays' legend opts (see ``widgets/cell.py``).
+        """
+        return self._legend_position
+
     def __init__(
         self,
         *,
         aspect_params: PlotAspect | None = None,
         layout_params: LayoutParams | None = None,
+        legend_position: LegendPosition | None = None,
         normalize_to_rate: bool = False,
     ):
         """
@@ -527,11 +552,16 @@ class Plotter:
         ----------
         layout_params:
             Layout parameters for combining multiple datasets. If None, uses defaults.
+        legend_position:
+            Where the legend is drawn relative to the plot frame. None for
+            plotters that draw no legend, which leaves the choice to whichever
+            layer of the cell does draw one.
         normalize_to_rate:
             If True, normalize counts data to rate (counts/s) using
             start_time/end_time coordinates before plotting.
         """
         self._normalize_to_rate = normalize_to_rate
+        self._legend_position = legend_position
         self._cached_state: Any | None = None
         self._time_bounds: TimeBounds | None = None
         self._range_targets: dict[DataKey, RangeTargets] = {}
@@ -930,7 +960,11 @@ class Plotter:
         # title='' stops Bokeh promoting a single overlaid element's label to the
         # plot title when there is no legend to carry it.
         return [
-            hv.opts.Overlay(shared_axes=True, title=''),
+            hv.opts.Overlay(
+                shared_axes=True,
+                title='',
+                **legend_overlay_opts(self._legend_position),
+            ),
             hv.opts.Layout(shared_axes=False),
         ]
 
@@ -1120,6 +1154,7 @@ class LinePlotter(Plotter):
         """Create LinePlotter from display parameters."""
         return cls(
             layout_params=params.layout,
+            legend_position=params.legend.position,
             aspect_params=params.plot_aspect,
             scale_opts=params.plot_scale,
             tick_params=params.ticks,
@@ -1148,6 +1183,7 @@ class LinePlotter(Plotter):
         """
         instance = cls(
             layout_params=params.layout,
+            legend_position=params.legend.position,
             aspect_params=params.plot_aspect,
             scale_opts=PlotScaleParams(y_scale=params.plot_scale.y_scale),
             tick_params=params.ticks,
@@ -1539,6 +1575,7 @@ class Overlay1DPlotter(Plotter):
         """Create Overlay1DPlotter from PlotParams1d."""
         return cls(
             layout_params=LayoutParams(combine_mode=CombineMode.overlay),
+            legend_position=params.legend.position,
             aspect_params=params.plot_aspect,
             scale_opts=params.plot_scale,
             tick_params=params.ticks,
