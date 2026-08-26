@@ -82,7 +82,7 @@ def main() -> None:
         aux_source_names = (
             spec.aux_sources.render(job_id=job_id) if spec.aux_sources else None
         )
-        context_keys = instrument.declared_context_keys(wid, source_name)
+        context_keys = instrument.bound_context_keys(wid, source_name)
         try:
             workflow = factory.create(
                 source_name=source_name,
@@ -91,7 +91,7 @@ def main() -> None:
                 aux_source_names=aux_source_names,
                 context_keys=context_keys,
                 chain_patch_bindings=instrument.chain_patch_bindings,
-                context_streams=instrument.context_streams,
+                offered_context_streams=instrument.offered_context_streams,
             )
         except Exception as e:
             logger.warning(

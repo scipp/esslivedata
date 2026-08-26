@@ -376,11 +376,12 @@ event on run transitions, and this is a second trigger on that path.
   in no stream lookup table. Harmless, because the context route is added unconditionally
   rather than derived from the mapping, but it needs a test pinning that — it reads as a
   bug otherwise.
-- `Instrument` gains declared context streams (workflow key → wire name) alongside
-  `ContextBinding`. The two are not redundant: a binding is *pushed* into a graph that
-  never mentions it (a chain patch), so it must name the specs and sources it applies to;
-  a declared stream is *pulled* by a graph that names its key, so it names nothing. Only
-  the pulled kind can be derived, which is why the LUT moves and motion does not. This
+- `Instrument` gains offered context streams (workflow key → wire name) alongside
+  `ContextBinding`. The two are not redundant, but the line between them is narrower than
+  push-vs-pull: an offer is derivable because the graph names the key, so a binding is
+  required only where the key reaches the graph solely because the binding injects it (a
+  chain patch), or where the stream filling a key varies per source. Keys that are ordinary
+  graph parameters belong on the offer side even when their value comes from motion. This
   supersedes ADR 0003's param-dependent-context non-goal, decided on YAGNI grounds.
 - Job creation becomes validate → build → read the gate off the workflow, rather than
   validate → resolve the gate → build. `WorkflowFactory.create` takes the validated params

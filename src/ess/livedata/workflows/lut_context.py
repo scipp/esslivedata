@@ -5,8 +5,8 @@
 The lookup-table workflow publishes two tables as context streams (ADR 0010):
 one for the detectors, one for the monitors. A consuming workflow inserts the
 matching provider and says nothing else: the provider takes one of the context
-keys here as its argument, the instrument declares which stream carries that
-key (:func:`declare_lut_context_streams`), and the workflow build derives the
+keys here as its argument, the instrument offers the stream carrying that key
+(:func:`offer_lut_context_streams`), and the workflow build derives the
 job's gate from whether its graph reaches the provider at all. Each provider
 selects the block covering its own flight path (see
 :mod:`~ess.livedata.workflows.lut_blocks`) and reassembles essreduce's public
@@ -76,13 +76,13 @@ def monitor_lookup_table(
     return LookupTable[SampleRun, MonitorType](**unpack_block(wire, ltotal))
 
 
-def declare_lut_context_streams(instrument: Instrument) -> None:
-    """Declare the streamed tables as context streams consuming graphs can request.
+def offer_lut_context_streams(instrument: Instrument) -> None:
+    """Offer the streamed tables as context streams consuming graphs can request.
 
-    One declaration per group, and none per spec: a workflow reaches the table
+    One offer per group, and none per spec: a workflow reaches the table
     by inserting :func:`detector_lookup_table` or :func:`monitor_lookup_table`,
     and the build derives the stream from the graph that provider ends up in
-    (see :meth:`~ess.livedata.config.instrument.Instrument.declare_context_stream`).
+    (see :meth:`~ess.livedata.config.instrument.Instrument.offer_context_stream`).
     Time-of-arrival jobs therefore stay ungated without anyone saying so: their
     graph reduces straight from ``event_time_offset``, so the provider is
     unreachable and the table is not requested. That is the property ADR 0010
@@ -91,7 +91,7 @@ def declare_lut_context_streams(instrument: Instrument) -> None:
     than by something each spec has to remember to say.
 
     A group with no placeable component publishes no table, so its stream is
-    not declared and a job whose graph asks for it fails at job creation on the
+    not offered and a job whose graph asks for it fails at job creation on the
     unsatisfied key, rather than waiting forever for a stream nobody publishes.
 
     A placeable *group* does not make every component in it placeable. A job on
@@ -107,6 +107,6 @@ def declare_lut_context_streams(instrument: Instrument) -> None:
         (instrument.monitors, MonitorLutContext, MONITOR_LUT_OUTPUT),
     ):
         if set(group) & instrument.lut_components:
-            instrument.declare_context_stream(
+            instrument.offer_context_stream(
                 workflow_key=key, stream_name=LUT_STREAM_NAMES[output]
             )

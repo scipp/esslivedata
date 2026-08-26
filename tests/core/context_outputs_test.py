@@ -31,7 +31,7 @@ from ess.livedata.config.workflow_spec import (
 from ess.livedata.core.context_outputs import (
     ContextOutputError,
     ContextOutputExtractor,
-    resolve_context_streams,
+    resolve_context_outputs,
 )
 from ess.livedata.core.job import JobResult
 from ess.livedata.core.message import StreamId, StreamKind
@@ -131,7 +131,7 @@ def test_context_outputs_validator_rejects_multiple_source_names() -> None:
 def test_resolves_declared_names_for_the_spec_source() -> None:
     spec = _spec(source_names=['a'], context_outputs={'table': 'wavelength_lut/x'})
 
-    resolved = resolve_context_streams({spec.get_id(): spec})
+    resolved = resolve_context_outputs({spec.get_id(): spec})
 
     assert resolved == {(spec.get_id(), 'a'): (('table', 'wavelength_lut/x'),)}
 
@@ -147,7 +147,7 @@ def test_collision_across_specs_is_rejected() -> None:
     )
 
     with pytest.raises(ContextOutputError, match='Duplicate context stream name'):
-        resolve_context_streams({s.get_id(): s for s in (first, second)})
+        resolve_context_outputs({s.get_id(): s for s in (first, second)})
 
 
 def test_extracts_only_designated_output(

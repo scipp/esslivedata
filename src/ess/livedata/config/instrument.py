@@ -145,8 +145,8 @@ class Instrument:
     #: instruments.
     _lut_components: frozenset[str] = field(default_factory=frozenset, init=False)
     #: Context streams a workflow can request by asking for the key, filled in
-    #: by :meth:`declare_context_stream`.
-    _context_streams: dict[Any, str] = field(default_factory=dict, init=False)
+    #: by :meth:`offer_context_stream`.
+    _offered_context_streams: dict[Any, str] = field(default_factory=dict, init=False)
     #: Stability tolerance for chopper delay readbacks. The readback stream's
     #: unit is enforced to ``ns`` by ``declare_chopper_setpoint_streams``.
     #: Shared by ``ChopperSynthesizer`` for noise rejection (rolling-window std
@@ -310,50 +310,57 @@ class Instrument:
         self._validate_binding_stream_name(binding)
         self.context_bindings.append(binding)
 
-    def declare_context_stream(self, *, workflow_key: Any, stream_name: str) -> None:
-        """Register a context stream workflows may request by asking for its key.
+    def offer_context_stream(self, *, workflow_key: Any, stream_name: str) -> None:
+        """Offer a stream to every workflow, keyed by the Sciline key it fills.
 
-        The counterpart to :meth:`add_context_binding` for streams a workflow
-        *pulls* rather than has *pushed* into it. A binding names the specs and
-        sources it applies to, because a chain patch is injected into a graph
-        that never mentions it. A declared context stream names nothing: the
-        consuming graph asks for ``workflow_key``, and the workflow build
+        The counterpart to :meth:`add_context_binding`. Both end up as
+        ``{stream name: workflow key}`` entries in a job's ``context_keys`` and
+        in its gate; they differ in what decides *which jobs* get the entry.
+
+        An offer names no spec, source or params. A graph asks for the stream
+        simply by containing ``workflow_key``, and the workflow build
         (``StreamProcessorWorkflow.build``) reads that request off the finished
-        graph. Which specs, which sources and which params consume it therefore
-        need no declaration at all -- the
-        streamed wavelength lookup table (ADR 0010) is the motivating case, where
-        the same graph feeds a job either through the table or straight from
-        time-of-arrival depending on its params.
+        graph. The streamed wavelength lookup table (ADR 0010) is the motivating
+        case: one spec feeds a job either through the table or straight from
+        time-of-arrival depending on its params, and only the built graph knows
+        which.
 
-        Declare only streams that are actually published: a job whose graph asks
-        for an undeclared key fails at creation on the unsatisfied key, whereas
-        gating on a stream nobody publishes would leave it ``pending_context``
-        forever.
+        A binding is needed where that reading cannot work: when the key reaches
+        the graph only because the binding puts it there (a chain patch is
+        injected into a graph that never mentions it, so there is no request to
+        read back), or when the stream filling a key varies per source. Offers
+        are bijective -- one stream per key and one key per stream,
+        instrument-wide -- and so cannot express the latter.
+
+        Offer only streams that are actually published; :meth:`validate` checks
+        this. Gating on a stream nobody publishes would leave the job in
+        ``pending_context`` forever, whereas a graph asking for a key nobody
+        offers fails loudly at job creation on the unsatisfied key.
         """
-        if (previous := self._context_streams.get(workflow_key)) not in (
+        if (previous := self._offered_context_streams.get(workflow_key)) not in (
             None,
             stream_name,
         ):
             raise ValueError(
                 f"Context stream for workflow key {workflow_key} already "
-                f"declared as {previous!r}, cannot redeclare as {stream_name!r}"
+                f"offered as {previous!r}, cannot also offer {stream_name!r}"
             )
-        for key, name in self._context_streams.items():
+        for key, name in self._offered_context_streams.items():
             if name == stream_name and key != workflow_key:
                 raise ValueError(
-                    f"Context stream {stream_name!r} already declared for "
+                    f"Context stream {stream_name!r} is already offered for "
                     f"workflow key {key}, cannot also serve {workflow_key}"
                 )
-        self._context_streams[workflow_key] = stream_name
+        self._offered_context_streams[workflow_key] = stream_name
 
     @property
-    def context_streams(self) -> dict[Any, str]:
-        """Declared context streams, as workflow key -> wire name.
+    def offered_context_streams(self) -> dict[Any, str]:
+        """Offered context streams, as workflow key -> wire name.
 
         Handed to every workflow build, which keeps whichever entries its graph
-        turns out to need (see :meth:`declare_context_stream`).
+        turns out to need (see :meth:`offer_context_stream`).
         """
-        return dict(self._context_streams)
+        return dict(self._offered_context_streams)
 
     @property
     def lut_components(self) -> frozenset[str]:
@@ -419,17 +426,18 @@ class Instrument:
             if source_name in binding.dependent_sources
         ]
 
-    def declared_context_keys(
+    def bound_context_keys(
         self, workflow_id: WorkflowId, source_name: str
     ) -> dict[str, Any]:
-        """Every declared context key for a ``(spec, source)`` pair.
+        """The context keys bound by :class:`ContextBinding` for a ``(spec, source)``.
 
-        Returns ``{stream_name: workflow_key}``; context wire names equal their
-        stream names, so the keys double as the set of gating context streams a
-        binding contributes. A binding applies to every job on a dependent
-        source, which is why this needs no params: a stream only some of a
-        spec's jobs consume is declared with :meth:`declare_context_stream`
-        instead, and resolved per job against the graph it builds.
+        Returns ``{stream_name: workflow_key}``, the inverse orientation of
+        :attr:`offered_context_streams`; context wire names equal their stream
+        names, so the keys double as the set of gating context streams a binding
+        contributes. A binding applies to every job on a dependent source, which
+        is why this needs no params: a stream only some of a spec's jobs consume
+        is offered instead (see :meth:`offer_context_stream`), and resolved per
+        job against the graph it builds.
 
         Two bindings naming one stream for different keys is a declaration
         mistake and is rejected at registration by :meth:`validate`, not here.
@@ -840,7 +848,7 @@ class Instrument:
                 get_nexus_geometry_filename,
             )
             from ess.livedata.workflows.lut_context import (
-                declare_lut_context_streams,
+                offer_lut_context_streams,
             )
             from ess.livedata.workflows.wavelength_lut_workflow import (
                 attach_wavelength_lut_factory,
@@ -856,7 +864,7 @@ class Instrument:
             )
             # Before setup_factories: a consuming spec neither declares nor
             # inherits anything here, it just inserts a provider taking the key.
-            declare_lut_context_streams(self)
+            offer_lut_context_streams(self)
 
         if hasattr(module, 'setup_factories'):
             module.setup_factories(self)
@@ -913,6 +921,31 @@ class Instrument:
         self._validate_binding_dependent_sources()
         self._validate_context_binding_declarations()
         self._validate_chain_patch_value_log_uniqueness()
+        self._validate_offered_context_streams()
+
+    def _validate_offered_context_streams(self) -> None:
+        """Raise if an offered context stream is not published by anything.
+
+        A gate on a name nothing publishes never opens, leaving every consuming
+        job in ``pending_context`` forever. Two publishers are legitimate: a
+        declared instrument stream, and a workflow output republished as a
+        context stream (:attr:`WorkflowSpec.context_outputs`). Device substreams
+        are excluded for the reason spelled out in
+        :meth:`_validate_binding_stream_name` — ``DeviceSynthesizer`` suppresses
+        them in favour of the merged device stream.
+        """
+        published = set(self.streams) - {
+            name for device in self.devices.values() for name in device.substream_names
+        }
+        for spec in self.workflow_factory.values():
+            published.update(spec.context_outputs.values())
+        for key, name in self._offered_context_streams.items():
+            if name not in published:
+                raise ValueError(
+                    f"Context stream {name!r} offered for workflow key {key} is "
+                    "published by neither a declared stream nor a workflow's "
+                    "context_outputs; jobs asking for the key would gate forever"
+                )
 
     def _validate_binding_dependent_sources(self) -> None:
         """Raise if any binding lists a source name no registered spec advertises."""

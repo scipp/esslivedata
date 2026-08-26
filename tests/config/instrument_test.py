@@ -636,10 +636,10 @@ class TestContextBindings:
             stream_name='rot', workflow_key=_Key, dependent_sources=['det1']
         )
 
-        assert instrument.declared_context_keys(handle.workflow_id, 'det1') == {
+        assert instrument.bound_context_keys(handle.workflow_id, 'det1') == {
             'rot': _Key
         }
-        assert instrument.declared_context_keys(handle.workflow_id, 'det2') == {}
+        assert instrument.bound_context_keys(handle.workflow_id, 'det2') == {}
 
     def test_declared_context_keys_honours_skip_instrument_contexts(self):
         instrument = Instrument(
@@ -657,7 +657,7 @@ class TestContextBindings:
         )
         handle.skip_instrument_contexts()
 
-        assert instrument.declared_context_keys(handle.workflow_id, 'det1') == {}
+        assert instrument.bound_context_keys(handle.workflow_id, 'det1') == {}
 
     def test_declared_context_keys_includes_spec_scope_binding(self):
         instrument = Instrument(
@@ -673,7 +673,7 @@ class TestContextBindings:
         handle.skip_instrument_contexts()
         handle.add_context_binding(stream_name='rot', workflow_key=_Key)
 
-        assert instrument.declared_context_keys(handle.workflow_id, 'det1') == {
+        assert instrument.bound_context_keys(handle.workflow_id, 'det1') == {
             'rot': _Key
         }
 
@@ -684,7 +684,7 @@ class TestContextBindings:
         )
 
         with pytest.raises(KeyError, match=r'not.*registered'):
-            instrument.declared_context_keys(workflow_id, 'det1')
+            instrument.bound_context_keys(workflow_id, 'det1')
 
     def test_two_bindings_naming_one_stream_with_different_keys_raise(self):
         # One stream feeds one key. Nothing a job selects reaches a stream name,
@@ -706,42 +706,40 @@ class TestContextBindings:
             instrument.validate()
 
 
-class TestDeclaredContextStreams:
+class TestOfferedContextStreams:
     """Streams a workflow requests by asking for their key.
 
     No spec, source or params are named: what consumes the stream is settled by
     the graph a job builds, so the only thing that can go wrong here is the
-    declaration disagreeing with itself.
+    offer disagreeing with itself.
     """
 
-    def test_declared_stream_is_offered_by_key(self):
+    def test_offered_stream_is_keyed_by_workflow_key(self):
         instrument = Instrument(name='test')
 
-        instrument.declare_context_stream(workflow_key=_Key, stream_name='lut')
+        instrument.offer_context_stream(workflow_key=_Key, stream_name='lut')
 
-        assert instrument.context_streams == {_Key: 'lut'}
+        assert instrument.offered_context_streams == {_Key: 'lut'}
 
-    def test_redeclaring_the_same_pair_is_idempotent(self):
+    def test_reoffering_the_same_pair_is_idempotent(self):
         """Instrument modules are imported once but ``load_factories`` may run
-        again in a long-lived process; a repeated declaration is not a mistake.
+        again in a long-lived process; a repeated offer is not a mistake.
         """
         instrument = Instrument(name='test')
 
-        instrument.declare_context_stream(workflow_key=_Key, stream_name='lut')
-        instrument.declare_context_stream(workflow_key=_Key, stream_name='lut')
+        instrument.offer_context_stream(workflow_key=_Key, stream_name='lut')
+        instrument.offer_context_stream(workflow_key=_Key, stream_name='lut')
 
-        assert instrument.context_streams == {_Key: 'lut'}
+        assert instrument.offered_context_streams == {_Key: 'lut'}
 
     def test_one_key_cannot_take_two_streams(self):
         class _OtherKey: ...
 
         instrument = Instrument(name='test')
-        instrument.declare_context_stream(workflow_key=_Key, stream_name='lut')
+        instrument.offer_context_stream(workflow_key=_Key, stream_name='lut')
 
-        with pytest.raises(ValueError, match='already declared'):
-            instrument.declare_context_stream(
-                workflow_key=_Key, stream_name='other_lut'
-            )
+        with pytest.raises(ValueError, match='already offered'):
+            instrument.offer_context_stream(workflow_key=_Key, stream_name='other_lut')
 
     def test_one_stream_cannot_serve_two_keys(self):
         # The reverse mapping is what routes an arriving value, so it has to be
@@ -749,10 +747,10 @@ class TestDeclaredContextStreams:
         class _OtherKey: ...
 
         instrument = Instrument(name='test')
-        instrument.declare_context_stream(workflow_key=_Key, stream_name='lut')
+        instrument.offer_context_stream(workflow_key=_Key, stream_name='lut')
 
-        with pytest.raises(ValueError, match='already declared'):
-            instrument.declare_context_stream(workflow_key=_OtherKey, stream_name='lut')
+        with pytest.raises(ValueError, match='already offered'):
+            instrument.offer_context_stream(workflow_key=_OtherKey, stream_name='lut')
 
 
 class TestInstrumentRegisterSpec:

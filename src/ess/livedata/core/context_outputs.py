@@ -4,8 +4,9 @@
 
 A workflow output designated in :attr:`WorkflowSpec.context_outputs` is
 republished on a dedicated Kafka topic under a stable *stream name*, where it
-becomes an ordinary context input that other workflows bind with a
-``ContextBinding`` (ADR 0003). This is the feedback edge of ADR 0010: the
+becomes an ordinary context input other workflows consume — a stream the
+instrument offers by key (``Instrument.offer_context_stream``), or one a
+``ContextBinding`` binds (ADR 0003). This is the feedback edge of ADR 0010: the
 wavelength lookup table is computed by one job and consumed by the reduction
 jobs of the same instrument.
 
@@ -16,8 +17,8 @@ properties, for the same reasons:
 - **A dedicated topic**, not ``livedata_data``. A backend service must not
   subscribe to every detector image in the facility in order to receive a
   lookup table.
-- **Stream names carry no job identity.** A ``ContextBinding`` is declared at
-  import time and cannot know a job number. Excluding it is also what lets a
+- **Stream names carry no job identity.** Offers and bindings are both declared
+  at import time and cannot know a job number. Excluding it is also what lets a
   relaunched producer transparently resume feeding its consumers.
 
 It differs in what happens downstream: a mirrored device is publish-only,
@@ -43,7 +44,7 @@ class ContextOutputError(ValueError):
     """Raised when ``context_outputs`` declarations cannot be resolved."""
 
 
-def resolve_context_streams(
+def resolve_context_outputs(
     registry: Mapping[WorkflowId, WorkflowSpec],
 ) -> dict[tuple[WorkflowId, str], tuple[tuple[str, str], ...]]:
     """Resolve every ``context_outputs`` declaration in a workflow registry.
@@ -103,7 +104,7 @@ class ContextOutputExtractor:
     """
 
     def __init__(self, *, registry: Mapping[WorkflowId, WorkflowSpec]) -> None:
-        self._streams = resolve_context_streams(registry)
+        self._streams = resolve_context_outputs(registry)
 
     def extract(self, results: list[JobResult]) -> list[Message[sc.DataArray]]:
         """Extract the designated context outputs of the given results.

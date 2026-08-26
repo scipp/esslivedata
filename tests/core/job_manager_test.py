@@ -2066,7 +2066,7 @@ class TestJobFactoryDeclaredContextStreams:
 
     def test_requested_stream_gates_the_job_and_is_routed_to_it(self) -> None:
         instrument = _build_instrument_with_streams()
-        instrument.declare_context_stream(workflow_key=_CtxKeyA, stream_name='lut')
+        instrument.offer_context_stream(workflow_key=_CtxKeyA, stream_name='lut')
         proc = FakeProcessor()
         proc.requests_context_streams = {_CtxKeyA}
         handle = self._register(instrument, proc)
@@ -2080,7 +2080,7 @@ class TestJobFactoryDeclaredContextStreams:
     def test_declared_stream_the_workflow_ignores_does_not_gate(self) -> None:
         """Every job is offered the declaration; only asking for it costs a gate."""
         instrument = _build_instrument_with_streams()
-        instrument.declare_context_stream(workflow_key=_CtxKeyA, stream_name='lut')
+        instrument.offer_context_stream(workflow_key=_CtxKeyA, stream_name='lut')
         proc = FakeProcessor()
         handle = self._register(instrument, proc)
 
@@ -2094,7 +2094,7 @@ class TestJobFactoryDeclaredContextStreams:
         """The two mechanisms coexist on one job: a pushed chain patch and a
         pulled table gate it alike."""
         instrument = _build_instrument_with_streams()
-        instrument.declare_context_stream(workflow_key=_CtxKeyA, stream_name='lut')
+        instrument.offer_context_stream(workflow_key=_CtxKeyA, stream_name='lut')
         proc = FakeProcessor()
         proc.requests_context_streams = {_CtxKeyA}
         handle = self._register(instrument, proc)

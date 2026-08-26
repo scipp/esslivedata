@@ -53,6 +53,13 @@ def gather_source_names(
             for reg in service_regs
         ):
             names.add(binding.stream_name)
+    if service_regs:
+        # Offered context streams name no spec or source: any hosted spec's
+        # graph may ask for one and only the built graph knows, so the
+        # subscription has to cover them all. Names published on the context
+        # topic drop out in resolve_stream_names — that route is added
+        # unconditionally rather than derived here.
+        names.update(instrument.offered_context_streams.values())
     devices = instrument.devices
     for name in list(names):
         device = devices.get(name)

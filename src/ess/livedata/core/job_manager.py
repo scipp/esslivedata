@@ -143,7 +143,7 @@ class JobFactory:
 
         Validates the config's params, then collects the job's context streams
         from both sides: the instrument- and spec-scope ``ContextBinding``
-        declarations matching this ``(spec, source)``, and the declared context
+        declarations matching this ``(spec, source)``, and the offered context
         streams the built workflow turns out to request (ADR 0010). Together
         they populate the job's ``context_keys`` (wired into ``set_context``)
         and ``gating_streams`` (the JobManager gates the job until each is
@@ -173,7 +173,7 @@ class JobFactory:
             rendered_aux_names = dict(config.aux_source_names or {})
 
         params = factory.validate_params(config)
-        context_keys = self._instrument.declared_context_keys(
+        context_keys = self._instrument.bound_context_keys(
             workflow_id, job_id.source_name
         )
         bound_streams = set(context_keys)
@@ -192,12 +192,12 @@ class JobFactory:
             aux_source_names=aux_streams,
             context_keys=context_keys,
             chain_patch_bindings=self._instrument.chain_patch_bindings,
-            context_streams=self._instrument.context_streams,
+            offered_context_streams=self._instrument.offered_context_streams,
         )
-        # Declared context streams are offered to every job; only the built
-        # graph knows which of them it asks for, so the gate is read back off
+        # Offered context streams reach every job; only the built graph knows
+        # which of them it asks for, so that half of the gate is read back off
         # the workflow rather than predicted here (ADR 0010).
-        context_streams = bound_streams | (
+        gating_streams = bound_streams | (
             set(stream_processor.requested_context_streams)
             if isinstance(stream_processor, SupportsContext)
             else set()
@@ -207,8 +207,8 @@ class JobFactory:
             workflow_id=workflow_id,
             workflow=stream_processor,
             source_names=[job_id.source_name],
-            input_streams=set(aux_streams.values()) | context_streams,
-            gating_streams=context_streams,
+            input_streams=set(aux_streams.values()) | gating_streams,
+            gating_streams=gating_streams,
             reset_on_run_transition=workflow_spec.reset_on_run_transition,
             supports_reset=workflow_spec.supports_reset,
         )

@@ -432,7 +432,7 @@ class TestDeclaredContextStreamDerivation:
     ):
         workflow = self._workflow(base_workflow_with_context)
 
-        workflow.build(context_streams={Context: 'ctx'})
+        workflow.build(offered_context_streams={Context: 'ctx'})
 
         assert workflow.requested_context_streams == frozenset({'ctx'})
         # Requested means wired: the value arrives under the declared wire name.
@@ -448,7 +448,7 @@ class TestDeclaredContextStreamDerivation:
     ):
         workflow = self._workflow(dead_context_provider)
 
-        workflow.build(context_streams={Context: 'ctx'})
+        workflow.build(offered_context_streams={Context: 'ctx'})
 
         # Nothing to wait for, and nothing missing either: the job runs on its
         # dynamic input alone.
@@ -469,14 +469,14 @@ class TestDeclaredContextStreamDerivation:
         workflow = self._workflow(base_workflow_with_context)
 
         with pytest.raises(sciline.UnsatisfiedRequirement, match='Context'):
-            workflow.build(context_streams={Static: 'other'})
+            workflow.build(offered_context_streams={Static: 'other'})
 
     def test_declaring_streams_after_build_raises(self, dead_context_provider):
         workflow = self._workflow(dead_context_provider)
         workflow.build()
 
         with pytest.raises(RuntimeError, match='already built'):
-            workflow.build(context_streams={Context: 'ctx'})
+            workflow.build(offered_context_streams={Context: 'ctx'})
 
 
 class TestWindowOutputs:

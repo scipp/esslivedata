@@ -192,6 +192,33 @@ class TestGatherSourceNames:
             'wavelength_lut/monitors',
         }
 
+    def test_offered_context_stream_is_subscribed_by_every_hosting_service(
+        self,
+    ) -> None:
+        """An offer names no spec, so which jobs ask for it is known only once
+        their graphs are built; the subscription must therefore cover them all.
+        """
+        from ess.livedata.config.stream import F144Stream
+
+        instrument = Instrument(
+            name="test",
+            detector_names=["det_a"],
+            streams={'rot': F144Stream(source='rot', topic='t', units='mm')},
+        )
+        instrument.register_spec(
+            group=DETECTORS,
+            name="view",
+            version=1,
+            title="View",
+            source_names=["det_a"],
+            outputs=DefaultOutputs,
+        )
+        instrument.offer_context_stream(stream_name='rot', workflow_key=object)
+
+        assert gather_source_names(instrument, "detector_data") == {'det_a', 'rot'}
+        # A service hosting no spec subscribes to nothing, offers included.
+        assert gather_source_names(instrument, "data_reduction") == set()
+
 
 class TestResolveStreamNames:
     def test_known_names_pass_through(self, infra_kwargs: dict) -> None:
