@@ -332,6 +332,14 @@ class Instrument:
         are bijective -- one stream per key and one key per stream,
         instrument-wide -- and so cannot express the latter.
 
+        A binding also routes more precisely, which is what keeps a stream
+        private to one spec off the offer side. Route derivation runs at startup
+        with no params, whereas an offer is taken up per job from the built
+        graph, so every service hosting any spec must subscribe to every offered
+        stream. A spec-scope binding subscribes only the service running that
+        spec -- the wavelength-LUT chopper setpoints, consumed by one workflow on
+        the timeseries service, stay bindings for this reason.
+
         Offer only streams that are actually published; :meth:`validate` checks
         this. Gating on a stream nobody publishes would leave the job in
         ``pending_context`` forever, whereas a graph asking for a key nobody

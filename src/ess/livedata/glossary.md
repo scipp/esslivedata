@@ -176,8 +176,9 @@ The naming stack, from the Kafka wire inwards (see ADR 0004 and
   streams have a value (ADR 0002).
 - **ContextBinding** — declaration mapping a context stream to a Sciline
   workflow key for given dependent sources (`config/stream.py`, ADR 0003).
-  Required where the stream filling a key varies per source, or where the key
-  reaches the graph only because the binding puts it there (a chain patch).
+  Required where the stream filling a key varies per source, where the key
+  reaches the graph only because the binding puts it there (a chain patch), or
+  where a stream private to one spec should not be subscribed by every service.
 - **Offered context stream** — instrument-wide mapping from a Sciline workflow
   key to the wire name carrying it, named by no spec, source or params
   (`Instrument.offer_context_stream`, ADR 0010). The workflow build keeps the
