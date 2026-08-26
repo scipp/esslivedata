@@ -20,6 +20,7 @@ from .core.message_batcher import (
     MessageBatcher,
     SimpleMessageBatcher,
 )
+from .core.numba_threading import verify_numba_threading_layer
 from .core.orchestrating_processor import OrchestratingProcessor
 from .core.preprocessor import PreprocessorFactory
 from .core.rate_aware_batcher import RateAwareMessageBatcher
@@ -335,6 +336,7 @@ class DataServiceRunner:
         )
         configure_sciline_scheduler(scheduler_mode)
         logger.info("sciline_scheduler", mode=scheduler_mode)
+        logger.info("numba_threading_layer", layer=verify_numba_threading_layer())
 
         # Configure logging with parsed arguments
         log_level = getattr(logging, args.pop('log_level'))

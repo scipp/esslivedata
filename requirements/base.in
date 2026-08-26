@@ -8,6 +8,7 @@ dask>=2026.3.0
 ess-streaming-data-types
 essreduce>=26.6.3
 jinja2
+numba
 pydantic>=2
 scipp>=25.02.0
 scippneutron>=25.11.1
