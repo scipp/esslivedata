@@ -35,9 +35,13 @@ python -m pytest -m "not integration" # include @pytest.mark.slow (~85s)
 tox                                   # CI: includes slow tests
 ```
 
-`addopts` carries `-n auto`; pass `-n0` to get a serial run (needed for `--pdb`, and
-for readable output with `-x`). Benchmark files (`*_bench.py`, `*_benchmark.py`) are
-not collected by default and drop back to serial automatically.
+`addopts` carries `-n auto --dist worksteal`; pass `-n0` to get a serial run (needed
+for `--pdb`, and for readable output with `-x`). `worksteal` is worth ~13% over xdist's
+default round-robin, because the slow `tests/services` tail otherwise lands on whichever
+worker happens to draw it and defines the critical path.
+
+Benchmark files (`*_bench.py`, `*_benchmark.py`) are not collected by default and drop
+back to serial automatically.
 
 **Run the shard, not the suite.** `tests/` mirrors `src/ess/livedata/` 1:1, so a change
 under `src/ess/livedata/<pkg>/` is covered by `tests/<pkg>/`. Approximate wall times on
@@ -54,16 +58,18 @@ a 24-core box, default marker set:
 | `tests/config` | 16s | 13.5s |
 | `tests/services` | 53s | 14s |
 | `tests/dashboard` | 51s | 17s |
-| whole suite | 148s | 39s |
+| whole suite | 148s | 32s |
 
 Run a single file while iterating and keep the full suite for before you commit. For
 one file `-n0` wins (0.9s vs 2.5s -- 24 workers cost more to start than the tests cost
 to run); the crossover is around `tests/kafka`.
 
-Roughly 25s of the 39s full parallel run is fixed overhead: every xdist worker
-re-collects all ~4950 items, so the floor grows with worker count (11.5s serial, 12.8s
-at `-n4`, 25.4s at `-n24`) and shrinking the suite's *import* cost helps more than
-adding cores.
+Most of the full parallel run is fixed overhead: every xdist worker re-collects all
+~4950 items, so the floor grows with worker count (11.5s serial, 12.8s at `-n4`, 25.4s
+at `-n24`) and shrinking the suite's *import* cost helps more than adding cores. Shards
+do not compose for the same reason -- backend (26s) plus `tests/dashboard` (15s) exceeds
+the 32s of running both together, so split the run only to *skip* a half, never to
+parallelise one.
 
 ### Code Quality
 

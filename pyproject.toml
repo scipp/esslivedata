@@ -110,6 +110,7 @@ addopts = """
 -m "not integration and not slow and not browser"
 -ra
 -n auto
+--dist worksteal
 """
 testpaths = "tests"
 markers = [
