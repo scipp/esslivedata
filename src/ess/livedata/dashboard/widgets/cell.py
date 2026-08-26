@@ -38,7 +38,12 @@ from ..plot_orchestrator import (
     PlotCell,
     PlotOrchestrator,
 )
-from ..plots import TimeBounds, format_time_info, merge_time_bounds
+from ..plots import (
+    TimeBounds,
+    format_time_info,
+    legend_overlay_opts,
+    merge_time_bounds,
+)
 from ..save_filename import build_save_filename_from_cell, make_save_filename_hook
 from ..session_layer import SessionLayer
 from .plot_grid import GridCellStyles
@@ -771,4 +776,16 @@ class CellWidget:
         if controller is not None:
             self._autoscale_controller = controller
             hooks.append(controller.make_hook())
-        return result.opts(hooks=hooks)
+        # Collating hands the legend to the outer OverlayPlot, which does not
+        # inherit the collated layers' legend opts, so the cell re-applies the
+        # setting. Only layers that draw a legend declare one; the first such
+        # layer decides, as it does for the frame-aspect hook.
+        legend_position = next(
+            (
+                plotter.legend_position
+                for plotter in cell_plotters
+                if plotter.legend_position is not None
+            ),
+            None,
+        )
+        return result.opts(hooks=hooks, **legend_overlay_opts(legend_position))
