@@ -109,6 +109,7 @@ addopts = """
 --benchmark-skip
 -m "not integration and not slow and not browser"
 -ra
+-n auto
 """
 testpaths = "tests"
 markers = [
