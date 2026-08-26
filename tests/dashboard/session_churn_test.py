@@ -77,15 +77,32 @@ POLL_INTERVAL_SECONDS = 0.5
 # the browser's own load. Generous: this only ever waits out a lagging server.
 REGISTRATION_TIMEOUT_SECONDS = 30
 
-# Closing the websocket does not unregister the session immediately: Bokeh
-# discards it once it has been unused for 15 s, checked every 17 s. No upper
-# bound is needed to keep this honest -- a session the reaper got to first
-# shows up under the wrong teardown line, which is asserted separately.
-CLEAN_CLOSE_TIMEOUT_SECONDS = 60
+# Both reapers run off wall-clock timers, so at the production defaults (60 s
+# registry stale timeout, 15 s Bokeh unused-session lifetime) this test spends
+# most of its time asleep. Shorten them on the server instead of waiting them
+# out; what is under test is that teardown reaches the reapers at all, not the
+# size of the constants.
+#
+# They cannot simply both be made tiny. The Bokeh lifetime is bounded below by
+# how long a fresh session takes to get its websocket up -- Bokeh starts the
+# clock at session creation, so too small a value reaps sessions before the
+# browser ever connects, and none of them register. The registry timeout is
+# bounded below by the Bokeh lifetime: a cleanly-closed session stops
+# heartbeating the moment it closes, so if the registry gets there first the
+# teardown is logged as a stale reap rather than an unregister. Production keeps
+# them a factor of four apart; keep that shape.
+UNUSED_SESSION_LIFETIME_SECONDS = 10
+SESSION_STALE_TIMEOUT_SECONDS = 30
 
-# SessionRegistry's stale timeout is 60 s (dashboard_services.py), and the
-# background update thread reaps between its other work.
-REAP_TIMEOUT_SECONDS = 90
+# Closing the websocket does not unregister the session immediately: Bokeh
+# discards it once it has been unused for UNUSED_SESSION_LIFETIME_SECONDS,
+# polling at the same interval, so twice that is the worst case. No upper bound
+# is needed to keep this honest -- a session the reaper got to first shows up
+# under the wrong teardown line, which is asserted separately.
+CLEAN_CLOSE_TIMEOUT_SECONDS = 3 * UNUSED_SESSION_LIFETIME_SECONDS
+
+# The registry reaps from the background update thread, between its other work.
+REAP_TIMEOUT_SECONDS = 2 * SESSION_STALE_TIMEOUT_SECONDS
 
 # Session ids as SessionRegistry logs them. The console renderer wraps each
 # message in ANSI escapes, which terminate the id capture on their own.
@@ -182,7 +199,14 @@ def assert_server_still_serves(browser: Browser, url: str) -> None:
 
 @pytest.mark.browser
 def test_session_churn_returns_to_baseline_and_server_stays_usable() -> None:
-    with fake_dashboard("dummy") as fake, open_browser() as browser:
+    with (
+        fake_dashboard(
+            "dummy",
+            session_stale_timeout_seconds=SESSION_STALE_TIMEOUT_SECONDS,
+            unused_session_lifetime_seconds=UNUSED_SESSION_LIFETIME_SECONDS,
+        ) as fake,
+        open_browser() as browser,
+    ):
         churned_at = fake.log.stat().st_size
         for cycle in range(1, CHURN_CYCLES + 1):
             contexts = [

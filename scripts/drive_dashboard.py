@@ -455,8 +455,26 @@ class FakeDashboard:
     log: Path
 
 
+def _timeout_args(
+    stale_timeout_seconds: float | None, unused_lifetime_seconds: float | None
+) -> list[str]:
+    """Server flags for the session reapers, omitting whichever is left default."""
+    args = []
+    if stale_timeout_seconds is not None:
+        args += ["--session-stale-timeout-seconds", str(stale_timeout_seconds)]
+    if unused_lifetime_seconds is not None:
+        args += ["--unused-session-lifetime-seconds", str(unused_lifetime_seconds)]
+    return args
+
+
 @contextmanager
-def _fake_dashboard(instrument: str, port: int | None = None):
+def _fake_dashboard(
+    instrument: str,
+    port: int | None = None,
+    *,
+    session_stale_timeout_seconds: float | None = None,
+    unused_session_lifetime_seconds: float | None = None,
+):
     """Launch a Kafka-free fake-backend dashboard seeded from the fixture.
 
     Copies the committed fixture to a writable scratch dir (the dashboard writes
@@ -472,6 +490,17 @@ def _fake_dashboard(instrument: str, port: int | None = None):
         tests should, so that concurrent runs cannot collide. Pass an explicit
         port only when the URL has to be known in advance, e.g. to open it by
         hand.
+    session_stale_timeout_seconds:
+        Registry stale timeout, in seconds. Only for tests that assert on a
+        session being reaped; at the production default that waits out a minute
+        of real time. Must stay comfortably above the Bokeh lifetime below, or
+        the registry reaps a cleanly-closed session before Bokeh's path
+        unregisters it and the teardown lands on the wrong line.
+    unused_session_lifetime_seconds:
+        Bokeh unused-session lifetime, in seconds. Bounded from below by how long
+        a fresh session takes to get its websocket up: Bokeh starts the clock at
+        session creation, so a value under that reaps sessions before the browser
+        ever connects.
     """
     fixture = REPO_ROOT / "tests/dashboard/ui_config_fixtures" / instrument
     if not fixture.is_dir():
@@ -509,6 +538,10 @@ def _fake_dashboard(instrument: str, port: int | None = None):
                     str(cfg),
                     "--auto-start",
                     "--no-fetch-announcements",
+                    *_timeout_args(
+                        session_stale_timeout_seconds,
+                        unused_session_lifetime_seconds,
+                    ),
                 ],
                 cwd=REPO_ROOT,
                 stdout=logf,
