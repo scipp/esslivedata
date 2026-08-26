@@ -35,6 +35,7 @@ dependencies = [
   "ess-streaming-data-types",
   "essreduce>=26.6.3",  # Thread-safe wavelength-LUT polygon intersection (no warning suppression race)
   "jinja2",
+  "numba",  # Compiled wavelength-LUT interpolation, see core/numba_threading.py
   "pydantic>=2",
   "scipp>=25.02.0",  # Improved performance of scipp.group
   "scippneutron>=25.11.1",  # For DREAM unit conversion fixes

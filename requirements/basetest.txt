@@ -96,8 +96,6 @@ idna==3.18
     # via
     #   email-validator
     #   requests
-importlib-metadata==9.0.0
-    # via dask
 iniconfig==2.3.0
     # via pytest
 ipydatawidgets==4.3.5
@@ -358,7 +356,6 @@ traittypes==0.2.3
 typing-extensions==4.16.0
     # via
     #   ase
-    #   ipython
     #   panel
     #   pydantic
     #   pydantic-core
@@ -376,5 +373,3 @@ widgetsnbextension==4.0.15
     # via ipywidgets
 xyzservices==2026.3.0
     # via bokeh
-zipp==4.1.0
-    # via importlib-metadata
