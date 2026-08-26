@@ -73,6 +73,9 @@ ABANDONED_SESSIONS = 3
 # to look right, so it settles far shorter than a session we assert on.
 CHURN_SETTLE_MS = 1500
 POLL_INTERVAL_SECONDS = 0.5
+# The server logs a registration when it processes the connection, which trails
+# the browser's own load. Generous: this only ever waits out a lagging server.
+REGISTRATION_TIMEOUT_SECONDS = 30
 
 # Closing the websocket does not unregister the session immediately: Bokeh
 # discards it once it has been unused for 15 s, checked every 17 s. No upper
@@ -120,6 +123,32 @@ def _wait_for_ids(
         time.sleep(POLL_INTERVAL_SECONDS)
 
 
+def _wait_for_registrations(
+    log: Path, offset: int, count: int, *, label: str
+) -> set[str]:
+    """Wait until ``count`` sessions have been logged as registered, and return them.
+
+    Registration is logged by the server when it processes the connection, which
+    trails the browser's own view of having loaded the page. Reading the log
+    straight after opening the sessions therefore races the server and
+    intermittently sees one too few.
+    """
+    deadline = time.monotonic() + REGISTRATION_TIMEOUT_SECONDS
+    while len(ids := _ids(_REGISTERED, _log_since(log, offset))) < count:
+        if time.monotonic() > deadline:
+            raise AssertionError(
+                f"{count} browsers were {label} but the server registered "
+                f"{len(ids)} sessions within {REGISTRATION_TIMEOUT_SECONDS:.0f} s"
+            )
+        time.sleep(POLL_INTERVAL_SECONDS)
+    # One browser must mean one session: more registrations than browsers would
+    # be a session leak of its own, which waiting must not hide.
+    assert len(ids) == count, (
+        f"{count} browsers were {label} but the server registered {len(ids)} sessions"
+    )
+    return ids
+
+
 def open_churn_session(browser: Browser, url: str) -> BrowserContext:
     """Open a throwaway session that visits a plot tab.
 
@@ -155,18 +184,18 @@ def assert_server_still_serves(browser: Browser, url: str) -> None:
 def test_session_churn_returns_to_baseline_and_server_stays_usable() -> None:
     with fake_dashboard("dummy") as fake, open_browser() as browser:
         churned_at = fake.log.stat().st_size
-        for _ in range(CHURN_CYCLES):
+        for cycle in range(1, CHURN_CYCLES + 1):
             contexts = [
                 open_churn_session(browser, fake.url) for _ in range(SESSIONS_PER_CYCLE)
             ]
+            # Tearing a session down before the server registered it leaves
+            # nothing to unregister, and the assertions below would be waiting
+            # on an id that was never issued.
+            churn_ids = _wait_for_registrations(
+                fake.log, churned_at, cycle * SESSIONS_PER_CYCLE, label="churned"
+            )
             for context in contexts:
                 context.close()
-        churn_ids = _ids(_REGISTERED, _log_since(fake.log, churned_at))
-        expected = CHURN_CYCLES * SESSIONS_PER_CYCLE
-        assert len(churn_ids) == expected, (
-            f"{expected} browsers were churned but the server registered "
-            f"{len(churn_ids)} sessions"
-        )
 
         # Cutting the browsers off the network abandons these sessions without a
         # websocket close, leaving the server with an open connection and a
@@ -174,15 +203,17 @@ def test_session_churn_returns_to_baseline_and_server_stays_usable() -> None:
         # stale timeout runs from here, and the clean closes above drain inside
         # it.
         abandoned_at = fake.log.stat().st_size
-        for _ in range(ABANDONED_SESSIONS):
+        for opened in range(1, ABANDONED_SESSIONS + 1):
             # The context lives until the browser closes: closing it here would
             # let Bokeh destroy the very session whose reaping is asserted.
-            open_churn_session(browser, fake.url).set_offline(True)
-        abandoned_ids = _ids(_REGISTERED, _log_since(fake.log, abandoned_at))
-        assert len(abandoned_ids) == ABANDONED_SESSIONS, (
-            f"{ABANDONED_SESSIONS} browsers were abandoned but the server "
-            f"registered {len(abandoned_ids)} sessions"
-        )
+            context = open_churn_session(browser, fake.url)
+            # Cut the network only once the server has the session: taken
+            # offline mid-handshake it never registers at all, so the reaper
+            # has nothing to reap and the wait below expires.
+            abandoned_ids = _wait_for_registrations(
+                fake.log, abandoned_at, opened, label="abandoned"
+            )
+            context.set_offline(True)
 
         _wait_for_ids(
             fake.log,
