@@ -1,0 +1,1480 @@
+
+<!DOCTYPE html>
+
+
+<html lang="en" data-content_root="../../" >
+
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" /><meta name="viewport" content="width=device-width, initial-scale=1" />
+
+    <title>Proposal: A declarative reconciler for plot-grid sessions &#8212; ESSlivedata</title>
+  
+  
+  
+  <script data-cfasync="false">
+    document.documentElement.dataset.mode = localStorage.getItem("mode") || "";
+    document.documentElement.dataset.theme = localStorage.getItem("theme") || "";
+  </script>
+  <!--
+    this give us a css class that will be invisible only if js is disabled
+  -->
+  <noscript>
+    <style>
+      .pst-js-only { display: none !important; }
+
+    </style>
+  </noscript>
+  
+  <!-- Loaded before other Sphinx assets -->
+  <link href="../../_static/styles/theme.css?digest=90905a2f556bf617f1a9" rel="stylesheet" />
+<link href="../../_static/styles/pydata-sphinx-theme.css?digest=90905a2f556bf617f1a9" rel="stylesheet" />
+
+    <link rel="stylesheet" type="text/css" href="../../_static/pygments.css?v=03e43079" />
+    <link rel="stylesheet" type="text/css" href="../../_static/copybutton.css?v=76b2166b" />
+    <link rel="stylesheet" type="text/css" href="../../_static/autodoc_pydantic.css" />
+    <link rel="stylesheet" type="text/css" href="../../_static/sphinx-design.min.css?v=95c83b7e" />
+  
+  <!-- So that users can add custom icons -->
+  <script defer src="../../_static/scripts/fontawesome.js?digest=90905a2f556bf617f1a9"></script>
+  <!-- Pre-loaded scripts that we'll load fully later -->
+  <link rel="preload" as="script" href="../../_static/scripts/bootstrap.js?digest=90905a2f556bf617f1a9" />
+<link rel="preload" as="script" href="../../_static/scripts/pydata-sphinx-theme.js?digest=90905a2f556bf617f1a9" />
+
+    <script src="../../_static/documentation_options.js?v=603b0020"></script>
+    <script src="../../_static/doctools.js?v=fd6eb6e6"></script>
+    <script src="../../_static/sphinx_highlight.js?v=6ffebe34"></script>
+    <script src="../../_static/clipboard.min.js?v=a7894cd8"></script>
+    <script src="../../_static/copybutton.js?v=f281be69"></script>
+    <script src="../../_static/design-tabs.js?v=f930bc37"></script>
+    <script crossorigin="anonymous" integrity="sha256-Ae2Vz/4ePdIu6ZyI/5ZGsYnb+m0JlOmKPjt6XZ9JJkA=" src="https://cdnjs.cloudflare.com/ajax/libs/require.js/2.3.4/require.min.js"></script>
+    <script type="module">import mermaid from "https://cdn.jsdelivr.net/npm/mermaid@11.12.1/dist/mermaid.esm.min.mjs";
+
+
+
+const initStyles = () => {
+    const defaultStyle = document.createElement('style');
+    defaultStyle.textContent = "pre.mermaid {\n    /* Same as .mermaid-container > pre */\n    display: block;\n    width: 100%;\n}\n\npre.mermaid > svg {\n    /* Same as .mermaid-container > pre > svg */\n    height: 500px;\n    width: 100%;\n    max-width: 100% !important;\n}";
+    document.head.appendChild(defaultStyle);
+
+    const fullscreenStyle = document.createElement('style');
+    fullscreenStyle.textContent = ".mermaid-container {\n    position: relative;\n    display: flex;\n    flex-direction: row;\n    width: 100%;\n}\n\n.mermaid-container > pre {\n    display: block;\n    width: 100%;\n}\n\n.mermaid-container > pre > svg {\n    height: 500px;\n    width: 100%;\n    max-width: 100% !important;\n}\n\n.mermaid-fullscreen-btn {\n    position: absolute;\n    width: 28px;\n    height: 28px;\n    background: rgba(255, 255, 255, 0.95);\n    border: 1px solid rgba(0, 0, 0, 0.3);\n    border-radius: 4px;\n    cursor: pointer;\n    display: flex;\n    align-items: center;\n    justify-content: center;\n    transition: all 0.2s;\n    box-shadow: 0 2px 6px rgba(0, 0, 0, 0.2);\n    font-size: 14px;\n    line-height: 1;\n    padding: 0;\n    color: #333;\n}\n\n.mermaid-fullscreen-btn:hover {\n    opacity: 100% !important;\n    background: rgba(255, 255, 255, 1);\n    box-shadow: 0 3px 10px rgba(0, 0, 0, 0.3);\n    transform: scale(1.1);\n}\n\n.mermaid-fullscreen-btn.dark-theme {\n    background: rgba(50, 50, 50, 0.95);\n    border: 1px solid rgba(255, 255, 255, 0.3);\n    color: #e0e0e0;\n}\n\n.mermaid-fullscreen-btn.dark-theme:hover {\n    background: rgba(60, 60, 60, 1);\n    box-shadow: 0 3px 10px rgba(255, 255, 255, 0.2);\n}\n\n.mermaid-fullscreen-modal {\n    display: none;\n    position: fixed !important;\n    top: 0 !important;\n    left: 0 !important;\n    width: 95vw;\n    height: 100vh;\n    background: rgba(255, 255, 255, 0.98);\n    z-index: 9999;\n    padding: 20px;\n    overflow: auto;\n}\n\n.mermaid-fullscreen-modal.dark-theme {\n    background: rgba(0, 0, 0, 0.98);\n}\n\n.mermaid-fullscreen-modal.active {\n    display: flex;\n    align-items: center;\n    justify-content: center;\n}\n\n.mermaid-container-fullscreen {\n    position: relative;\n    width: 95vw;\n    height: 90vh;\n    max-width: 95vw;\n    max-height: 90vh;\n    background: white;\n    border-radius: 8px;\n    padding: 20px;\n    box-shadow: 0 10px 40px rgba(0, 0, 0, 0.3);\n    overflow: auto;\n    display: flex;\n    align-items: center;\n    justify-content: center;\n}\n\n.mermaid-container-fullscreen.dark-theme {\n    background: #1a1a1a;\n    box-shadow: 0 10px 40px rgba(0, 0, 0, 0.8);\n}\n\n.mermaid-container-fullscreen pre.mermaid {\n    width: 100%;\n    height: 100%;\n    display: flex;\n    align-items: center;\n    justify-content: center;\n}\n\n.mermaid-container-fullscreen .mermaid svg {\n    height: 100% !important;\n    width: 100% !important;\n    cursor: grab;\n}\n\n.mermaid-fullscreen-close {\n    position: fixed !important;\n    top: 20px !important;\n    right: 20px !important;\n    width: 40px;\n    height: 40px;\n    background: rgba(255, 255, 255, 0.95);\n    border: 1px solid rgba(0, 0, 0, 0.2);\n    border-radius: 50%;\n    cursor: pointer;\n    z-index: 10000;\n    display: flex;\n    align-items: center;\n    justify-content: center;\n    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);\n    transition: all 0.2s;\n    font-size: 24px;\n    line-height: 1;\n    color: #333;\n}\n\n.mermaid-fullscreen-close:hover {\n    background: white;\n    box-shadow: 0 6px 16px rgba(0, 0, 0, 0.4);\n    transform: scale(1.1);\n}\n\n.mermaid-fullscreen-close.dark-theme {\n    background: rgba(50, 50, 50, 0.95);\n    border: 1px solid rgba(255, 255, 255, 0.2);\n    color: #e0e0e0;\n}\n\n.mermaid-fullscreen-close.dark-theme:hover {\n    background: rgba(60, 60, 60, 1);\n    box-shadow: 0 6px 16px rgba(255, 255, 255, 0.2);\n}\n\n.mermaid-fullscreen-modal .mermaid-fullscreen-btn {\n    display: none !important;\n}";
+    document.head.appendChild(fullscreenStyle);
+}
+
+// Detect if page has dark background
+const isDarkTheme = () => {
+    // We use a set of heuristics:
+    // 1. Check for common dark mode classes or attributes
+    // 2. Check computed background color brightness
+    if (document.documentElement.classList.contains('dark') ||
+        document.documentElement.getAttribute('data-theme') === 'dark' ||
+        document.body.classList.contains('dark') ||
+        document.body.getAttribute('data-theme') === 'dark') {
+        // console.log("Dark theme detected via class/attribute");
+        return true;
+    }
+    if (document.documentElement.classList.contains('light') ||
+        document.documentElement.getAttribute('data-theme') === 'light' ||
+        document.body.classList.contains('light') ||
+        document.body.getAttribute('data-theme') === 'light') {
+        // console.log("Light theme detected via class/attribute");
+        return false;
+    }
+    if (window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches) {
+        // console.log("Dark theme detected via prefers-color-scheme");
+        return true;
+    }
+    const bgColor = window.getComputedStyle(document.body).backgroundColor;
+    const match = bgColor.match(/rgb\((\d+),\s*(\d+),\s*(\d+)/);
+    if (match) {
+        const r = parseInt(match[1]);
+        const g = parseInt(match[2]);
+        const b = parseInt(match[3]);
+        const brightness = (r * 299 + g * 587 + b * 114) / 1000;
+        // console.log("Background color brightness:", brightness);
+        return brightness < 128;
+    }
+    // console.log("No dark or light theme detected, defaulting to light theme");
+    return false;
+};
+
+let darkTheme = isDarkTheme();
+let modal = null;
+let modalContent = null;
+let previousScrollOffset = [window.scrollX, window.scrollY];
+let _lazyObserver = null;
+let _renderQueue = Promise.resolve();
+let closeModal = () => {};
+
+document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape' && modal?.classList.contains('active')) {
+        closeModal();
+    }
+});
+
+// Apply d3 zoom to each SVG. Idempotent: an SVG already wrapped is skipped,
+// so this is safe to call both for the initial batch and for diagrams that
+// render lazily once they become visible.
+const addZoomToSvgs = (svgs) => {
+    svgs.each(function() {
+        if (this.getAttribute('data-zoom-applied') === 'true') return;
+        var svg = d3.select(this);
+        svg.html("<g class='wrapper'>" + svg.html() + "</g>");
+        var inner = svg.select("g");
+        var zoom = d3.zoom().on("zoom", function(event) {
+            inner.attr("transform", event.transform);
+        });
+        svg.call(zoom);
+        this.setAttribute('data-zoom-applied', 'true');
+    });
+};
+
+const runMermaid = async (rerun) => {
+    console.log("Running mermaid diagrams, rerun =", rerun);
+    // clear all existing mermaid charts
+    let all_mermaids = document.querySelectorAll(".mermaid");
+
+    if (rerun) {
+        // Disconnect any previous lazy rendering observer
+        if (_lazyObserver) {
+            _lazyObserver.disconnect();
+            _lazyObserver = null;
+        }
+
+        all_mermaids.forEach((el) => {
+            el.removeAttribute('data-mermaid-deferred');
+            el.removeAttribute('data-mermaid-render-failed');
+            if(!el.hasAttribute("data-original-code")) {
+                // store original code
+                // console.log(`Storing original code for first run: `, el.innerHTML);
+                el.setAttribute('data-original-code', el.innerHTML);
+            }
+            if(el.getAttribute("data-processed") === "true") {
+                // remove and restore original
+                el.removeAttribute("data-processed");
+                // console.log(`Restoring original code for re-run: `, el.getAttribute('data-original-code'));
+                el.innerHTML = el.getAttribute('data-original-code');
+            } else {
+                // store original code
+                // console.log(`Storing original code for re-run: `, el.innerHTML);
+                el.setAttribute('data-original-code', el.innerHTML);
+            }
+        });
+
+        // Separate visible and hidden elements. Mermaid's layout engine measures
+        // text dimensions via the DOM, which fails for elements hidden by a parent
+        // (e.g., Reveal.js non-active slides, sphinx-design unopened tabs),
+        // producing broken SVGs. Render visible elements now, defer hidden ones.
+        const visible = [];
+        const hidden = [];
+        all_mermaids.forEach((el) => {
+            // offsetParent is null for display:none ancestors.
+            // getClientRects().length > 0 catches position:fixed elements
+            // (which also have null offsetParent but are still visible).
+            if (el.offsetParent !== null || el.getClientRects().length > 0) {
+                visible.push(el);
+            } else {
+                hidden.push(el);
+                el.setAttribute('data-mermaid-deferred', 'true');
+            }
+        });
+
+        if (visible.length > 0) {
+            try {
+                await mermaid.run({ nodes: visible });
+            } catch (e) {
+                console.error("Mermaid rendering failed:", e);
+            }
+        }
+
+        // Lazily render hidden elements when they become visible.
+        // Uses a promise chain (_renderQueue) to serialize rendering,
+        // since IntersectionObserver may report multiple entries at once
+        // and mermaid.run() is not safe to call concurrently.
+        if (hidden.length > 0) {
+            if (typeof IntersectionObserver === 'undefined') {
+                console.warn("IntersectionObserver not available; hidden mermaid diagrams will not render.");
+            } else {
+                _renderQueue = Promise.resolve();
+                _lazyObserver = new IntersectionObserver((entries) => {
+                    for (const entry of entries) {
+                        if (entry.isIntersecting && entry.target.getAttribute("data-processed") !== "true") {
+                            _lazyObserver.unobserve(entry.target);
+                            const el = entry.target;
+                            _renderQueue = _renderQueue.then(async () => {
+                                try {
+                                    await mermaid.run({ nodes: [el] });
+                                    el.removeAttribute('data-mermaid-deferred');
+                                    // Apply zoom to the now-rendered diagram, matching
+                                    // the decoration visible diagrams receive.
+                                    if (false) {
+                                        addZoomToSvgs(d3.selectAll("").select(function() {
+                                            return this.querySelector("svg");
+                                        }));
+                                    }
+                                } catch (e) {
+                                    console.error("Mermaid deferred rendering failed:", e);
+                                    el.removeAttribute('data-mermaid-deferred');
+                                    el.setAttribute('data-mermaid-render-failed', 'true');
+                                }
+                            });
+                        }
+                    }
+                });
+                hidden.forEach((el) => _lazyObserver.observe(el));
+            }
+        }
+    }
+
+    all_mermaids = document.querySelectorAll(".mermaid");
+    // Exclude deferred (hidden) and render-failed elements from completion checks
+    const mermaids_active = document.querySelectorAll(".mermaid:not([data-mermaid-deferred]):not([data-mermaid-render-failed])");
+    const mermaids_processed = document.querySelectorAll(".mermaid:not([data-mermaid-deferred]):not([data-mermaid-render-failed])[data-processed='true']");
+
+    if (false) {
+        const mermaids_to_add_zoom = 0 === -1 ? mermaids_active.length : 0;
+        if(mermaids_to_add_zoom > 0) {
+            var svgs = d3.selectAll("").select(function() {
+                return this.querySelector("svg");
+            });
+            // Wait until every active (visible) diagram has rendered. Deferred
+            // diagrams are excluded, so a fixed d3_node_count that counts a
+            // hidden diagram no longer loops forever waiting for its SVG.
+            if(mermaids_active.length !== mermaids_processed.length) {
+                setTimeout(() => runMermaid(false), 200);
+                return;
+            }
+            addZoomToSvgs(svgs);
+        }
+    } else if(mermaids_active.length !== mermaids_processed.length) {
+        // Wait for mermaid to process all diagrams
+        setTimeout(() => runMermaid(false), 200);
+        return;
+    }
+
+    // Stop here if not adding fullscreen capability
+    if (!true) return;
+
+    if (modal !== null ) {
+        // Destroy existing modal
+        modal.remove();
+        modal = null;
+        modalContent = null;
+    }
+
+    modal = document.createElement('div');
+    modal.className = 'mermaid-fullscreen-modal' + (darkTheme ? ' dark-theme' : '');
+    modal.setAttribute('role', 'dialog');
+    modal.setAttribute('aria-modal', 'true');
+    modal.setAttribute('aria-label', 'Fullscreen diagram viewer');
+    modal.innerHTML = `
+        <button class="mermaid-fullscreen-close${darkTheme ? ' dark-theme' : ''}" aria-label="Close fullscreen">✕</button>
+        <div class="mermaid-container-fullscreen${darkTheme ? ' dark-theme' : ''}"></div>
+    `;
+    document.body.appendChild(modal);
+
+    modalContent = modal.querySelector('.mermaid-container-fullscreen');
+    const closeBtn = modal.querySelector('.mermaid-fullscreen-close');
+
+    closeModal = () => {
+        modal.classList.remove('active');
+        modalContent.innerHTML = '';
+        document.body.style.overflow = ''
+        window.scrollTo({left: previousScrollOffset[0], top: previousScrollOffset[1], behavior: 'instant'});
+    };
+
+    closeBtn.addEventListener('click', closeModal);
+    modal.addEventListener('click', (e) => {
+        if (e.target === modal) closeModal();
+    });
+    document.querySelectorAll('.mermaid').forEach((mermaidDiv) => {
+        if (mermaidDiv.parentNode.classList.contains('mermaid-container') ||
+            mermaidDiv.closest('.mermaid-fullscreen-modal')) {
+            // Already processed, adjust button class if needed
+            const existingBtn = mermaidDiv.parentNode.querySelector('.mermaid-fullscreen-btn');
+            if (existingBtn) {
+                existingBtn.className = 'mermaid-fullscreen-btn' + (darkTheme ? ' dark-theme' : '');
+            }
+            return;
+        }
+
+        const container = document.createElement('div');
+        container.className = 'mermaid-container';
+        mermaidDiv.parentNode.insertBefore(container, mermaidDiv);
+        container.appendChild(mermaidDiv);
+
+        const fullscreenBtn = document.createElement('button');
+        fullscreenBtn.className = 'mermaid-fullscreen-btn' + (darkTheme ? ' dark-theme' : '');
+        fullscreenBtn.setAttribute('aria-label', 'View diagram in fullscreen');
+        fullscreenBtn.textContent = "\u26f6";
+        fullscreenBtn.style.opacity = "50%";
+
+        // Calculate dynamic position based on diagram's margin and padding
+        const diagramStyle = window.getComputedStyle(mermaidDiv);
+        const marginTop = parseFloat(diagramStyle.marginTop) || 0;
+        const marginRight = parseFloat(diagramStyle.marginRight) || 0;
+        const paddingTop = parseFloat(diagramStyle.paddingTop) || 0;
+        const paddingRight = parseFloat(diagramStyle.paddingRight) || 0;
+        fullscreenBtn.style.top = `${marginTop + paddingTop + 4}px`;
+        fullscreenBtn.style.right = `${marginRight + paddingRight + 4}px`;
+
+        fullscreenBtn.addEventListener('click', () => {
+            previousScrollOffset = [window.scrollX, window.scrollY];
+            const clone = mermaidDiv.cloneNode(true);
+            modalContent.innerHTML = '';
+            modalContent.appendChild(clone);
+
+            const svg = clone.querySelector('svg');
+            if (svg) {
+                svg.removeAttribute('width');
+                svg.removeAttribute('height');
+                svg.style.width = '100%';
+                svg.style.height = 'auto';
+                svg.style.maxWidth = '100%';
+                svg.style.display = 'block';
+
+                if (false) {
+                    setTimeout(() => {
+                        const g = svg.querySelector('g');
+                        if (g) {
+                            var svgD3 = d3.select(svg);
+                            svgD3.html("<g class='wrapper'>" + svgD3.html() + "</g>");
+                            var inner = svgD3.select("g");
+                            var zoom = d3.zoom().on("zoom", function(event) {
+                                inner.attr("transform", event.transform);
+                            });
+                            svgD3.call(zoom);
+                        }
+                    }, 100);
+                }
+            }
+
+            modal.classList.add('active');
+            document.body.style.overflow = 'hidden';
+        });
+        container.appendChild(fullscreenBtn);
+    });
+};
+
+
+
+const load = async () => {
+    initStyles();
+
+
+    await runMermaid(true);
+
+    const reRunIfThemeChanges = async () => {
+        const newDarkTheme = isDarkTheme();
+        if (newDarkTheme !== darkTheme) {
+            darkTheme = newDarkTheme;
+            console.log("Theme change detected, re-running mermaid with", darkTheme ? "dark" : "default", "theme");
+            await mermaid.initialize(
+                {...{"startOnLoad": false},
+                ...{ darkMode: darkTheme, theme: darkTheme ? "dark" : "default" },
+                }
+            );
+            await runMermaid(true);
+        }
+    };
+
+    // Update theme classes when theme changes
+    const themeObserver = new MutationObserver(reRunIfThemeChanges);
+    themeObserver.observe(document.documentElement, {
+        attributes: true,
+        attributeFilter: ['class', 'style', 'data-theme']
+    });
+    themeObserver.observe(document.body, {
+        attributes: true,
+        attributeFilter: ['class', 'style', 'data-theme']
+    });
+};
+
+
+
+
+
+console.log("Initializing mermaid with", darkTheme ? "dark" : "default", "theme");
+mermaid.initialize(
+    {...{"startOnLoad": false},
+    ...{ darkMode: darkTheme, theme: darkTheme ? "dark" : "default" },
+    }
+);
+
+window.addEventListener("load", load);
+window.runMermaid = runMermaid;</script>
+    <script>DOCUMENTATION_OPTIONS.pagename = 'developer/proposals/declarative-session-reconciler';</script>
+    <script>DOCUMENTATION_OPTIONS.search_as_you_type = false;</script>
+    <script src="../../_static/anaconda-icon.js?v=461bdc62"></script>
+    <link rel="icon" href="../../_static/favicon.ico"/>
+    <link rel="index" title="Index" href="../../genindex.html" />
+    <link rel="search" title="Search" href="../../search.html" />
+    <link rel="next" title="The session reconciler today — detailed analysis" href="declarative-session-reconciler-current-state.html" />
+    <link rel="prev" title="ADR 0009: Generate the per-instrument stream registry at development time" href="../adr/0009-build-time-stream-registry-codegen.html" />
+  <meta name="viewport" content="width=device-width, initial-scale=1"/>
+  <meta name="docsearch:language" content="en"/>
+  <meta name="docsearch:version" content="26.8.1" />
+  
+    
+    <script src="../../_static/searchtools.js"></script>
+    <script src="../../_static/language_data.js"></script>
+    <script src="../../searchindex.js"></script>
+  
+  </head>
+  <body data-default-mode="">
+  
+  
+  <div id="pst-skip-link" class="skip-link d-print-none"><a href="#main-content">Skip to main content</a></div>
+
+  
+  <div id="pst-scroll-pixel-helper"></div>
+  
+  <button type="button" class="btn rounded-pill" id="pst-back-to-top">
+    <i class="fa-solid fa-arrow-up"></i>Back to top</button>
+  
+  
+  
+  
+  <dialog id="pst-search-dialog">
+    
+<form class="bd-search d-flex align-items-center"
+      action="../../search.html"
+      method="get">
+  <i class="fa-solid fa-magnifying-glass"></i>
+  <input type="search"
+         class="form-control"
+         name="q"
+         placeholder="Search the docs ..."
+         aria-label="Search the docs ..."
+         autocomplete="off"
+         autocorrect="off"
+         autocapitalize="off"
+         spellcheck="false"/>
+  <span class="search-button__kbd-shortcut"><kbd class="kbd-shortcut__modifier">Ctrl</kbd>+<kbd>K</kbd></span>
+</form>
+  </dialog>
+
+  <div class="pst-async-banner-revealer d-none">
+  <aside id="bd-header-version-warning" class="d-none d-print-none" aria-label="Version warning"></aside>
+</div>
+
+  
+    <header id="pst-header" class="bd-header navbar navbar-expand-lg bd-navbar d-print-none">
+<div class="bd-header__inner bd-page-width">
+  <button class="pst-navbar-icon sidebar-toggle primary-toggle" aria-label="Site navigation">
+    <span class="fa-solid fa-bars"></span>
+  </button>
+  
+  
+  <div class="col-lg-3 navbar-header-items__start">
+    
+      <div class="navbar-item">
+
+  
+    
+  
+
+<a class="navbar-brand logo" href="../../index.html">
+  
+  
+  
+  
+  
+    
+    
+      
+    
+    
+    <img src="../../_static/logo.svg" class="logo__image only-light" alt="ESSlivedata - Home"/>
+    <img src="../../_static/logo-dark.svg" class="logo__image only-dark pst-js-only" alt="ESSlivedata - Home"/>
+  
+  
+</a></div>
+    
+  </div>
+  
+  <div class="col-lg-9 navbar-header-items">
+    
+    <div class="me-auto navbar-header-items__center">
+      
+        <div class="navbar-item">
+<nav>
+  <ul class="bd-navbar-elements navbar-nav">
+    
+<li class="nav-item ">
+  <a class="nav-link nav-internal" href="../../user-guide/index.html">
+    User Guide
+  </a>
+</li>
+
+
+<li class="nav-item ">
+  <a class="nav-link nav-internal" href="../../api-reference/index.html">
+    API Reference
+  </a>
+</li>
+
+
+<li class="nav-item current active">
+  <a class="nav-link nav-internal" href="../index.html">
+    Development
+  </a>
+</li>
+
+
+<li class="nav-item ">
+  <a class="nav-link nav-internal" href="../../about/index.html">
+    About
+  </a>
+</li>
+
+            <li class="nav-item dropdown">
+                <button class="btn dropdown-toggle nav-item" type="button"
+                data-bs-toggle="dropdown" aria-expanded="false"
+                aria-controls="pst-nav-more-links">
+                    More
+                </button>
+                <ul id="pst-nav-more-links" class="dropdown-menu">
+                    
+<li class=" ">
+  <a class="nav-link dropdown-item nav-external" href="https://scipp.github.io/essreduce">
+    ESSreduce
+  </a>
+</li>
+
+
+<li class=" ">
+  <a class="nav-link dropdown-item nav-external" href="https://scipp.github.io/sciline">
+    Sciline
+  </a>
+</li>
+
+
+<li class=" ">
+  <a class="nav-link dropdown-item nav-external" href="https://scipp.github.io">
+    Scipp
+  </a>
+</li>
+
+                </ul>
+            </li>
+            
+  </ul>
+</nav></div>
+      
+    </div>
+    
+    
+    <div class="navbar-header-items__end">
+      
+        <div class="navbar-item navbar-persistent--container">
+          
+
+<button class="btn btn-sm pst-navbar-icon search-button search-button__button pst-js-only" title="Search" aria-label="Search" data-bs-placement="bottom" data-bs-toggle="tooltip">
+    <i class="fa-solid fa-magnifying-glass fa-lg"></i>
+</button>
+        </div>
+      
+      
+        <div class="navbar-item">
+
+<div class="theme-switch-container dropdown pst-js-only" data-bs-toggle="tooltip" data-bs-placement="bottom" title="Color mode">
+  <button class="btn btn-sm nav-link pst-navbar-icon theme-switch-button dropdown-toggle" aria-label="Color mode" data-bs-toggle="dropdown">
+    <i class="theme-switch fa-solid fa-sun fa-lg fa-fw" data-mode="light" title="Light"></i>
+    <i class="theme-switch fa-solid fa-moon fa-lg fa-fw" data-mode="dark" title="Dark"></i>
+    <i class="theme-switch fa-solid fa-circle-half-stroke fa-lg fa-fw" data-mode="auto" title="System Settings"></i>
+  </button>
+  <ul class="dropdown-menu dropdown-menu-end">
+    <li><button class="dropdown-item d-flex align-items-center theme-change-button" data-mode="auto"><i class="fa-solid fa-circle-half-stroke fa-lg fa-fw me-1"></i>System Settings</button></li>
+    <li><button class="dropdown-item d-flex align-items-center theme-change-button" data-mode="light"><i class="fa-solid fa-sun fa-lg fa-fw me-1"></i>Light</button></li>
+    <li><button class="dropdown-item d-flex align-items-center theme-change-button" data-mode="dark"><i class="fa-solid fa-moon fa-lg fa-fw me-1"></i>Dark</button></li>
+  </ul>
+</div></div>
+      
+        <div class="navbar-item"><ul class="navbar-icon-links"
+    aria-label="Icon Links">
+        <li class="nav-item">
+          
+          
+          
+          
+          
+          
+          
+          
+          <a href="https://github.com/scipp/esslivedata" title="GitHub" class="nav-link pst-navbar-icon" rel="noopener" target="_blank" data-bs-toggle="tooltip" data-bs-placement="bottom"><i class="fa-brands fa-github fa-lg" aria-hidden="true"></i><span class="visually-hidden">GitHub</span></a>
+        </li>
+        <li class="nav-item">
+          
+          
+          
+          
+          
+          
+          
+          
+          <a href="https://pypi.org/project/esslivedata/" title="PyPI" class="nav-link pst-navbar-icon" rel="noopener" target="_blank" data-bs-toggle="tooltip" data-bs-placement="bottom"><i class="fa-brands fa-python fa-lg" aria-hidden="true"></i><span class="visually-hidden">PyPI</span></a>
+        </li>
+        <li class="nav-item">
+          
+          
+          
+          
+          
+          
+          
+          
+          <a href="https://anaconda.org/conda-forge/esslivedata" title="Conda" class="nav-link pst-navbar-icon" rel="noopener" target="_blank" data-bs-toggle="tooltip" data-bs-placement="bottom"><i class="fa-custom fa-lg" data-prefix="fa-custom" data-icon="anaconda" aria-hidden="true"></i><span class="visually-hidden">Conda</span></a>
+        </li>
+</ul></div>
+      
+    </div>
+    
+  </div>
+  
+  
+    <div class="navbar-persistent--mobile">
+
+<button class="btn btn-sm pst-navbar-icon search-button search-button__button pst-js-only" title="Search" aria-label="Search" data-bs-placement="bottom" data-bs-toggle="tooltip">
+    <i class="fa-solid fa-magnifying-glass fa-lg"></i>
+</button>
+    </div>
+  
+
+  
+</div>
+
+    </header>
+  
+
+  <div class="bd-container">
+    <div class="bd-container__inner bd-page-width">
+      
+      
+      
+      <dialog id="pst-primary-sidebar-modal"></dialog>
+      <div id="pst-primary-sidebar" class="bd-sidebar-primary bd-sidebar">
+        
+
+  
+  <div class="sidebar-header-items sidebar-primary__section">
+    
+    
+      <div class="sidebar-header-items__center">
+        
+          
+          
+            <div class="navbar-item">
+<nav>
+  <ul class="bd-navbar-elements navbar-nav">
+    
+<li class="nav-item ">
+  <a class="nav-link nav-internal" href="../../user-guide/index.html">
+    User Guide
+  </a>
+</li>
+
+
+<li class="nav-item ">
+  <a class="nav-link nav-internal" href="../../api-reference/index.html">
+    API Reference
+  </a>
+</li>
+
+
+<li class="nav-item current active">
+  <a class="nav-link nav-internal" href="../index.html">
+    Development
+  </a>
+</li>
+
+
+<li class="nav-item ">
+  <a class="nav-link nav-internal" href="../../about/index.html">
+    About
+  </a>
+</li>
+
+
+<li class="nav-item ">
+  <a class="nav-link nav-external" href="https://scipp.github.io/essreduce">
+    ESSreduce
+  </a>
+</li>
+
+
+<li class="nav-item ">
+  <a class="nav-link nav-external" href="https://scipp.github.io/sciline">
+    Sciline
+  </a>
+</li>
+
+
+<li class="nav-item ">
+  <a class="nav-link nav-external" href="https://scipp.github.io">
+    Scipp
+  </a>
+</li>
+
+  </ul>
+</nav></div>
+          
+        
+      </div>
+    
+    
+    
+      <div class="sidebar-header-items__end">
+        
+          <div class="navbar-item">
+
+<div class="theme-switch-container dropdown pst-js-only" data-bs-toggle="tooltip" data-bs-placement="bottom" title="Color mode">
+  <button class="btn btn-sm nav-link pst-navbar-icon theme-switch-button dropdown-toggle" aria-label="Color mode" data-bs-toggle="dropdown">
+    <i class="theme-switch fa-solid fa-sun fa-lg fa-fw" data-mode="light" title="Light"></i>
+    <i class="theme-switch fa-solid fa-moon fa-lg fa-fw" data-mode="dark" title="Dark"></i>
+    <i class="theme-switch fa-solid fa-circle-half-stroke fa-lg fa-fw" data-mode="auto" title="System Settings"></i>
+  </button>
+  <ul class="dropdown-menu dropdown-menu-end">
+    <li><button class="dropdown-item d-flex align-items-center theme-change-button" data-mode="auto"><i class="fa-solid fa-circle-half-stroke fa-lg fa-fw me-1"></i>System Settings</button></li>
+    <li><button class="dropdown-item d-flex align-items-center theme-change-button" data-mode="light"><i class="fa-solid fa-sun fa-lg fa-fw me-1"></i>Light</button></li>
+    <li><button class="dropdown-item d-flex align-items-center theme-change-button" data-mode="dark"><i class="fa-solid fa-moon fa-lg fa-fw me-1"></i>Dark</button></li>
+  </ul>
+</div></div>
+        
+          <div class="navbar-item"><ul class="navbar-icon-links"
+    aria-label="Icon Links">
+        <li class="nav-item">
+          
+          
+          
+          
+          
+          
+          
+          
+          <a href="https://github.com/scipp/esslivedata" title="GitHub" class="nav-link pst-navbar-icon" rel="noopener" target="_blank" data-bs-toggle="tooltip" data-bs-placement="bottom"><i class="fa-brands fa-github fa-lg" aria-hidden="true"></i><span class="visually-hidden">GitHub</span></a>
+        </li>
+        <li class="nav-item">
+          
+          
+          
+          
+          
+          
+          
+          
+          <a href="https://pypi.org/project/esslivedata/" title="PyPI" class="nav-link pst-navbar-icon" rel="noopener" target="_blank" data-bs-toggle="tooltip" data-bs-placement="bottom"><i class="fa-brands fa-python fa-lg" aria-hidden="true"></i><span class="visually-hidden">PyPI</span></a>
+        </li>
+        <li class="nav-item">
+          
+          
+          
+          
+          
+          
+          
+          
+          <a href="https://anaconda.org/conda-forge/esslivedata" title="Conda" class="nav-link pst-navbar-icon" rel="noopener" target="_blank" data-bs-toggle="tooltip" data-bs-placement="bottom"><i class="fa-custom fa-lg" data-prefix="fa-custom" data-icon="anaconda" aria-hidden="true"></i><span class="visually-hidden">Conda</span></a>
+        </li>
+</ul></div>
+        
+      </div>
+    
+  </div>
+  
+    <div class="sidebar-primary-items__start sidebar-primary__section">
+        <div class="sidebar-primary-item">
+
+<nav class="bd-docs-nav bd-links"
+     aria-label="Section Navigation">
+  <p class="bd-links__title" role="heading" aria-level="1">Section Navigation</p>
+  <div class="bd-toc-item navbar-nav"><ul class="current nav bd-sidenav">
+<li class="toctree-l1"><a class="reference internal" href="../getting-started.html">Getting started</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../glossary.html">Glossary</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../coding-conventions.html">Coding conventions</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../dependency-management.html">Dependency management</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../design/backend-service-architecture.html">Backend Service Architecture</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../design/message-flow-and-transformation.html">Message Flow and Transformation</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../design/dashboard-architecture.html">Livedata Dashboard Architecture</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../design/orchestrator-flow.html">Orchestrator Flow: Plot Creation Lifecycle</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../design/rate-aware-batcher.html">Rate-Aware Message Batcher</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../design/stream-keying.html">Stream Keying</a></li>
+<li class="toctree-l1 has-children"><a class="reference internal" href="../adr/index.html">Architecture Decision Records</a><details><summary><span class="toctree-toggle" role="presentation"><i class="fa-solid fa-chevron-down"></i></span></summary><ul>
+<li class="toctree-l2"><a class="reference internal" href="../adr/0001-in-process-device-stream-synthesis.html">ADR 0001: In-process synthesis of merged device streams</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../adr/0002-context-stream-gating-at-jobmanager.html">ADR 0002: Gate workflow execution at the JobManager on context-stream readiness</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../adr/0003-context-input-declaration-model.html">ADR 0003: Unified declaration model for workflow context bindings</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../adr/0004-uniform-stream-name-keying.html">ADR 0004: Key workflow inputs uniformly by canonical stream name</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../adr/0005-frame-gated-session-flush.html">ADR 0005: Frame-gated per-session plot flush</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../adr/0006-nicos-derived-devices.html">ADR 0006: Expose designated workflow outputs to NICOS as derived devices</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../adr/0007-single-writer-versioned-pull.html">ADR 0007: Single-writer state with versioned pull as the dashboard concurrency model</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../adr/0008-job-adoption-from-heartbeat-observation.html">ADR 0008: Job adoption from heartbeat observation replaces persisted job identity</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../adr/0009-build-time-stream-registry-codegen.html">ADR 0009: Generate the per-instrument stream registry at development time</a></li>
+</ul>
+</details></li>
+<li class="toctree-l1 current active has-children"><a class="current reference internal" href="#">Proposal: A declarative reconciler for plot-grid sessions</a><details open="open"><summary><span class="toctree-toggle" role="presentation"><i class="fa-solid fa-chevron-down"></i></span></summary><ul>
+<li class="toctree-l2"><a class="reference internal" href="declarative-session-reconciler-current-state.html">The session reconciler today — detailed analysis</a></li>
+<li class="toctree-l2"><a class="reference internal" href="declarative-session-reconciler-migration.html">Declarative session reconciler — migration plan</a></li>
+</ul>
+</details></li>
+</ul>
+</div>
+</nav></div>
+        <div class="sidebar-primary-item">
+<div
+    id="pst-page-navigation-heading-2"
+    class="page-toc tocsection onthispage">
+    <i class="fa-solid fa-list"></i> On this page
+  </div>
+  <nav id="pst-page-toc-nav" class="page-toc" aria-labelledby="pst-page-navigation-heading-2">
+    <ul class="pst-show_toc_level nav section-nav flex-column">
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#summary">Summary</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#background-how-a-session-stays-up-to-date">Background: how a session stays up to date</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#what-went-wrong-two-defects-one-pattern">What went wrong: two defects, one pattern</a><ul class="nav section-nav flex-column">
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#the-waste-loop-1216">The waste loop (#1216)</a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#the-stale-occupancy-defect-1219">The stale-occupancy defect (#1219)</a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#the-pattern">The pattern</a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#where-the-pattern-stops-the-teardown-leak-1224">Where the pattern stops: the teardown leak (#1224)</a></li>
+</ul>
+</li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#proposal">Proposal</a><ul class="nav section-nav flex-column">
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#the-desired-state-function">The desired-state function</a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#the-differ">The differ</a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#rebuild-means-inputs-changed-not-a-counter-moved">Rebuild means “inputs changed”, not “a counter moved”</a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#one-definition-of-is-anyone-looking">One definition of “is anyone looking”</a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#what-stays-exactly-as-it-is">What stays exactly as it is</a></li>
+</ul>
+</li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#migration">Migration</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#is-it-worth-it-and-how-do-we-decide">Is it worth it, and how do we decide?</a></li>
+</ul>
+  </nav></div>
+    </div>
+  
+  
+  <div class="sidebar-primary-items__end sidebar-primary__section">
+      <div class="sidebar-primary-item">
+
+  <div class="tocsection sourcelink">
+    <a href="../../_sources/developer/proposals/declarative-session-reconciler.md">
+      <i class="fa-solid fa-file-lines"></i> Show Source
+    </a>
+  </div>
+</div>
+  </div>
+
+
+      </div>
+      
+      <main id="main-content" class="bd-main" role="main">
+        
+        
+          <div class="bd-content">
+            <div class="bd-article-container">
+              
+              <div class="bd-header-article d-print-none">
+<div class="header-article-items header-article__inner">
+  
+    <div class="header-article-items__start">
+      
+        <div class="header-article-item">
+
+<nav aria-label="Breadcrumb" class="d-print-none">
+  <ul class="bd-breadcrumbs">
+    
+    <li class="breadcrumb-item breadcrumb-home">
+      <a href="../../index.html" class="nav-link" aria-label="Home">
+        <i class="fa-solid fa-home"></i>
+      </a>
+    </li>
+    
+    <li class="breadcrumb-item"><a href="../index.html" class="nav-link">Development</a></li>
+    
+    <li class="breadcrumb-item active" aria-current="page"><span class="ellipsis">Proposal: A declarative reconciler for plot-grid sessions</span></li>
+  </ul>
+</nav>
+</div>
+      
+    </div>
+  
+  
+</div>
+</div>
+              
+              
+              
+                
+<div id="searchbox"></div>
+                <article class="bd-article">
+                  
+  <section class="tex2jax_ignore mathjax_ignore" id="proposal-a-declarative-reconciler-for-plot-grid-sessions">
+<h1>Proposal: A declarative reconciler for plot-grid sessions<a class="headerlink" href="#proposal-a-declarative-reconciler-for-plot-grid-sessions" title="Link to this heading">#</a></h1>
+<ul class="simple">
+<li><p>Status: accepted; migration tracked in
+<a class="reference external" href="https://github.com/scipp/esslivedata/issues/1227">#1227</a></p></li>
+<li><p>Date: 2026-08-08</p></li>
+<li><p>Motivated by: <a class="reference external" href="https://github.com/scipp/esslivedata/issues/1216">#1216</a>,
+<a class="reference external" href="https://github.com/scipp/esslivedata/issues/1219">#1219</a>, and the analysis
+behind the point fix in <a class="reference external" href="https://github.com/scipp/esslivedata/pull/1220">#1220</a></p></li>
+<li><p>Companion documents: <a class="reference internal" href="declarative-session-reconciler-current-state.html"><span class="std std-doc">The reconciler today — detailed analysis</span></a>
+and <a class="reference internal" href="declarative-session-reconciler-migration.html"><span class="std std-doc">Migration plan</span></a></p></li>
+</ul>
+<section id="summary">
+<h2>Summary<a class="headerlink" href="#summary" title="Link to this heading">#</a></h2>
+<p>Each browser session keeps its plot widgets in sync with shared state by
+running a periodic <em>reconcile pass</em>. That pass is today an imperative
+diff-and-patch loop that has accreted, one fix at a time, into a function with
+six interleaved concerns, nine pieces of hand-maintained bookkeeping, and a
+duplicated “is there work?” predicate that must mirror the loop’s internal
+gates by hand. Two recent defects (#1216 and its sibling #1219) were not
+concurrency bugs — the concurrency model worked — but <em>policy composition</em>
+bugs: individually reasonable rules, implemented in different components,
+interacting wastefully in a way no single component could see.</p>
+<p>This proposal restructures the pass into three explicit stages — a <strong>pure
+function computing the desired widget state</strong>, a <strong>differ</strong> comparing it
+against what is applied, and an <strong>applier</strong> — without touching the
+concurrency model (single-writer versioned pull, wakeup hub, frame clock; ADRs
+0005/0007). The defect class that produced #1216 and #1219 becomes
+unrepresentable, most bookkeeping is deleted, and future policy changes become
+one-line edits to a pure, unit-testable function.</p>
+<p>The closing section asks honestly whether this is worth doing and proposes a
+concrete decision procedure, because the current code <em>works</em> and its
+complexity is partly the irreducible price of the UI framework.</p>
+</section>
+<section id="background-how-a-session-stays-up-to-date">
+<h2>Background: how a session stays up to date<a class="headerlink" href="#background-how-a-session-stays-up-to-date" title="Link to this heading">#</a></h2>
+<p>Skip this section if you know the dashboard internals; it defines every term
+the rest of the document uses.</p>
+<p>The dashboard is one Python process serving N browser <strong>sessions</strong>. All
+sessions look at the same shared world:</p>
+<ul class="simple">
+<li><p><strong>Topology</strong> — the arrangement of plots: <strong>grids</strong> (one dashboard tab each)
+contain <strong>cells</strong> (positions in the grid), which contain <strong>layers</strong> (one
+plotted quantity each; multiple layers overlay in one figure). Any session
+can edit the topology; all sessions see the result.</p></li>
+<li><p><strong>Plotters</strong> — shared objects holding the computed state of each layer’s
+plot. Computing a plot is expensive; it is done once, centrally, not per
+session.</p></li>
+<li><p><strong>Per-session widgets</strong> — each session builds its <em>own</em> UI objects (tabs,
+cell widgets, figures). The UI framework (Panel/Bokeh) requires that a
+session’s widgets are only ever touched from that session’s own event loop.
+This is a hard constraint, not a style choice.</p></li>
+</ul>
+<p>Changes propagate by <strong>versioned pull</strong> (ADR 0007): a writer mutates shared
+state and bumps an integer version counter; each session, on its own loop,
+compares counters against what it last saw and pulls immutable snapshots when
+something moved. A <strong>wakeup hub</strong> nudges sessions promptly after a change, but
+a wake carries no data — it only means “look now rather than at the next
+housekeeping tick”.</p>
+<pre  class="mermaid">
+        flowchart LR
+    Kafka([&quot;Kafka&quot;])
+
+    subgraph Process[&quot;Dashboard process&quot;]
+        subgraph Ingest[&quot;Ingestion thread (one, shared)&quot;]
+            Pump[&quot;Message pump&lt;br/&gt;(drain data batch)&quot;]
+            Flush[&quot;Frame flush&lt;br/&gt;(compute plots)&quot;]
+        end
+
+        subgraph Shared[&quot;Shared state, versioned&quot;]
+            Topology[&quot;Topology&lt;br/&gt;grids / cells / layers&quot;]
+            LayerState[&quot;Per-layer lifecycle&lt;br/&gt;snapshots&quot;]
+            Plotters[&quot;Plotters&lt;br/&gt;(computed plot state)&quot;]
+            Tokens[&quot;Viewer tokens&lt;br/&gt;(who watches which layer)&quot;]
+        end
+
+        Hub[&quot;Wakeup hub&quot;]
+
+        subgraph Session[&quot;Browser session (xN, each on its own loop)&quot;]
+            Pass[&quot;Reconcile pass&quot;]
+            Widgets[&quot;Widgets&lt;br/&gt;tabs, cells, figures&quot;]
+        end
+    end
+
+    Browser([&quot;Browser&quot;])
+
+    Kafka --&gt; Pump --&gt; Flush --&gt; Plotters
+    Tokens -. &quot;no watcher →&lt;br/&gt;skip compute&quot; .-&gt; Flush
+    Flush -- &quot;wake (no data)&quot; --&gt; Hub -- &quot;tick&quot; --&gt; Pass
+    Pass -- &quot;poll versions,&lt;br/&gt;pull snapshots&quot; --&gt; Shared
+    Pass -- &quot;acquire / release&quot; --&gt; Tokens
+    Pass --&gt; Widgets --&gt; Browser
+
+    classDef shared fill:#fff3e0,stroke:#ef6c00,color:#e65100;
+    classDef sess fill:#ede7f6,stroke:#7b1fa2,color:#4a148c;
+    classDef ing fill:#e3f2fd,stroke:#1976d2,color:#0d47a1;
+    class Topology,LayerState,Plotters,Tokens shared;
+    class Pass,Widgets sess;
+    class Pump,Flush ing;
+    </pre><p>Two mechanisms matter for what follows:</p>
+<ul class="simple">
+<li><p><strong>Viewer tokens</strong>: a session holds a token on each layer of the grid it is
+currently displaying, and releases the tokens when it switches away. The
+frame flush skips layers with no tokens — <em>nobody watching, nothing
+computed</em>. When the first token arrives (a “0→1 transition”), the layer’s
+plot is computed on the spot so the revealing session has something to show.</p></li>
+<li><p><strong>Version counters carry one bit.</strong> A counter says <em>that</em> something changed,
+never <em>why</em>. This is deliberate — it is what makes the pattern trivially
+thread-safe — and it is also the root of the problem described next.</p></li>
+</ul>
+<p>The generic update contract, which this proposal does <strong>not</strong> change:</p>
+<pre  class="mermaid">
+        sequenceDiagram
+    participant W as Writer (any thread)
+    participant S as Shared state
+    participant H as Wakeup hub
+    participant R as Session pass (own loop)
+
+    W-&gt;&gt;S: mutate + bump version
+    W-&gt;&gt;H: wake_all()  — no data attached
+    H--&gt;&gt;R: schedule tick
+    R-&gt;&gt;S: did any version move since my last look?
+    alt moved
+        R-&gt;&gt;S: pull immutable snapshots
+        R-&gt;&gt;R: update this session's widgets
+    else nothing moved
+        R--&gt;&gt;R: return without touching widgets
+    end
+    </pre></section>
+<section id="what-went-wrong-two-defects-one-pattern">
+<h2>What went wrong: two defects, one pattern<a class="headerlink" href="#what-went-wrong-two-defects-one-pattern" title="Link to this heading">#</a></h2>
+<section id="the-waste-loop-1216">
+<h3>The waste loop (#1216)<a class="headerlink" href="#the-waste-loop-1216" title="Link to this heading">#</a></h3>
+<p>Sessions rebuilt the cell widgets of <em>every</em> enabled grid — including grids
+they were not displaying — on page load and again on every layer version bump
+(job restarts, plotter swaps, errors). Measured on a 15-cell fixture: 272 ms
+at page load, 89 ms per bump, per session, serialized on the shared loop.</p>
+<p>The build of a hidden cell was not merely premature; it was <em>doomed</em>. While
+nobody watches a layer, its plot is never computed, so the hidden build is an
+empty placeholder. And the reveal that the build supposedly prepares for
+destroys it: revealing the grid acquires the first viewer token, which
+computes the plot, which bumps the layer version, which the same pass reads as
+“rebuild this cell”.</p>
+<pre  class="mermaid">
+        sequenceDiagram
+    participant B as Backend (job restart)
+    participant L as Layer state (shared)
+    participant R as Session pass
+    participant C as Cell widget (hidden grid)
+
+    Note over R: Session is parked on another tab.&lt;br/&gt;It holds no viewer token,&lt;br/&gt;so this layer's plot is never computed.
+
+    B-&gt;&gt;L: new plotter, version += 1
+    L--&gt;&gt;R: wake
+    R-&gt;&gt;R: version moved → cell must be rebuilt
+    R-&gt;&gt;C: build widget — a placeholder,&lt;br/&gt;no computed plot exists
+    Note over C: wasted work (repeats on every bump)
+
+    Note over R: …later, user switches to this grid's tab
+    R-&gt;&gt;L: acquire viewer token (0 → 1)
+    L-&gt;&gt;L: compute plot now, version += 1
+    R-&gt;&gt;R: version moved again → rebuild
+    R-&gt;&gt;C: build widget again, now with a real plot
+    Note over C: the hidden build is discarded
+    </pre><p>The eager hidden build was a <em>documented, deliberate decision</em> (“hidden grids
+do no display work; this pass only keeps their structure reconciled”) — locally
+reasonable, and falsified only by the feedback loop above, which runs through
+four components. No single component’s local reasoning could see it.</p>
+</section>
+<section id="the-stale-occupancy-defect-1219">
+<h3>The stale-occupancy defect (#1219)<a class="headerlink" href="#the-stale-occupancy-defect-1219" title="Link to this heading">#</a></h3>
+<p>The grid widget decides which positions are free from a session-local dict
+populated only when a widget is <em>inserted</em> — a cached copy of information whose
+authority is the topology. The moment cells can legitimately exist without a
+widget in this session (exactly what fixing #1216 introduces), the cache is
+wrong: the user is offered “free” positions that are occupied, and completing
+the wizard there raised an uncaught exception.</p>
+</section>
+<section id="the-pattern">
+<h3>The pattern<a class="headerlink" href="#the-pattern" title="Link to this heading">#</a></h3>
+<p>Both defects share one shape, and the point fixes in #1220 (a visibility gate
+on the rebuild; catching the exception) do not remove it:</p>
+<ol class="arabic simple">
+<li><p><strong>One version channel, many causes.</strong> “Plotter swapped”, “job stopped”,
+and “you just started watching” all fund the same counter. The rebuild
+decision needs the cause; the counter, by design, cannot say.</p></li>
+<li><p><strong>The build decision is smeared.</strong> Whether a widget should exist is decided
+by policy in the pass, gated by tokens in a service, triggered by versions
+in snapshots. Nowhere is “should this cell have a widget, and will the
+build survive?” a single, checkable expression.</p></li>
+<li><p><strong>Bookkeeping maintained by hand.</strong> The pass keeps ~9 memo fields
+(last-seen versions, per-cell signatures, widget-to-grid maps, flush
+generations, timestamps), each an invariant of the form “this record
+reflects what my widgets show”. The #1220 fix works by <em>deliberately
+letting records go stale</em> so a later pass retries — correctness by
+choreographed staleness.</p></li>
+<li><p><strong>A duplicated predicate.</strong> A cheap “is there work?” check lets wake ticks
+skip idle sessions, but it must mirror every gate inside the pass by hand.
+Drift in one direction freezes widgets; in the other, it wastes wakes.</p></li>
+<li><p><strong>Derived state without a single source of truth.</strong> The occupancy cache is
+a second copy of topology, coherent only under an unstated invariant.</p></li>
+</ol>
+<p>A detailed inventory — every concern, every memo field, every representation
+of “is anyone looking”, with code references — is in
+<a class="reference internal" href="declarative-session-reconciler-current-state.html"><span class="std std-doc">the companion analysis</span></a>.</p>
+<p>The anatomy of the pass today, with its bookkeeping and the hand-mirrored
+predicate:</p>
+<pre  class="mermaid">
+        flowchart TD
+    Tick([&quot;wake / housekeeping tick&quot;]) --&gt; Pred{&quot;has_pending_work?&lt;br/&gt;(hand-written mirror of&lt;br/&gt;all five gates below)&quot;}
+    Pred -- no --&gt; Skip([&quot;skip&quot;])
+    Pred -- yes --&gt; Pass
+
+    subgraph Pass[&quot;_poll_for_plot_updates — one function, six concerns&quot;]
+        direction TB
+        S1[&quot;1 · reconcile tabs&lt;br/&gt;gate: topology version&quot;]
+        S2[&quot;2 · diff cell composition&lt;br/&gt;memo: per-cell signatures&quot;]
+        S3[&quot;3 · track layer versions&lt;br/&gt;memo: last-seen per layer&quot;]
+        S4[&quot;4 · acquire/release viewer tokens&lt;br/&gt;side effect: 0→1 computes the plot&lt;br/&gt;and bumps the version read in 3&quot;]
+        S5[&quot;5 · flush data to visible figures&lt;br/&gt;gates: frame generation, active tab&quot;]
+        S6[&quot;6 · age freshness pills&lt;br/&gt;memo: wall-clock timestamp&quot;]
+        S1 --&gt; S2 --&gt; S3 --&gt; S4 --&gt; S5 --&gt; S6
+    end
+
+    Pass --&gt; Rebuild[&quot;rebuild affected cells,&lt;br/&gt;then update memo records&lt;br/&gt;(staleness here = retry later)&quot;]
+
+    classDef warn fill:#ffebee,stroke:#c62828,color:#b71c1c;
+    class Pred,S4,Rebuild warn;
+    </pre></section>
+<section id="where-the-pattern-stops-the-teardown-leak-1224">
+<h3>Where the pattern stops: the teardown leak (#1224)<a class="headerlink" href="#where-the-pattern-stops-the-teardown-leak-1224" title="Link to this heading">#</a></h3>
+<p>A third defect surfaced while measuring the #1220 fix, and it is recorded
+here precisely because it is <strong>not</strong> an instance of the pattern above. A cell
+rebuilt while its grid is visible left the discarded widget’s rendered plot
+subscribed to the layer’s pipe: replacing a widget in a grid slot does not
+run the UI framework’s pane cleanup, and the widget’s <code class="docutils literal notranslate"><span class="pre">dispose()</span></code> released
+only its autoscale controller. Each leaked subscriber renders the layer once
+more on every update, accumulating monotonically over the session
+(<a class="reference external" href="https://github.com/scipp/esslivedata/issues/1224">#1224</a>; point fix in
+<a class="reference external" href="https://github.com/scipp/esslivedata/pull/1226">#1226</a>, which makes
+<code class="docutils literal notranslate"><span class="pre">dispose()</span></code> sever the pipe subscriptions).</p>
+<p>The decision layer was right — the pass correctly decided to rebuild. The
+defect sits in the <em>applier’s mechanics</em>, one level below anything
+<code class="docutils literal notranslate"><span class="pre">desired()</span></code> or the differ touches, so the reconciler would <strong>not</strong> have
+prevented it; claiming otherwise would oversell this proposal. What the
+defect does share with the pattern is its shape: “dispose releases everything
+build acquired” is one more hand-maintained inverse that nothing checks,
+spread across three parties (the widget’s dispose, the framework’s
+slot-replacement semantics, the plotting library’s render-time subscription).
+And visibility once again decided whether the defect was observable at all —
+a widget built for a hidden grid never renders, so it never subscribes, which
+is why no page-load measurement could see the leak.</p>
+<p>Two consequences for this proposal. The applied-state record gives build and
+dispose a single home, so the symmetry becomes reviewable in one place — a
+concentration benefit, not a structural guarantee. And the invariant that
+caught the leak — total pipe-subscriber count flat across rebuilds — is
+exactly a phase-0 characterization test; the migration plan lists it.</p>
+</section>
+</section>
+<section id="proposal">
+<h2>Proposal<a class="headerlink" href="#proposal" title="Link to this heading">#</a></h2>
+<p>Restructure the per-session pass into three stages with a strict read → decide
+→ act shape. The concurrency model, the wakeup mechanism, the frame clock, and
+the compute gating are untouched; this is a change to how one consumer is
+written, not to how state is shared.</p>
+<pre  class="mermaid">
+        flowchart LR
+    subgraph Inputs[&quot;1 · Read: immutable inputs&quot;]
+        T[&quot;topology snapshot&quot;]
+        L[&quot;layer snapshots&quot;]
+        V[&quot;this session's view&lt;br/&gt;(active tab, modal open)&quot;]
+        W[&quot;watcher info&lt;br/&gt;(is any other session&lt;br/&gt;watching layer X?)&quot;]
+    end
+
+    D[&quot;2 · Decide&lt;br/&gt;desired(inputs)&lt;br/&gt;a pure function returning&lt;br/&gt;the target widget tree&quot;]
+
+    subgraph Act[&quot;3 · Act&quot;]
+        Diff[&quot;diff against&lt;br/&gt;applied state&quot;]
+        Apply[&quot;apply: build / insert /&lt;br/&gt;dispose / flush&quot;]
+    end
+
+    A[(&quot;applied state:&lt;br/&gt;what widgets exist now,&lt;br/&gt;and the inputs each&lt;br/&gt;was built from&quot;)]
+
+    Inputs --&gt; D --&gt; Diff --&gt; Apply --&gt; A
+    A --&gt; Diff
+
+    classDef pure fill:#e8f5e9,stroke:#2e7d32,color:#1b5e20;
+    class D pure;
+    </pre><section id="the-desired-state-function">
+<h3>The desired-state function<a class="headerlink" href="#the-desired-state-function" title="Link to this heading">#</a></h3>
+<p><code class="docutils literal notranslate"><span class="pre">desired()</span></code> maps inputs to a target tree: for each cell, its geometry, its
+grid, whether this session should <strong>materialize</strong> it (actually construct the
+widget), and the <strong>build inputs</strong> the widget must be constructed from
+(composition plus, per layer, the plotter’s identity and whether it holds a
+computed plot).</p>
+<p>The policy that #1216 needed becomes one legible line instead of a gate
+threaded through a loop:</p>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="n">materialize</span> <span class="o">=</span> <span class="n">cell</span><span class="o">.</span><span class="n">grid</span> <span class="ow">is</span> <span class="n">my_active_grid</span> <span class="ow">or</span> <span class="n">any_other_session_watches</span><span class="p">(</span><span class="n">cell</span><span class="p">)</span>
+</pre></div>
+</div>
+<p>Being pure, <code class="docutils literal notranslate"><span class="pre">desired()</span></code> is unit-testable with plain data — no widgets, no
+event loops, no fakes. Every future policy question (“should hidden grids
+pre-warm?”, “should a modal suspend materialization?”) is a reviewable diff to
+this one function.</p>
+</section>
+<section id="the-differ">
+<h3>The differ<a class="headerlink" href="#the-differ" title="Link to this heading">#</a></h3>
+<p>The differ compares the desired tree with the applied tree and emits actions.
+Its rules are generic and never change when policy changes:</p>
+<ul class="simple">
+<li><p>desired but not applied, <code class="docutils literal notranslate"><span class="pre">materialize</span></code> → build and insert</p></li>
+<li><p>applied but no longer desired → dispose and remove</p></li>
+<li><p>applied but <code class="docutils literal notranslate"><span class="pre">build_inputs</span></code> differ → rebuild</p></li>
+<li><p>desired, not <code class="docutils literal notranslate"><span class="pre">materialize</span></code> → do nothing (<strong>deferred</strong> — the key new state)</p></li>
+</ul>
+<p>A cell’s life in this model, from any one session’s point of view:</p>
+<pre  class="mermaid">
+        stateDiagram-v2
+    [*] --&gt; Absent
+    Absent --&gt; Deferred: appears in topology, nobody watching
+    Absent --&gt; Materialized: appears where this session looks
+    Deferred --&gt; Materialized: revealed here, or another session watches
+    Materialized --&gt; Materialized: build inputs changed → rebuild
+    Deferred --&gt; Deferred: any number of changes → no work
+    Materialized --&gt; Absent: removed from topology
+    Deferred --&gt; Absent: removed from topology
+    </pre><p>The <code class="docutils literal notranslate"><span class="pre">Deferred</span> <span class="pre">→</span> <span class="pre">Deferred</span></code> self-loop is where #1216’s waste disappears: N
+version bumps while nobody watches coalesce into zero builds, structurally,
+not via a carefully placed gate. The same scenario as before, under the
+proposal:</p>
+<pre  class="mermaid">
+        sequenceDiagram
+    participant B as Backend (job restart)
+    participant L as Layer state (shared)
+    participant R as Session reconciler
+    participant C as Cell widget
+
+    Note over R: Session parked on another tab.
+
+    B-&gt;&gt;L: new plotter, version += 1
+    L--&gt;&gt;R: wake
+    R-&gt;&gt;R: desired(): cell not visible here,&lt;br/&gt;nobody watching → Deferred
+    Note over R: no build — nothing to discard later
+
+    Note over R: user switches to this grid's tab
+    R-&gt;&gt;L: acquire viewer token (0 → 1)
+    L-&gt;&gt;L: compute plot now
+    R-&gt;&gt;R: desired(): materialize, build inputs =&lt;br/&gt;(composition, plotter with computed plot)
+    R-&gt;&gt;C: build widget once, with a real plot
+    </pre></section>
+<section id="rebuild-means-inputs-changed-not-a-counter-moved">
+<h3>Rebuild means “inputs changed”, not “a counter moved”<a class="headerlink" href="#rebuild-means-inputs-changed-not-a-counter-moved" title="Link to this heading">#</a></h3>
+<p>Today a widget is rebuilt when a version counter moved past a remembered
+value; the remembered values are the bookkeeping that can go stale. Under the
+proposal, each widget records the <code class="docutils literal notranslate"><span class="pre">build_inputs</span></code> it was built from, and the
+differ rebuilds when the <em>current</em> inputs differ. Layer snapshots are already
+immutable, so this is cheap identity/value comparison.</p>
+<p>Staleness bugs become unrepresentable: there is no record to forget to update,
+and the placeholder-vs-real distinction falls out naturally — a widget built
+from “plotter without a computed plot” differs from inputs that now say
+“plotter with a computed plot”, so the reveal rebuild happens exactly when it
+should, and only then.</p>
+<p>Version counters are not abolished — they remain the cheap <em>wake</em> signal. They
+stop carrying rebuild semantics they cannot express. The “is there work?”
+predicate stops being a mirror: work is pending exactly when the input
+versions differ from a stamp recorded at the last apply. (One genuinely
+time-based term survives: a stalled stream ages its freshness indicator by
+wall clock, because the absence of events sends no wake. That term is inherent,
+not incidental.)</p>
+</section>
+<section id="one-definition-of-is-anyone-looking">
+<h3>One definition of “is anyone looking”<a class="headerlink" href="#one-definition-of-is-anyone-looking" title="Link to this heading">#</a></h3>
+<p>“Is anyone looking at this?” exists in five places today (viewer tokens,
+active-tab index arithmetic, the UI framework’s lazy tab rendering, a
+modal-suppression guard, and the watcher predicate the #1216 fix adds). The
+proposal consolidates the session-side half into one small <strong>session view</strong>
+value — active grid, modal state — produced in one place and consumed only as
+an input to <code class="docutils literal notranslate"><span class="pre">desired()</span></code>. Cross-session watching remains the viewer-token
+mechanism it is today; <code class="docutils literal notranslate"><span class="pre">desired()</span></code> reads it, it does not reimplement it.</p>
+<p>The occupancy cache (#1219) is subsumed rather than patched: which positions
+are free is <em>derived from the topology snapshot</em> — the applied widget tree
+stops being an authority on anything.</p>
+</section>
+<section id="what-stays-exactly-as-it-is">
+<h3>What stays exactly as it is<a class="headerlink" href="#what-stays-exactly-as-it-is" title="Link to this heading">#</a></h3>
+<ul class="simple">
+<li><p>Single-writer versioned pull (ADR 0007) and the ban on data-carrying push.</p></li>
+<li><p>The wakeup hub, housekeeping ticks, and the full-pass safety net.</p></li>
+<li><p>The frame clock, per-grid flush batching, and freshness semantics (ADR 0005).</p></li>
+<li><p>Viewer-token compute gating (“nobody watching, nothing computed”) and the
+0→1 synchronous compute on reveal.</p></li>
+<li><p>Lazy tab rendering (<code class="docutils literal notranslate"><span class="pre">dynamic=True</span></code>), update batching, and every documented
+Panel/Bokeh workaround — the migration plan treats each as an invariant to
+carry over, with a test where possible.</p></li>
+</ul>
+</section>
+</section>
+<section id="migration">
+<h2>Migration<a class="headerlink" href="#migration" title="Link to this heading">#</a></h2>
+<p>Four phases, each independently shippable and useful on its own; details,
+risks, and the test strategy are in the
+<a class="reference internal" href="declarative-session-reconciler-migration.html"><span class="std std-doc">migration plan</span></a>.</p>
+<div class="pst-scrollable-table-container"><table class="table">
+<thead>
+<tr class="row-odd"><th class="head"><p>Phase</p></th>
+<th class="head"><p>Content</p></th>
+<th class="head"><p>Ships alone?</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p>0</p></td>
+<td><p>Characterization tests around the current pass</p></td>
+<td><p>yes — <a class="reference external" href="https://github.com/scipp/esslivedata/pull/1229">#1229</a></p></td>
+</tr>
+<tr class="row-odd"><td><p>1</p></td>
+<td><p>Occupancy derived from topology (#1219, part 2)</p></td>
+<td><p>yes — merged as <a class="reference external" href="https://github.com/scipp/esslivedata/pull/1221">#1221</a></p></td>
+</tr>
+<tr class="row-even"><td><p>2</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">desired()</span></code> + differ for cell existence and materialization; delete signature/version memos</p></td>
+<td><p>yes — the go/no-go spike, <a class="reference external" href="https://github.com/scipp/esslivedata/pull/1230">#1230</a></p></td>
+</tr>
+<tr class="row-odd"><td><p>3</p></td>
+<td><p>Fold data-flush and freshness gating into the same shape</p></td>
+<td><p>declined post-phase-2 (see migration plan)</p></td>
+</tr>
+<tr class="row-even"><td><p>4</p></td>
+<td><p>Stable widget shell, swap only the figure on plotter change</p></td>
+<td><p>speculative spike, not scheduled</p></td>
+</tr>
+</tbody>
+</table>
+</div>
+</section>
+<section id="is-it-worth-it-and-how-do-we-decide">
+<h2>Is it worth it, and how do we decide?<a class="headerlink" href="#is-it-worth-it-and-how-do-we-decide" title="Link to this heading">#</a></h2>
+<p><strong>What it costs.</strong> Phases 1–2 are a bounded rewrite of essentially one module
+(<code class="docutils literal notranslate"><span class="pre">plot_grid_tabs.py</span></code>, ~1000 lines) plus tests — order of one to two weeks. The
+real risk is not effort but regression: the current code encodes hard-won
+workarounds for UI-framework traps, and a rewrite can silently drop one. The
+migration plan’s answer is to enumerate them as explicit invariants first
+(phase 0), which has independent value even if nothing else ships.</p>
+<p><strong>What it buys.</strong> Not user-visible performance — the #1220 point fix already
+banks that. It buys the <em>absence of a defect class</em> (stale bookkeeping,
+mirror drift, policy-composition surprises), locality of review (policy
+changes become diffs to a pure function), and much cheaper testing — policy
+tests drop the full service stack for plain data (the migration plan’s
+test-suite section details what shrinks, what stays, and what can be cleaned
+up either way). The value is therefore proportional to how often this area
+will change.</p>
+<p><strong>When it is not worth it.</strong> If the plot-grid UI is essentially
+feature-complete — no new visibility/materialization policies expected — the
+current code, as fixed by #1220 and documented, is acceptable to keep. Its
+complexity is real but contained, and a rewrite would be risk without payoff.</p>
+<p><strong>Decision procedure.</strong></p>
+<ol class="arabic simple">
+<li><p><strong>Count the queue.</strong> List concretely planned features that would touch
+materialization or visibility policy (candidates visible today:
+topology-driven occupancy, per-cell pause, richer layout editing,
+follow-the-presenter modes). Two or more → proceed to the spike. Zero →
+stop after phase 1, revisit when the queue fills.</p></li>
+<li><p><strong>Run phase 2 as a time-boxed spike</strong> (≤ 1 week) with hard acceptance
+criteria, agreed in advance: at least half of the pass’s memo fields
+deleted; the hand-mirrored predicate deleted; browser smoke tests green;
+no new framework workarounds required. Any criterion missed → abandon
+cheaply, keep phases 0–1, write down why.</p></li>
+<li><p><strong>Decide per phase.</strong> Phases 3–4 each get their own go/no-go on the same
+terms; nothing here is all-or-nothing.</p></li>
+</ol>
+<p><strong>Recommendation.</strong> Do phase 0 and phase 1 regardless — both are already
+justified independently of this proposal. Make the phase-2 spike conditional
+on the feature queue, per the procedure above.</p>
+<div class="toctree-wrapper compound">
+</div>
+</section>
+</section>
+
+
+                </article>
+              
+              
+              
+              
+              
+                <footer class="prev-next-footer d-print-none">
+                  
+<div class="prev-next-area">
+    <a class="left-prev"
+       href="../adr/0009-build-time-stream-registry-codegen.html"
+       title="previous page">
+      <i class="fa-solid fa-angle-left"></i>
+      <div class="prev-next-info">
+        <p class="prev-next-subtitle">previous</p>
+        <p class="prev-next-title">ADR 0009: Generate the per-instrument stream registry at development time</p>
+      </div>
+    </a>
+    <a class="right-next"
+       href="declarative-session-reconciler-current-state.html"
+       title="next page">
+      <div class="prev-next-info">
+        <p class="prev-next-subtitle">next</p>
+        <p class="prev-next-title">The session reconciler today — detailed analysis</p>
+      </div>
+      <i class="fa-solid fa-angle-right"></i>
+    </a>
+</div>
+                </footer>
+              
+            </div>
+            
+            
+              
+            
+          </div>
+          <footer class="bd-footer-content">
+            
+          </footer>
+        
+      </main>
+    </div>
+  </div>
+  
+  <!-- Scripts loaded after <body> so the DOM is not blocked -->
+  <script defer src="../../_static/scripts/bootstrap.js?digest=90905a2f556bf617f1a9"></script>
+<script defer src="../../_static/scripts/pydata-sphinx-theme.js?digest=90905a2f556bf617f1a9"></script>
+
+  <footer class="bd-footer">
+<div class="bd-footer__inner bd-page-width">
+  
+    <div class="footer-items__start">
+      
+        <div class="footer-item">
+
+  <p class="copyright">
+    
+      © Copyright 2025 Scipp contributors.
+      <br/>
+    
+  </p>
+</div>
+      
+        <div class="footer-item">
+
+  <p class="sphinx-version">
+    Created using <a href="https://www.sphinx-doc.org/">Sphinx</a> 9.0.4.
+    <br/>
+  </p>
+</div>
+      
+    </div>
+  
+  
+  
+    <div class="footer-items__end">
+      
+        <div class="footer-item"><!-- This will display the version of the docs -->
+Current ESSlivedata version: 26.8.1 (<a href="https://github.com/scipp/esslivedata/releases">older versions</a>).</div>
+      
+        <div class="footer-item">
+<p class="theme-version">
+  <!-- # L10n: Setting the PST URL as an argument as this does not need to be localized -->
+  Built with the <a href="https://pydata-sphinx-theme.readthedocs.io/en/stable/index.html">PyData Sphinx Theme</a> 0.20.0.
+</p></div>
+      
+    </div>
+  
+</div>
+
+  </footer>
+  </body>
+</html>
