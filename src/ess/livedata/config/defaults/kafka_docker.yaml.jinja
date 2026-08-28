@@ -3,10 +3,5 @@ security.protocol: {{ KAFKA_SECURITY_PROTOCOL }}
 sasl.mechanism: {{ KAFKA_SASL_MECHANISM }}
 sasl.username: {{ KAFKA_SASL_USERNAME }}
 sasl.password: {{ KAFKA_SASL_PASSWORD }}
-# Max size of a single message, in bytes (~96 MiB): TBL ORCA frames are 33.6 MB.
 message.max.bytes: 100971520
-# Producer send-queue memory cap, in KILOBYTES (1 GiB), matching librdkafka's
-# default. This is what makes the BufferError backpressure valve in
-# kafka/sink.py reachable: without a cap the producer queue grows until the
-# OOM killer intervenes instead.
-queue.buffering.max.kbytes: 1048576
+queue.buffering.max.kbytes: 104857600
