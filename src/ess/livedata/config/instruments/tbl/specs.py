@@ -4,6 +4,10 @@
 TBL workflow spec registration.
 """
 
+from typing import Literal, get_args
+
+import pydantic
+
 from ess.livedata.config import (
     Instrument,
     SourceMetadata,
@@ -14,7 +18,9 @@ from ess.livedata.config import (
 from ess.livedata.config.device_contract import COUNTS_TOTAL_DEVICE
 from ess.livedata.config.workflow_spec import DETECTORS
 from ess.livedata.workflows.detector_view_specs import (
+    DetectorROIAuxSources,
     DetectorViewOutputs,
+    DetectorViewParams,
     SpectrumViewSpec,
 )
 from ess.livedata.workflows.monitor_workflow_specs import (
@@ -24,7 +30,7 @@ from ess.livedata.workflows.monitor_workflow_specs import (
 
 from .streams_parsed import PARSED_STREAMS
 from .views import (
-    fold_image,
+    MAX_IMAGE_SIZE,
     get_he3_detector_view,
     get_he3_spectrum,
     get_multiblade_spectrum,
@@ -68,14 +74,52 @@ register_monitor_workflow_specs(
     instrument, monitor_names, params=TOAOnlyMonitorDataParams
 )
 
-instrument.add_logical_view(
+Timepix3ResolutionValue = Literal[256, 512, 1024, 2048, 4096]
+"""Square pixel grids the Timepix3 readout can be configured to produce."""
+
+
+class Timepix3Resolution(pydantic.BaseModel):
+    """Resolution mode the Timepix3 readout is currently running in."""
+
+    value: Timepix3ResolutionValue = pydantic.Field(
+        default=4096,
+        description=(
+            'Size of the square pixel grid the detector is reading out. The mode '
+            'is not published by the upstream system, so it must be set to match '
+            'the current detector setting by hand; a mismatch renders the image '
+            'from the wrong region of the pixel grid.'
+        ),
+        json_schema_extra={
+            'labels': {
+                size: f'{size} x {size}' for size in get_args(Timepix3ResolutionValue)
+            }
+        },
+    )
+
+
+class Timepix3DetectorViewParams(DetectorViewParams):
+    """Detector view parameters carrying the manually selected resolution mode."""
+
+    resolution: Timepix3Resolution = pydantic.Field(
+        title='Resolution',
+        description='Resolution mode the Timepix3 readout is running in.',
+        default_factory=Timepix3Resolution,
+    )
+
+
+timepix3_view_handle = instrument.register_spec(
+    group=DETECTORS,
     name='tbl_detector_timepix3',
+    version=1,
     title='Timepix3 Detector',
-    description='512x512 image downsampled from full resolution',
+    description=(
+        f'Image downsampled to at most {MAX_IMAGE_SIZE}x{MAX_IMAGE_SIZE} from the '
+        'configured readout resolution'
+    ),
     source_names=['timepix3_detector'],
-    transform=fold_image,
-    reduction_dim=['x_bin', 'y_bin'],
-    roi_support=True,
+    aux_sources=DetectorROIAuxSources(),
+    params=Timepix3DetectorViewParams,
+    outputs=DetectorViewOutputs,
     device_outputs=COUNTS_TOTAL_DEVICE,
 )
 

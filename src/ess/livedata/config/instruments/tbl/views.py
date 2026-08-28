@@ -3,11 +3,15 @@
 """
 TBL logical detector view transform functions.
 
-These transforms are registered with the instrument via instrument.add_logical_view()
-in specs.py.
+These transforms are wired to the workflow specs registered in specs.py.
 """
 
 import scipp as sc
+
+#: Largest image published per axis. Cameras read out far more pixels than the
+#: dashboard can plot, and ess.livedata may not keep up with the full grid, so
+#: images are downsampled to at most this many pixels per axis.
+MAX_IMAGE_SIZE = 512
 
 
 def fold_image(da: sc.DataArray, source_name: str) -> sc.DataArray:
@@ -15,8 +19,30 @@ def fold_image(da: sc.DataArray, source_name: str) -> sc.DataArray:
     # 4096x4096 or 2048x2048 is the actual panel size, but ess.livedata might not be
     #  able to keep up with that so we downsample to 512x512.
     da = da.rename_dims({'dim_0': 'x', 'dim_1': 'y'})
-    da = da.fold(dim='x', sizes={'x': 512, 'x_bin': -1})
-    da = da.fold(dim='y', sizes={'y': 512, 'y_bin': -1})
+    da = da.fold(dim='x', sizes={'x': MAX_IMAGE_SIZE, 'x_bin': -1})
+    da = da.fold(dim='y', sizes={'y': MAX_IMAGE_SIZE, 'y_bin': -1})
+    return da
+
+
+def fold_timepix3_image(da: sc.DataArray, resolution: int) -> sc.DataArray:
+    """Cut the Timepix3 pixel grid down to ``resolution`` and fold it for display.
+
+    The Timepix3 readout maps hits onto a square pixel grid whose size is a
+    detector setting, while the geometry file declares the largest grid,
+    4096x4096. A coarser mode is assumed to enumerate its pixels the same way,
+    so its event ids span the first ``resolution**2`` ids of the declared grid.
+
+    Events are grouped by the declared grid before any workflow sees them, in a
+    per-source preprocessor that no workflow parameter can reach, which is why
+    the mode is applied here as a leading slice rather than by grouping into a
+    smaller grid in the first place.
+    """
+    n_pixels = resolution * resolution
+    da = da.flatten(to='detector_number')['detector_number', :n_pixels]
+    da = da.fold(dim='detector_number', sizes={'x': resolution, 'y': resolution})
+    size = min(MAX_IMAGE_SIZE, resolution)
+    da = da.fold(dim='x', sizes={'x': size, 'x_bin': -1})
+    da = da.fold(dim='y', sizes={'y': size, 'y_bin': -1})
     return da
 
 
