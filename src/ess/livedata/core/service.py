@@ -16,6 +16,7 @@ from typing import Any, Protocol, Self
 import structlog
 
 from ..config.instruments import available_instruments
+from .cyclic_gc import PeriodicGarbageCollector
 from .processor import Processor
 
 
@@ -147,6 +148,12 @@ class Service(ServiceBase):
 
     Calls the injected processor in a loop with a configurable poll interval.
     If resources were passed, this class should be used as a context manager.
+
+    The loop periodically runs the cyclic garbage collector: per-chunk task
+    graph updates create self-referential garbage holding large arrays that
+    CPython's count-based collection never reclaims in steady state (see
+    https://github.com/scipp/esslivedata/issues/1264). Pass
+    ``garbage_collector=None`` to opt out.
     """
 
     def __init__(
@@ -157,6 +164,8 @@ class Service(ServiceBase):
         log_level: int = logging.INFO,
         poll_interval: float = 0.01,
         resources: ExitStack | None = None,
+        garbage_collector: PeriodicGarbageCollector | None = None,
+        collect_garbage: bool = True,
     ):
         super().__init__(name=name, log_level=log_level)
         self._poll_interval = poll_interval
@@ -164,6 +173,9 @@ class Service(ServiceBase):
         self._thread: threading.Thread | None = None
         self._resources = resources
         self._worker_error: str | None = None
+        self._garbage_collector = garbage_collector or (
+            PeriodicGarbageCollector() if collect_garbage else None
+        )
 
     def __enter__(self) -> Self:
         """Enter the context manager protocol."""
@@ -196,9 +208,15 @@ class Service(ServiceBase):
     def _run_loop(self) -> None:
         """Main service loop"""
         try:
+            if self._garbage_collector is not None:
+                # Everything alive now is process-lifetime service state; per-job
+                # state is allocated later and stays collectable.
+                self._garbage_collector.freeze()
             while self.is_running:
                 start_time = time.monotonic()
                 self._processor.process()
+                if self._garbage_collector is not None:
+                    self._garbage_collector.maybe_collect()
                 elapsed = time.monotonic() - start_time
                 remaining = max(0.0, self._poll_interval - elapsed)
                 if remaining > 0:
