@@ -74,12 +74,27 @@ ABSENT_BATCHES_FOR_EVICTION = 5
 # Only gated kinds reach ``_overflow`` (see ``GATED_STREAM_KINDS``), so
 # shedding can never discard control, log or context data.
 #
-# The cap counts messages, not bytes: message sizes are not known here, so
-# it bounds growth rather than a memory figure.  It is sized to sit well
-# above any healthy backlog -- in steady state the window keeps pace and
-# ``_overflow`` drains on every close -- so reaching it means sustained
-# overload, not a transient.
-DEFAULT_MAX_BACKLOG = 2000
+# The cap is in bytes rather than messages because payload sizes span four
+# orders of magnitude: an ev44 chunk is tens of kilobytes, while one ad00
+# area-detector frame (4096x4096 uint16) is 33.5 MB.  Any message count
+# generous enough to absorb a transient on a many-stream instrument would
+# permit tens of gigabytes of frames, and any count safe for frames would
+# shed constantly elsewhere.
+#
+# Sizing, against a 32 GB production host shared by all backend services and
+# their workflow/job data: the backlog is a shock absorber for transients,
+# not storage, so it gets a small slice.  512 MB holds ~13000 ev44 chunks --
+# more than a 40-stream instrument produces during a 20 s stall -- while
+# capping area-detector retention at ~15 frames.  That asymmetry is correct:
+# catching up on a 500 MB/s frame stream is infeasible, so shedding it
+# quickly is the right policy.  Every backend service shedding at once still
+# costs only ~2 GB of the host.
+DEFAULT_MAX_BACKLOG_BYTES = 512 * 1024**2
+
+# Assumed size of a payload whose arrays cannot be measured.  Only the four
+# bulk kinds reach the overflow and all of them carry numpy arrays, so this
+# is a floor for exotic payloads rather than a value the services rely on.
+UNKNOWN_PAYLOAD_BYTES = 1024
 
 # Shedding is intermittent by nature -- each jump clears the backlog, which
 # then refills -- so per-event logging would flap once per service iteration.
@@ -141,6 +156,30 @@ _MAX_ORIGIN_OFFSET_BATCHES = 1000
 # Three batches allows one pulse's worth of HWM advance to cover the
 # preceding empty batch, matching the natural cadence of 0.5 Hz-and-below
 # gated streams.
+
+
+def _payload_nbytes(value: Any) -> int:
+    """Best-effort retained size of a message payload.
+
+    Payloads reaching the overflow are ``DetectorEvents``/``MonitorEvents``
+    (a dataclass of numpy arrays) or an ``ADArray`` named tuple holding the
+    frame, so summing the ``nbytes`` of the arrays they expose covers every
+    gated kind.  Arrays are views into the source flatbuffer, which is what
+    the retained message actually pins.
+    """
+    nbytes = getattr(value, 'nbytes', None)
+    if isinstance(nbytes, int):
+        return nbytes
+    if isinstance(value, tuple):
+        parts: Any = value
+    else:
+        parts = getattr(value, '__dict__', {}).values()
+    total = 0
+    for part in parts:
+        part_nbytes = getattr(part, 'nbytes', None)
+        if isinstance(part_nbytes, int):
+            total += part_nbytes
+    return total or UNKNOWN_PAYLOAD_BYTES
 
 
 @dataclass(slots=True)
@@ -461,7 +500,7 @@ class RateAwareMessageBatcher(MessageBatcher):
         batch_length_s: float = 1.0,
         timeout_s: float | None = None,
         clock: Callable[[], float] = time.monotonic,
-        max_backlog: int = DEFAULT_MAX_BACKLOG,
+        max_backlog_bytes: int = DEFAULT_MAX_BACKLOG_BYTES,
     ) -> None:
         self._batch_length = Duration.from_seconds(batch_length_s)
         self._timeout_factor = (
@@ -479,8 +518,9 @@ class RateAwareMessageBatcher(MessageBatcher):
         self._future: list[Message[Any]] = []
         self._clock = clock
         self._last_close_wall = clock()
-        self._max_backlog = max_backlog
+        self._max_backlog_bytes = max_backlog_bytes
         self._dropped_messages = 0
+        self._dropped_bytes = 0
         self._last_shed_log = -math.inf
 
     @property
@@ -491,6 +531,11 @@ class RateAwareMessageBatcher(MessageBatcher):
     def dropped_messages(self) -> int:
         """Total gated messages dropped to keep the backlog bounded."""
         return self._dropped_messages
+
+    @property
+    def dropped_bytes(self) -> int:
+        """Total payload bytes dropped to keep the backlog bounded."""
+        return self._dropped_bytes
 
     @property
     def tracked_streams(self) -> set[StreamId]:
@@ -684,7 +729,7 @@ class RateAwareMessageBatcher(MessageBatcher):
         return has_gating
 
     def _shed_backlog(self) -> bool:
-        """Drop the stalest overflow once the backlog exceeds ``max_backlog``.
+        """Drop the stalest overflow once it exceeds ``max_backlog_bytes``.
 
         Keeps the newest messages: the caller advances the window to the
         oldest survivor, so keeping the newest is what lets the window catch
@@ -698,19 +743,28 @@ class RateAwareMessageBatcher(MessageBatcher):
         :
             True if anything was dropped.
         """
-        excess = len(self._overflow) - self._max_backlog
-        if excess <= 0:
+        if not self._overflow:
             return False
-        self._overflow.sort(key=lambda msg: msg.timestamp)
-        del self._overflow[:excess]
-        self._dropped_messages += excess
+        sized = [(_payload_nbytes(msg.value), msg) for msg in self._overflow]
+        retained = sum(nbytes for nbytes, _ in sized)
+        if retained <= self._max_backlog_bytes:
+            return False
+        sized.sort(key=lambda item: item[1].timestamp)
+        dropped = dropped_bytes = 0
+        while retained - dropped_bytes > self._max_backlog_bytes:
+            dropped_bytes += sized[dropped][0]
+            dropped += 1
+        self._overflow = [msg for _, msg in sized[dropped:]]
+        self._dropped_messages += dropped
+        self._dropped_bytes += dropped_bytes
         now = self._clock()
         if now - self._last_shed_log >= SHED_LOG_INTERVAL_S:
             self._last_shed_log = now
             logger.warning(
                 'batcher_backlog_shedding',
-                max_backlog=self._max_backlog,
+                max_backlog_bytes=self._max_backlog_bytes,
                 dropped_messages=self._dropped_messages,
+                dropped_bytes=self._dropped_bytes,
                 batch_length_s=self.batch_length_s,
             )
         return True

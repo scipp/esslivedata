@@ -25,6 +25,7 @@ from ess.livedata.core.message import Message, StreamId, StreamKind
 from ess.livedata.core.message_batcher import MessageBatch
 from ess.livedata.core.rate_aware_batcher import (
     MIN_DIFFS_FOR_GATE,
+    UNKNOWN_PAYLOAD_BYTES,
     RateAwareMessageBatcher,
 )
 from ess.livedata.core.timestamp import Timestamp
@@ -2771,7 +2772,9 @@ class TestBacklogShedding:
     # Each call delivers two batch lengths of data but the window advances by
     # one, so half of every call's traffic is surplus.
     ITER = 2.0
+    # Payloads here carry no arrays, so each costs UNKNOWN_PAYLOAD_BYTES.
     MAX_BACKLOG = 50
+    MAX_BACKLOG_BYTES = 50 * UNKNOWN_PAYLOAD_BYTES
 
     def _run(self, calls: int, batcher: RateAwareMessageBatcher):
         fed = delivered = 0
@@ -2789,7 +2792,9 @@ class TestBacklogShedding:
 
     def make(self, **kwargs) -> RateAwareMessageBatcher:
         return RateAwareMessageBatcher(
-            batch_length_s=self.BATCH_LEN, max_backlog=self.MAX_BACKLOG, **kwargs
+            batch_length_s=self.BATCH_LEN,
+            max_backlog_bytes=self.MAX_BACKLOG_BYTES,
+            **kwargs,
         )
 
     def test_retained_backlog_stays_bounded_under_sustained_overload(self):
@@ -2854,3 +2859,56 @@ class TestBacklogShedding:
             self._run(200, batcher)
         events = [entry['event'] for entry in logs]
         assert 'batcher_backlog_shedding' in events
+
+    def test_cap_is_bytes_so_large_payloads_are_shed_sooner(self):
+        """A frame-sized payload must exhaust the budget in far fewer messages
+        than a small one, which a message-count cap could not express."""
+        import numpy as np
+
+        def run(nbytes_each: int) -> int:
+            batcher = RateAwareMessageBatcher(
+                batch_length_s=self.BATCH_LEN, max_backlog_bytes=1_000_000
+            )
+            payload = np.zeros(nbytes_each // 8, dtype=np.float64)
+            t = 0.0
+            for _ in range(60):
+                chunk = [
+                    Message(
+                        timestamp=ts(m.timestamp.to_ns() / 1e9),
+                        stream=DETECTOR,
+                        value=payload,
+                    )
+                    for m in msgs_at(self.RATE, start=t, duration=self.ITER)
+                ]
+                t += self.ITER
+                batcher.batch(chunk)
+            return batcher.dropped_messages
+
+        small = run(1_000)
+        large = run(100_000)
+        assert small > 0
+        assert large > 0
+        # 100x the payload means the budget is exhausted 100x sooner, so many
+        # more messages are shed for the same traffic.
+        assert large > 10 * small
+
+    def test_dropped_bytes_tracks_dropped_payload(self):
+        import numpy as np
+
+        batcher = RateAwareMessageBatcher(
+            batch_length_s=self.BATCH_LEN, max_backlog_bytes=200_000
+        )
+        payload = np.zeros(1000, dtype=np.float64)  # 8000 bytes
+        t = 0.0
+        for _ in range(60):
+            chunk = [
+                Message(
+                    timestamp=ts(m.timestamp.to_ns() / 1e9),
+                    stream=DETECTOR,
+                    value=payload,
+                )
+                for m in msgs_at(self.RATE, start=t, duration=self.ITER)
+            ]
+            t += self.ITER
+            batcher.batch(chunk)
+        assert batcher.dropped_bytes == batcher.dropped_messages * payload.nbytes
