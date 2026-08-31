@@ -392,19 +392,20 @@ class TestROISpectraIntegration:
 
 
 class TestROIDeliveryViaJob:
-    """ROI delivery through the real Job using rendered per-job wire names."""
+    """ROI delivery through the real Job using rendered wire names."""
 
     def test_roi_request_via_job_wire_name_reaches_context(self):
-        """ROI arriving under its per-job wire name must reach the workflow.
+        """ROI arriving under its rendered wire name must reach the workflow.
 
         Regression for the case where the factory keyed ROI ``context_keys``
         by bare field names while requests arrive keyed by the rendered
-        ``'{job_id}/roi_rectangle'`` wire name, silently dropping every ROI
-        request (empty readback).
+        ``'{workflow_id}/{source_name}/roi_rectangle'`` wire name, silently
+        dropping every ROI request (empty readback).
         """
         factory = make_test_factory(y_size=4, x_size=4)
+        workflow_id = WorkflowId(instrument='dummy', name='detector_view', version=1)
         job_id = JobId(source_name='detector', job_number=uuid.uuid4())
-        rendered = DetectorROIAuxSources().render(job_id=job_id)
+        rendered = DetectorROIAuxSources().render(workflow_id, 'detector')
         workflow = factory.make_workflow(
             'detector', params=make_test_params(), aux_source_names=rendered
         )
@@ -412,9 +413,7 @@ class TestROIDeliveryViaJob:
 
         job = Job(
             job_id=job_id,
-            workflow_id=WorkflowId(
-                instrument='dummy', namespace='detector_view', name='x', version=1
-            ),
+            workflow_id=workflow_id,
             workflow=workflow,
             source_names=['detector'],
             input_streams=set(rendered.values()),

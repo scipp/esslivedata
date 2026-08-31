@@ -540,111 +540,132 @@ class TestAuxSourcesConstruction:
 class TestAuxSourcesRender:
     """Tests for AuxSources render() method."""
 
-    def test_default_render_returns_fixed_values(self) -> None:
+    def test_default_render_returns_fixed_values(
+        self, sample_workflow_id: WorkflowId
+    ) -> None:
         aux_sources = AuxSources({'monitor': 'monitor1'})
-        job_id = JobId(source_name='detector1', job_number='test-uuid-123')
 
-        rendered = aux_sources.render(job_id)
+        rendered = aux_sources.render(sample_workflow_id, 'detector1')
 
         assert rendered == {'monitor': 'monitor1'}
 
-    def test_render_with_selections_overrides_defaults(self) -> None:
+    def test_render_with_selections_overrides_defaults(
+        self, sample_workflow_id: WorkflowId
+    ) -> None:
         aux_sources = AuxSources(
             {
                 'monitor': AuxInput(choices=('mon1', 'mon2'), default='mon1'),
             }
         )
-        job_id = JobId(source_name='det1', job_number='id-1')
 
-        rendered = aux_sources.render(job_id, selections={'monitor': 'mon2'})
+        rendered = aux_sources.render(
+            sample_workflow_id, 'det1', selections={'monitor': 'mon2'}
+        )
 
         assert rendered == {'monitor': 'mon2'}
 
-    def test_render_with_partial_selections(self) -> None:
+    def test_render_with_partial_selections(
+        self, sample_workflow_id: WorkflowId
+    ) -> None:
         aux_sources = AuxSources(
             {
                 'a': AuxInput(choices=('x', 'y'), default='x'),
                 'b': AuxInput(choices=('p', 'q'), default='p'),
             }
         )
-        job_id = JobId(source_name='det1', job_number='id-1')
 
-        rendered = aux_sources.render(job_id, selections={'a': 'y'})
+        rendered = aux_sources.render(sample_workflow_id, 'det1', selections={'a': 'y'})
 
         assert rendered == {'a': 'y', 'b': 'p'}
 
-    def test_render_ignores_unknown_selection_keys(self) -> None:
+    def test_render_ignores_unknown_selection_keys(
+        self, sample_workflow_id: WorkflowId
+    ) -> None:
         aux_sources = AuxSources({'monitor': 'mon1'})
-        job_id = JobId(source_name='det1', job_number='id-1')
 
         rendered = aux_sources.render(
-            job_id, selections={'monitor': 'mon1', 'unknown': 'ignored'}
+            sample_workflow_id,
+            'det1',
+            selections={'monitor': 'mon1', 'unknown': 'ignored'},
         )
 
         assert rendered == {'monitor': 'mon1'}
 
-    def test_render_with_none_selections_uses_defaults(self) -> None:
+    def test_render_with_none_selections_uses_defaults(
+        self, sample_workflow_id: WorkflowId
+    ) -> None:
         aux_sources = AuxSources({'monitor': 'mon1'})
-        job_id = JobId(source_name='det1', job_number='id-1')
 
-        rendered = aux_sources.render(job_id, selections=None)
+        rendered = aux_sources.render(sample_workflow_id, 'det1', selections=None)
 
         assert rendered == {'monitor': 'mon1'}
 
-    def test_custom_render_transforms_stream_names(self) -> None:
-        class RoiAuxSources(AuxSources):
+    def test_custom_render_transforms_stream_names(
+        self, sample_workflow_id: WorkflowId
+    ) -> None:
+        class ViewScopedAuxSources(AuxSources):
             def render(
-                self, job_id: JobId, selections: dict[str, str] | None = None
+                self,
+                workflow_id: WorkflowId,
+                source_name: str,
+                selections: dict[str, str] | None = None,
             ) -> dict[str, str]:
-                base = super().render(job_id, selections)
+                base = super().render(workflow_id, source_name, selections)
                 return {
-                    field: f"{job_id.job_number}/{stream}"
+                    field: f"{workflow_id}/{source_name}/{stream}"
                     for field, stream in base.items()
                 }
 
-        aux_sources = RoiAuxSources(
+        aux_sources = ViewScopedAuxSources(
             {
                 'roi': AuxInput(
                     choices=('roi_rectangle', 'roi_polygon'), default='roi_rectangle'
                 )
             }
         )
-        job_id = JobId(source_name='detector1', job_number='abc-123')
 
-        rendered = aux_sources.render(job_id, selections={'roi': 'roi_polygon'})
+        rendered = aux_sources.render(
+            sample_workflow_id, 'detector1', selections={'roi': 'roi_polygon'}
+        )
 
-        assert rendered == {'roi': 'abc-123/roi_polygon'}
+        assert rendered == {
+            'roi': 'INSTRUMENT/NAME/1/detector1/roi_polygon',
+        }
 
-    def test_custom_render_with_source_name_prefix(self) -> None:
+    def test_custom_render_with_source_name_prefix(
+        self, sample_workflow_id: WorkflowId
+    ) -> None:
         class SourcePrefixedAuxSources(AuxSources):
             def render(
-                self, job_id: JobId, selections: dict[str, str] | None = None
+                self,
+                workflow_id: WorkflowId,
+                source_name: str,
+                selections: dict[str, str] | None = None,
             ) -> dict[str, str]:
-                base = super().render(job_id, selections)
+                base = super().render(workflow_id, source_name, selections)
                 return {
-                    field: f"{job_id.source_name}/{stream}"
-                    for field, stream in base.items()
+                    field: f"{source_name}/{stream}" for field, stream in base.items()
                 }
 
         aux_sources = SourcePrefixedAuxSources(
             {'monitor': AuxInput(choices=('monitor1', 'monitor2'), default='monitor1')}
         )
-        job_id = JobId(source_name='detector1', job_number='uuid-456')
 
-        rendered = aux_sources.render(job_id, selections={'monitor': 'monitor2'})
+        rendered = aux_sources.render(
+            sample_workflow_id, 'detector1', selections={'monitor': 'monitor2'}
+        )
 
         assert rendered == {'monitor': 'detector1/monitor2'}
 
-    def test_render_with_multiple_fields(self) -> None:
+    def test_render_with_multiple_fields(self, sample_workflow_id: WorkflowId) -> None:
         aux_sources = AuxSources(
             {
                 'incident_monitor': 'monitor1',
                 'transmission_monitor': 'monitor2',
             }
         )
-        job_id = JobId(source_name='detector1', job_number='test-id')
 
-        rendered = aux_sources.render(job_id)
+        rendered = aux_sources.render(sample_workflow_id, 'detector1')
 
         assert rendered == {
             'incident_monitor': 'monitor1',

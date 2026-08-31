@@ -22,12 +22,13 @@ import scipp as sc
 
 from .. import parameter_models
 from ..config import models
+from ..config.roi_names import roi_stream_name
 from ..config.workflow_spec import (
     AuxSources,
     CumulativeOutput,
-    JobId,
     OutputView,
     WindowOutput,
+    WorkflowId,
     WorkflowOutputsBase,
 )
 
@@ -478,8 +479,10 @@ class DetectorROIAuxSources(AuxSources):
     """Auxiliary source spec for ROI configuration in detector workflows.
 
     Subscribes to the supported ROI geometry streams (rectangle, polygon).
-    :meth:`render` prefixes each stream name with the ``job_id`` so every job
-    instance owns its own ROI configuration stream.
+    :meth:`render` scopes each stream name to the view it configures, so the
+    ROI selection belongs to the view rather than to the job generation
+    currently computing it (see
+    :func:`~ess.livedata.config.roi_names.roi_stream_name`).
 
     ROI is an auxiliary source, not a gated context binding: the ROI providers
     treat a missing or empty request as "no ROI selected" (an empty result),
@@ -498,25 +501,27 @@ class DetectorROIAuxSources(AuxSources):
 
     def render(
         self,
-        job_id: JobId,
+        workflow_id: WorkflowId,
+        source_name: str,
         selections: dict[str, str] | None = None,
     ) -> dict[str, str]:
-        """Render ROI stream names with a job-specific prefix.
+        """Render ROI stream names scoped to the view they configure.
 
         Parameters
         ----------
-        job_id:
-            Job identifier containing source_name and job_number.
+        workflow_id:
+            The detector view workflow the ROI applies to.
+        source_name:
+            The detector within that workflow.
         selections:
-            Ignored — ROI streams are always job-specific.
+            Ignored — the ROI streams a view listens on are not user-selectable.
 
         Returns
         -------
         :
-            Mapping from ROI geometry keys to job-specific stream names
-            (e.g. ``'{job_id}/roi_rectangle'``).
+            Mapping from ROI geometry keys to stream names (e.g.
+            ``'{workflow_id}/{source_name}/roi_rectangle'``).
         """
         return {
-            'roi_rectangle': f"{job_id}/roi_rectangle",
-            'roi_polygon': f"{job_id}/roi_polygon",
+            key: roi_stream_name(workflow_id, source_name, key) for key in self.inputs
         }

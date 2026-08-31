@@ -162,7 +162,8 @@ class JobFactory:
         # Render dynamic aux source names using the spec's render() method.
         if workflow_spec.aux_sources is not None:
             rendered_aux_names = workflow_spec.aux_sources.render(
-                job_id=job_id,
+                workflow_id=workflow_id,
+                source_name=job_id.source_name,
                 selections=config.aux_source_names if config.aux_source_names else None,
             )
         else:

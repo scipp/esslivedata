@@ -299,9 +299,6 @@ class DashboardServices:
             notification_queue=self.notification_queue,
             on_change=self.wakeup_hub.wake_all,
         )
-        self.roi_publisher.set_job_number_resolver(
-            self.job_orchestrator.get_active_job_number
-        )
 
         self.workflow_controller = WorkflowController(
             job_orchestrator=self.job_orchestrator,

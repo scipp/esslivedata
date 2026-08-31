@@ -111,9 +111,10 @@ class DetectorViewFactory:
             Workflow parameters containing coordinate mode, edges, and ranges.
         aux_source_names:
             Rendered auxiliary stream names, mapping role to wire name. ROI
-            roles (``'roi_rectangle'``/``'roi_polygon'``) carry the per-job
-            wire names (``'{job_id}/roi_rectangle'``) on which ROI requests
-            arrive; the workflow keys its ROI ``context_keys`` by these so
+            roles (``'roi_rectangle'``/``'roi_polygon'``) carry the view-scoped
+            wire names (``'{workflow_id}/{source_name}/roi_rectangle'``) on
+            which ROI requests arrive; the workflow keys its ROI
+            ``context_keys`` by these so
             ``StreamProcessorWorkflow.accumulate`` routes incoming requests to
             ``set_context``. Empty for views without ROI support.
         lookup_table_filename:
@@ -243,11 +244,11 @@ class DetectorViewFactory:
                 }
             )
             # ROI requests are auxiliary context streams delivered via
-            # set_context. They arrive keyed by the per-job wire name
-            # ('{job_id}/roi_rectangle'), so context_keys must use those wire
-            # names (resolved here from aux_source_names) for
-            # StreamProcessorWorkflow.accumulate to route them. The readback
-            # target_keys above stay keyed by output name.
+            # set_context. They arrive keyed by the view-scoped wire name
+            # ('{workflow_id}/{source_name}/roi_rectangle'), so context_keys
+            # must use those wire names (resolved here from aux_source_names)
+            # for StreamProcessorWorkflow.accumulate to route them. The
+            # readback target_keys above stay keyed by output name.
             context_keys.update(
                 {
                     aux_source_names['roi_rectangle']: ROIRectangleRequest,

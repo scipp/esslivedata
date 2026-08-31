@@ -37,7 +37,7 @@ import structlog
 
 from ..config.acknowledgement import AcknowledgementResponse, CommandAcknowledgement
 from ..config.instruments import get_config
-from ..config.roi_names import get_roi_mapper
+from ..config.roi_names import get_roi_mapper, roi_stream_name
 from ..config.workflow_spec import (
     JobId,
     ResultKey,
@@ -232,7 +232,6 @@ class _Job:
         self.next_emit = 0.0  # monotonic deadline; 0 => emit immediately
         self.variant = source_variant(config.job_id.source_name)
         self.start_time = Timestamp.now()
-        self.rois: dict[str, sc.DataArray] = {}
         self.previous_emit = self.start_time
         self.error_message: str | None = None
 
@@ -260,6 +259,10 @@ class FakeBackend:
     def __init__(self, workflows: Mapping[WorkflowId, WorkflowSpec]) -> None:
         self._workflows = workflows
         self._jobs: dict[JobId, _Job] = {}
+        # Latched ROI requests, keyed by the wire stream name they arrived on.
+        # Outlives the jobs reading them, as the backend's context accumulators
+        # do.
+        self._rois: dict[str, sc.DataArray] = {}
         self._control: list[Message] = []
         self._lock = threading.Lock()
 
@@ -284,21 +287,30 @@ class FakeBackend:
         """Store an ROI request, replacing the previous one for its geometry.
 
         Latest-value semantics match the backend, which accumulates ROI streams
-        with a ``LatestValueAccumulator``. Requests for jobs that are not
-        running are dropped, as they would be by a backend that has no such job.
+        with a ``LatestValueAccumulator``. Requests are latched per view whether
+        or not a job is running, so one published before a job starts is picked
+        up when it does.
 
         Parameters
         ----------
         stream_name:
-            ROI stream name, ``f"{job_id}/{readback_key}"``.
+            ROI stream name, see
+            :func:`~ess.livedata.config.roi_names.roi_stream_name`.
         rois:
             Concatenated ROI geometries for that readback key.
         """
-        job_key, _, readback_key = stream_name.rpartition('/')
         with self._lock:
-            for job_id, job in self._jobs.items():
-                if str(job_id) == job_key:
-                    job.rois[readback_key] = rois
+            self._rois[stream_name] = rois
+
+    def _job_rois(self, job: _Job) -> dict[str, sc.DataArray]:
+        """The latched ROI requests a job reads, keyed by readback key."""
+        workflow_id = job.config.identifier
+        source_name = job.config.job_id.source_name
+        found = {
+            key: self._rois.get(roi_stream_name(workflow_id, source_name, key))
+            for key in _ROI_READBACK_KEYS
+        }
+        return {key: rois for key, rois in found.items() if rois is not None}
 
     def fail_job(self, job_id: JobId, message: str) -> None:
         """Fault a running job, as a workflow raising in the backend does.
@@ -367,7 +379,8 @@ class FakeBackend:
 
     def _emit_data(self, job: _Job) -> list[Message]:
         timestamp_ns = time.time_ns()
-        variants = roi_variants(job.rois)
+        rois = self._job_rois(job)
+        variants = roi_variants(rois)
         now = Timestamp.from_ns(timestamp_ns)
         messages = []
         for output_name, template in job.output_templates().items():
@@ -380,7 +393,7 @@ class FakeBackend:
             if output_name in _ROI_READBACK_KEYS:
                 # The backend echoes the request as readback; the template is
                 # its empty-request equivalent.
-                value = job.rois.get(output_name, template)
+                value = rois.get(output_name, template)
             elif 'roi' in template.dims:
                 value = expand_roi_spectra(template, variants, job.update, timestamp_ns)
             else:

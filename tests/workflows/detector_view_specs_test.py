@@ -2,12 +2,11 @@
 # Copyright (c) 2025 Scipp contributors (https://github.com/scipp)
 import subprocess
 import sys
-import uuid
 
 import pytest
 
 from ess.livedata.config.instrument import Instrument
-from ess.livedata.config.workflow_spec import DETECTORS, JobId
+from ess.livedata.config.workflow_spec import DETECTORS, WorkflowId
 from ess.livedata.parameter_models import (
     TimeUnit,
     TOARange,
@@ -70,12 +69,28 @@ class TestDetectorROIAuxSources:
         reg = instrument.workflow_factory.registration(handle.workflow_id)
         assert reg.context_bindings == ()
 
-    def test_roi_aux_render_prefixes_with_job_id(self) -> None:
-        job_id = JobId(source_name='detector1', job_number=uuid.uuid4())
-        assert DetectorROIAuxSources().render(job_id) == {
-            'roi_rectangle': f"{job_id}/roi_rectangle",
-            'roi_polygon': f"{job_id}/roi_polygon",
+    def test_roi_aux_render_scopes_names_to_the_view(self) -> None:
+        workflow_id = WorkflowId(instrument='dummy', name='detector_view', version=1)
+        assert DetectorROIAuxSources().render(workflow_id, 'detector1') == {
+            'roi_rectangle': 'dummy/detector_view/1/detector1/roi_rectangle',
+            'roi_polygon': 'dummy/detector_view/1/detector1/roi_polygon',
         }
+
+    def test_roi_aux_render_is_independent_of_the_job_generation(self) -> None:
+        """The rendered names carry no job_number, so a restart reuses them."""
+        workflow_id = WorkflowId(instrument='dummy', name='detector_view', version=1)
+        aux = DetectorROIAuxSources()
+        assert aux.render(workflow_id, 'detector1') == aux.render(
+            workflow_id, 'detector1'
+        )
+
+    def test_roi_aux_render_distinguishes_views_sharing_a_source(self) -> None:
+        """Two ROI-supporting views of one detector must not share a stream."""
+        source = 'detector1'
+        aux = DetectorROIAuxSources()
+        xy = aux.render(WorkflowId(instrument='d', name='xy_view', version=1), source)
+        cyl = aux.render(WorkflowId(instrument='d', name='cyl_view', version=1), source)
+        assert set(xy.values()).isdisjoint(cyl.values())
 
     def test_logical_view_with_roi_support_adds_roi_aux_sources(self) -> None:
         instrument = Instrument(name="test_instrument")

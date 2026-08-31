@@ -11,8 +11,43 @@ from dataclasses import dataclass
 from typing import Literal
 
 from .models import PolygonROI, RectangleROI
+from .workflow_spec import WorkflowId
 
 ROIGeometryType = Literal["rectangle", "polygon"]
+
+
+def roi_stream_name(
+    workflow_id: WorkflowId, source_name: str, readback_key: str
+) -> str:
+    """Wire name of the ROI request stream feeding one detector view.
+
+    The name is the stable identity of the view the ROI applies to — the same
+    ``(workflow_id, source_name)`` pair that keys its outputs
+    (:class:`~ess.livedata.config.workflow_spec.DataKey`) — and deliberately
+    carries no ``job_number``. An ROI selection is a property of the view, not
+    of the job generation currently computing it: it outlives restarts, and a
+    selection made before the job starts is latched by the preprocessor's
+    context accumulator and picked up when it does.
+
+    Both sides of the wire name streams through here: the backend renders it
+    into a job's aux sources (``DetectorROIAuxSources.render``) and the
+    dashboard addresses its publishes with it (``ROIPublisher.publish``).
+
+    Parameters
+    ----------
+    workflow_id:
+        The workflow the ROI applies to.
+    source_name:
+        The source within that workflow.
+    readback_key:
+        The geometry's stream key, see :attr:`ROIGeometry.readback_key`.
+
+    Returns
+    -------
+    :
+        The ROI request stream name.
+    """
+    return f"{workflow_id}/{source_name}/{readback_key}"
 
 
 @dataclass(frozen=True)

@@ -1468,12 +1468,11 @@ class TestJobFactoryRender:
             def __init__(self):
                 super().__init__({'monitor': 'monitor1'})
 
-            def render(self, job_id, selections=None):
+            def render(self, workflow_id, source_name, selections=None):
                 # Prepend source_name to stream name
                 base = self.get_defaults()
                 return {
-                    field: f"{job_id.source_name}/{stream}"
-                    for field, stream in base.items()
+                    field: f"{source_name}/{stream}" for field, stream in base.items()
                 }
 
         # Setup instrument and workflow
@@ -1638,7 +1637,7 @@ class TestJobFactoryRender:
         assert job.input_stream_names == {'monitor1'}
 
     def test_job_factory_render_uses_source_name(self) -> None:
-        """Test that render() can use source_name from JobId."""
+        """Test that render() can use the source_name it is given."""
         from ess.livedata.config.instrument import Instrument
         from ess.livedata.config.workflow_spec import AuxSources
 
@@ -1646,11 +1645,10 @@ class TestJobFactoryRender:
             def __init__(self):
                 super().__init__({'roi': 'roi_rectangle'})
 
-            def render(self, job_id, selections=None):
+            def render(self, workflow_id, source_name, selections=None):
                 base = self.get_defaults()
                 return {
-                    field: f"{job_id.source_name}/{stream}"
-                    for field, stream in base.items()
+                    field: f"{source_name}/{stream}" for field, stream in base.items()
                 }
 
         instrument = Instrument(name='test')
@@ -1714,11 +1712,10 @@ class TestJobFactoryRender:
                     }
                 )
 
-            def render(self, job_id, selections=None):
+            def render(self, workflow_id, source_name, selections=None):
                 base = self.get_defaults()
                 return {
-                    field: f"{job_id.source_name}/{stream}"
-                    for field, stream in base.items()
+                    field: f"{source_name}/{stream}" for field, stream in base.items()
                 }
 
         instrument = Instrument(name='test')

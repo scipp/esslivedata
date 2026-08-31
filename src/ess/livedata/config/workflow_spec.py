@@ -324,19 +324,26 @@ class AuxSources:
 
     def render(
         self,
-        job_id: JobId,
+        workflow_id: WorkflowId,
+        source_name: str,
         selections: dict[str, str] | None = None,
     ) -> dict[str, str]:
-        """Render auxiliary source stream names for a specific job.
+        """Render auxiliary source stream names for one workflow output.
 
         The default implementation returns the selected (or default) stream
-        names unchanged. Subclasses can override to transform names, e.g.,
-        to add job-specific prefixes.
+        names unchanged. Subclasses can override to transform names, e.g. to
+        scope a stream to the view it belongs to.
+
+        Rendering is keyed by the stable ``(workflow_id, source_name)``
+        identity rather than by job: an aux stream a subclass names for itself
+        is addressable before its job starts and across restarts of it.
 
         Parameters
         ----------
-        job_id:
-            The job identifier, containing both source_name and job_number.
+        workflow_id:
+            The workflow the job belongs to.
+        source_name:
+            The source the job processes.
         selections:
             User selections overriding defaults. Keys not present in the
             inputs specification are ignored.
