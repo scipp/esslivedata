@@ -6,8 +6,7 @@ from ..config.instrument import Instrument
 from ..core.message import StreamId, StreamKind
 from ..core.preprocessor import Accumulator, JobBasedPreprocessorFactoryBase
 from .accumulators import Cumulative
-from .downsample_pixel_ids import DownsamplePixelIds
-from .group_by_pixel import GroupByPixel
+from .detector_data import make_detector_event_preprocessor
 from .to_nxevent_data import ToNXevent_data
 from .to_nxlog import nxlog_for_stream
 
@@ -30,16 +29,9 @@ class ReductionPreprocessorFactory(JobBasedPreprocessorFactoryBase):
             case StreamKind.MONITOR_EVENTS:
                 return ToNXevent_data()
             case StreamKind.DETECTOR_EVENTS:
-                inner: Accumulator
-                if self._group_by_pixel:
-                    detector_number = self._instrument.get_detector_number(key.name)
-                    inner = GroupByPixel(ToNXevent_data(), detector_number)
-                else:
-                    inner = ToNXevent_data()
-                downsampling = self._instrument.get_downsampling(key.name)
-                if downsampling is None:
-                    return inner
-                return DownsamplePixelIds(inner, downsampling)
+                return make_detector_event_preprocessor(
+                    self._instrument, key.name, group_by_pixel=self._group_by_pixel
+                )
             case StreamKind.AREA_DETECTOR:
                 return Cumulative(clear_on_get=True)
             case _:

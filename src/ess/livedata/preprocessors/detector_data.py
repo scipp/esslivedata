@@ -21,6 +21,29 @@ _GEOMETRY_RELEASE_URL = (
 )
 
 
+def make_detector_event_preprocessor(
+    instrument: Instrument, name: str, *, group_by_pixel: bool
+) -> Accumulator:
+    """Build the preprocessor chain for one detector event stream.
+
+    Shared by the detector-data and data-reduction services, which differ in
+    what they do with the result but not in how the events reach it.
+
+    Downsampling wraps the grouping rather than replacing it: the ids are
+    remapped onto the coarse grid first, so grouping sees only that grid and
+    the full-resolution one is never materialized.
+    """
+    inner: Accumulator
+    if group_by_pixel:
+        inner = GroupByPixel(ToNXevent_data(), instrument.get_detector_number(name))
+    else:
+        inner = ToNXevent_data()
+    downsampling = instrument.get_downsampling(name)
+    if downsampling is None:
+        return inner
+    return DownsamplePixelIds(inner, downsampling)
+
+
 class DetectorPreprocessorFactory(JobBasedPreprocessorFactoryBase):
     """
     Factory for detector data preprocessors.
@@ -45,16 +68,9 @@ class DetectorPreprocessorFactory(JobBasedPreprocessorFactoryBase):
                 # Skip detectors that are not configured
                 if key.name not in self._instrument.detector_names:
                     return None
-                inner: Accumulator
-                if self._group_by_pixel:
-                    detector_number = self._instrument.get_detector_number(key.name)
-                    inner = GroupByPixel(ToNXevent_data(), detector_number)
-                else:
-                    inner = ToNXevent_data()
-                downsampling = self._instrument.get_downsampling(key.name)
-                if downsampling is None:
-                    return inner
-                return DownsamplePixelIds(inner, downsampling)
+                return make_detector_event_preprocessor(
+                    self._instrument, key.name, group_by_pixel=self._group_by_pixel
+                )
             case StreamKind.AREA_DETECTOR:
                 return Cumulative(clear_on_get=True)
             case StreamKind.LIVEDATA_ROI:
