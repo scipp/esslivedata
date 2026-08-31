@@ -13,6 +13,7 @@ if TYPE_CHECKING:
 import pydantic
 import scipp as sc
 import scippnexus as snx
+import structlog
 
 from ess.livedata.workflows.workflow_factory import (
     SpecHandle,
@@ -67,6 +68,26 @@ class SourceMetadata(pydantic.BaseModel):
     description: str = pydantic.Field(
         default='', description="Longer description for tooltips"
     )
+
+
+logger = structlog.get_logger(__name__)
+
+
+@dataclass(frozen=True)
+class DetectorDownsampling:
+    """Resolved reduced-resolution ingest settings for one detector."""
+
+    #: Side length of the target grid the preprocessor maps event ids onto.
+    resolution: int
+    #: Lowest event id the detector emits, taken from the geometry file.
+    #: Detectors differ: TBL's Timepix3 counts from 0, its He3 banks from 1.
+    first_id: int
+    #: Side length the geometry file declares, or None if no file was read.
+    #: Only a cross-check: the resolution actually streamed is inferred from
+    #: the event ids, since the file is static and may be stale.
+    declared_resolution: int | None
+    #: The target grid itself, as a 2D ``detector_number``.
+    grid: sc.Variable
 
 
 @dataclass
@@ -140,6 +161,7 @@ class Instrument:
     dim_titles: dict[str, str] = field(default_factory=dict)
     _detector_numbers: dict[str, sc.Variable] = field(default_factory=dict)
     _downsampled_detectors: dict[str, int] = field(default_factory=dict)
+    _downsampling_cache: dict[str, DetectorDownsampling] = field(default_factory=dict)
     _nexus_file: str | None = None
     _detector_group_names: dict[str, str] = field(default_factory=dict)
     _timeseries_workflow_handle: SpecHandle | None = field(default=None, init=False)
@@ -379,10 +401,19 @@ class Instrument:
         4096x4096 panel downsampled to 512x512 this replaces a 16.7-million-bin
         group-and-merge per update with a 262-thousand-bin grouping.
 
-        The source resolution is not taken from the geometry file, which is
+        The *source* resolution is not taken from the geometry file, which is
         static and need not describe what the detector is actually streaming.
         It is inferred from the observed event ids instead; see
         :class:`~ess.livedata.preprocessors.downsample_pixel_ids.DownsamplePixelIds`.
+
+        The file is still read where available, for what does not change when a
+        detector is reconfigured: that the grid is square, that its side is a
+        multiple of ``resolution``, and which id the detector counts from.
+        Id bases differ between detectors -- TBL's Timepix3 counts from 0 while
+        its Multi-Blade and He3 banks count from 1 -- and getting that wrong
+        does not merely shift the image by a pixel: it makes the inferred
+        source resolution wrong, silently. Hence it is resolved from the file
+        rather than assumed. See :meth:`get_downsampling`.
 
         Only meaningful for logical views, which address pixels by index. A
         geometric view resolves pixel positions from the file and would need
@@ -393,8 +424,8 @@ class Instrument:
         name:
             Name of the detector (must be in ``self.detector_names``).
         resolution:
-            Side length of the target grid. The inferred source resolution must
-            be an integer multiple of it.
+            Side length of the target grid. The source resolution must be an
+            integer multiple of it.
         """
         if name not in self.detector_names:
             raise ValueError(
@@ -404,16 +435,50 @@ class Instrument:
         if resolution < 1:
             raise ValueError(f"resolution must be positive, got {resolution}")
         self._downsampled_detectors[name] = resolution
-        # Define the target grid here rather than deriving it from the geometry
-        # file: the ids we produce are 0-based indices into this grid, so it is
-        # ours to define, and the file is not consulted for this detector.
-        self._detector_numbers[name] = sc.arange(
-            'detector_number', resolution * resolution, unit=None
-        ).fold(dim='detector_number', sizes={'dim_0': resolution, 'dim_1': resolution})
 
-    def get_downsampling_resolution(self, name: str) -> int | None:
-        """Target grid side length for *name*, or None if not downsampled."""
-        return self._downsampled_detectors.get(name)
+    def get_downsampling(self, name: str) -> DetectorDownsampling | None:
+        """
+        Resolved reduced-resolution ingest settings, or None if not configured.
+
+        Resolved lazily so that the geometry file, loaded by
+        :meth:`load_factories`, can be consulted where it is available.
+        """
+        resolution = self._downsampled_detectors.get(name)
+        if resolution is None:
+            return None
+        if (cached := self._downsampling_cache.get(name)) is None:
+            cached = self._resolve_downsampling(name, resolution)
+            self._downsampling_cache[name] = cached
+        return cached
+
+    def _resolve_downsampling(self, name: str, resolution: int) -> DetectorDownsampling:
+        grid = sc.arange('detector_number', resolution * resolution, unit=None).fold(
+            dim='detector_number', sizes={'dim_0': resolution, 'dim_1': resolution}
+        )
+        declared = self._detector_numbers.get(name)
+        if declared is None:
+            # Dev configurations and instruments without a geometry file. The
+            # id base cannot be checked, so the common convention is assumed;
+            # a detector counting from 1 will show up as dropped ids.
+            logger.warning(
+                'downsampling_without_geometry',
+                detector=name,
+                resolution=resolution,
+                assumed_first_id=0,
+            )
+            return DetectorDownsampling(resolution, 0, None, grid)
+        if declared.ndim != 2 or declared.shape[0] != declared.shape[1]:
+            raise ValueError(
+                f"Detector {name} is configured for downsampling, which assumes a "
+                f"square grid, but its detector_number is {declared.sizes}."
+            )
+        source = declared.shape[0]
+        if source % resolution:
+            raise ValueError(
+                f"Detector {name} has side {source}, which is not a multiple of the "
+                f"downsampling resolution {resolution}, so the blocks do not tile."
+            )
+        return DetectorDownsampling(resolution, int(declared.min().value), source, grid)
 
     def configure_detector(
         self,
@@ -460,6 +525,8 @@ class Instrument:
         self._detector_numbers[name] = candidate
 
     def get_detector_number(self, name: str) -> sc.Variable:
+        if (downsampling := self.get_downsampling(name)) is not None:
+            return downsampling.grid
         return self._detector_numbers[name]
 
     def configure_pixellated_monitor(

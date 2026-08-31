@@ -10,6 +10,7 @@ from dataclasses import replace
 import numpy as np
 import structlog
 
+from ..config.instrument import DetectorDownsampling
 from ..core.preprocessor import Accumulator
 from ..core.timestamp import Timestamp
 from .to_nxevent_data import DetectorEvents
@@ -36,9 +37,11 @@ class DownsamplePixelIds[T](Accumulator[DetectorEvents, T]):
 
         source = ceil(sqrt(max_id + 1) / resolution) * resolution
 
-    The geometry file is deliberately not consulted. It is static and describes
-    how the detector was configured when the file was written, not what is
-    being streamed now.
+    The geometry file is deliberately not the authority here. It is static and
+    describes how the detector was configured when the file was written, not
+    what is being streamed now; where it declares a different resolution that
+    is logged, not obeyed. It is trusted only for what a reconfiguration does
+    not change: the id base, and that the grid is square.
 
     Inference is safe here because ids are laid out as ``x * source + y`` with
     ``x`` the slow axis, so any event at large ``x`` produces a large id: even
@@ -53,21 +56,32 @@ class DownsamplePixelIds[T](Accumulator[DetectorEvents, T]):
     rather than raised on, matching what grouping already does with ids outside
     the grid, so a single corrupt id cannot take the service down.
 
-    Event ids are assumed 0-based, as the target grid is.
+    Ids are taken relative to ``downsampling.first_id``, which the geometry
+    file supplies, because detectors disagree on where they start counting and
+    guessing wrong does not merely shift the image: for a 1-based 4096x4096
+    panel treated as 0-based, ``max_id`` becomes 4096**2 rather than
+    4096**2 - 1 and the inferred resolution comes out as 4608.
 
     Parameters
     ----------
     inner:
         Accumulator receiving the remapped events.
-    resolution:
-        Side length of the target grid.
+    downsampling:
+        Resolved settings from ``Instrument.get_downsampling``.
     """
 
-    def __init__(self, inner: Accumulator[DetectorEvents, T], resolution: int) -> None:
+    def __init__(
+        self,
+        inner: Accumulator[DetectorEvents, T],
+        downsampling: DetectorDownsampling,
+    ) -> None:
         self._inner = inner
-        self._resolution = resolution
+        self._resolution = downsampling.resolution
+        self._first_id = downsampling.first_id
+        self._declared_resolution = downsampling.declared_resolution
         self._source_resolution: int | None = None
         self._out_of_range = 0
+        self._below_first_id = 0
         self._logger = structlog.get_logger(__name__)
 
     @property
@@ -82,15 +96,43 @@ class DownsamplePixelIds[T](Accumulator[DetectorEvents, T]):
             'detector_resolution_inferred',
             max_event_id=int(max_id),
             source_resolution=source,
+            declared_resolution=self._declared_resolution,
             target_resolution=self._resolution,
+            first_id=self._first_id,
             block=source // self._resolution,
         )
+        if (
+            self._declared_resolution is not None
+            and self._declared_resolution != source
+        ):
+            # Not an error: the file is static and the detector may be running
+            # in a different configuration. Worth saying out loud, because the
+            # usual reason is that the geometry file has gone stale.
+            self._logger.warning(
+                'detector_resolution_differs_from_geometry_file',
+                streamed_resolution=source,
+                declared_resolution=self._declared_resolution,
+            )
         return source
 
     def add(self, timestamp: Timestamp, data: DetectorEvents) -> bool:
-        pixel_id = np.asarray(data.pixel_id)
-        if pixel_id.size == 0:
+        raw = np.asarray(data.pixel_id)
+        if raw.size == 0:
             return self._inner.add(timestamp, data)
+        pixel_id = raw if self._first_id == 0 else raw - self._first_id
+
+        if below := int(np.count_nonzero(pixel_id < 0)):
+            # Ids below where the detector is declared to start counting: the
+            # base is wrong, or the data is. Either way they map outside the
+            # target grid and grouping drops them.
+            self._below_first_id += below
+            self._logger.warning(
+                'event_id_below_first_id',
+                first_id=self._first_id,
+                min_event_id=int(raw.min()),
+                dropped=below,
+                dropped_total=self._below_first_id,
+            )
 
         max_id = int(pixel_id.max())
         if self._source_resolution is None:

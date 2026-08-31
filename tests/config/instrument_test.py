@@ -5,6 +5,7 @@ import uuid
 import pydantic
 import pytest
 import scipp as sc
+from structlog.testing import capture_logs
 
 from ess.livedata.config.instrument import (
     DEFAULT_DIM_TITLES,
@@ -956,25 +957,86 @@ class TestDetectorDownsampling:
     def instrument(self) -> Instrument:
         return Instrument(name='test', detector_names=['det', 'other'])
 
+    @staticmethod
+    def square_grid(side: int, first_id: int = 0) -> sc.Variable:
+        return sc.arange(
+            'detector_number', first_id, first_id + side * side, unit=None
+        ).fold(dim='detector_number', sizes={'dim_0': side, 'dim_1': side})
+
     def test_is_off_unless_configured(self, instrument: Instrument) -> None:
-        assert instrument.get_downsampling_resolution('det') is None
+        assert instrument.get_downsampling('det') is None
 
     def test_applies_only_to_the_configured_detector(
         self, instrument: Instrument
     ) -> None:
+        instrument.configure_detector('det', detector_number=self.square_grid(4096))
+        instrument.configure_detector('other', detector_number=self.square_grid(4096))
         instrument.configure_detector_downsampling('det', resolution=512)
 
-        assert instrument.get_downsampling_resolution('det') == 512
-        assert instrument.get_downsampling_resolution('other') is None
+        assert instrument.get_downsampling('det').resolution == 512
+        assert instrument.get_downsampling('other') is None
 
     def test_detector_number_is_the_target_grid(self, instrument: Instrument) -> None:
+        instrument.configure_detector('det', detector_number=self.square_grid(4096))
         instrument.configure_detector_downsampling('det', resolution=512)
 
         detector_number = instrument.get_detector_number('det')
         assert detector_number.sizes == {'dim_0': 512, 'dim_1': 512}
-        # Ids produced by the preprocessor are 0-based indices into this grid.
+        # Ids the preprocessor produces are 0-based indices into this grid.
         assert detector_number.min().value == 0
         assert detector_number.max().value == 512 * 512 - 1
+
+    def test_takes_the_id_base_from_the_geometry_file(
+        self, instrument: Instrument
+    ) -> None:
+        # Detectors disagree on where they start counting, and assuming wrong
+        # corrupts the inferred source resolution rather than merely shifting
+        # the image, so the base is read rather than assumed.
+        instrument.configure_detector(
+            'det', detector_number=self.square_grid(4096, first_id=1)
+        )
+        instrument.configure_detector_downsampling('det', resolution=512)
+
+        assert instrument.get_downsampling('det').first_id == 1
+
+    def test_records_the_declared_resolution_for_cross_checking(
+        self, instrument: Instrument
+    ) -> None:
+        instrument.configure_detector('det', detector_number=self.square_grid(4096))
+        instrument.configure_detector_downsampling('det', resolution=512)
+
+        assert instrument.get_downsampling('det').declared_resolution == 4096
+
+    def test_assumes_a_zero_base_and_warns_without_a_geometry_file(
+        self, instrument: Instrument
+    ) -> None:
+        instrument.configure_detector_downsampling('det', resolution=512)
+
+        with capture_logs() as logs:
+            downsampling = instrument.get_downsampling('det')
+
+        assert downsampling.first_id == 0
+        assert downsampling.declared_resolution is None
+        assert any(e['event'] == 'downsampling_without_geometry' for e in logs)
+
+    def test_rejects_a_non_square_detector(self, instrument: Instrument) -> None:
+        instrument.configure_detector(
+            'det',
+            detector_number=sc.arange('detector_number', 4096 * 2048, unit=None).fold(
+                dim='detector_number', sizes={'dim_0': 4096, 'dim_1': 2048}
+            ),
+        )
+        instrument.configure_detector_downsampling('det', resolution=512)
+
+        with pytest.raises(ValueError, match='square'):
+            instrument.get_downsampling('det')
+
+    def test_rejects_a_side_that_does_not_tile(self, instrument: Instrument) -> None:
+        instrument.configure_detector('det', detector_number=self.square_grid(1000))
+        instrument.configure_detector_downsampling('det', resolution=512)
+
+        with pytest.raises(ValueError, match='not a multiple'):
+            instrument.get_downsampling('det')
 
     def test_rejects_unknown_detector(self, instrument: Instrument) -> None:
         with pytest.raises(ValueError, match='not in declared detector_names'):

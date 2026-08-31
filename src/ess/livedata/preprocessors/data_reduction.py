@@ -36,10 +36,10 @@ class ReductionPreprocessorFactory(JobBasedPreprocessorFactoryBase):
                     inner = GroupByPixel(ToNXevent_data(), detector_number)
                 else:
                     inner = ToNXevent_data()
-                resolution = self._instrument.get_downsampling_resolution(key.name)
-                if resolution is None:
+                downsampling = self._instrument.get_downsampling(key.name)
+                if downsampling is None:
                     return inner
-                return DownsamplePixelIds(inner, resolution=resolution)
+                return DownsamplePixelIds(inner, downsampling)
             case StreamKind.AREA_DETECTOR:
                 return Cumulative(clear_on_get=True)
             case _:
