@@ -1,6 +1,6 @@
 # ADR 0003: Unified declaration model for workflow context bindings
 
-- Status: accepted
+- Status: accepted (amended 2026-08-31)
 - Deciders: Simon
 - Date: 2026-05-21
 
@@ -229,8 +229,8 @@ single source of truth and a binding cannot disagree with the stream it patches.
   calls it, hands `context_keys` to the factory (injected via `SupportsContext.build`,
   ADR 0004), sets `Job.gating_streams`, and returns a bare `Job`.
 - `AuxSources` is dynamic, user-selectable aux only. ROI remains an `AuxSources`
-  (`DetectorROIAuxSources`, job-prefixed per job) — it is not a context binding, since
-  ADR 0002 routes ROI as aux rather than gating it.
+  (`DetectorROIAuxSources`, prefixed per job; see the amendment below) — it is not a
+  context binding, since ADR 0002 routes ROI as aux rather than gating it.
 - `Workflow.context_keys` is removed from the protocol; `StreamProcessorWorkflow`
   receives the routing
   layer's `context_keys` via `build` (ADR 0004), other implementations drop the stub.
@@ -246,3 +246,21 @@ single source of truth and a binding cannot disagree with the stream it patches.
   failure without putting NeXus introspection on the construction hot path.
 - Per ADR 0002, the gate mechanism inside `JobManager` is unchanged; this ADR settles
   only the declaration model that feeds it.
+
+## Amendment 2026-08-31: ROI streams are scoped to the view, not the job
+
+The ROI stream name above embedded the `job_id`, giving each job generation its own
+stream. `MessagePreprocessor._accumulators` is insert-only, so that made the map grow
+without bound over a process's lifetime, driven by the wire (#1260).
+
+`DetectorROIAuxSources.render` now names the stream for the view it configures,
+`{workflow_id}/{source_name}/{readback_key}`, which is the `DataKey` the dashboard
+already keys the corresponding readback output by. The set is bounded by the workflow
+registry. An ROI selection is thereby a property of the view rather than of the job
+generation computing it: it can be published before the job starts and survives a
+restart of it.
+
+The declaration model this ADR settles is unchanged — ROI is still `AuxSources` rather
+than a `ContextBinding`, and the gate is still not involved. Only what `render` returns
+changed, along with its parameters, which are now the workflow and source rather than
+the `JobId`.
