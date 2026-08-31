@@ -10,7 +10,7 @@ from dataclasses import replace
 import numpy as np
 import structlog
 
-from ..config.instrument import DetectorDownsampling
+from ..config.detector_downsampling import DetectorDownsampling
 from ..core.preprocessor import Accumulator
 from ..core.timestamp import Timestamp
 from .to_nxevent_data import DetectorEvents

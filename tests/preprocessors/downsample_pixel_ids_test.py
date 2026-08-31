@@ -5,7 +5,7 @@ import pytest
 import scipp as sc
 from structlog.testing import capture_logs
 
-from ess.livedata.config.instrument import DetectorDownsampling
+from ess.livedata.config.detector_downsampling import DetectorDownsampling
 from ess.livedata.core.timestamp import Timestamp
 from ess.livedata.preprocessors.downsample_pixel_ids import DownsamplePixelIds
 from ess.livedata.preprocessors.group_by_pixel import GroupByPixel
