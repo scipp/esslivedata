@@ -62,6 +62,30 @@ MIN_DIFFS_FOR_GATE = 4
 DIFF_BUFFER_SIZE = 32
 ABSENT_BATCHES_FOR_EVICTION = 5
 
+# Hard cap on retained gated overflow.  A window advances by at most one
+# batch length per ``batch()`` call, so whenever a service iteration takes
+# longer than the batch length the caller hands over more data than the
+# window can release and the surplus stays in ``_overflow`` for the life of
+# the process -- unbounded memory, while the Kafka consumer reports zero lag
+# because the backlog is downstream of it.  This is the same bounded-buffer
+# policy the consumer queue already applies (``BackgroundMessageSource``,
+# ``max_queue_size``): drop rather than grow, and say so.
+#
+# Only gated kinds reach ``_overflow`` (see ``GATED_STREAM_KINDS``), so
+# shedding can never discard control, log or context data.
+#
+# The cap counts messages, not bytes: message sizes are not known here, so
+# it bounds growth rather than a memory figure.  It is sized to sit well
+# above any healthy backlog -- in steady state the window keeps pace and
+# ``_overflow`` drains on every close -- so reaching it means sustained
+# overload, not a transient.
+DEFAULT_MAX_BACKLOG = 2000
+
+# Shedding is intermittent by nature -- each jump clears the backlog, which
+# then refills -- so per-event logging would flap once per service iteration.
+# Report a cumulative summary at a fixed wall-clock interval instead.
+SHED_LOG_INTERVAL_S = 60.0
+
 # Wall-clock stall threshold for the liveness backstop, in multiples of the
 # batch length (see the module docstring's clock policy).  It must sit above
 # the slowest legitimate close so healthy operation never triggers it: the
@@ -437,6 +461,7 @@ class RateAwareMessageBatcher(MessageBatcher):
         batch_length_s: float = 1.0,
         timeout_s: float | None = None,
         clock: Callable[[], float] = time.monotonic,
+        max_backlog: int = DEFAULT_MAX_BACKLOG,
     ) -> None:
         self._batch_length = Duration.from_seconds(batch_length_s)
         self._timeout_factor = (
@@ -454,10 +479,18 @@ class RateAwareMessageBatcher(MessageBatcher):
         self._future: list[Message[Any]] = []
         self._clock = clock
         self._last_close_wall = clock()
+        self._max_backlog = max_backlog
+        self._dropped_messages = 0
+        self._last_shed_log = -math.inf
 
     @property
     def batch_length_s(self) -> float:
         return self._batch_length.to_seconds()
+
+    @property
+    def dropped_messages(self) -> int:
+        """Total gated messages dropped to keep the backlog bounded."""
+        return self._dropped_messages
 
     @property
     def tracked_streams(self) -> set[StreamId]:
@@ -504,7 +537,13 @@ class RateAwareMessageBatcher(MessageBatcher):
         for msg in messages:
             self._route_message(msg, window)
 
-        if self._should_recover_from_gap(window):
+        # Shedding leaves the window far behind the survivors it kept, so it
+        # forces the same jump a detected gap would: without it the window
+        # would crawl forward one batch at a time through data that has just
+        # been discarded.
+        shed = self._shed_backlog()
+
+        if shed or self._should_recover_from_gap(window):
             window = self._recover_from_gap(window)
 
         # Stall recovery is a last resort, checked only when nothing closes:
@@ -643,6 +682,38 @@ class RateAwareMessageBatcher(MessageBatcher):
             if not stream.is_gate_satisfied():
                 return False
         return has_gating
+
+    def _shed_backlog(self) -> bool:
+        """Drop the stalest overflow once the backlog exceeds ``max_backlog``.
+
+        Keeps the newest messages: the caller advances the window to the
+        oldest survivor, so keeping the newest is what lets the window catch
+        up to live traffic instead of crawling through a backlog it can
+        never clear.  The alternative -- dropping the newest -- bounds
+        memory just as well but leaves the window falling permanently
+        further behind, delivering ever-staler data.
+
+        Returns
+        -------
+        :
+            True if anything was dropped.
+        """
+        excess = len(self._overflow) - self._max_backlog
+        if excess <= 0:
+            return False
+        self._overflow.sort(key=lambda msg: msg.timestamp)
+        del self._overflow[:excess]
+        self._dropped_messages += excess
+        now = self._clock()
+        if now - self._last_shed_log >= SHED_LOG_INTERVAL_S:
+            self._last_shed_log = now
+            logger.warning(
+                'batcher_backlog_shedding',
+                max_backlog=self._max_backlog,
+                dropped_messages=self._dropped_messages,
+                batch_length_s=self.batch_length_s,
+            )
+        return True
 
     def _should_recover_from_gap(self, window: _ActiveWindow) -> bool:
         """True if gated overflow exists but no gated stream has contributed.

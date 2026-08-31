@@ -2757,3 +2757,100 @@ class TestClockCreep:
                         last_delivery = t
                     worst = max(worst, t - last_delivery)
         assert worst < 5.0, f"delivery silent for {worst:.1f}s of data time"
+
+
+class TestBacklogShedding:
+    """A service iteration slower than the batch length hands the batcher more
+    data than the window can release, and the surplus is retained forever
+    (scipp/esslivedata#378).  The backlog must stay bounded, and only bulk
+    event data may be sacrificed to bound it.
+    """
+
+    BATCH_LEN = 1.0
+    RATE = 20.0
+    # Each call delivers two batch lengths of data but the window advances by
+    # one, so half of every call's traffic is surplus.
+    ITER = 2.0
+    MAX_BACKLOG = 50
+
+    def _run(self, calls: int, batcher: RateAwareMessageBatcher):
+        fed = delivered = 0
+        t = 0.0
+        last_delivered_end = None
+        for _ in range(calls):
+            chunk = msgs_at(self.RATE, start=t, duration=self.ITER)
+            t += self.ITER
+            fed += len(chunk)
+            out = batcher.batch(chunk)
+            if out is not None:
+                delivered += len(out.messages)
+                last_delivered_end = out.end_time
+        return fed, delivered, t, last_delivered_end
+
+    def make(self, **kwargs) -> RateAwareMessageBatcher:
+        return RateAwareMessageBatcher(
+            batch_length_s=self.BATCH_LEN, max_backlog=self.MAX_BACKLOG, **kwargs
+        )
+
+    def test_retained_backlog_stays_bounded_under_sustained_overload(self):
+        batcher = self.make()
+        fed, delivered, _, _ = self._run(200, batcher)
+        retained = fed - delivered - batcher.dropped_messages
+        assert batcher.dropped_messages > 0
+        # Whatever is neither delivered nor dropped is still held in memory.
+        assert 0 <= retained <= self.MAX_BACKLOG + self.RATE * self.ITER
+
+    def test_backlog_does_not_grow_with_time(self):
+        batcher = self.make()
+        fed, delivered, _, _ = self._run(50, batcher)
+        early = fed - delivered - batcher.dropped_messages
+        fed, delivered, _, _ = self._run(200, batcher)
+        late = fed - delivered - batcher.dropped_messages
+        assert late <= early + self.RATE * self.ITER
+
+    def test_nothing_dropped_while_keeping_up(self):
+        batcher = self.make()
+        t = 0.0
+        for _ in range(200):
+            # One batch length of data per call: the window keeps pace.
+            batcher.batch(msgs_at(self.RATE, start=t, duration=self.BATCH_LEN))
+            t += self.BATCH_LEN
+        assert batcher.dropped_messages == 0
+
+    def test_window_keeps_up_with_live_data_while_shedding(self):
+        """Shedding keeps the newest messages, so the delivered window must
+        track live traffic rather than crawling through a stale backlog."""
+        batcher = self.make()
+        _, _, newest_fed, last_end = self._run(200, batcher)
+        assert last_end is not None
+        lag_s = newest_fed - last_end.to_ns() / 1e9
+        assert lag_s < self.MAX_BACKLOG / self.RATE + 2 * self.ITER
+
+    def test_log_stream_is_never_dropped(self):
+        """Only GATED_STREAM_KINDS reach the overflow, so context data must
+        survive an overload that sheds detector events."""
+        log_stream = StreamId(kind=StreamKind.LOG, name="context")
+        batcher = self.make()
+        t = 0.0
+        logs_fed = 0
+        logs_out = 0
+        for i in range(200):
+            chunk = msgs_at(self.RATE, start=t, duration=self.ITER)
+            # Stop feeding before the end so the last one is not merely still
+            # buffered when the loop finishes.
+            if i < 198:
+                chunk.append(msg(t, log_stream, value="ctx"))
+                logs_fed += 1
+            t += self.ITER
+            out = batcher.batch(chunk)
+            if out is not None:
+                logs_out += sum(1 for m in out.messages if m.stream == log_stream)
+        assert batcher.dropped_messages > 0
+        assert logs_out == logs_fed
+
+    def test_shedding_is_logged(self):
+        batcher = self.make()
+        with capture_logs() as logs:
+            self._run(200, batcher)
+        events = [entry['event'] for entry in logs]
+        assert 'batcher_backlog_shedding' in events
