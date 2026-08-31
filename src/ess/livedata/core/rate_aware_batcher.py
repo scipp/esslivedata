@@ -855,6 +855,23 @@ class RateAwareMessageBatcher(MessageBatcher):
         still fits in the current window) the window is kept but draining
         resets per-stream slot placement so re-routing recomputes it from
         scratch against the same ``start_time``.
+
+        Despite the name, this is not only a silence-gap path: it is also how
+        the window catches up whenever a call hands over more data time than
+        one batch length.  A batch closes at most once per call, so the close
+        path alone advances the window by one batch length per call -- a
+        ceiling that binds only while the window sits inside continuous data.
+        When a call's gated arrivals all land past the window, no gridded
+        stream has contributed and this path advances the window in one jump
+        instead.
+
+        Jumping does not skip delivery.  Stashed and pending messages older
+        than the new ``window.start`` re-route to negative slots: they ride
+        along in the next batch (whose ``start_time`` then understates its
+        contents, as in ``SimpleMessageBatcher._split_messages``) rather than
+        being dropped.  Only ``_shed_backlog`` discards messages, so the data
+        actually lost under overload is well below the surplus the window
+        could not release.
         """
         stashed = self._drain_window()
         pending = self._overflow
