@@ -947,3 +947,39 @@ class TestDimTitles:
         Instrument(name='test', dim_titles={'wavelength': 'λ'})
 
         assert DEFAULT_DIM_TITLES == before
+
+
+class TestDetectorDownsampling:
+    """Opt-in reduced-resolution ingest, configured per detector."""
+
+    @pytest.fixture
+    def instrument(self) -> Instrument:
+        return Instrument(name='test', detector_names=['det', 'other'])
+
+    def test_is_off_unless_configured(self, instrument: Instrument) -> None:
+        assert instrument.get_downsampling_resolution('det') is None
+
+    def test_applies_only_to_the_configured_detector(
+        self, instrument: Instrument
+    ) -> None:
+        instrument.configure_detector_downsampling('det', resolution=512)
+
+        assert instrument.get_downsampling_resolution('det') == 512
+        assert instrument.get_downsampling_resolution('other') is None
+
+    def test_detector_number_is_the_target_grid(self, instrument: Instrument) -> None:
+        instrument.configure_detector_downsampling('det', resolution=512)
+
+        detector_number = instrument.get_detector_number('det')
+        assert detector_number.sizes == {'dim_0': 512, 'dim_1': 512}
+        # Ids produced by the preprocessor are 0-based indices into this grid.
+        assert detector_number.min().value == 0
+        assert detector_number.max().value == 512 * 512 - 1
+
+    def test_rejects_unknown_detector(self, instrument: Instrument) -> None:
+        with pytest.raises(ValueError, match='not in declared detector_names'):
+            instrument.configure_detector_downsampling('nope', resolution=512)
+
+    def test_rejects_nonpositive_resolution(self, instrument: Instrument) -> None:
+        with pytest.raises(ValueError, match='must be positive'):
+            instrument.configure_detector_downsampling('det', resolution=0)

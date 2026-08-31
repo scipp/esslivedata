@@ -139,6 +139,7 @@ class Instrument:
     source_metadata: dict[str, SourceMetadata] = field(default_factory=dict)
     dim_titles: dict[str, str] = field(default_factory=dict)
     _detector_numbers: dict[str, sc.Variable] = field(default_factory=dict)
+    _downsampled_detectors: dict[str, int] = field(default_factory=dict)
     _nexus_file: str | None = None
     _detector_group_names: dict[str, str] = field(default_factory=dict)
     _timeseries_workflow_handle: SpecHandle | None = field(default=None, init=False)
@@ -367,6 +368,52 @@ class Instrument:
         the group name and the detector name. Otherwise, just the detector name.
         """
         return self._detector_group_names.get(name, name)
+
+    def configure_detector_downsampling(self, name: str, *, resolution: int) -> None:
+        """
+        Ingest a square detector at reduced resolution.
+
+        Opt-in per detector. Event ids are remapped to a coarser
+        ``resolution`` x ``resolution`` grid in the preprocessor, before pixel
+        grouping, so the full-resolution grid is never materialized. For a
+        4096x4096 panel downsampled to 512x512 this replaces a 16.7-million-bin
+        group-and-merge per update with a 262-thousand-bin grouping.
+
+        The source resolution is not taken from the geometry file, which is
+        static and need not describe what the detector is actually streaming.
+        It is inferred from the observed event ids instead; see
+        :class:`~ess.livedata.preprocessors.downsample_pixel_ids.DownsamplePixelIds`.
+
+        Only meaningful for logical views, which address pixels by index. A
+        geometric view resolves pixel positions from the file and would need
+        those positions merged to match, which this does not do.
+
+        Parameters
+        ----------
+        name:
+            Name of the detector (must be in ``self.detector_names``).
+        resolution:
+            Side length of the target grid. The inferred source resolution must
+            be an integer multiple of it.
+        """
+        if name not in self.detector_names:
+            raise ValueError(
+                f"Detector {name} not in declared detector_names. "
+                f"Available detectors: {self.detector_names}"
+            )
+        if resolution < 1:
+            raise ValueError(f"resolution must be positive, got {resolution}")
+        self._downsampled_detectors[name] = resolution
+        # Define the target grid here rather than deriving it from the geometry
+        # file: the ids we produce are 0-based indices into this grid, so it is
+        # ours to define, and the file is not consulted for this detector.
+        self._detector_numbers[name] = sc.arange(
+            'detector_number', resolution * resolution, unit=None
+        ).fold(dim='detector_number', sizes={'dim_0': resolution, 'dim_1': resolution})
+
+    def get_downsampling_resolution(self, name: str) -> int | None:
+        """Target grid side length for *name*, or None if not downsampled."""
+        return self._downsampled_detectors.get(name)
 
     def configure_detector(
         self,

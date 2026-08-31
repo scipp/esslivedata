@@ -24,12 +24,12 @@ from ess.livedata.workflows.monitor_workflow_specs import (
 
 from .streams_parsed import PARSED_STREAMS
 from .views import (
-    fold_image,
     get_he3_detector_view,
     get_he3_spectrum,
     get_multiblade_spectrum,
     get_multiblade_view,
     identity,
+    name_image_dims,
 )
 
 detector_names = [
@@ -42,6 +42,9 @@ detector_names = [
 ]
 
 monitor_names = ['monitor_1']
+
+#: Side length the Timepix3 panel is ingested at; see name_image_dims.
+IMAGE_RESOLUTION = 512
 
 instrument = Instrument(
     name='tbl',
@@ -68,13 +71,17 @@ register_monitor_workflow_specs(
     instrument, monitor_names, params=TOAOnlyMonitorDataParams
 )
 
+instrument.configure_detector_downsampling(
+    'timepix3_detector', resolution=IMAGE_RESOLUTION
+)
+
 instrument.add_logical_view(
     name='tbl_detector_timepix3',
     title='Timepix3 Detector',
-    description='512x512 image downsampled from full resolution',
+    description=f'{IMAGE_RESOLUTION}x{IMAGE_RESOLUTION} image downsampled from '
+    'full resolution',
     source_names=['timepix3_detector'],
-    transform=fold_image,
-    reduction_dim=['x_bin', 'y_bin'],
+    transform=name_image_dims,
     roi_support=True,
     device_outputs=COUNTS_TOTAL_DEVICE,
 )

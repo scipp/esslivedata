@@ -11,13 +11,35 @@ import scipp as sc
 
 
 def fold_image(da: sc.DataArray, source_name: str) -> sc.DataArray:
-    """Fold detector image dimensions for downsampling to 512x512."""
+    """Fold detector image dimensions for downsampling to 512x512.
+
+    Used with ``reduction_dim=['x_bin', 'y_bin']`` to merge each 8x8 block into
+    one output pixel. This is the only option for an area detector such as
+    ORCA, which streams whole frames: there are no event ids to coarsen, so the
+    full-resolution image must be built and then reduced.
+
+    Event detectors should instead be ingested at reduced resolution, which is
+    far cheaper -- see :func:`name_image_dims`.
+    """
     # 4096x4096 or 2048x2048 is the actual panel size, but ess.livedata might not be
     #  able to keep up with that so we downsample to 512x512.
     da = da.rename_dims({'dim_0': 'x', 'dim_1': 'y'})
     da = da.fold(dim='x', sizes={'x': 512, 'x_bin': -1})
     da = da.fold(dim='y', sizes={'y': 512, 'y_bin': -1})
     return da
+
+
+def name_image_dims(da: sc.DataArray, source_name: str) -> sc.DataArray:
+    """Name the detector image dimensions, without reshaping.
+
+    For an event detector configured via
+    ``Instrument.configure_detector_downsampling``, event ids are remapped onto
+    the coarser grid in the preprocessor, before pixel grouping. The array
+    already has the target shape here, so there is nothing left to fold or
+    reduce -- unlike :func:`fold_image`, which pays for the full-resolution
+    grid on every update whether one event arrived or a million.
+    """
+    return da.rename_dims({'dim_0': 'x', 'dim_1': 'y'})
 
 
 def get_multiblade_view(da: sc.DataArray, source_name: str) -> sc.DataArray:

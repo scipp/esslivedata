@@ -1,5 +1,6 @@
 # SPDX-License-Identifier: BSD-3-Clause
 # Copyright (c) 2025 Scipp contributors (https://github.com/scipp)
+import numpy as np
 import pytest
 import scipp as sc
 
@@ -9,12 +10,15 @@ from ess.livedata.config.instrument import Instrument
 from ess.livedata.config.instruments import available_instruments, get_config
 from ess.livedata.config.stream import F144Stream
 from ess.livedata.core.preprocessor import StreamId
+from ess.livedata.core.timestamp import Timestamp
 from ess.livedata.preprocessors.accumulators import LatestValueAccumulator
 from ess.livedata.preprocessors.detector_data import (
     DetectorPreprocessorFactory,
     get_nexus_geometry_filename,
 )
+from ess.livedata.preprocessors.downsample_pixel_ids import DownsamplePixelIds
 from ess.livedata.preprocessors.group_by_pixel import GroupByPixel
+from ess.livedata.preprocessors.to_nxevent_data import DetectorEvents
 from ess.livedata.preprocessors.to_nxlog import ToNXlog
 
 
@@ -182,3 +186,42 @@ class TestDetectorPreprocessorFactoryLogStreams:
         stream_id = StreamId(kind=StreamKind.LOG, name='some_log')
         preprocessor = factory.make_preprocessor(stream_id)
         assert preprocessor is None
+
+
+class TestDownsampledDetector:
+    """Downsampling is opt-in: only configured detectors are remapped."""
+
+    def make_preprocessor(self, *, downsample: bool):
+        instrument = Instrument(name='test', detector_names=['det'])
+        if downsample:
+            instrument.configure_detector_downsampling('det', resolution=4)
+        else:
+            instrument.configure_detector(
+                'det', detector_number=sc.arange('detector_number', 256, unit=None)
+            )
+        factory = DetectorPreprocessorFactory(instrument=instrument)
+        return factory.make_preprocessor(
+            StreamId(kind=StreamKind.DETECTOR_EVENTS, name='det')
+        )
+
+    def test_unconfigured_detector_is_grouped_at_full_resolution(self) -> None:
+        assert isinstance(self.make_preprocessor(downsample=False), GroupByPixel)
+
+    def test_configured_detector_is_downsampled_before_grouping(self) -> None:
+        assert isinstance(self.make_preprocessor(downsample=True), DownsamplePixelIds)
+
+    def test_downsampled_detector_produces_the_target_grid(self) -> None:
+        preprocessor = self.make_preprocessor(downsample=True)
+
+        preprocessor.add(
+            Timestamp.from_ns(0),
+            DetectorEvents(
+                time_of_arrival=np.array([0, 1, 2], dtype='int64'),
+                unit='ns',
+                pixel_id=np.array([0, 5, 16 * 16 - 1], dtype='int64'),
+            ),
+        )
+
+        result = preprocessor.get()
+        assert result.sizes == {'detector_number': 16}
+        assert result.bins.size().data.sum().value == 3

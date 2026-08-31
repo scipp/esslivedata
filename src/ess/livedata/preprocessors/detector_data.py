@@ -11,6 +11,7 @@ from ..config.instrument import Instrument
 from ..core.message import StreamId, StreamKind
 from ..core.preprocessor import Accumulator, JobBasedPreprocessorFactoryBase
 from .accumulators import Cumulative, LatestValueAccumulator
+from .downsample_pixel_ids import DownsamplePixelIds
 from .group_by_pixel import GroupByPixel
 from .to_nxevent_data import ToNXevent_data
 from .to_nxlog import nxlog_for_stream
@@ -44,10 +45,16 @@ class DetectorPreprocessorFactory(JobBasedPreprocessorFactoryBase):
                 # Skip detectors that are not configured
                 if key.name not in self._instrument.detector_names:
                     return None
+                inner: Accumulator
                 if self._group_by_pixel:
                     detector_number = self._instrument.get_detector_number(key.name)
-                    return GroupByPixel(ToNXevent_data(), detector_number)
-                return ToNXevent_data()
+                    inner = GroupByPixel(ToNXevent_data(), detector_number)
+                else:
+                    inner = ToNXevent_data()
+                resolution = self._instrument.get_downsampling_resolution(key.name)
+                if resolution is None:
+                    return inner
+                return DownsamplePixelIds(inner, resolution=resolution)
             case StreamKind.AREA_DETECTOR:
                 return Cumulative(clear_on_get=True)
             case StreamKind.LIVEDATA_ROI:
