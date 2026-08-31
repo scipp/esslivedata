@@ -42,6 +42,18 @@ class PeriodicGarbageCollector:
     ``log_interval`` seconds a summary of collection durations is logged so
     that drift is observed rather than assumed.
 
+    Durations and reclaimed counts are logged together because their
+    *combination* is what diagnoses. A full collection walks everything
+    reachable, so duration tracks the live tracked population, while the
+    reclaimed count tracks only the garbage. Rising duration at a flat
+    reclaimed count therefore means live objects are accumulating -- a
+    retained buffer rather than a cycle leak -- and no amount of collection
+    will help. At roughly 0.045 ms per 1000 live tracked objects the logged
+    duration converts back to an object count without a heap dump. Do not
+    read a rising duration as the benign drift described above without
+    checking the reclaimed count beside it: that pair is how the unbounded
+    batcher backlog was found after this mitigation was already deployed.
+
     Parameters
     ----------
     interval:
