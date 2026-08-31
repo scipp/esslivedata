@@ -19,7 +19,11 @@ from ess.livedata.workflows.workflow_factory import (
     WorkflowFactory,
 )
 
-from .detector_downsampling import DetectorDownsampling, resolve_downsampling
+from .detector_downsampling import (
+    DetectorDownsampling,
+    is_power_of_two,
+    resolve_downsampling,
+)
 from .stream import ChainPatchBinding, ContextBinding, Device, F144Stream, Stream
 from .value_log import ValueLog
 from .workflow_spec import (
@@ -383,7 +387,8 @@ class Instrument:
 
         The *source* resolution is not taken from the geometry file, which is
         static and need not describe what the detector is actually streaming.
-        It is inferred from the observed event ids instead; see
+        It is inferred from the observed event ids instead, within the bound
+        the file sets; see
         :class:`~ess.livedata.preprocessors.downsample_pixel_ids.DownsamplePixelIds`.
         What the file *is* trusted for, and why, is
         :func:`~ess.livedata.config.detector_downsampling.resolve_downsampling`.
@@ -392,21 +397,28 @@ class Instrument:
         geometric view resolves pixel positions from the file and would need
         those positions merged to match, which this does not do.
 
+        Because the streamed resolution is only known once events arrive, it
+        can be revised upward mid-run. There is no automatic reset when it is:
+        results accumulated under the old estimate stay in the cumulative image
+        and are wrong until the workflow is restarted or reset by hand. Say so
+        in the view's ``description`` -- the operator reading the plot is the
+        one who has to act on it.
+
         Parameters
         ----------
         name:
             Name of the detector (must be in ``self.detector_names``).
         resolution:
-            Side length of the target grid. The source resolution must be an
-            integer multiple of it.
+            Side length of the target grid. Must be a power of two, as must
+            the source resolution, which cannot be smaller.
         """
         if name not in self.detector_names:
             raise ValueError(
                 f"Detector {name} not in declared detector_names. "
                 f"Available detectors: {self.detector_names}"
             )
-        if resolution < 1:
-            raise ValueError(f"resolution must be positive, got {resolution}")
+        if not is_power_of_two(resolution):
+            raise ValueError(f"resolution must be a power of two, got {resolution}")
         self._downsampled_detectors[name] = resolution
 
     def get_downsampling(self, name: str) -> DetectorDownsampling | None:
@@ -415,6 +427,9 @@ class Instrument:
 
         Resolved lazily so that the geometry file, loaded by
         :meth:`load_factories`, can be consulted where it is available.
+        Because the result is cached, :meth:`load_factories` resolves every
+        configured detector once the file has been read, so that an earlier
+        caller cannot latch the file-less fallback.
         """
         resolution = self._downsampled_detectors.get(name)
         if resolution is None:
@@ -814,6 +829,11 @@ class Instrument:
                     # the expected path (e.g., monitors lack a detector_number
                     # dataset — they must provide it via configure_pixellated_monitor)
                     pass
+
+        # Must follow the loop above: get_downsampling caches, so resolving it
+        # any earlier would freeze the file-less fallback for the process.
+        for name in self._downsampled_detectors:
+            self.get_downsampling(name)
 
     def _attach_default_monitor_factories(self) -> None:
         """Attach the shared monitor workflow factory where none was provided.

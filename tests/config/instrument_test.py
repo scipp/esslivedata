@@ -1031,17 +1031,53 @@ class TestDetectorDownsampling:
         with pytest.raises(ValueError, match='square'):
             instrument.get_downsampling('det')
 
-    def test_rejects_a_side_that_does_not_tile(self, instrument: Instrument) -> None:
+    def test_rejects_a_side_that_is_not_a_power_of_two(
+        self, instrument: Instrument
+    ) -> None:
         instrument.configure_detector('det', detector_number=self.square_grid(1000))
         instrument.configure_detector_downsampling('det', resolution=512)
 
-        with pytest.raises(ValueError, match='not a multiple'):
+        with pytest.raises(ValueError, match='power of two'):
+            instrument.get_downsampling('det')
+
+    def test_rejects_a_side_below_the_target_resolution(
+        self, instrument: Instrument
+    ) -> None:
+        instrument.configure_detector('det', detector_number=self.square_grid(256))
+        instrument.configure_detector_downsampling('det', resolution=512)
+
+        with pytest.raises(ValueError, match='at least the downsampling resolution'):
+            instrument.get_downsampling('det')
+
+    def test_rejects_ids_that_are_not_row_major_contiguous(
+        self, instrument: Instrument
+    ) -> None:
+        # The remap inverts 'id = x * side + y'. A file enumerating the grid in
+        # any other order would scramble the image with nothing to notice it by.
+        instrument.configure_detector(
+            'det', detector_number=self.square_grid(1024).transpose().copy()
+        )
+        instrument.configure_detector_downsampling('det', resolution=512)
+
+        with pytest.raises(ValueError, match='row-major'):
+            instrument.get_downsampling('det')
+
+    def test_rejects_ids_with_gaps(self, instrument: Instrument) -> None:
+        detector_number = self.square_grid(1024).copy()
+        detector_number.values[3, 7] += 1_000_000
+        instrument.configure_detector('det', detector_number=detector_number)
+        instrument.configure_detector_downsampling('det', resolution=512)
+
+        with pytest.raises(ValueError, match='row-major'):
             instrument.get_downsampling('det')
 
     def test_rejects_unknown_detector(self, instrument: Instrument) -> None:
         with pytest.raises(ValueError, match='not in declared detector_names'):
             instrument.configure_detector_downsampling('nope', resolution=512)
 
-    def test_rejects_nonpositive_resolution(self, instrument: Instrument) -> None:
-        with pytest.raises(ValueError, match='must be positive'):
-            instrument.configure_detector_downsampling('det', resolution=0)
+    @pytest.mark.parametrize('resolution', [0, -1, 300, 1000])
+    def test_rejects_a_resolution_that_is_not_a_power_of_two(
+        self, instrument: Instrument, resolution: int
+    ) -> None:
+        with pytest.raises(ValueError, match='power of two'):
+            instrument.configure_detector_downsampling('det', resolution=resolution)

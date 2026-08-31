@@ -213,15 +213,35 @@ class TestDownsampledDetector:
     def test_downsampled_detector_produces_the_target_grid(self) -> None:
         preprocessor = self.make_preprocessor(downsample=True)
 
-        preprocessor.add(
-            Timestamp.from_ns(0),
-            DetectorEvents(
-                time_of_arrival=np.array([0, 1, 2], dtype='int64'),
-                unit='ns',
-                pixel_id=np.array([0, 5, 16 * 16 - 1], dtype='int64'),
-            ),
-        )
+        preprocessor.add(Timestamp.from_ns(0), self.batch())
 
         result = preprocessor.get()
         assert result.sizes == {'detector_number': 16}
         assert result.bins.size().data.sum().value == 3
+
+    @staticmethod
+    def batch() -> DetectorEvents:
+        return DetectorEvents(
+            time_of_arrival=np.array([0, 1, 2], dtype='int64'),
+            unit='ns',
+            pixel_id=np.array([0, 5, 16 * 16 - 1], dtype='int32'),
+        )
+
+    @pytest.mark.parametrize('group_by_pixel', [True, False])
+    def test_survives_repeated_get_release_cycles(self, group_by_pixel: bool) -> None:
+        # ToNXevent_data hands out views into a reused buffer and refuses the
+        # next get() until they are released. The service releases via the
+        # outermost accumulator, so every wrapper must delegate.
+        instrument = Instrument(name='test', detector_names=['det'])
+        instrument.configure_detector_downsampling('det', resolution=4)
+        factory = DetectorPreprocessorFactory(
+            instrument=instrument, group_by_pixel=group_by_pixel
+        )
+        preprocessor = factory.make_preprocessor(
+            StreamId(kind=StreamKind.DETECTOR_EVENTS, name='det')
+        )
+
+        for cycle in range(3):
+            preprocessor.add(Timestamp.from_ns(cycle), self.batch())
+            preprocessor.get()
+            preprocessor.release_buffers()

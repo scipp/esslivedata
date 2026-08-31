@@ -78,8 +78,14 @@ instrument.configure_detector_downsampling(
 instrument.add_logical_view(
     name='tbl_detector_timepix3',
     title='Timepix3 Detector',
-    description=f'{IMAGE_RESOLUTION}x{IMAGE_RESOLUTION} image downsampled from '
-    'full resolution',
+    description=(
+        f'{IMAGE_RESOLUTION}x{IMAGE_RESOLUTION} image, downsampled from full'
+        ' resolution as the events are ingested. The full resolution is read'
+        ' from the event ids, so it may be revised upward shortly after a run'
+        ' starts if the first events cover only part of the panel. Cumulative'
+        ' results from before such a revision are wrong and are not discarded'
+        ' automatically: reset or restart the workflow to clear them.'
+    ),
     source_names=['timepix3_detector'],
     transform=name_image_dims,
     roi_support=True,

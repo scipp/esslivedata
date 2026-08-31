@@ -86,19 +86,24 @@ class TestSourceResolutionInference:
         acc.add(ts(), events([4096 * 4096 - 1]))
         assert acc.source_resolution == 4096
 
-    def test_rounds_up_to_a_multiple_of_the_target_resolution(self) -> None:
-        # Dead pixels in the last rows leave max_id short of the corner; the
-        # blocks must still tile evenly, so the estimate rounds up.
+    def test_rounds_up_to_a_power_of_two(self) -> None:
+        # Panels come in powers of two, so any max_id past the halfway row
+        # pins the panel -- far weaker than needing the last rows to fire.
         acc = DownsamplePixelIds(RecordingAccumulator(), downsampling(512))
-        acc.add(ts(), events([4096 * 4000]))
+        acc.add(ts(), events([1025 * 4096]))
         assert acc.source_resolution == 4096
+
+    def test_never_estimates_below_the_target_resolution(self) -> None:
+        acc = DownsamplePixelIds(RecordingAccumulator(), downsampling(512))
+        acc.add(ts(), events([0]))
+        assert acc.source_resolution == 512
 
     def test_infers_a_smaller_panel_when_the_stream_is_smaller(self) -> None:
         acc = DownsamplePixelIds(RecordingAccumulator(), downsampling(512))
         acc.add(ts(), events([2048 * 2048 - 1]))
         assert acc.source_resolution == 2048
 
-    def test_latches_on_first_batch_and_does_not_drift(self) -> None:
+    def test_never_shrinks(self) -> None:
         acc = DownsamplePixelIds(RecordingAccumulator(), downsampling(512))
         acc.add(ts(), events([4096 * 4096 - 1]))
         acc.add(ts(), events([0]))
@@ -121,24 +126,55 @@ class TestSourceResolutionInference:
 
 
 class TestIdsAboveInferredResolution:
-    def test_are_dropped_rather_than_raised_on(self) -> None:
-        # A single corrupt id must not take the service down; grouping already
-        # discards ids outside the configured detector_number.
+    """An underestimate is evidence, not corruption -- up to the declared bound."""
+
+    def test_raise_the_estimate_when_nothing_bounds_it(self) -> None:
+        acc = DownsamplePixelIds(RecordingAccumulator(), downsampling(2))
+        acc.add(ts(), events([0]))  # latches source_resolution = 2
+        assert acc.source_resolution == 2
+        acc.add(ts(), events([300]))
+        assert acc.source_resolution == 32
+
+    def test_a_narrow_beam_converges_on_the_true_panel(self) -> None:
+        # The failure this guards: a run whose first batch only lights the
+        # first rows would otherwise map every later event with a wrong stride
+        # for the lifetime of the process.
+        acc = DownsamplePixelIds(
+            RecordingAccumulator(), downsampling(512, declared=4096)
+        )
+        acc.add(ts(), events([100 * 4096]))
+        assert acc.source_resolution < 4096
+        acc.add(ts(), events([4095 * 4096 + 4095]))
+        assert acc.source_resolution == 4096
+
+    def test_growing_discards_the_events_mapped_with_the_old_stride(self) -> None:
         inner = RecordingAccumulator()
         acc = DownsamplePixelIds(inner, downsampling(2))
-        acc.add(ts(), events([0]))  # latches source_resolution = 2
+        acc.add(ts(), events([0]))
+        acc.add(ts(), events([300]))
+        # The first batch carried the old stride; only the re-mapped one remains.
+        assert len(inner.batches) == 1
+
+    def test_are_dropped_rather_than_raised_on_at_the_declared_bound(self) -> None:
+        # A single corrupt id must not take the service down, nor ratchet the
+        # estimate; grouping already discards ids outside the detector_number.
+        inner = RecordingAccumulator()
+        acc = DownsamplePixelIds(inner, downsampling(2, declared=4))
+        acc.add(ts(), events([15]))
+        assert acc.source_resolution == 4
         acc.add(ts(), events([3, 10_000]))
+        assert acc.source_resolution == 4
         remapped = inner.batches[-1].pixel_id
         assert remapped[0] < 4
         assert remapped[1] >= 4  # outside the target grid, so grouping drops it
 
     def test_are_counted_and_logged(self) -> None:
-        acc = DownsamplePixelIds(RecordingAccumulator(), downsampling(2))
-        acc.add(ts(), events([0]))
+        acc = DownsamplePixelIds(RecordingAccumulator(), downsampling(2, declared=4))
+        acc.add(ts(), events([15]))
         with capture_logs() as logs:
             acc.add(ts(), events([10_000, 10_001]))
         entry = next(
-            e for e in logs if e['event'] == 'event_id_above_inferred_resolution'
+            e for e in logs if e['event'] == 'event_id_above_source_resolution'
         )
         assert entry['dropped'] == 2
 
@@ -146,8 +182,8 @@ class TestIdsAboveInferredResolution:
 class TestIdBase:
     def test_a_one_based_detector_infers_its_true_resolution(self) -> None:
         # Regression: treating a 1-based panel as 0-based makes max_id one too
-        # large, and the inferred resolution comes out at 4608 instead of 4096
-        # -- a wrong stride, which shears the image rather than coarsening it.
+        # large, and the inferred resolution doubles to 8192 -- a wrong stride,
+        # which shears the image rather than coarsening it.
         acc = DownsamplePixelIds(RecordingAccumulator(), downsampling(512, first_id=1))
         acc.add(ts(), events([4096 * 4096]))
         assert acc.source_resolution == 4096
@@ -171,40 +207,29 @@ class TestIdBase:
         assert inner.batches[0].pixel_id[0] < 0
 
 
-class TestGeometryFileCrossCheck:
-    def test_warns_when_the_stream_disagrees_with_the_declared_resolution(
-        self,
-    ) -> None:
-        acc = DownsamplePixelIds(
-            RecordingAccumulator(), downsampling(512, declared=4096)
-        )
-        with capture_logs() as logs:
-            acc.add(ts(), events([2048 * 2048 - 1]))
-        entry = next(
-            e
-            for e in logs
-            if e['event'] == 'detector_resolution_differs_from_geometry_file'
-        )
-        assert entry['streamed_resolution'] == 2048
-        assert entry['declared_resolution'] == 4096
+class TestGeometryFileBound:
+    """The file bounds the estimate; within the bound the stream decides."""
 
-    def test_the_stream_wins_over_the_declared_resolution(self) -> None:
-        # The file is static and may be stale; it never overrides observation.
+    def test_a_detector_streaming_less_than_declared_is_believed(self) -> None:
+        # Reduced readout, or a stale file. Either way the stream is the
+        # authority on what is actually arriving.
         acc = DownsamplePixelIds(
             RecordingAccumulator(), downsampling(512, declared=4096)
         )
         acc.add(ts(), events([2048 * 2048 - 1]))
         assert acc.source_resolution == 2048
 
-    def test_silent_when_they_agree(self) -> None:
+    def test_the_estimate_never_exceeds_the_declared_resolution(self) -> None:
         acc = DownsamplePixelIds(
             RecordingAccumulator(), downsampling(512, declared=4096)
         )
-        with capture_logs() as logs:
-            acc.add(ts(), events([4096 * 4096 - 1]))
-        assert not any(
-            e['event'] == 'detector_resolution_differs_from_geometry_file' for e in logs
-        )
+        acc.add(ts(), events([100 * 4096 * 4096]))
+        assert acc.source_resolution == 4096
+
+    def test_without_a_file_there_is_no_bound(self) -> None:
+        acc = DownsamplePixelIds(RecordingAccumulator(), downsampling(512))
+        acc.add(ts(), events([8192 * 8192 - 1]))
+        assert acc.source_resolution == 8192
 
 
 class TestEquivalenceWithFoldAndConcat:
