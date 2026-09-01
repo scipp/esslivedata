@@ -20,11 +20,11 @@ from .streams_parsed import PARSED_STREAMS
 from .views import name_image_dims
 
 #: Side length the Timepix3 panel is ingested at; see name_image_dims.
-IMAGE_RESOLUTION = 512
+TIMEPIX3_IMAGE_RESOLUTION = 512
 #: Largest grid the Timepix3 panel can read out. The readout is
 #: reconfigured during operation, so this bounds the inferred streamed
 #: resolution rather than stating it.
-PANEL_RESOLUTION = 4096
+TIMEPIX3_PANEL_RESOLUTION = 4096
 
 instrument = Instrument(
     name='odin',
@@ -41,7 +41,9 @@ register_monitor_workflow_specs(
 )
 
 instrument.configure_detector_downsampling(
-    'timepix3', resolution=IMAGE_RESOLUTION, max_resolution=PANEL_RESOLUTION
+    'timepix3',
+    resolution=TIMEPIX3_IMAGE_RESOLUTION,
+    max_resolution=TIMEPIX3_PANEL_RESOLUTION,
 )
 
 # Detector view spec registration (with ROI support)
@@ -49,11 +51,11 @@ instrument.add_logical_view(
     name='odin_detector_xy',
     title='Timepix3 XY Detector Counts',
     description=(
-        f'{IMAGE_RESOLUTION}x{IMAGE_RESOLUTION} image, downsampled from the'
-        ' streamed resolution as the events are ingested. The streamed'
-        ' resolution is read from the event ids; a readout reconfiguration'
-        ' restarts the cumulative image, since counts taken before and after'
-        ' it are not commensurable.'
+        f'{TIMEPIX3_IMAGE_RESOLUTION}x{TIMEPIX3_IMAGE_RESOLUTION} image,'
+        ' downsampled from the streamed resolution as the events are'
+        ' ingested. The streamed resolution is read from the event ids; a'
+        ' readout reconfiguration restarts the cumulative image, since counts'
+        ' taken before and after it are not commensurable.'
     ),
     source_names=['timepix3'],
     transform=name_image_dims,
