@@ -276,6 +276,25 @@ class TestIdsAboveMaxResolution:
         assert remapped[0] < 4
         assert remapped[1] >= 4  # outside the target grid, so grouping drops it
 
+    def test_do_not_raise_the_estimate_off_a_reduced_readout(self) -> None:
+        # The bound is what makes a wild id harmless, so the estimate must be
+        # measured against it rather than clamped to it afterwards: otherwise
+        # one bad id ratchets a reduced readout up to the full panel and holds
+        # it there for a whole window.
+        acc = make(512, max_resolution=4096)
+        acc.add(ts(), events([1024 * 1024 - 1]))
+        assert acc.source_resolution == 1024
+        acc.add(ts(), events([2_000_000_000]))
+        assert acc.source_resolution == 1024
+
+    def test_a_batch_of_nothing_else_leaves_the_estimate_unset(self) -> None:
+        inner = RecordingAccumulator()
+        acc = make(512, inner=inner, max_resolution=4096)
+        acc.add(ts(), events([2_000_000_000, 3_000_000_000]))
+        assert acc.source_resolution is None
+        # Still forwarded, and outside the target grid so grouping drops them.
+        assert (inner.batches[0].pixel_id >= 512 * 512).all()
+
     def test_are_counted_and_logged(self) -> None:
         acc = make(2, max_resolution=4)
         acc.add(ts(), events([15]))
@@ -301,6 +320,13 @@ class TestIdBase:
         acc = make(2, inner=inner, first_id=1)
         acc.add(ts(), events([1, 16]))
         assert inner.batches[0].pixel_id[0] == 0
+
+    def test_a_batch_entirely_below_the_base_does_not_raise(self) -> None:
+        # Regression: the batch max is negative, and feeding that to the
+        # estimate raised ValueError from isqrt, taking the service down.
+        acc = make(512, inner=RecordingAccumulator(), first_id=1)
+        acc.add(ts(), events([0, 0, 0]))
+        assert acc.source_resolution is None
 
     def test_ids_below_the_base_are_dropped_and_logged(self) -> None:
         inner = RecordingAccumulator()

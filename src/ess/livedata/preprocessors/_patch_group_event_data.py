@@ -12,6 +12,14 @@ skip the grouping step, but still fold to the target shape defined by
 ``detector_number.sizes`` (e.g., flat 1D → multi-dimensional).
 
 This is a temporary measure until ``ess.reduce`` is updated upstream.
+
+Whatever replaces it must keep top-level coords: the upstream implementation
+rebuilds the array and drops them, whereas this one passes them through, and
+``DownsamplePixelIds`` relies on that to carry ``SOURCE_RESOLUTION`` to the
+cumulative accumulator's reset. Unlike ``DETECTOR_TRANSFORM``, which the
+workflow re-stamps from a static pipeline value, the source resolution is only
+known to the preprocessor and has nowhere else to come from.
+``tests/services/detector_data_test.py`` covers the resulting reset end to end.
 """
 
 import ess.reduce.nexus._nexus_loader as _nexus_loader

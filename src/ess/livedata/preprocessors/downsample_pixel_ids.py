@@ -143,8 +143,9 @@ class DownsamplePixelIds(Accumulator[DetectorEvents, sc.DataArray]):
 
     The estimate is bounded by ``max_resolution``, which the instrument
     configuration states because it is a property of the hardware. Ids implying
-    more than that are corruption rather than evidence: they are counted and
-    reported, and they map outside the target grid so grouping drops them.
+    more than that are corruption rather than evidence: they are excluded from
+    the window before it is consulted, counted and reported, and they map
+    outside the target grid so grouping drops them.
 
     Ids are laid out as ``x * source + y`` with ``x`` the slow axis, which
     :func:`~ess.livedata.config.detector_downsampling.resolve_downsampling`
@@ -183,6 +184,7 @@ class DownsamplePixelIds(Accumulator[DetectorEvents, sc.DataArray]):
         self._inner = inner
         self._resolution = downsampling.resolution
         self._max_resolution = downsampling.max_resolution
+        self._corrupt_at = downsampling.max_resolution**2
         self._first_id = downsampling.first_id
         self._source_resolution: int | None = None
         self._window = _EvidenceWindow(window=window, buckets=buckets)
@@ -220,16 +222,12 @@ class DownsamplePixelIds(Accumulator[DetectorEvents, sc.DataArray]):
         if (lowest := int(pixel_id.min())) < 0:
             self._report_below_first_id(pixel_id, lowest)
 
-        max_id = int(pixel_id.max())
-        self._window.add(self._clock(), max_id, count=raw.size)
-        self._update_estimate()
+        self._observe(pixel_id)
 
-        source = self._source_resolution
-        if max_id >= source * source:
-            # Only reachable once the estimate is at max_resolution, so these
-            # ids are corruption rather than evidence.
-            self._report_out_of_range(pixel_id, source)
-
+        # An estimate needs at least one admissible id. Until one arrives every
+        # id in the batch is out of range, so remapping at the target stride
+        # forwards it and grouping drops it, as it would with any other stride.
+        source = self._source_resolution or self._resolution
         block = source // self._resolution
         # x is the slow axis: id = x * source + y. Ids at or beyond source**2
         # give x // block >= resolution, so the remapped id falls outside the
@@ -239,6 +237,26 @@ class DownsamplePixelIds(Accumulator[DetectorEvents, sc.DataArray]):
         remapped = (x // block) * self._resolution + (y // block)
 
         return self._inner.add(timestamp, replace(data, pixel_id=remapped))
+
+    def _observe(self, pixel_id: np.ndarray) -> None:
+        """Feed the batch's largest admissible id to the evidence window.
+
+        Ids at or beyond ``max_resolution**2``, and ids below ``first_id``,
+        cannot have come from this detector, so they are corruption rather
+        than evidence and must not reach the estimate. Letting them through
+        would defeat the bound they are measured against: one wild id would
+        ratchet a reduced readout up to the full panel and hold it there for a
+        whole window.
+        """
+        max_id = int(pixel_id.max())
+        if max_id >= self._corrupt_at:
+            admissible = pixel_id < self._corrupt_at
+            self._report_out_of_range(pixel_id.size - int(admissible.sum()))
+            max_id = int(np.max(pixel_id, where=admissible, initial=-1))
+        if max_id < 0:
+            return
+        self._window.add(self._clock(), max_id, count=pixel_id.size)
+        self._update_estimate()
 
     def _update_estimate(self) -> None:
         """Adopt the estimate the window supports, if it differs and is allowed."""
@@ -262,6 +280,12 @@ class DownsamplePixelIds(Accumulator[DetectorEvents, sc.DataArray]):
             self._window.count < self._min_events_to_shrink
         ):
             return
+        # Deliberately not throttled, unlike the corruption reports below. Those
+        # describe a condition that holds for a whole run and would otherwise
+        # recur at the cycle rate; this is an event, and one that is expected to
+        # be rare. If it stops being rare, that frequency is the finding -- the
+        # window or the shrink guard would be mistuned -- so it must not be
+        # suppressed.
         self._logger.warning(
             'detector_resolution_changed',
             previous_resolution=self._source_resolution,
@@ -276,14 +300,13 @@ class DownsamplePixelIds(Accumulator[DetectorEvents, sc.DataArray]):
         # in earlier cycles is discarded downstream via SOURCE_RESOLUTION.
         self._inner.clear()
 
-    def _report_out_of_range(self, pixel_id: np.ndarray, source: int) -> None:
-        n = int(np.count_nonzero(pixel_id >= source * source))
+    def _report_out_of_range(self, n: int) -> None:
         self._out_of_range += n
         if (suppressed := self._out_of_range_throttle.take(self._clock())) is None:
             return
         self._logger.warning(
             'event_id_above_max_resolution',
-            source_resolution=source,
+            source_resolution=self._source_resolution,
             max_resolution=self._max_resolution,
             dropped=n,
             dropped_total=self._out_of_range,
