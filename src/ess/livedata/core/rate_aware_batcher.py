@@ -37,7 +37,8 @@ reach the overflow, so the selectivity is structural rather than stated.
 Shedding is an exception state to be fixed upstream, not a mode to run in:
 drops are counted, logged (``batcher_backlog_shedding``) and reported via
 ``drain_metrics``.  The bounds and their sizing rationale are documented at
-``DEFAULT_MAX_BACKLOG_BATCHES`` and ``DEFAULT_MAX_BACKLOG_BYTES``.
+``DEFAULT_MAX_BACKLOG_S``, ``DEFAULT_MAX_BACKLOG_BATCHES`` and
+``DEFAULT_MAX_BACKLOG_BYTES``.
 """
 
 from __future__ import annotations
@@ -87,24 +88,39 @@ ABSENT_BATCHES_FOR_EVICTION = 5
 # consumer queue already applies (``BackgroundMessageSource``,
 # ``max_queue_size``): drop rather than grow, and say so.
 #
-# The primary bound is *data time*, not memory.  Retained backlog is data the
-# service has not caught up with, and the batcher can only catch up at
-# ``batch_length - iteration_time`` per call: retaining a deep backlog buys
-# late data at the price of showing everything late for as long as it takes
-# to replay, which for an iteration close to the batch length is minutes.  So
-# the backlog is capped at a small multiple of the batch length: the lag a
-# stall can leave behind is bounded by that multiple regardless of how deep
-# the stall was, rather than by how fast the loop happens to drain.
+# The primary bound is *data time*, not memory: retained backlog is data the
+# service has not caught up with, and under genuine overload -- the loop
+# itself too slow -- the batcher only catches up at ``batch_length -
+# iteration_time`` per call, so a deep backlog buys late data at the price
+# of showing everything late for as long as the replay takes.  A bound in
+# data time caps the lag a stall can leave behind regardless of how deep
+# the stall was.  Expressing it in data time also makes it uniform across
+# instruments -- a byte budget buys ~20 s of ev44 but ~1.5 s of
+# area-detector frames.  It is applied per stream, against each stream's
+# own frontier: a single horizon for the whole backlog would shed a
+# stream's fresh data merely because a peer is stamped further ahead (see
+# ``_shed_backlog``).
 #
-# Two batch lengths leaves ordinary jitter alone -- an iteration merely
-# overshooting its window sheds nothing -- while keeping the post-stall lag
-# inside the window the timeout path already tolerates.  Expressing it in
-# batch lengths also makes it uniform across instruments (a byte budget buys
-# ~20 s of ev44 but ~1.5 s of area-detector frames) and lets it follow the
-# adaptive wrapper's escalated windows.  It is applied per stream, against
-# each stream's own frontier: a single horizon for the whole backlog would
-# shed a stream's fresh data merely because a peer is stamped further ahead
-# (see ``_shed_backlog``).
+# The bound is the larger of two terms.  ``DEFAULT_MAX_BACKLOG_S`` is the
+# burst tolerance: a delivery gap (consumer-group rebalance, broker blip,
+# producer restart) that hands over less than this in one poll is replayed
+# in full rather than holed -- and cheaply, because an *idle* service
+# recovers a retained burst by a gap jump plus timeout closes at poll rate,
+# not by the slow crawl of an overloaded loop.  Its price is paid only
+# under sustained overload past what escalation absorbs, where the steady
+# lag approaches the bound.  No pre-production statistics on gap durations
+# exist; 10 s sits above single-rebalance scale, and the ``max_backlog_s``
+# metric and drop counters are the instrument for tuning it.
+#
+# ``DEFAULT_MAX_BACKLOG_BATCHES`` is a floor that scales with the window:
+# the overflow legitimately holds up to about one batch length of
+# in-transit next-window traffic, so a fixed seconds bound below the
+# escalated batch length would shed healthy traffic.  Two batch lengths
+# leaves ordinary jitter alone -- an iteration merely overshooting its
+# window sheds nothing -- and follows the adaptive wrapper's escalated
+# windows (16 s at the 8 s ceiling, where the floor exceeds the seconds
+# term and takes over).
+DEFAULT_MAX_BACKLOG_S = 10.0
 DEFAULT_MAX_BACKLOG_BATCHES = 2
 
 # Secondary hard bound, on memory.  The data-time bound alone does not bound
@@ -532,6 +548,7 @@ class RateAwareMessageBatcher(MessageBatcher):
         batch_length_s: float = 1.0,
         timeout_s: float | None = None,
         clock: Callable[[], float] = time.monotonic,
+        max_backlog_s: float = DEFAULT_MAX_BACKLOG_S,
         max_backlog_batches: int = DEFAULT_MAX_BACKLOG_BATCHES,
         max_backlog_bytes: int = DEFAULT_MAX_BACKLOG_BYTES,
     ) -> None:
@@ -551,13 +568,14 @@ class RateAwareMessageBatcher(MessageBatcher):
         self._future: list[Message[Any]] = []
         self._clock = clock
         self._last_close_wall = clock()
+        self._max_backlog_s = max_backlog_s
         self._max_backlog_batches = max_backlog_batches
         self._max_backlog_bytes = max_backlog_bytes
         self._total_dropped_messages = 0
         self._total_dropped_bytes = 0
         self._dropped_messages_since_drain = 0
         self._dropped_bytes_since_drain = 0
-        self._max_backlog_s = 0.0
+        self._backlog_peak_s = 0.0
         self._last_shed_log = -math.inf
 
     @property
@@ -576,11 +594,11 @@ class RateAwareMessageBatcher(MessageBatcher):
 
     def drain_metrics(self) -> BatcherMetrics:
         metrics = BatcherMetrics(
-            max_backlog_s=self._max_backlog_s,
+            max_backlog_s=self._backlog_peak_s,
             dropped_messages=self._dropped_messages_since_drain,
             dropped_bytes=self._dropped_bytes_since_drain,
         )
-        self._max_backlog_s = 0.0
+        self._backlog_peak_s = 0.0
         self._dropped_messages_since_drain = 0
         self._dropped_bytes_since_drain = 0
         return metrics
@@ -776,9 +794,10 @@ class RateAwareMessageBatcher(MessageBatcher):
     def _shed_backlog(self) -> bool:
         """Drop the stalest overflow until it fits both backlog bounds.
 
-        Each stream retains at most ``max_backlog_batches`` of data time, and
-        the backlog as a whole at most ``max_backlog_bytes``; see the bounds'
-        rationale at the top of this module.
+        Each stream retains at most the data-time bound -- the larger of
+        ``max_backlog_batches`` batch lengths and ``max_backlog_s`` -- and
+        the backlog as a whole at most ``max_backlog_bytes``; see the
+        bounds' rationale at the top of this module.
 
         The data-time horizon is per stream, anchored on that stream's own
         frontier.  A single horizon for the whole backlog would conflate
@@ -828,13 +847,17 @@ class RateAwareMessageBatcher(MessageBatcher):
         by_stream: defaultdict[StreamId, list[Timestamp]] = defaultdict(list)
         for _, msg in sized:
             by_stream[msg.stream].append(msg.timestamp)
+        bound = max(
+            self._max_backlog_batches * self._batch_length,
+            Duration.from_seconds(self._max_backlog_s),
+        )
         horizons: dict[StreamId, Timestamp] = {}
         for stream, stamps in by_stream.items():
             frontier = plausible_anchor(stamps, self._batch_length)
-            self._max_backlog_s = max(
-                self._max_backlog_s, (frontier - stamps[0]).to_seconds()
+            self._backlog_peak_s = max(
+                self._backlog_peak_s, (frontier - stamps[0]).to_seconds()
             )
-            horizons[stream] = frontier - self._max_backlog_batches * self._batch_length
+            horizons[stream] = frontier - bound
         kept = [item for item in sized if item[1].timestamp >= horizons[item[1].stream]]
         retained = sum(nbytes for nbytes, _ in kept)
         shed_by_bytes = 0
@@ -856,9 +879,9 @@ class RateAwareMessageBatcher(MessageBatcher):
             self._last_shed_log = now
             logger.warning(
                 'batcher_backlog_shedding',
-                backlog_limit_s=self._max_backlog_batches * self.batch_length_s,
+                backlog_limit_s=bound.to_seconds(),
                 backlog_limit_bytes=self._max_backlog_bytes,
-                max_backlog_s=round(self._max_backlog_s, 3),
+                max_backlog_s=round(self._backlog_peak_s, 3),
                 total_dropped_messages=self._total_dropped_messages,
                 total_dropped_bytes=self._total_dropped_bytes,
                 batch_length_s=self.batch_length_s,

@@ -28,6 +28,7 @@ from ess.livedata.core.message_batcher import MessageBatch
 from ess.livedata.core.rate_aware_batcher import (
     DEFAULT_MAX_BACKLOG_BATCHES,
     DEFAULT_MAX_BACKLOG_BYTES,
+    DEFAULT_MAX_BACKLOG_S,
     MIN_DIFFS_FOR_GATE,
     UNKNOWN_PAYLOAD_BYTES,
     RateAwareMessageBatcher,
@@ -2807,8 +2808,12 @@ class TestBacklogShedding:
         return fed, delivered, t, last_delivered_end
 
     def make(self, **kwargs) -> RateAwareMessageBatcher:
+        # max_backlog_s=0 puts the batch-length floor in charge, so the
+        # bounded-backlog properties are exercised at the floor; the seconds
+        # term has its own tests below.
         return RateAwareMessageBatcher(
             batch_length_s=self.BATCH_LEN,
+            max_backlog_s=0.0,
             max_backlog_batches=self.MAX_BACKLOG_BATCHES,
             max_backlog_bytes=self.MAX_BACKLOG_BYTES,
             **kwargs,
@@ -2873,7 +2878,40 @@ class TestBacklogShedding:
         newest = start + 120.0
         lag_s = newest - batcher._active_window.start.to_ns() / 1e9
         assert batcher.total_dropped_messages > 0
-        assert lag_s <= (DEFAULT_MAX_BACKLOG_BATCHES + 1) * self.BATCH_LEN
+        assert lag_s <= DEFAULT_MAX_BACKLOG_S + self.BATCH_LEN
+
+    def test_delivery_hiccup_within_seconds_bound_replays_in_full(self):
+        """The seconds term is the burst tolerance: a delivery gap that hands
+        over less than it in one poll (consumer rebalance, broker blip) is
+        replayed completely instead of leaving a hole, and delivery carries
+        on once live traffic resumes."""
+        batcher, start = make_converged_batcher(rate_hz=self.RATE)
+        burst = msgs_at(self.RATE, start=start, duration=DEFAULT_MAX_BACKLOG_S - 2)
+        fed = len(burst)
+        delivered = 0
+        out = batcher.batch(burst)
+        if out is not None:
+            delivered += len(out.messages)
+        t = start + DEFAULT_MAX_BACKLOG_S - 2
+        for _ in range(30):
+            chunk = msgs_at(self.RATE, start=t, duration=self.BATCH_LEN)
+            fed += len(chunk)
+            t += self.BATCH_LEN
+            out = batcher.batch(chunk)
+            if out is not None:
+                delivered += len(out.messages)
+        assert batcher.total_dropped_messages == 0
+        assert delivered > 0.8 * fed, "replay wedged instead of catching up"
+
+    def test_batch_floor_governs_at_escalated_batch_lengths(self):
+        """At an escalated window the in-transit traffic alone can exceed the
+        seconds term, so the floor of two batch lengths takes over: a backlog
+        the seconds bound alone would shed is retained."""
+        batcher, start = make_converged_batcher(rate_hz=self.RATE, batch_length_s=8.0)
+        batcher.batch(
+            msgs_at(self.RATE, start=start, duration=DEFAULT_MAX_BACKLOG_S + 2.0)
+        )
+        assert batcher.total_dropped_messages == 0
 
     def test_stream_is_not_shed_for_a_peer_being_stamped_ahead(self):
         """The data-time horizon is per stream: a peer whose timestamps run
