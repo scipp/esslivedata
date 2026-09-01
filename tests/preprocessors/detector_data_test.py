@@ -194,7 +194,9 @@ class TestDownsampledDetector:
     def make_preprocessor(self, *, downsample: bool):
         instrument = Instrument(name='test', detector_names=['det'])
         if downsample:
-            instrument.configure_detector_downsampling('det', resolution=4)
+            instrument.configure_detector_downsampling(
+                'det', resolution=4, max_resolution=256
+            )
         else:
             instrument.configure_detector(
                 'det', detector_number=sc.arange('detector_number', 256, unit=None)
@@ -233,7 +235,9 @@ class TestDownsampledDetector:
         # next get() until they are released. The service releases via the
         # outermost accumulator, so every wrapper must delegate.
         instrument = Instrument(name='test', detector_names=['det'])
-        instrument.configure_detector_downsampling('det', resolution=4)
+        instrument.configure_detector_downsampling(
+            'det', resolution=4, max_resolution=256
+        )
         factory = DetectorPreprocessorFactory(
             instrument=instrument, group_by_pixel=group_by_pixel
         )

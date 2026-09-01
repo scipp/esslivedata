@@ -6,9 +6,11 @@ from __future__ import annotations
 
 import math
 import time
+from collections.abc import Callable
 from dataclasses import replace
 
 import numpy as np
+import scipp as sc
 import structlog
 
 from ..config.detector_downsampling import DetectorDownsampling
@@ -17,13 +19,78 @@ from ..core.preprocessor import Accumulator
 from ..core.timestamp import Timestamp
 from .to_nxevent_data import DetectorEvents
 
+SOURCE_RESOLUTION = 'source_resolution'
+"""Coord name carrying the inferred source resolution downstream.
+
+Stamped on every batch :class:`DownsamplePixelIds` emits. Counts remapped from
+different source resolutions are not commensurable, so the cumulative
+accumulator lists this alongside the detector transform in its ``reset_coords``
+and discards its buffer when it changes.
+"""
+
+DEFAULT_WINDOW_S = 60.0
+"""Window over which event ids count as evidence of the source resolution."""
+
+DEFAULT_WINDOW_BUCKETS = 6
+"""Granularity with which the window expires evidence."""
+
+DEFAULT_MIN_EVENTS_TO_SHRINK = 1000
+"""Events required in the window before concluding the panel got smaller."""
+
 
 def _round_up_to_power_of_two(side: int) -> int:
     """Smallest power of two that is at least ``side``."""
     return 1 << (max(side, 1) - 1).bit_length()
 
 
-class DownsamplePixelIds[T](Accumulator[DetectorEvents, T]):
+class _EvidenceWindow:
+    """Largest event id, and how many events, seen in the recent past.
+
+    A ring of buckets, coarse because the window boundary does not need to be
+    sharp: what matters is that evidence expires on the order of the window,
+    not exactly at it. Buckets expire on write, so a detector that stops
+    sending stops the clock rather than losing its resolution to a drought --
+    absence of events is not evidence about the panel.
+    """
+
+    def __init__(self, *, window: float, buckets: int) -> None:
+        self._interval = window / buckets
+        self._max: list[int | None] = [None] * buckets
+        self._count = [0] * buckets
+        self._index: int | None = None
+
+    def add(self, now: float, max_id: int, count: int) -> None:
+        index = int(now // self._interval)
+        self._expire(index)
+        slot = index % len(self._max)
+        current = self._max[slot]
+        self._max[slot] = max_id if current is None else max(current, max_id)
+        self._count[slot] += count
+
+    def _expire(self, index: int) -> None:
+        if self._index is None:
+            self._index = index
+            return
+        stale = min(index - self._index, len(self._max))
+        for offset in range(1, stale + 1):
+            slot = (self._index + offset) % len(self._max)
+            self._max[slot] = None
+            self._count[slot] = 0
+        self._index = max(index, self._index)
+
+    @property
+    def max_id(self) -> int | None:
+        """Largest id in the window, or None if it holds no events."""
+        seen = [value for value in self._max if value is not None]
+        return max(seen) if seen else None
+
+    @property
+    def count(self) -> int:
+        """Events in the window."""
+        return sum(self._count)
+
+
+class DownsamplePixelIds(Accumulator[DetectorEvents, sc.DataArray]):
     """Remap event ids onto a coarser square grid, then delegate.
 
     Wraps the accumulator that would otherwise receive the raw events and
@@ -40,8 +107,10 @@ class DownsamplePixelIds[T](Accumulator[DetectorEvents, T]):
     Source resolution
     -----------------
     ``source_resolution`` is the side length of the grid the detector is
-    streaming. It is inferred from the largest event id observed, rounded up to
-    a power of two:
+    streaming. The detector is reconfigured to different readout resolutions
+    during operation and does not announce it on any stream we consume, so it
+    is inferred from the largest event id seen recently, rounded up to a power
+    of two:
 
         source = 2 ** ceil(log2(sqrt(max_id + 1)))
 
@@ -51,37 +120,28 @@ class DownsamplePixelIds[T](Accumulator[DetectorEvents, T]):
     rounding to a multiple of ``resolution`` instead would have needed one past
     row 3136.
 
-    The estimate is a lower bound, so the only possible error is an
-    underestimate, and an underestimate is self-announcing: ids at or beyond
-    ``source**2`` cannot occur if it is correct. Those ids therefore raise the
-    estimate rather than merely being counted, so a run that starts with a
-    narrow beam converges on the true panel as soon as anything lands outside
-    it.
+    Evidence expires, because the estimate has to follow the panel downward as
+    well as upward. A reconfiguration to a smaller readout produces no id that
+    contradicts the old estimate -- it simply stops producing the large ones --
+    so an estimate taken over all ids ever seen could only ever grow, and would
+    stay pinned at the old resolution for the rest of the run. Taking it over a
+    window instead handles both directions with one rule.
 
-    Re-estimating is not free, and what it costs is *not* reset automatically.
-    This accumulator discards the events it is still holding, which is at most
-    one update's worth since ``get()`` empties it every cycle. Everything
-    already published is another matter: the workflow's cumulative accumulator
-    keeps counts across cycles, and those accumulated before the correction
-    were mapped with the old stride. The target grid does not change, so
-    nothing breaks or reshapes -- but the cumulative image and any ROI spectrum
-    derived from it stay wrong, in proportion to how long the estimate was
-    wrong, until someone restarts or resets the workflow. Nothing signals this
-    downstream; ``detector_resolution_grown`` is logged at WARNING so an
-    operator can decide. Wiring it into the accumulator's reset-on-move
-    (``reset_coord`` / ``DetectorGeometry``) would need the resolution to
-    travel with the data, since that signal is a static pipeline value today.
+    The two directions are not equally well evidenced, though, and the estimate
+    is deliberately asymmetric: a large id *proves* the panel is at least that
+    big, while the absence of large ids is only suggestive -- a beam spot in
+    the low rows looks the same as a smaller panel. So growth is immediate,
+    while shrinking additionally requires the window to hold
+    ``min_events_to_shrink`` events, which keeps a handful of stray counts
+    during a quiet period from dropping the estimate. Neither guard is exact,
+    and both are cheap to get wrong: a resolution change resets the cumulative
+    accumulators (see ``SOURCE_RESOLUTION``), so an estimate that flips costs a
+    restarted image rather than a corrupted one.
 
-    The geometry file is not the authority on the source resolution: it is
-    static and describes how the detector was configured when the file was
-    written, not what is being streamed now, and a detector reading out a
-    subset of its panel would be described wrongly by it. It does, however,
-    bound the estimate. Nothing a reconfiguration can do makes the panel
-    physically larger than the file describes, so ids implying more than
-    ``declared_resolution`` are corruption and are dropped, which is also what
-    keeps a single wild id from ratcheting the estimate up for good. Where no
-    file was read there is no such bound and a wild id can ratchet; that path
-    already warns that it is running blind.
+    The estimate is bounded by ``max_resolution``, which the instrument
+    configuration states because it is a property of the hardware. Ids implying
+    more than that are corruption rather than evidence: they are counted and
+    reported, and they map outside the target grid so grouping drops them.
 
     Ids are laid out as ``x * source + y`` with ``x`` the slow axis, which
     :func:`~ess.livedata.config.detector_downsampling.resolve_downsampling`
@@ -97,18 +157,34 @@ class DownsamplePixelIds[T](Accumulator[DetectorEvents, T]):
         Accumulator receiving the remapped events.
     downsampling:
         Resolved settings from ``Instrument.get_downsampling``.
+    window:
+        Seconds an event id counts as evidence of the source resolution.
+    buckets:
+        Granularity with which ``window`` expires evidence.
+    min_events_to_shrink:
+        Events required in the window before the estimate may decrease.
+    clock:
+        Monotonic seconds, for expiring evidence and throttling reports.
     """
 
     def __init__(
         self,
-        inner: Accumulator[DetectorEvents, T],
+        inner: Accumulator[DetectorEvents, sc.DataArray],
         downsampling: DetectorDownsampling,
+        *,
+        window: float = DEFAULT_WINDOW_S,
+        buckets: int = DEFAULT_WINDOW_BUCKETS,
+        min_events_to_shrink: int = DEFAULT_MIN_EVENTS_TO_SHRINK,
+        clock: Callable[[], float] = time.monotonic,
     ) -> None:
         self._inner = inner
         self._resolution = downsampling.resolution
+        self._max_resolution = downsampling.max_resolution
         self._first_id = downsampling.first_id
-        self._declared_resolution = downsampling.declared_resolution
         self._source_resolution: int | None = None
+        self._window = _EvidenceWindow(window=window, buckets=buckets)
+        self._min_events_to_shrink = min_events_to_shrink
+        self._clock = clock
         self._out_of_range = 0
         self._below_first_id = 0
         self._out_of_range_throttle = LogThrottle()
@@ -128,10 +204,7 @@ class DownsamplePixelIds[T](Accumulator[DetectorEvents, T]):
         values that reach 2**24 for a 4096x4096 panel.
         """
         side = _round_up_to_power_of_two(math.isqrt(max_id) + 1)
-        side = max(side, self._resolution)
-        if self._declared_resolution is not None:
-            side = min(side, self._declared_resolution)
-        return side
+        return min(max(side, self._resolution), self._max_resolution)
 
     def add(self, timestamp: Timestamp, data: DetectorEvents) -> bool:
         raw = np.asarray(data.pixel_id)
@@ -143,24 +216,13 @@ class DownsamplePixelIds[T](Accumulator[DetectorEvents, T]):
             self._report_below_first_id(pixel_id, lowest)
 
         max_id = int(pixel_id.max())
-        if self._source_resolution is None:
-            self._source_resolution = self._estimate(max_id)
-            self._logger.info(
-                'detector_resolution_inferred',
-                max_event_id=max_id,
-                source_resolution=self._source_resolution,
-                declared_resolution=self._declared_resolution,
-                target_resolution=self._resolution,
-                first_id=self._first_id,
-                block=self._source_resolution // self._resolution,
-            )
-        elif max_id >= self._source_resolution**2:
-            self._grow(max_id)
+        self._window.add(self._clock(), max_id, count=raw.size)
+        self._update_estimate()
 
         source = self._source_resolution
         if max_id >= source * source:
-            # Only reachable once the estimate is at the bound the geometry
-            # file sets, so these ids are corruption rather than evidence.
+            # Only reachable once the estimate is at max_resolution, so these
+            # ids are corruption rather than evidence.
             self._report_out_of_range(pixel_id, source)
 
         block = source // self._resolution
@@ -173,33 +235,51 @@ class DownsamplePixelIds[T](Accumulator[DetectorEvents, T]):
 
         return self._inner.add(timestamp, replace(data, pixel_id=remapped))
 
-    def _grow(self, max_id: int) -> None:
-        """Raise the estimate to cover ``max_id``, if the bound allows it."""
-        grown = self._estimate(max_id)
-        if grown <= self._source_resolution:
+    def _update_estimate(self) -> None:
+        """Adopt the estimate the window supports, if it differs and is allowed."""
+        if (window_max := self._window.max_id) is None:
+            return
+        estimate = self._estimate(window_max)
+        if estimate == self._source_resolution:
+            return
+        if self._source_resolution is None:
+            self._source_resolution = estimate
+            self._logger.info(
+                'detector_resolution_inferred',
+                source_resolution=estimate,
+                max_resolution=self._max_resolution,
+                target_resolution=self._resolution,
+                first_id=self._first_id,
+                block=estimate // self._resolution,
+            )
+            return
+        if estimate < self._source_resolution and (
+            self._window.count < self._min_events_to_shrink
+        ):
             return
         self._logger.warning(
-            'detector_resolution_grown',
-            max_event_id=max_id,
+            'detector_resolution_changed',
             previous_resolution=self._source_resolution,
-            source_resolution=grown,
-            declared_resolution=self._declared_resolution,
-            block=grown // self._resolution,
+            source_resolution=estimate,
+            window_max_event_id=self._window.max_id,
+            window_events=self._window.count,
+            block=estimate // self._resolution,
         )
-        self._source_resolution = grown
+        self._source_resolution = estimate
         # Events already accumulated this cycle were mapped with the old
-        # stride. Discarding them costs at most one update.
+        # stride. Discarding them costs at most one update; what was published
+        # in earlier cycles is discarded downstream via SOURCE_RESOLUTION.
         self._inner.clear()
 
     def _report_out_of_range(self, pixel_id: np.ndarray, source: int) -> None:
         n = int(np.count_nonzero(pixel_id >= source * source))
         self._out_of_range += n
-        if (suppressed := self._out_of_range_throttle.take(time.monotonic())) is None:
+        if (suppressed := self._out_of_range_throttle.take(self._clock())) is None:
             return
         self._logger.warning(
-            'event_id_above_source_resolution',
+            'event_id_above_max_resolution',
             source_resolution=source,
-            declared_resolution=self._declared_resolution,
+            max_resolution=self._max_resolution,
             dropped=n,
             dropped_total=self._out_of_range,
             suppressed_reports=suppressed,
@@ -211,7 +291,7 @@ class DownsamplePixelIds[T](Accumulator[DetectorEvents, T]):
         # and grouping drops them.
         n = int(np.count_nonzero(pixel_id < 0))
         self._below_first_id += n
-        if (suppressed := self._below_first_id_throttle.take(time.monotonic())) is None:
+        if (suppressed := self._below_first_id_throttle.take(self._clock())) is None:
             return
         self._logger.warning(
             'event_id_below_first_id',
@@ -222,8 +302,11 @@ class DownsamplePixelIds[T](Accumulator[DetectorEvents, T]):
             suppressed_reports=suppressed,
         )
 
-    def get(self) -> T:
-        return self._inner.get()
+    def get(self) -> sc.DataArray:
+        result = self._inner.get()
+        if self._source_resolution is not None:
+            result.coords[SOURCE_RESOLUTION] = sc.index(self._source_resolution)
+        return result
 
     def clear(self) -> None:
         self._inner.clear()

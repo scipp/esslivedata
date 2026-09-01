@@ -19,6 +19,7 @@ from scippnexus import NXdetector
 # (used by workflow_factory.attach_factory to inspect parameter types)
 from ...config.workflow_spec import Temporality
 from ...preprocessors.accumulators import make_no_copy_accumulator_pair
+from ...preprocessors.downsample_pixel_ids import SOURCE_RESOLUTION
 from ..detector_view_specs import (
     DetectorViewOutputs,
     DetectorViewOutputsBase,
@@ -259,8 +260,13 @@ class DetectorViewFactory:
         # wavelength views shift the per-pixel wavelength calibration). The coord is
         # stamped only for file-based sources, so this is a no-op for file-less
         # logical TOA views, which stay valid across a move.
+        #
+        # Reset it likewise when a downsampled detector's source resolution changes:
+        # the target grid is unchanged, but counts remapped with a different stride
+        # land in different pixels. Stamped only by DownsamplePixelIds, so this is a
+        # no-op for detectors ingested at full resolution.
         cumulative, window = make_no_copy_accumulator_pair(
-            reset_coord=DETECTOR_TRANSFORM
+            reset_coords=(DETECTOR_TRANSFORM, SOURCE_RESOLUTION)
         )
         return StreamProcessorWorkflow(
             workflow,

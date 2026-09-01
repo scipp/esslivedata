@@ -971,14 +971,18 @@ class TestDetectorDownsampling:
     ) -> None:
         instrument.configure_detector('det', detector_number=self.square_grid(4096))
         instrument.configure_detector('other', detector_number=self.square_grid(4096))
-        instrument.configure_detector_downsampling('det', resolution=512)
+        instrument.configure_detector_downsampling(
+            'det', resolution=512, max_resolution=4096
+        )
 
         assert instrument.get_downsampling('det').resolution == 512
         assert instrument.get_downsampling('other') is None
 
     def test_detector_number_is_the_target_grid(self, instrument: Instrument) -> None:
         instrument.configure_detector('det', detector_number=self.square_grid(4096))
-        instrument.configure_detector_downsampling('det', resolution=512)
+        instrument.configure_detector_downsampling(
+            'det', resolution=512, max_resolution=4096
+        )
 
         detector_number = instrument.get_detector_number('det')
         assert detector_number.sizes == {'dim_0': 512, 'dim_1': 512}
@@ -995,28 +999,33 @@ class TestDetectorDownsampling:
         instrument.configure_detector(
             'det', detector_number=self.square_grid(4096, first_id=1)
         )
-        instrument.configure_detector_downsampling('det', resolution=512)
+        instrument.configure_detector_downsampling(
+            'det', resolution=512, max_resolution=4096
+        )
 
         assert instrument.get_downsampling('det').first_id == 1
 
-    def test_records_the_declared_resolution_for_cross_checking(
+    def test_records_the_configured_maximum_resolution(
         self, instrument: Instrument
     ) -> None:
         instrument.configure_detector('det', detector_number=self.square_grid(4096))
-        instrument.configure_detector_downsampling('det', resolution=512)
+        instrument.configure_detector_downsampling(
+            'det', resolution=512, max_resolution=4096
+        )
 
-        assert instrument.get_downsampling('det').declared_resolution == 4096
+        assert instrument.get_downsampling('det').max_resolution == 4096
 
     def test_assumes_a_zero_base_and_warns_without_a_geometry_file(
         self, instrument: Instrument
     ) -> None:
-        instrument.configure_detector_downsampling('det', resolution=512)
+        instrument.configure_detector_downsampling(
+            'det', resolution=512, max_resolution=4096
+        )
 
         with capture_logs() as logs:
             downsampling = instrument.get_downsampling('det')
 
         assert downsampling.first_id == 0
-        assert downsampling.declared_resolution is None
         assert any(e['event'] == 'downsampling_without_geometry' for e in logs)
 
     def test_rejects_a_non_square_detector(self, instrument: Instrument) -> None:
@@ -1026,7 +1035,9 @@ class TestDetectorDownsampling:
                 dim='detector_number', sizes={'dim_0': 4096, 'dim_1': 2048}
             ),
         )
-        instrument.configure_detector_downsampling('det', resolution=512)
+        instrument.configure_detector_downsampling(
+            'det', resolution=512, max_resolution=4096
+        )
 
         with pytest.raises(ValueError, match='square'):
             instrument.get_downsampling('det')
@@ -1035,18 +1046,24 @@ class TestDetectorDownsampling:
         self, instrument: Instrument
     ) -> None:
         instrument.configure_detector('det', detector_number=self.square_grid(1000))
-        instrument.configure_detector_downsampling('det', resolution=512)
+        instrument.configure_detector_downsampling(
+            'det', resolution=512, max_resolution=4096
+        )
 
         with pytest.raises(ValueError, match='power of two'):
             instrument.get_downsampling('det')
 
-    def test_rejects_a_side_below_the_target_resolution(
+    def test_rejects_a_declared_side_above_the_configured_maximum(
         self, instrument: Instrument
     ) -> None:
-        instrument.configure_detector('det', detector_number=self.square_grid(256))
-        instrument.configure_detector_downsampling('det', resolution=512)
+        # max_resolution is meant to be what the hardware can read out, so a
+        # file declaring more than that means one of the two is wrong.
+        instrument.configure_detector('det', detector_number=self.square_grid(4096))
+        instrument.configure_detector_downsampling(
+            'det', resolution=512, max_resolution=2048
+        )
 
-        with pytest.raises(ValueError, match='at least the downsampling resolution'):
+        with pytest.raises(ValueError, match='max_resolution'):
             instrument.get_downsampling('det')
 
     def test_rejects_ids_that_are_not_row_major_contiguous(
@@ -1057,7 +1074,9 @@ class TestDetectorDownsampling:
         instrument.configure_detector(
             'det', detector_number=self.square_grid(1024).transpose().copy()
         )
-        instrument.configure_detector_downsampling('det', resolution=512)
+        instrument.configure_detector_downsampling(
+            'det', resolution=512, max_resolution=4096
+        )
 
         with pytest.raises(ValueError, match='row-major'):
             instrument.get_downsampling('det')
@@ -1066,18 +1085,32 @@ class TestDetectorDownsampling:
         detector_number = self.square_grid(1024).copy()
         detector_number.values[3, 7] += 1_000_000
         instrument.configure_detector('det', detector_number=detector_number)
-        instrument.configure_detector_downsampling('det', resolution=512)
+        instrument.configure_detector_downsampling(
+            'det', resolution=512, max_resolution=4096
+        )
 
         with pytest.raises(ValueError, match='row-major'):
             instrument.get_downsampling('det')
 
     def test_rejects_unknown_detector(self, instrument: Instrument) -> None:
         with pytest.raises(ValueError, match='not in declared detector_names'):
-            instrument.configure_detector_downsampling('nope', resolution=512)
+            instrument.configure_detector_downsampling(
+                'nope', resolution=512, max_resolution=4096
+            )
 
     @pytest.mark.parametrize('resolution', [0, -1, 300, 1000])
     def test_rejects_a_resolution_that_is_not_a_power_of_two(
         self, instrument: Instrument, resolution: int
     ) -> None:
         with pytest.raises(ValueError, match='power of two'):
-            instrument.configure_detector_downsampling('det', resolution=resolution)
+            instrument.configure_detector_downsampling(
+                'det', resolution=resolution, max_resolution=4096
+            )
+
+    def test_rejects_a_maximum_below_the_target_resolution(
+        self, instrument: Instrument
+    ) -> None:
+        with pytest.raises(ValueError, match='below the target resolution'):
+            instrument.configure_detector_downsampling(
+                'det', resolution=512, max_resolution=256
+            )

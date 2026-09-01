@@ -45,6 +45,10 @@ monitor_names = ['monitor_1']
 
 #: Side length the Timepix3 panel is ingested at; see name_image_dims.
 IMAGE_RESOLUTION = 512
+#: Largest grid the Timepix3 panel can read out. The readout is
+#: reconfigured during operation, so this bounds the inferred streamed
+#: resolution rather than stating it.
+PANEL_RESOLUTION = 4096
 
 instrument = Instrument(
     name='tbl',
@@ -72,19 +76,18 @@ register_monitor_workflow_specs(
 )
 
 instrument.configure_detector_downsampling(
-    'timepix3_detector', resolution=IMAGE_RESOLUTION
+    'timepix3_detector', resolution=IMAGE_RESOLUTION, max_resolution=PANEL_RESOLUTION
 )
 
 instrument.add_logical_view(
     name='tbl_detector_timepix3',
     title='Timepix3 Detector',
     description=(
-        f'{IMAGE_RESOLUTION}x{IMAGE_RESOLUTION} image, downsampled from full'
-        ' resolution as the events are ingested. The full resolution is read'
-        ' from the event ids, so it may be revised upward shortly after a run'
-        ' starts if the first events cover only part of the panel. Cumulative'
-        ' results from before such a revision are wrong and are not discarded'
-        ' automatically: reset or restart the workflow to clear them.'
+        f'{IMAGE_RESOLUTION}x{IMAGE_RESOLUTION} image, downsampled from the'
+        ' streamed resolution as the events are ingested. The streamed'
+        ' resolution is read from the event ids; a readout reconfiguration'
+        ' restarts the cumulative image, since counts taken before and after'
+        ' it are not commensurable.'
     ),
     source_names=['timepix3_detector'],
     transform=name_image_dims,

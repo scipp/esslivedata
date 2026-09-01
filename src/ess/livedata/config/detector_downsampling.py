@@ -30,38 +30,41 @@ class DetectorDownsampling:
 
     #: Side length of the target grid the preprocessor maps event ids onto.
     resolution: int
+    #: Largest grid the detector can physically read out, from the instrument
+    #: configuration. A hardware fact, unlike the resolution it is currently
+    #: streaming, which is operator-reconfigurable and inferred from the ids.
+    max_resolution: int
     #: Lowest event id the detector emits, taken from the geometry file.
     #: Detectors differ: TBL's Timepix3 counts from 0, its He3 banks from 1.
     first_id: int
-    #: Side length the geometry file declares, or None if no file was read.
-    #: An upper bound rather than the streamed resolution, which is inferred
-    #: from the event ids since the file is static and may be stale.
-    declared_resolution: int | None
     #: The target grid itself, as a 2D ``detector_number``.
     grid: sc.Variable
 
 
 def resolve_downsampling(
-    name: str, resolution: int, declared: sc.Variable | None
+    name: str, resolution: int, max_resolution: int, declared: sc.Variable | None
 ) -> DetectorDownsampling:
     """Resolve ingest settings for one detector against its declared grid.
 
     The *streamed* resolution is deliberately not taken from ``declared``: the
-    geometry file is static and need not describe what the detector is
-    currently streaming, so the preprocessor infers it from the observed event
-    ids instead (see
-    :class:`~ess.livedata.preprocessors.downsample_pixel_ids.DownsamplePixelIds`).
+    readout resolution is operator-reconfigurable and changes during a run, so
+    the geometry file records one past configuration rather than the current
+    one. The preprocessor infers it from the observed event ids instead (see
+    :class:`~ess.livedata.preprocessors.downsample_pixel_ids.DownsamplePixelIds`),
+    bounded by ``max_resolution``, which is a property of the hardware and so
+    belongs in the instrument configuration rather than in a file that
+    describes a configuration.
 
-    ``declared`` is consulted for what a reconfiguration cannot change:
+    ``declared`` is consulted only for what a reconfiguration cannot change:
 
     - that the ids are a contiguous row-major enumeration of a square grid,
       which is the layout the remap assumes and the one property whose failure
-      would scramble the image rather than announce itself;
+      would scramble the image rather than announce itself. The check can only
+      be made at the resolution the file happens to record, but a readout that
+      enumerates row-major at one resolution does so at all of them;
     - which id the detector counts from, since detectors disagree and a wrong
       base does not merely shift the image by a pixel, it makes the inferred
-      source resolution wrong;
-    - the largest grid the detector can be reading out, which bounds the
-      preprocessor's estimate.
+      source resolution wrong.
 
     Parameters
     ----------
@@ -69,6 +72,8 @@ def resolve_downsampling(
         Detector name, for diagnostics.
     resolution:
         Side length of the target grid.
+    max_resolution:
+        Largest grid the detector can read out.
     declared:
         The detector's ``detector_number`` as read from the geometry file, or
         None where no file was read.
@@ -84,30 +89,35 @@ def resolve_downsampling(
     if declared is None:
         # Dev configurations and instruments without a geometry file. The id
         # base cannot be checked, so the common convention is assumed; a
-        # detector counting from 1 will show up as dropped ids. Nor is there a
-        # bound on the inferred resolution.
+        # detector counting from 1 will show up as dropped ids.
         logger.warning(
             'downsampling_without_geometry',
             detector=name,
             resolution=resolution,
             assumed_first_id=0,
         )
-        return DetectorDownsampling(resolution, 0, None, grid)
+        return DetectorDownsampling(resolution, max_resolution, 0, grid)
     if declared.ndim != 2 or declared.shape[0] != declared.shape[1]:
         raise ValueError(
             f"Detector {name} is configured for downsampling, which assumes a "
             f"square grid, but its detector_number is {declared.sizes}."
         )
     side = declared.shape[0]
-    if not is_power_of_two(side) or side < resolution:
+    if not is_power_of_two(side):
         raise ValueError(
-            f"Detector {name} has side {side}, which must be a power of two and "
-            f"at least the downsampling resolution {resolution}. Panels come in "
-            "powers of two; a detector that does not is not a candidate for "
-            "downsampling by id remapping."
+            f"Detector {name} has side {side}, which must be a power of two. "
+            "Panels come in powers of two; a detector that does not is not a "
+            "candidate for downsampling by id remapping."
+        )
+    if side > max_resolution:
+        raise ValueError(
+            f"Detector {name} is declared with side {side} in the geometry file "
+            f"but configured with max_resolution={max_resolution}. The "
+            "configured maximum is meant to be what the hardware can read out, "
+            "so one of the two is wrong."
         )
     first_id = _check_contiguous_row_major(name, declared)
-    return DetectorDownsampling(resolution, first_id, side, grid)
+    return DetectorDownsampling(resolution, max_resolution, first_id, grid)
 
 
 def _check_contiguous_row_major(name: str, declared: sc.Variable) -> int:

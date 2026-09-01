@@ -144,7 +144,8 @@ class Instrument:
     source_metadata: dict[str, SourceMetadata] = field(default_factory=dict)
     dim_titles: dict[str, str] = field(default_factory=dict)
     _detector_numbers: dict[str, sc.Variable] = field(default_factory=dict)
-    _downsampled_detectors: dict[str, int] = field(default_factory=dict)
+    #: name -> (target resolution, physical maximum resolution)
+    _downsampled_detectors: dict[str, tuple[int, int]] = field(default_factory=dict)
     _downsampling_cache: dict[str, DetectorDownsampling] = field(default_factory=dict)
     _nexus_file: str | None = None
     _detector_group_names: dict[str, str] = field(default_factory=dict)
@@ -375,7 +376,9 @@ class Instrument:
         """
         return self._detector_group_names.get(name, name)
 
-    def configure_detector_downsampling(self, name: str, *, resolution: int) -> None:
+    def configure_detector_downsampling(
+        self, name: str, *, resolution: int, max_resolution: int
+    ) -> None:
         """
         Ingest a square detector at reduced resolution.
 
@@ -385,24 +388,19 @@ class Instrument:
         4096x4096 panel downsampled to 512x512 this replaces a 16.7-million-bin
         group-and-merge per update with a 262-thousand-bin grouping.
 
-        The *source* resolution is not taken from the geometry file, which is
-        static and need not describe what the detector is actually streaming.
-        It is inferred from the observed event ids instead, within the bound
-        the file sets; see
+        The resolution the detector is *streaming* is operator-reconfigurable
+        and is not announced on any stream we consume, so the preprocessor
+        infers it from the observed event ids and follows it when it changes;
+        see
         :class:`~ess.livedata.preprocessors.downsample_pixel_ids.DownsamplePixelIds`.
-        What the file *is* trusted for, and why, is
+        Counts taken at different source resolutions are not commensurable, so
+        a change resets the cumulative accumulators, exactly as a detector move
+        does. What the geometry file is trusted for, and why, is
         :func:`~ess.livedata.config.detector_downsampling.resolve_downsampling`.
 
         Only meaningful for logical views, which address pixels by index. A
         geometric view resolves pixel positions from the file and would need
         those positions merged to match, which this does not do.
-
-        Because the streamed resolution is only known once events arrive, it
-        can be revised upward mid-run. There is no automatic reset when it is:
-        results accumulated under the old estimate stay in the cumulative image
-        and are wrong until the workflow is restarted or reset by hand. Say so
-        in the view's ``description`` -- the operator reading the plot is the
-        one who has to act on it.
 
         Parameters
         ----------
@@ -411,15 +409,30 @@ class Instrument:
         resolution:
             Side length of the target grid. Must be a power of two, as must
             the source resolution, which cannot be smaller.
+        max_resolution:
+            Largest grid the detector can physically read out. Bounds the
+            inferred source resolution, so that a corrupt id cannot raise it.
+            A hardware fact, which is why it is stated here rather than read
+            from the geometry file: the file records one past configuration of
+            a setting that changes during operation.
         """
         if name not in self.detector_names:
             raise ValueError(
                 f"Detector {name} not in declared detector_names. "
                 f"Available detectors: {self.detector_names}"
             )
-        if not is_power_of_two(resolution):
-            raise ValueError(f"resolution must be a power of two, got {resolution}")
-        self._downsampled_detectors[name] = resolution
+        for label, value in (
+            ('resolution', resolution),
+            ('max_resolution', max_resolution),
+        ):
+            if not is_power_of_two(value):
+                raise ValueError(f"{label} must be a power of two, got {value}")
+        if max_resolution < resolution:
+            raise ValueError(
+                f"max_resolution {max_resolution} is below the target resolution "
+                f"{resolution} for detector {name}."
+            )
+        self._downsampled_detectors[name] = (resolution, max_resolution)
 
     def get_downsampling(self, name: str) -> DetectorDownsampling | None:
         """
@@ -431,12 +444,13 @@ class Instrument:
         configured detector once the file has been read, so that an earlier
         caller cannot latch the file-less fallback.
         """
-        resolution = self._downsampled_detectors.get(name)
-        if resolution is None:
+        configured = self._downsampled_detectors.get(name)
+        if configured is None:
             return None
         if (cached := self._downsampling_cache.get(name)) is None:
+            resolution, max_resolution = configured
             cached = resolve_downsampling(
-                name, resolution, self._detector_numbers.get(name)
+                name, resolution, max_resolution, self._detector_numbers.get(name)
             )
             self._downsampling_cache[name] = cached
         return cached
