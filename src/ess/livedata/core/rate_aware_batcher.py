@@ -791,7 +791,7 @@ class RateAwareMessageBatcher(MessageBatcher):
                 return False
         return has_gating
 
-    def _shed_backlog(self) -> bool:
+    def _shed_backlog(self) -> None:
         """Drop the stalest overflow until it fits both backlog bounds.
 
         Each stream retains at most the data-time bound -- the larger of
@@ -832,14 +832,9 @@ class RateAwareMessageBatcher(MessageBatcher):
         was just discarded), so the ordinary gap check fires on the next
         call and jumps in one step.  Bounded lag arrives one call late;
         livelock never.
-
-        Returns
-        -------
-        :
-            True if anything was dropped.
         """
         if not self._overflow:
-            return False
+            return
         sized = sorted(
             ((_payload_nbytes(msg.value), msg) for msg in self._overflow),
             key=lambda item: item[1].timestamp,
@@ -866,7 +861,7 @@ class RateAwareMessageBatcher(MessageBatcher):
             shed_by_bytes += 1
         survivors = kept[shed_by_bytes:]
         if len(survivors) == len(sized):
-            return False
+            return
         dropped = len(sized) - len(survivors)
         dropped_bytes = sum(nbytes for nbytes, _ in sized) - retained
         self._overflow = [msg for _, msg in survivors]
@@ -886,7 +881,6 @@ class RateAwareMessageBatcher(MessageBatcher):
                 total_dropped_bytes=self._total_dropped_bytes,
                 batch_length_s=self.batch_length_s,
             )
-        return True
 
     def _should_recover_from_gap(self, window: _ActiveWindow) -> bool:
         """True if gated overflow exists but no gated stream has contributed.

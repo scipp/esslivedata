@@ -2944,10 +2944,12 @@ class TestBacklogShedding:
         assert 0 <= lost <= fed // 2, "peer offset cost the lagging stream extra data"
 
     def test_byte_shedding_one_stream_does_not_disturb_a_healthy_peer(self):
-        """Any shed forces the window jump a detected gap would, overriding
-        the a-gated-stream-contributed veto -- including a byte-bound trim of
-        one stream while a peer gates normally in the current window.  The
-        forced jumps must not cost the healthy peer data or stall delivery."""
+        """A byte-bound trim of one oversized stream while a peer gates
+        normally in the current window must not advance the window past the
+        peer's live traffic: shedding leaves the jump to gap detection, whose
+        veto (no jump while a gated stream still has messages in the window)
+        protects the peer.  Forcing the jump on every shed livelocked exactly
+        this topology -- see ``_shed_backlog``."""
         frames = StreamId(kind=StreamKind.AREA_DETECTOR, name="frames")
         payload = _numpy_payload(8_000)
         batcher, start = make_converged_batcher(
@@ -3091,7 +3093,7 @@ class TestBacklogShedding:
 
     def test_oversized_payloads_never_shed_the_entire_backlog(self):
         """Payloads that each exceed the byte bound must not empty the
-        overflow: the forced gap jump needs a surviving message to anchor
+        overflow: the catch-up gap jump needs a surviving message to anchor
         the new window on, so the newest one is kept and delivery goes on."""
         payload = _numpy_payload(8_000)
         batcher, start = make_converged_batcher(
