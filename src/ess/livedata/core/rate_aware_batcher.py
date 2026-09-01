@@ -24,6 +24,20 @@ buffered, the window is re-placed at the plausible anchor of that traffic
 (see ``_recover_from_stall``).  The backstop is self-correcting: a wrong
 re-placement is just another stall, corrected the same way, so it needs no
 per-pathology analysis of *how* the window got misplaced.
+
+Freshness policy
+----------------
+The batcher bounds its backlog and, when the service cannot keep up, stays
+live rather than complete: the stalest surplus of bulk data is shed, and the
+window jumps to the newest retained data instead of replaying a queue it can
+never clear.  Operators steer beam, samples and detector commissioning from
+this output, where a stale reading is worse than an intermittent hole.  Only
+``GATED_STREAM_KINDS`` can be shed -- control, log and context data never
+reach the overflow, so the selectivity is structural rather than stated.
+Shedding is an exception state to be fixed upstream, not a mode to run in:
+drops are counted, logged (``batcher_backlog_shedding``) and reported via
+``drain_metrics``.  The bounds and their sizing rationale are documented at
+``DEFAULT_MAX_BACKLOG_BATCHES`` and ``DEFAULT_MAX_BACKLOG_BYTES``.
 """
 
 from __future__ import annotations
@@ -63,26 +77,21 @@ MIN_DIFFS_FOR_GATE = 4
 DIFF_BUFFER_SIZE = 32
 ABSENT_BATCHES_FOR_EVICTION = 5
 
-# Bounds on the retained gated overflow.  A window advances by at most one
-# batch length per ``batch()`` call, so whenever a service iteration takes
-# longer than the batch length the caller hands over more data than the
-# window can release and the surplus stays in ``_overflow`` for the life of
-# the process -- unbounded memory, while the Kafka consumer reports zero lag
-# because the backlog is downstream of it.  This is the same bounded-buffer
-# policy the consumer queue already applies (``BackgroundMessageSource``,
+# Bounds on the retained gated overflow, enforcing the module docstring's
+# freshness policy.  A window advances by at most one batch length per
+# ``batch()`` call, so whenever a service iteration takes longer than the
+# batch length the caller hands over more data than the window can release
+# and the surplus stays in ``_overflow`` for the life of the process --
+# unbounded memory, while the Kafka consumer reports zero lag because the
+# backlog is downstream of it.  This is the same bounded-buffer policy the
+# consumer queue already applies (``BackgroundMessageSource``,
 # ``max_queue_size``): drop rather than grow, and say so.
-#
-# Only gated kinds reach ``_overflow`` (see ``GATED_STREAM_KINDS``), so
-# shedding can never discard control, log or context data.
 #
 # The primary bound is *data time*, not memory.  Retained backlog is data the
 # service has not caught up with, and the batcher can only catch up at
 # ``batch_length - iteration_time`` per call: retaining a deep backlog buys
 # late data at the price of showing everything late for as long as it takes
-# to replay, which for an iteration close to the batch length is minutes.
-# Operators steer beam, samples and detector commissioning from this output,
-# where stale readings are worse than an intermittent hole -- and shedding at
-# all is an exception state to be fixed upstream, not a mode to run in.  So
+# to replay, which for an iteration close to the batch length is minutes.  So
 # the backlog is capped at a small multiple of the batch length: the lag a
 # stall can leave behind is bounded by that multiple regardless of how deep
 # the stall was, rather than by how fast the loop happens to drain.
@@ -178,14 +187,21 @@ def _payload_nbytes(value: Any) -> int:
     """Best-effort retained size of a message payload.
 
     Payloads reaching the overflow are ``DetectorEvents``/``MonitorEvents``
-    (a dataclass of numpy arrays) or an ``ADArray`` named tuple holding the
-    frame, so summing the ``nbytes`` of the arrays they expose covers every
-    gated kind.  Arrays are views into the source flatbuffer, which is what
-    the retained message actually pins.
+    (a dataclass of numpy arrays viewing the source flatbuffer, which is
+    what the retained message actually pins) or the ``sc.DataArray`` that
+    the da00/ad00 adapters produce upstream of the batcher (monitor counts,
+    area-detector frames).  Numpy exposes ``nbytes``; scipp exposes
+    ``underlying_size()``, which measures the owned buffers a retained
+    slice pins; a dataclass is summed over its array fields.
     """
     nbytes = getattr(value, 'nbytes', None)
     if isinstance(nbytes, int):
         return nbytes
+    underlying_size = getattr(value, 'underlying_size', None)
+    if callable(underlying_size):
+        size = underlying_size()
+        if isinstance(size, int):
+            return size
     if isinstance(value, tuple):
         parts: Any = value
     else:
@@ -537,8 +553,10 @@ class RateAwareMessageBatcher(MessageBatcher):
         self._last_close_wall = clock()
         self._max_backlog_batches = max_backlog_batches
         self._max_backlog_bytes = max_backlog_bytes
-        self._dropped_messages = 0
-        self._dropped_bytes = 0
+        self._total_dropped_messages = 0
+        self._total_dropped_bytes = 0
+        self._dropped_messages_since_drain = 0
+        self._dropped_bytes_since_drain = 0
         self._max_backlog_s = 0.0
         self._last_shed_log = -math.inf
 
@@ -547,22 +565,24 @@ class RateAwareMessageBatcher(MessageBatcher):
         return self._batch_length.to_seconds()
 
     @property
-    def dropped_messages(self) -> int:
+    def total_dropped_messages(self) -> int:
         """Total gated messages dropped to keep the backlog bounded."""
-        return self._dropped_messages
+        return self._total_dropped_messages
 
     @property
-    def dropped_bytes(self) -> int:
+    def total_dropped_bytes(self) -> int:
         """Total payload bytes dropped to keep the backlog bounded."""
-        return self._dropped_bytes
+        return self._total_dropped_bytes
 
     def drain_metrics(self) -> BatcherMetrics:
         metrics = BatcherMetrics(
             max_backlog_s=self._max_backlog_s,
-            dropped_messages=self._dropped_messages,
-            dropped_bytes=self._dropped_bytes,
+            dropped_messages=self._dropped_messages_since_drain,
+            dropped_bytes=self._dropped_bytes_since_drain,
         )
         self._max_backlog_s = 0.0
+        self._dropped_messages_since_drain = 0
+        self._dropped_bytes_since_drain = 0
         return metrics
 
     @property
@@ -780,7 +800,10 @@ class RateAwareMessageBatcher(MessageBatcher):
         up to live traffic instead of crawling through a backlog it can
         never clear.  The alternative -- dropping the newest -- bounds
         memory just as well but leaves the window falling permanently
-        further behind, delivering ever-staler data.
+        further behind, delivering ever-staler data.  The newest message
+        survives unconditionally, even alone over the byte bound: shedding
+        forces a gap jump, which needs a surviving message to anchor the
+        new window on.
 
         Returns
         -------
@@ -806,7 +829,7 @@ class RateAwareMessageBatcher(MessageBatcher):
         kept = [item for item in sized if item[1].timestamp >= horizons[item[1].stream]]
         retained = sum(nbytes for nbytes, _ in kept)
         shed_by_bytes = 0
-        while shed_by_bytes < len(kept) and retained > self._max_backlog_bytes:
+        while shed_by_bytes < len(kept) - 1 and retained > self._max_backlog_bytes:
             retained -= kept[shed_by_bytes][0]
             shed_by_bytes += 1
         survivors = kept[shed_by_bytes:]
@@ -815,8 +838,10 @@ class RateAwareMessageBatcher(MessageBatcher):
         dropped = len(sized) - len(survivors)
         dropped_bytes = sum(nbytes for nbytes, _ in sized) - retained
         self._overflow = [msg for _, msg in survivors]
-        self._dropped_messages += dropped
-        self._dropped_bytes += dropped_bytes
+        self._total_dropped_messages += dropped
+        self._total_dropped_bytes += dropped_bytes
+        self._dropped_messages_since_drain += dropped
+        self._dropped_bytes_since_drain += dropped_bytes
         now = self._clock()
         if now - self._last_shed_log >= SHED_LOG_INTERVAL_S:
             self._last_shed_log = now
@@ -825,8 +850,8 @@ class RateAwareMessageBatcher(MessageBatcher):
                 backlog_limit_s=self._max_backlog_batches * self.batch_length_s,
                 backlog_limit_bytes=self._max_backlog_bytes,
                 max_backlog_s=round(self._max_backlog_s, 3),
-                dropped_messages=self._dropped_messages,
-                dropped_bytes=self._dropped_bytes,
+                total_dropped_messages=self._total_dropped_messages,
+                total_dropped_bytes=self._total_dropped_bytes,
                 batch_length_s=self.batch_length_s,
             )
         return True

@@ -41,16 +41,19 @@ class BatcherMetrics:
     no lag for data it has already handed over, and per-stream ingest lag is
     measured before batching.  ``max_backlog_s`` is therefore a leading
     indicator -- it rises during any stall, whether or not shedding follows.
+
+    All fields cover the interval since the last drain, like the per-interval
+    counters in the periodic ``consumer_metrics`` line.
     """
 
     max_backlog_s: float
-    """Deepest retained backlog, in data time, since the last drain."""
+    """Deepest backlog observed, in data time, since the last drain."""
 
     dropped_messages: int
-    """Messages shed to keep the backlog bounded, cumulative since start."""
+    """Messages shed to keep the backlog bounded, since the last drain."""
 
     dropped_bytes: int
-    """Payload bytes shed to keep the backlog bounded, cumulative since start."""
+    """Payload bytes shed to keep the backlog bounded, since the last drain."""
 
 
 # Largest jump between consecutive timestamps that still reads as continuous
@@ -136,11 +139,14 @@ class MessageBatcher(ABC):
         return 1.0
 
     def drain_metrics(self) -> BatcherMetrics:
-        """Return backlog metrics, resetting the interval peak.
+        """Return backlog metrics for the interval since the last drain.
 
-        The default is an empty snapshot: batchers that hold no more than the
-        active window cannot fall behind live data, so they have nothing to
-        report.
+        The default is an empty snapshot, accurate for batchers that hold no
+        more than the active window and so cannot fall behind live data.
+        ``SimpleMessageBatcher`` is the known exception: its future-message
+        backlog is unbounded, yet it reports zeros here -- it is a fallback
+        pending replacement by the rate-aware batcher and deliberately does
+        not implement the backlog bound.
         """
         return BatcherMetrics(max_backlog_s=0.0, dropped_messages=0, dropped_bytes=0)
 

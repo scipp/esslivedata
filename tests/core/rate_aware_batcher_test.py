@@ -18,13 +18,16 @@ service would experience.
 
 import random
 
+import numpy as np
 import pytest
+import scipp as sc
 from structlog.testing import capture_logs
 
 from ess.livedata.core.message import Message, StreamId, StreamKind
 from ess.livedata.core.message_batcher import MessageBatch
 from ess.livedata.core.rate_aware_batcher import (
     DEFAULT_MAX_BACKLOG_BATCHES,
+    DEFAULT_MAX_BACKLOG_BYTES,
     MIN_DIFFS_FOR_GATE,
     UNKNOWN_PAYLOAD_BYTES,
     RateAwareMessageBatcher,
@@ -111,6 +114,7 @@ def make_converged_batcher(
     streams: dict[StreamId, float] | None = None,
     timeout_s: float | None = None,
     clock: FakeClock | None = None,
+    max_backlog_bytes: int = DEFAULT_MAX_BACKLOG_BYTES,
 ) -> tuple[RateAwareMessageBatcher, float]:
     """Create a batcher with converged rate estimates.
 
@@ -134,6 +138,7 @@ def make_converged_batcher(
         batch_length_s=batch_length_s,
         timeout_s=convergence_timeout,
         clock=clock if clock is not None else FakeClock(),
+        max_backlog_bytes=max_backlog_bytes,
     )
 
     # Initial batch seeds the timeline
@@ -2761,6 +2766,14 @@ class TestClockCreep:
         assert worst < 5.0, f"delivery silent for {worst:.1f}s of data time"
 
 
+def _numpy_payload(nbytes: int) -> np.ndarray:
+    return np.zeros(nbytes // 8, dtype=np.float64)
+
+
+def _scipp_payload(nbytes: int) -> sc.DataArray:
+    return sc.DataArray(sc.array(dims=['x'], values=_numpy_payload(nbytes)))
+
+
 class TestBacklogShedding:
     """A service iteration slower than the batch length hands the batcher more
     data than the window can release, and the surplus is retained forever
@@ -2810,8 +2823,8 @@ class TestBacklogShedding:
     def test_retained_backlog_stays_bounded_under_sustained_overload(self):
         batcher = self.make()
         fed, delivered, _, _ = self._run(200, batcher)
-        retained = fed - delivered - batcher.dropped_messages
-        assert batcher.dropped_messages > 0
+        retained = fed - delivered - batcher.total_dropped_messages
+        assert batcher.total_dropped_messages > 0
         # Whatever is neither delivered nor dropped is still held in memory.
         max_retained = self.MAX_BACKLOG_BATCHES * self.BATCH_LEN * self.RATE
         assert 0 <= retained <= max_retained + self.RATE * self.ITER
@@ -2819,9 +2832,9 @@ class TestBacklogShedding:
     def test_backlog_does_not_grow_with_time(self):
         batcher = self.make()
         fed, delivered, _, _ = self._run(50, batcher)
-        early = fed - delivered - batcher.dropped_messages
+        early = fed - delivered - batcher.total_dropped_messages
         fed, delivered, _, _ = self._run(200, batcher)
-        late = fed - delivered - batcher.dropped_messages
+        late = fed - delivered - batcher.total_dropped_messages
         assert late <= early + self.RATE * self.ITER
 
     def test_backlog_is_bounded_in_data_time(self):
@@ -2834,7 +2847,7 @@ class TestBacklogShedding:
             batcher.batch(msgs_at(self.RATE, start=t, duration=self.ITER))
             t += self.ITER
             worst = max(worst, self._backlog_s(batcher))
-        assert batcher.dropped_messages > 0
+        assert batcher.total_dropped_messages > 0
         assert worst <= self.MAX_BACKLOG_BATCHES * self.BATCH_LEN
 
     def test_single_long_stall_costs_bounded_lag(self):
@@ -2845,7 +2858,7 @@ class TestBacklogShedding:
         batcher.batch(msgs_at(self.RATE, start=start, duration=120.0))
         newest = start + 120.0
         lag_s = newest - batcher._active_window.start.to_ns() / 1e9
-        assert batcher.dropped_messages > 0
+        assert batcher.total_dropped_messages > 0
         assert lag_s <= (DEFAULT_MAX_BACKLOG_BATCHES + 1) * self.BATCH_LEN
 
     def test_stream_is_not_shed_for_a_peer_being_stamped_ahead(self):
@@ -2875,7 +2888,7 @@ class TestBacklogShedding:
             for m in buf
             if m.stream == DETECTOR
         ) + sum(1 for m in batcher._streams[DETECTOR].messages if m.stream == DETECTOR)
-        assert batcher.dropped_messages > 0, "the ahead stream should still shed"
+        assert batcher.total_dropped_messages > 0, "the ahead stream should still shed"
         assert fed - delivered - held == 0, "peer offset cost the lagging stream data"
 
     def test_stray_future_timestamp_does_not_condemn_the_backlog(self):
@@ -2886,7 +2899,7 @@ class TestBacklogShedding:
         batcher.batch(
             [*msgs_at(self.RATE, start=start, duration=self.ITER), msg(start + 600.0)]
         )
-        assert batcher.dropped_messages == 0
+        assert batcher.total_dropped_messages == 0
 
     def test_nothing_dropped_while_keeping_up(self):
         batcher = self.make()
@@ -2895,7 +2908,7 @@ class TestBacklogShedding:
             # One batch length of data per call: the window keeps pace.
             batcher.batch(msgs_at(self.RATE, start=t, duration=self.BATCH_LEN))
             t += self.BATCH_LEN
-        assert batcher.dropped_messages == 0
+        assert batcher.total_dropped_messages == 0
 
     def test_window_keeps_up_with_live_data_while_shedding(self):
         """Shedding keeps the newest messages, so the delivered window must
@@ -2925,7 +2938,7 @@ class TestBacklogShedding:
             out = batcher.batch(chunk)
             if out is not None:
                 logs_out += sum(1 for m in out.messages if m.stream == log_stream)
-        assert batcher.dropped_messages > 0
+        assert batcher.total_dropped_messages > 0
         assert logs_out == logs_fed
 
     def test_shedding_is_logged(self):
@@ -2935,12 +2948,13 @@ class TestBacklogShedding:
         events = [entry['event'] for entry in logs]
         assert 'batcher_backlog_shedding' in events
 
-    def test_memory_backstop_shortens_retention_for_large_payloads(self):
+    @pytest.mark.parametrize('payload_of', [_numpy_payload, _scipp_payload])
+    def test_memory_backstop_shortens_retention_for_large_payloads(self, payload_of):
         """The byte bound must bite before the data-time bound once payloads
         are frame-sized: a budget that holds seconds of ev44 holds only a
-        fraction of a second of area-detector frames.
+        fraction of a second of area-detector frames.  The scipp variant is
+        what the da00/ad00 adapters actually deliver to the batcher.
         """
-        import numpy as np
 
         def retained_s(nbytes_each: int) -> float:
             batcher = RateAwareMessageBatcher(
@@ -2948,7 +2962,7 @@ class TestBacklogShedding:
                 max_backlog_batches=10,
                 max_backlog_bytes=1_000_000,
             )
-            payload = np.zeros(nbytes_each // 8, dtype=np.float64)
+            payload = payload_of(nbytes_each)
             t = 0.0
             for _ in range(60):
                 chunk = [
@@ -2970,8 +2984,6 @@ class TestBacklogShedding:
         assert large < small / 10
 
     def test_dropped_bytes_tracks_dropped_payload(self):
-        import numpy as np
-
         batcher = RateAwareMessageBatcher(
             batch_length_s=self.BATCH_LEN, max_backlog_bytes=200_000
         )
@@ -2988,19 +3000,49 @@ class TestBacklogShedding:
             ]
             t += self.ITER
             batcher.batch(chunk)
-        assert batcher.dropped_bytes == batcher.dropped_messages * payload.nbytes
+        expected = batcher.total_dropped_messages * payload.nbytes
+        assert batcher.total_dropped_bytes == expected
+
+    def test_oversized_payloads_never_shed_the_entire_backlog(self):
+        """Payloads that each exceed the byte bound must not empty the
+        overflow: the forced gap jump needs a surviving message to anchor
+        the new window on, so the newest one is kept and delivery goes on."""
+        payload = _numpy_payload(8_000)
+        batcher, start = make_converged_batcher(
+            rate_hz=self.RATE, max_backlog_bytes=100
+        )
+
+        def feed(t: float, duration: float) -> MessageBatch | None:
+            return batcher.batch(
+                [
+                    Message(timestamp=m.timestamp, stream=DETECTOR, value=payload)
+                    for m in msgs_at(self.RATE, start=t, duration=duration)
+                ]
+            )
+
+        feed(start, duration=3.0)
+        assert batcher.total_dropped_messages > 0
+        delivered = 0
+        t = start + 3.0
+        for _ in range(5):
+            out = feed(t, duration=1.0)
+            t += 1.0
+            if out is not None:
+                delivered += len(out.messages)
+        assert delivered > 0
 
     def test_metrics_report_backlog_depth_and_drops(self):
         batcher = self.make()
         self._run(50, batcher)
         metrics = batcher.drain_metrics()
         assert metrics.max_backlog_s > self.BATCH_LEN
-        assert metrics.dropped_messages == batcher.dropped_messages
-        assert metrics.dropped_bytes == batcher.dropped_bytes
+        # First drain, so the interval spans everything since start.
+        assert metrics.dropped_messages == batcher.total_dropped_messages
+        assert metrics.dropped_bytes == batcher.total_dropped_bytes
 
-    def test_metrics_backlog_peak_resets_on_drain(self):
-        """The peak is per interval, so a quiet interval must not inherit the
-        previous one's excursion; drop counters are cumulative and must not."""
+    def test_metrics_reset_on_drain(self):
+        """Fields are per interval, so a quiet interval must not inherit the
+        previous one's excursion or drops; the totals keep the full history."""
         batcher = self.make()
         self._run(50, batcher)
         first = batcher.drain_metrics()
@@ -3010,4 +3052,6 @@ class TestBacklogShedding:
             t += self.BATCH_LEN
         second = batcher.drain_metrics()
         assert second.max_backlog_s < first.max_backlog_s
-        assert second.dropped_messages == first.dropped_messages
+        assert second.dropped_messages == 0
+        assert second.dropped_bytes == 0
+        assert batcher.total_dropped_messages == first.dropped_messages
