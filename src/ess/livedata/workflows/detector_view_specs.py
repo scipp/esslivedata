@@ -493,6 +493,12 @@ class DetectorROIAuxSources(AuxSources):
     job-free stream name that is what lets a selection be published before its
     job exists — ``JobManager.peek_pending_streams`` hands the latched value to
     the job as it activates — and survive a restart of it.
+
+    Two concurrent jobs of one view would therefore read one selection. The
+    backend does not rule that out — ``JobManager`` keys jobs by ``JobId`` and
+    never supersedes — and multiple jobs per workflow remain supported; it is
+    the dashboard that commits one generation at a time, stopping the previous
+    job before starting the next.
     """
 
     def __init__(self) -> None:
