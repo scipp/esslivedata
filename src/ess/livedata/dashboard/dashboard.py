@@ -13,7 +13,10 @@ from holoviews import Dimension
 from ess.livedata import ServiceBase, __version__, format_version
 
 from .config_store import ConfigStoreManager
-from .dashboard_services import DashboardServices
+from .dashboard_services import (
+    DEFAULT_SESSION_STALE_TIMEOUT,
+    DashboardServices,
+)
 from .design import LivedataDesign
 from .fake_backend import FakeBackendTransport
 from .kafka_transport import DashboardKafkaTransport
@@ -22,6 +25,10 @@ from .session_registry import SessionId
 from .session_updater import SessionUpdater
 from .theme import DEFAULT_THEME, THEMES
 from .transport import NullTransport, Transport
+
+# Bokeh's own reaper, distinct from the registry's: seconds an unused Bokeh
+# session (one with no connections left) is kept before its document is dropped.
+DEFAULT_UNUSED_SESSION_LIFETIME = 15.0
 
 # Global throttling for sliders, etc.
 pn.config.throttled = True
@@ -49,6 +56,8 @@ class DashboardBase(ServiceBase, ABC):
         basic_auth_password: str | None = None,
         basic_auth_cookie_secret: str | None = None,
         theme: str = DEFAULT_THEME.name,
+        session_stale_timeout_seconds: float = DEFAULT_SESSION_STALE_TIMEOUT,
+        unused_session_lifetime_seconds: float = DEFAULT_UNUSED_SESSION_LIFETIME,
     ):
         if auto_start and transport != 'fake':
             raise ValueError(
@@ -64,6 +73,7 @@ class DashboardBase(ServiceBase, ABC):
         self._collapsed_sidebar = collapsed_sidebar
         self._basic_auth_password = basic_auth_password
         self._basic_auth_cookie_secret = basic_auth_cookie_secret
+        self._unused_session_lifetime_seconds = unused_session_lifetime_seconds
         if theme not in THEMES:
             raise ValueError(f"Unknown theme {theme!r}; expected one of {[*THEMES]}")
         self._theme = THEMES[theme]
@@ -83,6 +93,7 @@ class DashboardBase(ServiceBase, ABC):
             exit_stack=self._exit_stack,
             transport=self._create_transport(transport),
             config_manager=config_manager,
+            session_stale_timeout_seconds=session_stale_timeout_seconds,
         )
 
         self._logger.info("%s initialized", self.__class__.__name__)
@@ -392,6 +403,15 @@ class DashboardBase(ServiceBase, ABC):
                 cookie_secret=self._basic_auth_cookie_secret,
                 login_template=_LOGIN_TEMPLATE,
                 logout_template=_LOGOUT_TEMPLATE,
+                # Bokeh discards a session once its last connection has been
+                # gone this long, which is what releases the document. It polls
+                # at the same interval, so the worst case is twice the lifetime.
+                unused_session_lifetime_milliseconds=int(
+                    self._unused_session_lifetime_seconds * 1000
+                ),
+                check_unused_sessions_milliseconds=int(
+                    self._unused_session_lifetime_seconds * 1000
+                ),
             )
         except KeyboardInterrupt:
             self._logger.info("Keyboard interrupt received, shutting down...")

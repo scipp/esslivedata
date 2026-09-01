@@ -40,6 +40,13 @@ from .workflow_controller import WorkflowController
 logger = structlog.get_logger(__name__)
 
 
+# Seconds a session whose browser vanished without closing its websocket is kept
+# before the registry drops it and releases its per-layer state. Such a session
+# stops sending heartbeats, which is all the reaper has to go on; long enough not
+# to evict one that is merely on a slow link.
+DEFAULT_SESSION_STALE_TIMEOUT = 60.0
+
+
 class DashboardServices:
     """
     Manages dashboard service setup and dependencies.
@@ -76,6 +83,7 @@ class DashboardServices:
         exit_stack: ExitStack,
         transport: Transport,
         config_manager: ConfigStoreManager,
+        session_stale_timeout_seconds: float = DEFAULT_SESSION_STALE_TIMEOUT,
     ):
         self._instrument = instrument
         self._dev = dev
@@ -100,7 +108,9 @@ class DashboardServices:
         self.notification_queue = NotificationQueue(on_push=self.wakeup_hub.wake_all)
 
         # Session registry for tracking active browser sessions
-        self.session_registry = SessionRegistry(stale_timeout_seconds=60.0)
+        self.session_registry = SessionRegistry(
+            stale_timeout_seconds=session_stale_timeout_seconds
+        )
 
         # Background update thread state
         self._update_thread: threading.Thread | None = None

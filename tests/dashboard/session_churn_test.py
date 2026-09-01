@@ -57,6 +57,12 @@ import pytest
 pytest.importorskip("playwright.sync_api")
 from playwright.sync_api import Browser, BrowserContext
 
+from ess.livedata.dashboard.dashboard import DEFAULT_UNUSED_SESSION_LIFETIME
+from ess.livedata.dashboard.session_registry import (
+    SESSION_REAPED_MSG,
+    SESSION_REGISTERED_MSG,
+    SESSION_UNREGISTERED_MSG,
+)
 from tests.helpers.browser import (
     Dashboard,
     assert_updating,
@@ -73,22 +79,62 @@ ABANDONED_SESSIONS = 3
 # to look right, so it settles far shorter than a session we assert on.
 CHURN_SETTLE_MS = 1500
 POLL_INTERVAL_SECONDS = 0.5
+# The server logs a registration when it processes the connection, which trails
+# the browser's own load. Generous: this only ever waits out a lagging server.
+REGISTRATION_TIMEOUT_SECONDS = 30
+
+# Both reapers run off wall-clock timers, so at the production defaults (60 s
+# registry stale timeout, 15 s Bokeh unused-session lifetime) this test spends
+# most of its time asleep. Shorten them on the server instead of waiting them
+# out; what is under test is that teardown reaches the reapers at all, not the
+# size of the constants.
+#
+# They cannot simply both be made tiny. The Bokeh lifetime is bounded below by
+# how long a fresh session takes to get its websocket up -- Bokeh starts the
+# clock at session creation, so too small a value reaps sessions before the
+# browser ever connects, and none of them register. The registry timeout is
+# bounded below by the Bokeh lifetime: a cleanly-closed session stops
+# heartbeating the moment it closes, so if the registry gets there first the
+# teardown is logged as a stale reap rather than an unregister. Production keeps
+# them a factor of four apart; keep that shape.
+# Only the registry timeout is shortened. Bokeh's lifetime is left at its
+# default: shortening it is what the clean-close path would need, but it is also
+# what risks reaping a session before its websocket is up, and this test already
+# has an open flake in that shape (a browser that registers no session at all).
+# Not worth trading a reliable assertion for a faster one.
+UNUSED_SESSION_LIFETIME_SECONDS = DEFAULT_UNUSED_SESSION_LIFETIME
+# Bokeh's worst case is lifetime plus one poll interval; the registry must sit
+# clear of that or it reaps a cleanly-closed session first and the teardown is
+# logged as a stale reap. Production leaves ~30 s of headroom over the same
+# worst case, which is the least this can be shortened to and keep that shape.
+SESSION_STALE_TIMEOUT_SECONDS = 3 * UNUSED_SESSION_LIFETIME_SECONDS
 
 # Closing the websocket does not unregister the session immediately: Bokeh
-# discards it once it has been unused for 15 s, checked every 17 s. No upper
-# bound is needed to keep this honest -- a session the reaper got to first
-# shows up under the wrong teardown line, which is asserted separately.
-CLEAN_CLOSE_TIMEOUT_SECONDS = 60
+# discards it once it has been unused for UNUSED_SESSION_LIFETIME_SECONDS,
+# polling at the same interval, so twice that is the worst case. No upper bound
+# is needed to keep this honest -- a session the reaper got to first shows up
+# under the wrong teardown line, which is asserted separately.
+CLEAN_CLOSE_TIMEOUT_SECONDS = 3 * UNUSED_SESSION_LIFETIME_SECONDS
 
-# SessionRegistry's stale timeout is 60 s (dashboard_services.py), and the
-# background update thread reaps between its other work.
-REAP_TIMEOUT_SECONDS = 90
+# The registry reaps from the background update thread, between its other work.
+REAP_TIMEOUT_SECONDS = 2 * SESSION_STALE_TIMEOUT_SECONDS
 
-# Session ids as SessionRegistry logs them. The console renderer wraps each
-# message in ANSI escapes, which terminate the id capture on their own.
-_REGISTERED = re.compile(r"Registered new session: ([\w-]+)")
-_UNREGISTERED = re.compile(r"Unregistered session: ([\w-]+)")
-_REAPED = re.compile(r"Cleaned up stale session: ([\w-]+)")
+
+def _id_pattern(message: str) -> re.Pattern[str]:
+    """Capture the session id out of one of SessionRegistry's log messages.
+
+    Built from the message the registry actually logs, so rewording it updates
+    this with it. The console renderer wraps each message in ANSI escapes, which
+    terminate the id capture on their own, so only the text up to the id matters.
+    """
+    prefix, _, _ = message.partition("%s")
+    return re.compile(re.escape(prefix) + r"([\w-]+)")
+
+
+# Session ids as SessionRegistry logs them.
+_REGISTERED = _id_pattern(SESSION_REGISTERED_MSG)
+_UNREGISTERED = _id_pattern(SESSION_UNREGISTERED_MSG)
+_REAPED = _id_pattern(SESSION_REAPED_MSG)
 
 
 def _ids(pattern: re.Pattern[str], text: str) -> set[str]:
@@ -118,6 +164,32 @@ def _wait_for_ids(
                 f"for after {timeout_seconds:.0f} s: {sorted(missing)}"
             )
         time.sleep(POLL_INTERVAL_SECONDS)
+
+
+def _wait_for_registrations(
+    log: Path, offset: int, count: int, *, label: str
+) -> set[str]:
+    """Wait until ``count`` sessions have been logged as registered, and return them.
+
+    Registration is logged by the server when it processes the connection, which
+    trails the browser's own view of having loaded the page. Reading the log
+    straight after opening the sessions therefore races the server and
+    intermittently sees one too few.
+    """
+    deadline = time.monotonic() + REGISTRATION_TIMEOUT_SECONDS
+    while len(ids := _ids(_REGISTERED, _log_since(log, offset))) < count:
+        if time.monotonic() > deadline:
+            raise AssertionError(
+                f"{count} browsers were {label} but the server registered "
+                f"{len(ids)} sessions within {REGISTRATION_TIMEOUT_SECONDS:.0f} s"
+            )
+        time.sleep(POLL_INTERVAL_SECONDS)
+    # One browser must mean one session: more registrations than browsers would
+    # be a session leak of its own, which waiting must not hide.
+    assert len(ids) == count, (
+        f"{count} browsers were {label} but the server registered {len(ids)} sessions"
+    )
+    return ids
 
 
 def open_churn_session(browser: Browser, url: str) -> BrowserContext:
@@ -153,20 +225,26 @@ def assert_server_still_serves(browser: Browser, url: str) -> None:
 
 @pytest.mark.browser
 def test_session_churn_returns_to_baseline_and_server_stays_usable() -> None:
-    with fake_dashboard("dummy") as fake, open_browser() as browser:
+    with (
+        fake_dashboard(
+            "dummy",
+            session_stale_timeout_seconds=SESSION_STALE_TIMEOUT_SECONDS,
+        ) as fake,
+        open_browser() as browser,
+    ):
         churned_at = fake.log.stat().st_size
-        for _ in range(CHURN_CYCLES):
+        for cycle in range(1, CHURN_CYCLES + 1):
             contexts = [
                 open_churn_session(browser, fake.url) for _ in range(SESSIONS_PER_CYCLE)
             ]
+            # Tearing a session down before the server registered it leaves
+            # nothing to unregister, and the assertions below would be waiting
+            # on an id that was never issued.
+            churn_ids = _wait_for_registrations(
+                fake.log, churned_at, cycle * SESSIONS_PER_CYCLE, label="churned"
+            )
             for context in contexts:
                 context.close()
-        churn_ids = _ids(_REGISTERED, _log_since(fake.log, churned_at))
-        expected = CHURN_CYCLES * SESSIONS_PER_CYCLE
-        assert len(churn_ids) == expected, (
-            f"{expected} browsers were churned but the server registered "
-            f"{len(churn_ids)} sessions"
-        )
 
         # Cutting the browsers off the network abandons these sessions without a
         # websocket close, leaving the server with an open connection and a
@@ -174,15 +252,17 @@ def test_session_churn_returns_to_baseline_and_server_stays_usable() -> None:
         # stale timeout runs from here, and the clean closes above drain inside
         # it.
         abandoned_at = fake.log.stat().st_size
-        for _ in range(ABANDONED_SESSIONS):
+        for opened in range(1, ABANDONED_SESSIONS + 1):
             # The context lives until the browser closes: closing it here would
             # let Bokeh destroy the very session whose reaping is asserted.
-            open_churn_session(browser, fake.url).set_offline(True)
-        abandoned_ids = _ids(_REGISTERED, _log_since(fake.log, abandoned_at))
-        assert len(abandoned_ids) == ABANDONED_SESSIONS, (
-            f"{ABANDONED_SESSIONS} browsers were abandoned but the server "
-            f"registered {len(abandoned_ids)} sessions"
-        )
+            context = open_churn_session(browser, fake.url)
+            # Cut the network only once the server has the session: taken
+            # offline mid-handshake it never registers at all, so the reaper
+            # has nothing to reap and the wait below expires.
+            abandoned_ids = _wait_for_registrations(
+                fake.log, abandoned_at, opened, label="abandoned"
+            )
+            context.set_offline(True)
 
         _wait_for_ids(
             fake.log,
