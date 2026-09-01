@@ -17,7 +17,10 @@ from ess.livedata.workflows.monitor_workflow_specs import (
 )
 
 from .streams_parsed import PARSED_STREAMS
-from .views import fold_image
+from .views import name_image_dims
+
+#: Side length the Timepix3 panel is ingested at; see name_image_dims.
+IMAGE_RESOLUTION = 512
 
 instrument = Instrument(
     name='odin',
@@ -33,14 +36,22 @@ register_monitor_workflow_specs(
     instrument, ['monitor1', 'monitor2'], params=TOAOnlyMonitorDataParams
 )
 
+instrument.configure_detector_downsampling('timepix3', resolution=IMAGE_RESOLUTION)
+
 # Detector view spec registration (with ROI support)
 instrument.add_logical_view(
     name='odin_detector_xy',
     title='Timepix3 XY Detector Counts',
-    description='2D view of the Timepix3 detector counts',
+    description=(
+        f'{IMAGE_RESOLUTION}x{IMAGE_RESOLUTION} image, downsampled from full'
+        ' resolution as the events are ingested. The full resolution is read'
+        ' from the event ids, so it may be revised upward shortly after a run'
+        ' starts if the first events cover only part of the panel. Cumulative'
+        ' results from before such a revision are wrong and are not discarded'
+        ' automatically: reset or restart the workflow to clear them.'
+    ),
     source_names=['timepix3'],
-    transform=fold_image,
-    reduction_dim=['x_bin', 'y_bin'],
+    transform=name_image_dims,
     roi_support=True,
     device_outputs=COUNTS_TOTAL_DEVICE,
 )
