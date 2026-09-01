@@ -19,7 +19,11 @@ from ess.livedata import Service
 from ess.livedata.config.device_contract import DeviceContract
 from ess.livedata.logging_config import configure_logging
 
-from .dashboard import DashboardBase
+from .dashboard import (
+    DEFAULT_UNUSED_SESSION_LIFETIME,
+    DashboardBase,
+)
+from .dashboard_services import DEFAULT_SESSION_STALE_TIMEOUT
 from .session_updater import SessionUpdater
 from .theme import DEFAULT_THEME, THEMES
 from .widgets.log_producer_widget import LogProducerWidget
@@ -95,14 +99,6 @@ Compositor.definitions = [
     if definition.operation is not apply_nodata
 ]
 
-# Resolving a colormap imports colorcet, which registers hundreds of colormaps with
-# matplotlib. Left lazy, that lands on a session's IOLoop during its first plot render
-# and blocks every request behind it. Pay it here, at startup, where blocking is free.
-# Costs ~70 ms; with matplotlib < 3.11.2 it is ~2.8 s, since each registration paid
-# difflib "did you mean" generation (matplotlib#32172). The warmup is worth keeping
-# independent of that fix -- remove it only if first-render profiling says otherwise.
-process_cmap('viridis')
-
 # Remove Bokeh logo from Layout toolbars by patching LayoutPlot.initialize_plot
 
 _original_layout_initialize = LayoutPlot.initialize_plot
@@ -136,6 +132,8 @@ class ReductionApp(DashboardBase):
         basic_auth_password: str | None = None,
         basic_auth_cookie_secret: str | None = None,
         theme: str = DEFAULT_THEME.name,
+        session_stale_timeout_seconds: float = DEFAULT_SESSION_STALE_TIMEOUT,
+        unused_session_lifetime_seconds: float = DEFAULT_UNUSED_SESSION_LIFETIME,
     ):
         super().__init__(
             instrument=instrument,
@@ -150,6 +148,8 @@ class ReductionApp(DashboardBase):
             basic_auth_password=basic_auth_password,
             basic_auth_cookie_secret=basic_auth_cookie_secret,
             theme=theme,
+            session_stale_timeout_seconds=session_stale_timeout_seconds,
+            unused_session_lifetime_seconds=unused_session_lifetime_seconds,
         )
         self._fetch_announcements = fetch_announcements
         # Load (and validate) the NICOS derived-device contract once. Fails loud
@@ -324,6 +324,22 @@ def get_arg_parser() -> argparse.ArgumentParser:
         'Can also be set via LIVEDATA_BASIC_AUTH_COOKIE_SECRET env var.',
     )
     parser.add_argument(
+        '--session-stale-timeout-seconds',
+        type=float,
+        default=DEFAULT_SESSION_STALE_TIMEOUT,
+        help='Seconds without a heartbeat before a session is dropped and its '
+        'per-layer state released. Lower it where browsers vanish often, raise it '
+        'where links are slow.',
+    )
+    parser.add_argument(
+        '--unused-session-lifetime-seconds',
+        type=float,
+        default=DEFAULT_UNUSED_SESSION_LIFETIME,
+        help='Seconds Bokeh keeps a session with no connections left before '
+        'dropping its document. Also the poll interval, so a closed session is '
+        'released somewhere between one and two times this.',
+    )
+    parser.add_argument(
         '--check',
         action='store_true',
         default=False,
@@ -335,8 +351,27 @@ def get_arg_parser() -> argparse.ArgumentParser:
     return parser
 
 
+def _warm_up_colormaps() -> None:
+    """Register colorcet's colormaps with matplotlib before serving.
+
+    Resolving a colormap imports colorcet, which registers hundreds of colormaps with
+    matplotlib. Left lazy, that lands on a session's IOLoop during its first plot
+    render and blocks every request behind it. Pay it before the server starts, where
+    blocking is free. Costs ~70 ms; with matplotlib < 3.11.2 it is ~2.8 s, since each
+    registration pays difflib "did you mean" generation (matplotlib#32172). The warmup
+    is worth keeping independent of that fix -- remove it only if first-render
+    profiling says otherwise.
+
+    Deliberately not called at import: it is the single largest import cost in the test
+    suite, where nothing renders.
+    """
+    process_cmap('viridis')
+
+
 def main() -> None:
     import logging
+
+    _warm_up_colormaps()
 
     parser = get_arg_parser()
     args = vars(parser.parse_args())
