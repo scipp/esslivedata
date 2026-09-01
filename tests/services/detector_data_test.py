@@ -205,6 +205,54 @@ def test_loki_cumulative_resets_when_detector_carriage_moves() -> None:
     assert sc.allclose(cumulative.data, current.data)
 
 
+def test_odin_cumulative_resets_when_the_readout_resolution_changes() -> None:
+    """A readout reconfiguration resets the cumulative image.
+
+    ODIN's Timepix3 is ingested at reduced resolution: event ids are remapped
+    onto a 512x512 grid in the preprocessor, using a stride derived from the
+    resolution the detector is currently streaming. That resolution is
+    reconfigurable and is not announced on any stream, so it is inferred from
+    the ids -- which means it can be revised while a job runs. Counts remapped
+    with the old stride land in different pixels than counts remapped with the
+    new one, so summing across the revision would produce a blended image.
+    ``DownsamplePixelIds`` stamps the resolution as a coord and the cumulative
+    accumulator resets on it, exactly as it does on a detector move.
+    """
+    app = make_detector_app('odin')
+    sink = app.sink
+    service = app.service
+    workflow_id, _ = _get_workflow_from_registry('odin')
+
+    source_name = 'timepix3'
+    app.publish_config_message(
+        workflow_spec.WorkflowConfig(
+            identifier=workflow_id, job_id=_job_id(source_name)
+        )
+    )
+    service.step()
+
+    n_out = 10
+    # Only the first rows of the 4096x4096 panel light up, so the ids seen so
+    # far are consistent with a much smaller readout.
+    app.publish_events(size=2000, time=2, id_range=(0, 100 * 4096))
+    service.step()
+    assert _data_messages(sink)[0].value.nansum().value == 2000  # cumulative
+
+    # Still nothing above the inferred resolution -> plain accumulation.
+    app.publish_events(size=3000, time=4, id_range=(0, 100 * 4096))
+    service.step()
+    assert _data_messages(sink)[n_out].value.nansum().value == 5000  # cumulative
+
+    # An id from the far corner proves the panel is the full 4096, so the
+    # stride changes and the 5000 counts mapped with the old one are discarded.
+    app.publish_events(size=1000, time=6, id_range=(4000 * 4096, 4096 * 4096 - 1))
+    service.step()
+    cumulative = _data_messages(sink)[2 * n_out].value
+    current = _data_messages(sink)[2 * n_out + 1].value
+    assert cumulative.nansum().value == 1000
+    assert sc.allclose(cumulative.data, current.data)
+
+
 def test_magic_projection_stays_gated_until_rotation_readback_arrives() -> None:
     """MAGIC's banks ride rotation stages, so the projection waits for the readback.
 

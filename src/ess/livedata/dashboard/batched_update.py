@@ -12,7 +12,7 @@ from typing import TYPE_CHECKING
 import panel as pn
 import structlog
 
-from .loop_monitor import LogThrottle
+from ..core.log_throttle import LogThrottle
 
 if TYPE_CHECKING:
     from bokeh.document import Document
