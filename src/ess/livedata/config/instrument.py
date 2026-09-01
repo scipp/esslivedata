@@ -21,7 +21,7 @@ from ess.livedata.workflows.workflow_factory import (
 
 from .detector_downsampling import (
     DetectorDownsampling,
-    is_power_of_two,
+    is_reachable_resolution,
     resolve_downsampling,
 )
 from .stream import ChainPatchBinding, ContextBinding, Device, F144Stream, Stream
@@ -407,30 +407,26 @@ class Instrument:
         name:
             Name of the detector (must be in ``self.detector_names``).
         resolution:
-            Side length of the target grid. Must be a power of two, as must
-            the source resolution, which cannot be smaller.
+            Side length of the target grid.
         max_resolution:
             Largest grid the detector can physically read out. Bounds the
             inferred source resolution, so that a corrupt id cannot raise it.
             A hardware fact, which is why it is stated here rather than read
             from the geometry file: the file records one past configuration of
-            a setting that changes during operation.
+            a setting that changes during operation. Must be ``resolution``
+            times a power of two; see ``is_reachable_resolution``.
         """
         if name not in self.detector_names:
             raise ValueError(
                 f"Detector {name} not in declared detector_names. "
                 f"Available detectors: {self.detector_names}"
             )
-        for label, value in (
-            ('resolution', resolution),
-            ('max_resolution', max_resolution),
-        ):
-            if not is_power_of_two(value):
-                raise ValueError(f"{label} must be a power of two, got {value}")
-        if max_resolution < resolution:
+        if resolution <= 0:
+            raise ValueError(f"resolution must be positive, got {resolution}")
+        if not is_reachable_resolution(max_resolution, resolution):
             raise ValueError(
-                f"max_resolution {max_resolution} is below the target resolution "
-                f"{resolution} for detector {name}."
+                f"max_resolution {max_resolution} must be the resolution "
+                f"{resolution} times a power of two, for detector {name}."
             )
         self._downsampled_detectors[name] = (resolution, max_resolution)
 

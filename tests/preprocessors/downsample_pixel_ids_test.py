@@ -125,9 +125,9 @@ class TestSourceResolutionInference:
         acc.add(ts(), events([4096 * 4096 - 1]))
         assert acc.source_resolution == 4096
 
-    def test_rounds_up_to_a_power_of_two(self) -> None:
-        # Panels come in powers of two, so any max_id past the halfway row
-        # pins the panel -- far weaker than needing the last rows to fire.
+    def test_rounds_up_to_the_next_candidate(self) -> None:
+        # Candidates double, so any id past the panel's first quarter of rows
+        # pins it -- far weaker than needing the last 512 rows to fire.
         acc = make(512)
         acc.add(ts(), events([1025 * 4096]))
         assert acc.source_resolution == 4096
@@ -148,6 +148,19 @@ class TestSourceResolutionInference:
         acc.add(ts(), events([]))
         assert acc.source_resolution is None
         assert len(inner.batches) == 1
+
+    def test_candidates_are_the_target_doubled_not_powers_of_two(self) -> None:
+        # 1000x1000 ingested at 250x250: the candidates are 250, 500, 1000.
+        acc = make(250, max_resolution=4000)
+        acc.add(ts(), events([1000 * 1000 - 1]))
+        assert acc.source_resolution == 1000
+
+    def test_a_quarter_of_the_panel_pins_it_whatever_the_resolutions(self) -> None:
+        # The point of doubling: an event past the first quarter of rows is
+        # enough, here row 250 of 1000, rather than one in the last 250 rows.
+        acc = make(250, max_resolution=4000)
+        acc.add(ts(), events([251 * 1000]))
+        assert acc.source_resolution == 1000
 
     def test_logs_the_inferred_resolution(self) -> None:
         acc = make(512)

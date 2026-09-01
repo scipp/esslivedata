@@ -46,6 +46,15 @@ class TestIdBase:
         assert any(e['event'] == 'downsampling_without_geometry' for e in logs)
 
 
+class TestNonPowerOfTwoResolutions:
+    """Only the ratio has to be a power of two, not the resolutions."""
+
+    def test_accepts_a_panel_and_target_that_are_not_powers_of_two(self) -> None:
+        downsampling = resolve(square_grid(1000), resolution=250, max_resolution=4000)
+        assert downsampling.resolution == 250
+        assert downsampling.grid.sizes == {'dim_0': 250, 'dim_1': 250}
+
+
 class TestDeclaredGridRejections:
     """The layout the remap assumes, checked while the file is in memory."""
 
@@ -56,9 +65,15 @@ class TestDeclaredGridRejections:
         with pytest.raises(ValueError, match='square'):
             resolve(declared)
 
-    def test_rejects_a_side_that_is_not_a_power_of_two(self) -> None:
+    def test_rejects_a_side_the_target_does_not_tile(self) -> None:
         with pytest.raises(ValueError, match='power of two'):
             resolve(square_grid(1000))
+
+    def test_rejects_a_side_tiled_by_a_ratio_that_is_not_a_power_of_two(self) -> None:
+        # 1000 = 200 * 5 tiles cleanly, but 200 doubled never reaches 1000, so
+        # the preprocessor could not infer this source however well it tiles.
+        with pytest.raises(ValueError, match='power of two'):
+            resolve(square_grid(1000), resolution=200, max_resolution=1600)
 
     def test_rejects_a_side_above_the_configured_maximum(self) -> None:
         # max_resolution is meant to be what the hardware can read out, so a

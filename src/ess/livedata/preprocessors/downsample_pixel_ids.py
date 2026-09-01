@@ -114,11 +114,14 @@ class DownsamplePixelIds(Accumulator[DetectorEvents, sc.DataArray]):
 
         source = 2 ** ceil(log2(sqrt(max_id + 1)))
 
-    Panels come in powers of two -- 4096, 2048, 512 -- so rounding to one is
-    both the tightest defensible estimate and much easier to reach than an
-    exact one: a 4096 panel is pinned by any event past row 1024, where
-    rounding to a multiple of ``resolution`` instead would have needed one past
-    row 3136.
+    The candidates are the target resolution repeatedly doubled, and the
+    estimate is the smallest of them that can hold ``max_id``. Restricting the
+    candidates that way is what makes them easy to reach: whatever the panel
+    is, an event anywhere past its first quarter of rows pins it, where
+    rounding to a multiple of ``resolution`` instead would have needed one in
+    the last ``resolution`` rows -- past row 3136 of a 4096 panel downsampled
+    to 512. It also means the target grid always tiles the source exactly.
+    Neither resolution has to be a power of two itself, only their ratio.
 
     Evidence expires, because the estimate has to follow the panel downward as
     well as upward. A reconfiguration to a smaller readout produces no id that
@@ -201,10 +204,12 @@ class DownsamplePixelIds(Accumulator[DetectorEvents, sc.DataArray]):
 
         ``isqrt(max_id) + 1`` is the smallest ``s`` with ``s**2 > max_id``,
         exactly -- unlike ``ceil(sqrt(...))``, which is a float operation on
-        values that reach 2**24 for a 4096x4096 panel.
+        values that reach 2**24 for a 4096x4096 panel. Rounding the blocks per
+        side up to a power of two picks the smallest candidate at or above it.
         """
-        side = _round_up_to_power_of_two(math.isqrt(max_id) + 1)
-        return min(max(side, self._resolution), self._max_resolution)
+        smallest = math.isqrt(max_id) + 1
+        blocks = _round_up_to_power_of_two(-(-smallest // self._resolution))
+        return min(self._resolution * blocks, self._max_resolution)
 
     def add(self, timestamp: Timestamp, data: DetectorEvents) -> bool:
         raw = np.asarray(data.pixel_id)

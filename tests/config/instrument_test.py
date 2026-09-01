@@ -1021,28 +1021,30 @@ class TestDetectorDownsampling:
         with pytest.raises(ValueError, match='not in declared detector_names'):
             self.configure(instrument, 'nope')
 
-    @pytest.mark.parametrize('resolution', [0, -1, 300, 1000])
-    def test_rejects_a_resolution_that_is_not_a_power_of_two(
+    @pytest.mark.parametrize('resolution', [0, -1])
+    def test_rejects_a_resolution_that_is_not_positive(
         self, instrument: Instrument, resolution: int
     ) -> None:
-        with pytest.raises(ValueError, match='power of two'):
+        with pytest.raises(ValueError, match='must be positive'):
             instrument.configure_detector_downsampling(
                 'det', resolution=resolution, max_resolution=4096
             )
 
-    @pytest.mark.parametrize('max_resolution', [0, -1, 300, 1000])
-    def test_rejects_a_maximum_that_is_not_a_power_of_two(
+    @pytest.mark.parametrize('max_resolution', [0, -256, 768, 256])
+    def test_rejects_a_maximum_the_resolution_cannot_reach_by_doubling(
         self, instrument: Instrument, max_resolution: int
     ) -> None:
-        with pytest.raises(ValueError, match='power of two'):
+        # Below the target, or above it by a ratio that is not a power of two.
+        with pytest.raises(ValueError, match='times a power of two'):
             instrument.configure_detector_downsampling(
-                'det', resolution=256, max_resolution=max_resolution
+                'det', resolution=512, max_resolution=max_resolution
             )
 
-    def test_rejects_a_maximum_below_the_target_resolution(
+    def test_accepts_resolutions_that_are_not_powers_of_two(
         self, instrument: Instrument
     ) -> None:
-        with pytest.raises(ValueError, match='below the target resolution'):
-            instrument.configure_detector_downsampling(
-                'det', resolution=512, max_resolution=256
-            )
+        instrument.configure_detector_downsampling(
+            'det', resolution=250, max_resolution=4000
+        )
+
+        assert instrument.get_downsampling('det').resolution == 250

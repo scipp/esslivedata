@@ -19,9 +19,27 @@ import structlog
 logger = structlog.get_logger(__name__)
 
 
-def is_power_of_two(value: int) -> bool:
+def _is_power_of_two(value: int) -> bool:
     """Returns whether ``value`` is a positive power of two."""
     return value > 0 and not value & (value - 1)
+
+
+def is_reachable_resolution(side: int, resolution: int) -> bool:
+    """Returns whether ``side`` is ``resolution`` times a power of two.
+
+    The remap needs the target resolution to tile the source exactly, which on
+    its own would allow any integer ratio. The power-of-two restriction comes
+    from the inference instead: the preprocessor picks the source resolution
+    from the candidates it can reach by repeatedly doubling the target, so a
+    source that is not one of them could never be inferred, however cleanly it
+    tiles. Neither side has to be a power of two itself -- a 1000x1000 panel
+    ingested at 250x250 is fine.
+    """
+    return (
+        resolution > 0
+        and side % resolution == 0
+        and _is_power_of_two(side // resolution)
+    )
 
 
 @dataclass(frozen=True)
@@ -103,11 +121,12 @@ def resolve_downsampling(
             f"square grid, but its detector_number is {declared.sizes}."
         )
     side = declared.shape[0]
-    if not is_power_of_two(side):
+    if not is_reachable_resolution(side, resolution):
         raise ValueError(
-            f"Detector {name} has side {side}, which must be a power of two. "
-            "Panels come in powers of two; a detector that does not is not a "
-            "candidate for downsampling by id remapping."
+            f"Detector {name} has side {side}, which must be the downsampling "
+            f"resolution {resolution} times a power of two. The target grid has "
+            "to tile the source, and the source has to be one of the resolutions "
+            "the preprocessor can infer."
         )
     if side > max_resolution:
         raise ValueError(
