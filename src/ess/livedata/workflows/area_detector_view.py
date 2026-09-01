@@ -9,6 +9,7 @@ This module provides view classes for area detector data (ad00 schema).
 from __future__ import annotations
 
 from collections.abc import Callable
+from functools import partial
 from typing import Any
 
 import scipp as sc
@@ -122,7 +123,7 @@ class AreaDetectorView(Workflow):
     @staticmethod
     def view_factory(
         *,
-        transform: Callable[[sc.DataArray], sc.DataArray] | None = None,
+        transform: Callable[[sc.DataArray, str], sc.DataArray] | None = None,
         reduction_dim: str | list[str] | None = None,
     ) -> Callable[[str], AreaDetectorView]:
         """
@@ -132,6 +133,10 @@ class AreaDetectorView(Workflow):
         ----------
         transform:
             Callable that transforms input data (e.g., fold or slice operations).
+            Signature ``(da: DataArray, source_name: str) -> DataArray``, matching
+            :meth:`Instrument.add_logical_view` so a single instrument transform
+            can serve both registration paths. ``source_name`` is bound by the
+            returned factory; ``LogicalView`` calls the result with the data alone.
             If None, identity transform is used.
         reduction_dim:
             Dimension(s) to sum over after applying transform. Enables downsampling.
@@ -141,13 +146,14 @@ class AreaDetectorView(Workflow):
         :
             Factory function that takes source_name and returns an AreaDetectorView.
         """
-        actual_transform = transform if transform is not None else (lambda da: da)
 
         def factory(source_name: str) -> AreaDetectorView:
-            _ = source_name
-            logical_view = raw.LogicalView(
-                transform=actual_transform, reduction_dim=reduction_dim
+            bound = (
+                (lambda da: da)
+                if transform is None
+                else partial(transform, source_name=source_name)
             )
+            logical_view = raw.LogicalView(transform=bound, reduction_dim=reduction_dim)
             return AreaDetectorView(logical_view)
 
         return factory
