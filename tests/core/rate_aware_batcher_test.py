@@ -2814,6 +2814,17 @@ class TestBacklogShedding:
             **kwargs,
         )
 
+    def _held(self, batcher: RateAwareMessageBatcher, stream: StreamId) -> int:
+        buffered = sum(
+            1
+            for buf in (batcher._overflow, batcher._non_gated, batcher._future)
+            for m in buf
+            if m.stream == stream
+        )
+        return buffered + sum(
+            1 for m in batcher._streams[stream].messages if m.stream == stream
+        )
+
     def _backlog_s(self, batcher: RateAwareMessageBatcher) -> float:
         if not batcher._overflow:
             return 0.0
@@ -2853,9 +2864,12 @@ class TestBacklogShedding:
     def test_single_long_stall_costs_bounded_lag(self):
         """One deep stall must not leave the service replaying old data: after
         the stall the window sits within the bound of the newest data fed, no
-        matter how far behind it fell."""
+        matter how far behind it fell.  The jump lands via gap detection on
+        the call after the shed (one poll iteration), so allow one empty call
+        for it."""
         batcher, start = make_converged_batcher(rate_hz=self.RATE)
         batcher.batch(msgs_at(self.RATE, start=start, duration=120.0))
+        batcher.batch([])
         newest = start + 120.0
         lag_s = newest - batcher._active_window.start.to_ns() / 1e9
         assert batcher.total_dropped_messages > 0
@@ -2865,7 +2879,10 @@ class TestBacklogShedding:
         """The data-time horizon is per stream: a peer whose timestamps run
         ahead must not make a stream's own fresh data look stale.  Offsets
         between streams are not backlog depth, and a single horizon for the
-        whole backlog cannot tell them apart.
+        whole backlog cannot tell them apart.  Under overload each stream
+        loses at most its own surplus -- the peer's offset adds nothing,
+        where a global horizon anchored on the ahead peer would shed the
+        lagging stream's entire retained backlog.
         """
         ahead = StreamId(kind=StreamKind.DETECTOR_EVENTS, name="ahead")
         skew = (DEFAULT_MAX_BACKLOG_BATCHES + 1) * self.BATCH_LEN
@@ -2882,14 +2899,45 @@ class TestBacklogShedding:
             t += self.ITER
             if out is not None:
                 delivered += sum(1 for m in out.messages if m.stream == DETECTOR)
-        held = sum(
-            1
-            for buf in (batcher._overflow, batcher._non_gated, batcher._future)
-            for m in buf
-            if m.stream == DETECTOR
-        ) + sum(1 for m in batcher._streams[DETECTOR].messages if m.stream == DETECTOR)
+        lost = fed - delivered - self._held(batcher, DETECTOR)
+        # The window releases at most one batch length of the two fed per
+        # call, so the stream's own surplus is half its feed.
         assert batcher.total_dropped_messages > 0, "the ahead stream should still shed"
-        assert fed - delivered - held == 0, "peer offset cost the lagging stream data"
+        assert 0 <= lost <= fed // 2, "peer offset cost the lagging stream extra data"
+
+    def test_byte_shedding_one_stream_does_not_disturb_a_healthy_peer(self):
+        """Any shed forces the window jump a detected gap would, overriding
+        the a-gated-stream-contributed veto -- including a byte-bound trim of
+        one stream while a peer gates normally in the current window.  The
+        forced jumps must not cost the healthy peer data or stall delivery."""
+        frames = StreamId(kind=StreamKind.AREA_DETECTOR, name="frames")
+        payload = _numpy_payload(8_000)
+        batcher, start = make_converged_batcher(
+            rate_hz=self.RATE,
+            streams={DETECTOR: self.RATE, frames: self.RATE},
+            # Every frame alone exceeds the cap, so the frames stream is
+            # trimmed by bytes on every call while DETECTOR keeps up.
+            max_backlog_bytes=100,
+        )
+        fed = delivered = 0
+        t = start
+        for _ in range(100):
+            chunk = msgs_at(self.RATE, start=t, duration=self.BATCH_LEN)
+            fed += len(chunk)
+            # Mild overload on the frames stream only, so it keeps a byte
+            # backlog while DETECTOR delivers one window per call.
+            chunk += [
+                Message(timestamp=m.timestamp, stream=frames, value=payload)
+                for m in msgs_at(self.RATE, start=t, duration=1.5 * self.BATCH_LEN)
+            ]
+            out = batcher.batch(sorted(chunk, key=lambda m: m.timestamp))
+            t += self.BATCH_LEN
+            if out is not None:
+                delivered += sum(1 for m in out.messages if m.stream == DETECTOR)
+        held = self._held(batcher, DETECTOR)
+        assert batcher.total_dropped_messages > 0, "frames should shed by bytes"
+        assert fed - delivered - held == 0, "byte shedding cost the healthy peer data"
+        assert delivered > 0.9 * (fed - held), "healthy peer delivery stalled"
 
     def test_stray_future_timestamp_does_not_condemn_the_backlog(self):
         """The data-time bound is measured against the plausible anchor of the

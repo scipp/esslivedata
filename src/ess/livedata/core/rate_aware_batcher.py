@@ -630,13 +630,10 @@ class RateAwareMessageBatcher(MessageBatcher):
         for msg in messages:
             self._route_message(msg, window)
 
-        # Shedding leaves the window far behind the survivors it kept, so it
-        # forces the same jump a detected gap would: without it the window
-        # would crawl forward one batch at a time through data that has just
-        # been discarded.
-        shed = self._shed_backlog()
+        # Shed before the gap check so a jump targets the surviving backlog.
+        self._shed_backlog()
 
-        if shed or self._should_recover_from_gap(window):
+        if self._should_recover_from_gap(window):
             window = self._recover_from_gap(window)
 
         # Stall recovery is a last resort, checked only when nothing closes:
@@ -795,15 +792,27 @@ class RateAwareMessageBatcher(MessageBatcher):
         The byte bound stays global -- memory is -- and drops the stalest
         survivors regardless of stream.
 
-        Keeps the newest messages: the caller advances the window to the
-        oldest survivor, so keeping the newest is what lets the window catch
-        up to live traffic instead of crawling through a backlog it can
-        never clear.  The alternative -- dropping the newest -- bounds
-        memory just as well but leaves the window falling permanently
-        further behind, delivering ever-staler data.  The newest message
-        survives unconditionally, even alone over the byte bound: shedding
-        forces a gap jump, which needs a surviving message to anchor the
-        new window on.
+        Keeps the newest messages: once the window's own region drains, gap
+        detection advances it to the oldest survivor in one jump, so keeping
+        the newest is what lets the window catch up to live traffic instead
+        of crawling through a backlog it can never clear.  The alternative
+        -- dropping the newest -- bounds memory just as well but leaves the
+        window falling permanently further behind, delivering ever-staler
+        data.  The newest message survives unconditionally, even alone over
+        the byte bound: without a survivor there is nothing for that jump
+        to anchor the new window on.
+
+        Shedding deliberately does *not* force the jump itself.  Gap
+        recovery is vetoed while any gated stream still has messages in the
+        window, and that veto must hold: a shed can be a byte-bound trim of
+        one oversized stream while a peer gates normally in the current
+        window, and jumping then overruns the peer's live traffic --
+        leaving its gate permanently unsatisfiable and delivery stalled
+        until the wall-clock backstop.  When a shed does strand the window
+        behind the survivors, its region is empty by construction (the data
+        was just discarded), so the ordinary gap check fires on the next
+        call and jumps in one step.  Bounded lag arrives one call late;
+        livelock never.
 
         Returns
         -------
