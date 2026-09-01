@@ -53,7 +53,8 @@ The naming stack, from the Kafka wire inwards (see ADR 0004 and
   source names, aux sources, parameter and output models
   (`config/workflow_spec.py`). Purely declarative; contains no runtime values.
 - **WorkflowConfig** — runtime parameter *values* for a spec, sent as a command
-  to start a job. Currently conflates "configure" and "start" (issue #445).
+  to start a job. Conflates "configure" and "start"; the split was considered
+  and dropped, see the `WorkflowConfig` docstring.
 - **Job** — a running instance of a workflow, bound to a `JobId` and its input
   streams (`core/job.py`).
 - **JobNumber** — a `uuid.UUID` minted per commit; the persistent identity

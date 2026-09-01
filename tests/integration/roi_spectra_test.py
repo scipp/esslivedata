@@ -23,8 +23,8 @@ def test_roi_spectra_follow_published_rois(integration_env: IntegrationEnv) -> N
     ROI spectra results arrive for published ROIs and follow ROI changes.
 
     Publishes rectangle ROIs the way the dashboard does (ROIPublisher to the
-    LIVEDATA_ROI topic, addressed to the workflow's current job) and asserts
-    the detector view's roi_spectra output tracks the published set.
+    LIVEDATA_ROI topic, addressed to the view) and asserts the detector view's
+    roi_spectra output tracks the published set.
     """
     backend = integration_env.backend
     workflow_id = WorkflowId(instrument='dummy', name='panel_0_xy', version=1)

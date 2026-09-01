@@ -22,7 +22,7 @@ import scipp as sc
 
 from .. import parameter_models
 from ..config import models
-from ..config.roi_names import roi_stream_name
+from ..config.roi_names import get_roi_mapper, roi_stream_name
 from ..config.workflow_spec import (
     AuxSources,
     CumulativeOutput,
@@ -478,26 +478,25 @@ def make_detector_view_params(
 class DetectorROIAuxSources(AuxSources):
     """Auxiliary source spec for ROI configuration in detector workflows.
 
-    Subscribes to the supported ROI geometry streams (rectangle, polygon).
-    :meth:`render` scopes each stream name to the view it configures, so the
-    ROI selection belongs to the view rather than to the job generation
-    currently computing it (see
-    :func:`~ess.livedata.config.roi_names.roi_stream_name`).
+    Subscribes to every ROI geometry the instrument configures. :meth:`render`
+    names each stream for the view it configures, via
+    :func:`~ess.livedata.config.roi_names.roi_stream_name`.
 
     ROI is an auxiliary source, not a gated context binding: the ROI providers
     treat a missing or empty request as "no ROI selected" (an empty result),
     so there is nothing to gate on and no cold-start seed is required. The
     detector-view factory wires the ROI streams into ``set_context`` itself
     (see :meth:`DetectorViewFactory.make_workflow`).
+
+    The streams are nonetheless preprocessed by a context accumulator, which
+    latches the latest request independently of any job. Together with the
+    job-free stream name that is what lets a selection be published before its
+    job exists — ``JobManager.peek_pending_streams`` hands the latched value to
+    the job as it activates — and survive a restart of it.
     """
 
     def __init__(self) -> None:
-        super().__init__(
-            {
-                'roi_rectangle': 'roi_rectangle',
-                'roi_polygon': 'roi_polygon',
-            }
-        )
+        super().__init__({key: key for key in get_roi_mapper().readback_keys})
 
     def render(
         self,

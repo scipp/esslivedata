@@ -24,10 +24,10 @@ def roi_stream_name(
     The name is the stable identity of the view the ROI applies to — the same
     ``(workflow_id, source_name)`` pair that keys its outputs
     (:class:`~ess.livedata.config.workflow_spec.DataKey`) — and deliberately
-    carries no ``job_number``. An ROI selection is a property of the view, not
-    of the job generation currently computing it: it outlives restarts, and a
-    selection made before the job starts is latched by the preprocessor's
-    context accumulator and picked up when it does.
+    carries no ``job_number``, so an ROI selection is a property of the view
+    rather than of the job generation computing it (ADR 0003, amendment
+    2026-08-31; consequences on
+    :class:`~ess.livedata.workflows.detector_view_specs.DetectorROIAuxSources`).
 
     Both sides of the wire name streams through here: the backend renders it
     into a job's aux sources (``DetectorROIAuxSources.render``) and the

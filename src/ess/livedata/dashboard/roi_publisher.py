@@ -22,10 +22,10 @@ class ROIPublisher:
     This class provides a simple interface for publishing ROIs to the
     LIVEDATA_ROI Kafka topic.
 
-    ROIs are addressed by the stable identity of the view they apply to,
-    ``(workflow_id, source_name)``, which is also the stream name the backend
-    listens on. No job need be running to publish: the backend latches the
-    request and the job picks it up whenever it starts.
+    ROIs are addressed by the view they apply to; the stream name the backend
+    listens on comes from
+    :func:`~ess.livedata.config.roi_names.roi_stream_name`. No job need be
+    running to publish.
 
     Parameters
     ----------

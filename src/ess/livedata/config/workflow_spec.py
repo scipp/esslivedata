@@ -334,16 +334,15 @@ class AuxSources:
         names unchanged. Subclasses can override to transform names, e.g. to
         scope a stream to the view it belongs to.
 
-        Rendering is keyed by the stable ``(workflow_id, source_name)``
-        identity rather than by job: an aux stream a subclass names for itself
-        is addressable before its job starts and across restarts of it.
-
         Parameters
         ----------
         workflow_id:
             The workflow the job belongs to.
         source_name:
-            The source the job processes.
+            The source the job processes. Together with ``workflow_id`` this
+            is the view's stable identity; the job's ``job_number`` is
+            deliberately not passed, so a name a subclass renders for itself
+            stays addressable across restarts of the job.
         selections:
             User selections overriding defaults. Keys not present in the
             inputs specification are ignored.

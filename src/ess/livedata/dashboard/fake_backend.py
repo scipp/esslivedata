@@ -287,9 +287,8 @@ class FakeBackend:
         """Store an ROI request, replacing the previous one for its geometry.
 
         Latest-value semantics match the backend, which accumulates ROI streams
-        with a ``LatestValueAccumulator``. Requests are latched per view whether
-        or not a job is running, so one published before a job starts is picked
-        up when it does.
+        with a ``LatestValueAccumulator`` keyed by stream name, independently of
+        any job.
 
         Parameters
         ----------

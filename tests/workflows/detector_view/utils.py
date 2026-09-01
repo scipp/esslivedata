@@ -113,8 +113,8 @@ def make_fake_detector_number(y_size: int, x_size: int) -> sc.Variable:
 
 # Identity ROI aux-name mapping: tests that feed bare 'roi_rectangle'/'roi_polygon'
 # directly to workflow.accumulate construct the workflow with these so the
-# context_keys wire names match. Production renders per-job-prefixed names; see
-# tests using DetectorROIAuxSources.render for that path.
+# context_keys wire names match. Production renders view-scoped names; see tests
+# using DetectorROIAuxSources.render for that path.
 ROI_AUX_NAMES = {'roi_rectangle': 'roi_rectangle', 'roi_polygon': 'roi_polygon'}
 
 

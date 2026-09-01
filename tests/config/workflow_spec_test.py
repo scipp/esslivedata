@@ -703,19 +703,6 @@ class TestJobId:
             assert '/' in result
             assert result.startswith(source_name + '/')
 
-    def test_str_used_in_stream_names(self) -> None:
-        """Test that __str__ is suitable for use in stream names."""
-        import uuid
-
-        job_number = uuid.uuid4()
-        job_id = JobId(source_name='detector', job_number=job_number)
-
-        # Simulate stream name construction
-        stream_name = f'{job_id}/roi_rectangle'
-
-        expected = f'detector/{job_number}/roi_rectangle'
-        assert stream_name == expected
-
     def test_str_ensures_uniqueness_across_detectors(self) -> None:
         """Test that __str__ provides unique identifiers for different detectors."""
         import uuid
