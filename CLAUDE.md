@@ -30,10 +30,22 @@ python -m venv .venv && source .venv/bin/activate && pip install -e ".[test]"
   via `tox -e browser`.
 
 ```sh
-python -m pytest                      # fast tests only (~25s)
+python -m pytest                      # fast tests only (~32s)
 python -m pytest -m "not integration" # include @pytest.mark.slow (~85s)
 tox                                   # CI: includes slow tests
 ```
+
+`addopts` carries `-n auto --dist worksteal`; pass `-n0` for a serial run (needed for
+`--pdb`, and for readable output with `-x`).
+
+**Run the shard, not the suite.** A change under `src/ess/livedata/<pkg>/` is covered
+by `tests/<pkg>/`. A single file is ~1s serial against ~32s for the whole suite, so
+iterate on one file with `-n0` (24 workers cost more to start than the tests cost to
+run) and keep the full suite for before you commit. Every shard is under 20s.
+
+Shards do not compose: each run re-pays a collection floor that grows with worker
+count, so backend plus `tests/dashboard` separately exceeds running both together.
+Split the run only to *skip* a half, never to parallelise one.
 
 ### Code Quality
 
