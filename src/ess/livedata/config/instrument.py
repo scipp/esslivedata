@@ -19,6 +19,11 @@ from ess.livedata.workflows.workflow_factory import (
     WorkflowFactory,
 )
 
+from .detector_downsampling import (
+    DetectorDownsampling,
+    is_reachable_resolution,
+    resolve_downsampling,
+)
 from .stream import ChainPatchBinding, ContextBinding, Device, F144Stream, Stream
 from .value_log import ValueLog
 from .workflow_spec import (
@@ -139,6 +144,9 @@ class Instrument:
     source_metadata: dict[str, SourceMetadata] = field(default_factory=dict)
     dim_titles: dict[str, str] = field(default_factory=dict)
     _detector_numbers: dict[str, sc.Variable] = field(default_factory=dict)
+    #: name -> (target resolution, physical maximum resolution)
+    _downsampled_detectors: dict[str, tuple[int, int]] = field(default_factory=dict)
+    _downsampling_cache: dict[str, DetectorDownsampling] = field(default_factory=dict)
     _nexus_file: str | None = None
     _detector_group_names: dict[str, str] = field(default_factory=dict)
     _timeseries_workflow_handle: SpecHandle | None = field(default=None, init=False)
@@ -368,6 +376,81 @@ class Instrument:
         """
         return self._detector_group_names.get(name, name)
 
+    def configure_detector_downsampling(
+        self, name: str, *, resolution: int, max_resolution: int
+    ) -> None:
+        """
+        Ingest a square detector at reduced resolution.
+
+        Opt-in per detector. Event ids are remapped to a coarser
+        ``resolution`` x ``resolution`` grid in the preprocessor, before pixel
+        grouping, so the full-resolution grid is never materialized. For a
+        4096x4096 panel downsampled to 512x512 this replaces a 16.7-million-bin
+        group-and-merge per update with a 262-thousand-bin grouping.
+
+        The resolution the detector is *streaming* is operator-reconfigurable
+        and is not announced on any stream we consume, so the preprocessor
+        infers it from the observed event ids and follows it when it changes;
+        see
+        :class:`~ess.livedata.preprocessors.downsample_pixel_ids.DownsamplePixelIds`.
+        Counts taken at different source resolutions are not commensurable, so
+        a change resets the cumulative accumulators, exactly as a detector move
+        does. What the geometry file is trusted for, and why, is
+        :func:`~ess.livedata.config.detector_downsampling.resolve_downsampling`.
+
+        Only meaningful for logical views, which address pixels by index. A
+        geometric view resolves pixel positions from the file and would need
+        those positions merged to match, which this does not do.
+
+        Parameters
+        ----------
+        name:
+            Name of the detector (must be in ``self.detector_names``).
+        resolution:
+            Side length of the target grid.
+        max_resolution:
+            Largest grid the detector can physically read out. Bounds the
+            inferred source resolution, so that a corrupt id cannot raise it.
+            A hardware fact, which is why it is stated here rather than read
+            from the geometry file: the file records one past configuration of
+            a setting that changes during operation. Must be ``resolution``
+            times a power of two; see ``is_reachable_resolution``.
+        """
+        if name not in self.detector_names:
+            raise ValueError(
+                f"Detector {name} not in declared detector_names. "
+                f"Available detectors: {self.detector_names}"
+            )
+        if resolution <= 0:
+            raise ValueError(f"resolution must be positive, got {resolution}")
+        if not is_reachable_resolution(max_resolution, resolution):
+            raise ValueError(
+                f"max_resolution {max_resolution} must be the resolution "
+                f"{resolution} times a power of two, for detector {name}."
+            )
+        self._downsampled_detectors[name] = (resolution, max_resolution)
+
+    def get_downsampling(self, name: str) -> DetectorDownsampling | None:
+        """
+        Resolved reduced-resolution ingest settings, or None if not configured.
+
+        Resolved lazily so that the geometry file, loaded by
+        :meth:`load_factories`, can be consulted where it is available.
+        Because the result is cached, :meth:`load_factories` resolves every
+        configured detector once the file has been read, so that an earlier
+        caller cannot latch the file-less fallback.
+        """
+        configured = self._downsampled_detectors.get(name)
+        if configured is None:
+            return None
+        if (cached := self._downsampling_cache.get(name)) is None:
+            resolution, max_resolution = configured
+            cached = resolve_downsampling(
+                name, resolution, max_resolution, self._detector_numbers.get(name)
+            )
+            self._downsampling_cache[name] = cached
+        return cached
+
     def configure_detector(
         self,
         name: str,
@@ -413,6 +496,8 @@ class Instrument:
         self._detector_numbers[name] = candidate
 
     def get_detector_number(self, name: str) -> sc.Variable:
+        if (downsampling := self.get_downsampling(name)) is not None:
+            return downsampling.grid
         return self._detector_numbers[name]
 
     def configure_pixellated_monitor(
@@ -754,6 +839,11 @@ class Instrument:
                     # the expected path (e.g., monitors lack a detector_number
                     # dataset — they must provide it via configure_pixellated_monitor)
                     pass
+
+        # Must follow the loop above: get_downsampling caches, so resolving it
+        # any earlier would freeze the file-less fallback for the process.
+        for name in self._downsampled_detectors:
+            self.get_downsampling(name)
 
     def _attach_default_monitor_factories(self) -> None:
         """Attach the shared monitor workflow factory where none was provided.

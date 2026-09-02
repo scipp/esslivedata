@@ -13,7 +13,8 @@ from typing import Any
 
 from structlog.testing import capture_logs
 
-from ess.livedata.dashboard.loop_monitor import LogThrottle, LoopMonitor
+from ess.livedata.core.log_throttle import LogThrottle
+from ess.livedata.dashboard.loop_monitor import LoopMonitor
 
 _INTERVAL = 0.02
 

@@ -414,7 +414,7 @@ class TestNoCopyAccumulatorPair:
 
 
 class TestResettingCumulativeAccumulator:
-    """make_no_copy_accumulator_pair(reset_coord=...) resets on coord change."""
+    """make_no_copy_accumulator_pair(reset_coords=(...,)) resets on coord change."""
 
     @staticmethod
     def _hist(values, position):
@@ -425,7 +425,7 @@ class TestResettingCumulativeAccumulator:
         )
 
     def test_accumulates_while_reset_coord_unchanged(self) -> None:
-        cumulative, _ = make_no_copy_accumulator_pair(reset_coord='position')
+        cumulative, _ = make_no_copy_accumulator_pair(reset_coords=('position',))
         cumulative.push(self._hist([1.0, 2.0], 0.0))
         cumulative.push(self._hist([3.0, 4.0], 0.0))
         assert sc.identical(
@@ -434,7 +434,7 @@ class TestResettingCumulativeAccumulator:
         )
 
     def test_resets_when_reset_coord_changes(self) -> None:
-        cumulative, _ = make_no_copy_accumulator_pair(reset_coord='position')
+        cumulative, _ = make_no_copy_accumulator_pair(reset_coords=('position',))
         cumulative.push(self._hist([1.0, 2.0], 0.0))
         moved = self._hist([3.0, 4.0], 1.0)
         cumulative.push(moved)
@@ -443,7 +443,7 @@ class TestResettingCumulativeAccumulator:
 
     def test_absent_reset_coord_is_a_noop(self) -> None:
         """Data without the coord accumulates as usual (e.g. TOA-mode histograms)."""
-        cumulative, _ = make_no_copy_accumulator_pair(reset_coord='position')
+        cumulative, _ = make_no_copy_accumulator_pair(reset_coords=('position',))
         cumulative.push(sc.array(dims=['x'], values=[1.0, 2.0], unit='counts'))
         cumulative.push(sc.array(dims=['x'], values=[3.0, 4.0], unit='counts'))
         assert sc.identical(
@@ -455,7 +455,7 @@ class TestResettingCumulativeAccumulator:
         data rather than summing across it. The driving loop pushes once per
         finalize so this does not fire in practice, but guards against a future
         change to that relation (and the coord-mismatch crash it would cause)."""
-        _, window = make_no_copy_accumulator_pair(reset_coord='position')
+        _, window = make_no_copy_accumulator_pair(reset_coords=('position',))
         window.push(self._hist([1.0, 2.0], 0.0))
         moved = self._hist([3.0, 4.0], 1.0)
         window.push(moved)
