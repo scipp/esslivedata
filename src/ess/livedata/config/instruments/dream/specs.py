@@ -19,15 +19,11 @@ from ess.livedata.config import (
 )
 from ess.livedata.config.device_contract import COUNTS_TOTAL_DEVICE
 from ess.livedata.config.workflow_spec import (
-    DETECTORS,
     AuxInput,
     AuxSources,
     WorkflowOutputsBase,
 )
-from ess.livedata.workflows.detector_view_specs import (
-    DetectorViewOutputs,
-    DetectorViewParams,
-)
+from ess.livedata.workflows.detector_view_specs import DetectorViewParams
 from ess.livedata.workflows.monitor_workflow_specs import (
     MonitorDataParams,
     register_monitor_workflow_specs,
@@ -193,10 +189,8 @@ class DreamDetectorViewParams(DetectorViewParams):
 # Replaces both the legacy DetectorProjection and the Sciline detector view
 # registrations. Which projection each bank uses is declared once, on the
 # ``GeometricViewConfig`` entries in ``factories.py``.
-projection_handle = instrument.register_spec(
-    group=DETECTORS,
+projection_handle = instrument.register_detector_view(
     name='detector_projection',
-    version=1,
     title='Detector Projection',
     description=(
         'Projection of detector banks onto 2D planes. '
@@ -204,7 +198,6 @@ projection_handle = instrument.register_spec(
     ),
     source_names=detector_names,
     params=DreamDetectorViewParams,
-    outputs=DetectorViewOutputs,
     # The projection covers every bank, so it carries the NICOS counts devices;
     # the wire and strip views cover subsets.
     device_outputs=COUNTS_TOTAL_DEVICE,

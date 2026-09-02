@@ -263,12 +263,13 @@ starts and survives a restart of it.
 With the job number gone the name is fixed at declaration time and varies only per
 source, which is what a spec-scope `ContextBinding` expresses. ROI therefore leaves
 `AuxSources` — which is now purely the user-selectable role→stream mapping this ADR
-describes it as — and becomes one binding per source and geometry. `load_factories` derives these from the
-spec's outputs model: a spec publishing the ROI readbacks is served by a detector-view
-graph that cannot build without the request keys, so `workflows.detector_view.bind_roi_requests`
-sweeps the registry rather than each factory restating what its spec already declares.
-It lives on the factory side only because the workflow keys must stay out of the
-`specs.py` the dashboard imports. The `DetectorROIAuxSources` subclass and the `render`
+describes it as — and becomes one binding per source and geometry, derived rather than declared. A view says
+`roi_support` once, at spec registration; that selects the outputs model carrying the
+ROI readbacks, and `load_factories` binds the request streams of every spec declaring
+those (`workflows.detector_view.bind_roi_requests` sweeps the registry). A spec
+publishing the readbacks is served by a detector-view graph that cannot build without
+the request keys, so the two always coincide. The sweep lives on the factory side only
+because the workflow keys must stay out of the `specs.py` the dashboard imports. The `DetectorROIAuxSources` subclass and the `render`
 override hook it needed are gone, and the dashboard no longer shows or ships ROI aux
 selections.
 

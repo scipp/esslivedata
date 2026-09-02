@@ -602,6 +602,99 @@ class Instrument:
             return metadata.description
         return ''
 
+    def register_detector_view(
+        self,
+        *,
+        name: str,
+        title: str,
+        description: str,
+        source_names: Sequence[str],
+        group: WorkflowGroup = DETECTORS,
+        service: str | None = None,
+        roi_support: bool = True,
+        output_ndim: int | None = None,
+        spectrum_view: SpectrumViewSpec | None = None,
+        params: type[pydantic.BaseModel] | None = None,
+        device_outputs: dict[str, str] | None = None,
+    ) -> SpecHandle:
+        """
+        Register a detector-view spec, deriving its params and outputs models.
+
+        ``roi_support`` is the sole declaration of whether the view has ROI:
+        it selects the outputs model carrying the ROI readbacks, from which
+        :meth:`load_factories` in turn binds the request streams (see
+        :func:`~ess.livedata.workflows.detector_view.bind_roi_requests`).
+        Naming an outputs model here instead would state the same fact twice.
+
+        Use this for a view whose factory is attached by hand in
+        ``factories.py`` -- a geometric projection, or one reading
+        instrument-specific ``params``. :meth:`add_logical_view` builds on it
+        for views the standard logical-view factory serves, which need no
+        ``factories.py`` code at all.
+
+        Parameters
+        ----------
+        name:
+            Unique name for the view within the given group.
+        title:
+            Human-readable title for the view.
+        description:
+            Description of the view.
+        source_names:
+            List of source names this view applies to.
+        group:
+            Display-oriented :class:`WorkflowGroup` this view belongs to.
+        service:
+            Name of the backend service responsible for running this workflow.
+            Defaults to ``group.name``.
+        roi_support:
+            Whether ROI selection is supported for this view. Geometric
+            projections always support it; a logical view that does not map
+            output pixels back to input pixels does not.
+        output_ndim:
+            Number of dimensions for spatial outputs. Defaults to 2.
+        spectrum_view:
+            Optional ``SpectrumViewSpec`` enabling a ``spectrum_view`` output
+            derived from the cumulative accumulated histogram via a
+            per-instrument transform.
+        params:
+            Params model, when the factory needs fields beyond the standard
+            detector-view ones. Defaults to the model derived from
+            ``spectrum_view``.
+        device_outputs:
+            Outputs of this view exposed to NICOS as derived devices. Pass
+            :data:`~ess.livedata.config.device_contract.COUNTS_TOTAL_DEVICE` on
+            the one view per detector bank whose total is the bank's device.
+
+        Returns
+        -------
+        :
+            Handle for the registered spec.
+        """
+        from ess.livedata.workflows.detector_view_specs import (
+            make_detector_view_outputs,
+            make_detector_view_params,
+        )
+
+        return self.register_spec(
+            group=group,
+            service=service,
+            name=name,
+            version=1,
+            title=title,
+            description=description,
+            source_names=list(source_names),
+            params=(
+                make_detector_view_params(spectrum_view=spectrum_view)
+                if params is None
+                else params
+            ),
+            outputs=make_detector_view_outputs(
+                output_ndim, roi_support=roi_support, spectrum_view=spectrum_view
+            ),
+            device_outputs=device_outputs,
+        )
+
     def add_logical_view(
         self,
         *,
@@ -670,25 +763,16 @@ class Instrument:
         :
             Handle for the registered spec.
         """
-        from ess.livedata.workflows.detector_view_specs import (
-            make_detector_view_outputs,
-            make_detector_view_params,
-        )
-
-        outputs = make_detector_view_outputs(
-            output_ndim, roi_support=roi_support, spectrum_view=spectrum_view
-        )
-        params = make_detector_view_params(spectrum_view=spectrum_view)
-        handle = self.register_spec(
-            group=group,
-            service=service,
+        handle = self.register_detector_view(
             name=name,
-            version=1,
             title=title,
             description=description,
-            source_names=list(source_names),
-            params=params,
-            outputs=outputs,
+            source_names=source_names,
+            group=group,
+            service=service,
+            roi_support=roi_support,
+            output_ndim=output_ndim,
+            spectrum_view=spectrum_view,
             device_outputs=device_outputs,
         )
         self._logical_view_handles[name] = handle

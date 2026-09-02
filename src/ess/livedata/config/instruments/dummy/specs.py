@@ -10,11 +10,7 @@ import scipp as sc
 from ess.livedata.config import F144Stream, Instrument, instrument_registry
 from ess.livedata.config.device_contract import COUNTS_TOTAL_DEVICE
 from ess.livedata.config.workflow_spec import DETECTORS, WorkflowOutputsBase
-from ess.livedata.workflows.detector_view_specs import (
-    DetectorViewOutputs,
-    DetectorViewOutputsBase,
-    DetectorViewParams,
-)
+from ess.livedata.workflows.detector_view_specs import DetectorViewOutputsBase
 from ess.livedata.workflows.monitor_workflow_specs import (
     TOAOnlyMonitorDataParams,
     register_monitor_workflow_specs,
@@ -54,10 +50,8 @@ register_monitor_workflow_specs(
 )
 
 # Register detector view spec.
-panel_0_view_handle = instrument.register_spec(
-    group=DETECTORS,
+instrument.add_logical_view(
     name='panel_0_xy',
-    version=1,
     title='Panel 0',
     description=(
         'Detector image for the dummy "panel_0" logical detector, projected '
@@ -65,8 +59,6 @@ panel_0_view_handle = instrument.register_spec(
         'restricted to regions of interest.'
     ),
     source_names=['panel_0'],
-    params=DetectorViewParams,
-    outputs=DetectorViewOutputs,
     # The primary panel_0 view, not its 3-D 'layers' counterpart, carries the device.
     device_outputs=COUNTS_TOTAL_DEVICE,
 )

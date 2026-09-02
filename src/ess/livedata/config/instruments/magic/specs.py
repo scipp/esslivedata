@@ -19,11 +19,6 @@ from ess.livedata.config import (
     name_streams,
 )
 from ess.livedata.config.device_contract import COUNTS_TOTAL_DEVICE
-from ess.livedata.config.workflow_spec import DETECTORS
-from ess.livedata.workflows.detector_view_specs import (
-    DetectorViewOutputs,
-    DetectorViewParams,
-)
 from ess.livedata.workflows.monitor_workflow_specs import (
     TOAOnlyMonitorDataParams,
     register_monitor_workflow_specs,
@@ -116,15 +111,11 @@ strip_view_handle = instrument.add_logical_view(
 # cuboid with only one active surface, and which of its two radial faces that is has
 # not been confirmed against the hardware. Using the outer face instead would move
 # every pixel ~16.5 mm outwards.
-projection_handle = instrument.register_spec(
-    group=DETECTORS,
+projection_handle = instrument.register_detector_view(
     name='detector_projection',
-    version=1,
     title='Detector Projection',
     description='Projection of the cylindrical detector banks onto their mantle.',
     source_names=detector_names,
-    params=DetectorViewParams,
-    outputs=DetectorViewOutputs,
     # The projection, not the wire or strip view, carries the NICOS counts devices.
     device_outputs=COUNTS_TOTAL_DEVICE,
 )
