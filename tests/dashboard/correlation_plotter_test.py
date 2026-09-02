@@ -22,7 +22,13 @@ from ess.livedata.dashboard.correlation_plotter import (
     CorrelationHistogramPlotter,
 )
 from ess.livedata.dashboard.extractors import FullHistoryExtractor
-from ess.livedata.dashboard.plot_params import PlotScaleParams, PlotScaleParams2d
+from ess.livedata.dashboard.plot_params import (
+    CombineMode,
+    LegendParams,
+    LegendPosition,
+    PlotScaleParams,
+    PlotScaleParams2d,
+)
 from ess.livedata.dashboard.plots import ImagePlotter, LinePlotter, TitleResolver
 from ess.livedata.dashboard.temporal_buffers import TemporalBuffer
 
@@ -637,6 +643,39 @@ class TestCorrelationHistogram1dPlotter:
         params = CorrelationHistogram1dParams()
         plotter = CorrelationHistogram1dPlotter.from_params(params)
         assert isinstance(plotter, CorrelationHistogram1dPlotter)
+
+
+class TestCorrelationHistogramRendererDelegation:
+    """The cell asks the outer plotter for properties the renderer owns."""
+
+    def test_legend_position_comes_from_renderer(self):
+        params = CorrelationHistogram1dParams(
+            legend=LegendParams(position=LegendPosition.bottom)
+        )
+        plotter = CorrelationHistogram1dPlotter.from_params(params)
+
+        assert plotter.legend_position is LegendPosition.bottom
+
+    def test_legend_position_is_none_for_2d(self):
+        plotter = CorrelationHistogram2dPlotter.from_params(
+            CorrelationHistogram2dParams()
+        )
+
+        assert plotter.legend_position is None
+
+    def test_overlay_mode_is_overlayable(self):
+        plotter = CorrelationHistogram1dPlotter.from_params(
+            CorrelationHistogram1dParams()
+        )
+
+        assert plotter.is_overlayable
+
+    def test_layout_mode_is_not_overlayable(self):
+        params = CorrelationHistogram1dParams()
+        params.layout.combine_mode = CombineMode.layout
+        plotter = CorrelationHistogram1dPlotter.from_params(params)
+
+        assert not plotter.is_overlayable
 
 
 class TestCorrelationHistogram2dPlotter:
