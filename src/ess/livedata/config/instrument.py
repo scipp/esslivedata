@@ -24,7 +24,6 @@ from .detector_downsampling import (
     is_reachable_resolution,
     resolve_downsampling,
 )
-from .roi_names import get_roi_mapper, roi_stream_name
 from .stream import ChainPatchBinding, ContextBinding, Device, F144Stream, Stream
 from .value_log import ValueLog
 from .workflow_spec import (
@@ -797,7 +796,8 @@ class Instrument:
         2. Auto-attaches timeseries factory if specs were registered
         3. Auto-attaches logical view factories if views were registered
         4. Calls instrument-specific setup_factories(self)
-        5. Auto-loads detector_numbers from nexus for unconfigured detectors
+        5. Binds the ROI request streams of every ROI-publishing spec
+        6. Auto-loads detector_numbers from nexus for unconfigured detectors
         """
         import importlib
 
@@ -816,7 +816,6 @@ class Instrument:
             from ess.livedata.workflows.detector_view import (
                 DetectorViewFactory,
                 InstrumentDetectorSource,
-                bind_roi_requests,
             )
             from ess.livedata.workflows.detector_view import (
                 LogicalViewConfig as ScilineLogicalViewConfig,
@@ -835,8 +834,6 @@ class Instrument:
                     view_config=view_config,
                 )
                 handle.attach_factory()(factory.make_workflow)
-                if config.roi_support:
-                    bind_roi_requests(handle)
 
         if self.choppers:
             from ess.livedata.preprocessors.detector_data import (
@@ -856,6 +853,10 @@ class Instrument:
             module.setup_factories(self)
 
         self._attach_default_monitor_factories()
+
+        from ess.livedata.workflows.detector_view import bind_roi_requests
+
+        bind_roi_requests(self.workflow_factory)
 
         self.validate()
 
@@ -911,35 +912,6 @@ class Instrument:
         self._validate_binding_dependent_sources()
         self._validate_context_binding_wire_name_collisions()
         self._validate_chain_patch_value_log_uniqueness()
-        self._validate_roi_request_bindings()
-
-    def _validate_roi_request_bindings(self) -> None:
-        """Raise if a spec publishes ROI readbacks without binding the requests.
-
-        The detector-view graph requires the request keys, so a job of such a
-        spec would fail to build. The bindings are declared next to the factory
-        by ``bind_roi_requests``; forgetting that call is caught here rather
-        than at the first job.
-        """
-        readback_keys = get_roi_mapper().readback_keys
-        for reg in self.workflow_factory.registrations():
-            spec = reg.spec
-            if not set(readback_keys) <= set(spec.outputs.model_fields):
-                continue
-            bound = {binding.stream_name for binding in reg.context_bindings}
-            for source in spec.source_names:
-                missing = [
-                    key
-                    for key in readback_keys
-                    if roi_stream_name(spec.get_id(), source, key) not in bound
-                ]
-                if missing:
-                    raise ValueError(
-                        f"Spec {spec.name!r} publishes ROI readbacks for source "
-                        f"{source!r} but binds no request stream for {missing}; "
-                        "call bind_roi_requests(handle) where its factory is "
-                        "attached"
-                    )
 
     def _validate_binding_dependent_sources(self) -> None:
         """Raise if any binding lists a source name no registered spec advertises."""

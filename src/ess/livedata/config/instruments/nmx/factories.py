@@ -18,7 +18,6 @@ def setup_factories(instrument: Instrument) -> None:
         DetectorViewFactory,
         InstrumentDetectorSource,
         LogicalViewConfig,
-        bind_roi_requests,
     )
 
     # Configure detectors with computed arrays
@@ -43,4 +42,3 @@ def setup_factories(instrument: Instrument) -> None:
     )
 
     specs.panel_xy_view_handle.attach_factory()(_nmx_panels_view.make_workflow)
-    bind_roi_requests(specs.panel_xy_view_handle)

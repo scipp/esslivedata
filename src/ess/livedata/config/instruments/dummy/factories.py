@@ -31,7 +31,6 @@ def setup_factories(instrument: Instrument) -> None:
         DetectorViewFactory,
         InstrumentDetectorSource,
         LogicalViewConfig,
-        bind_roi_requests,
     )
     from ess.livedata.workflows.stream_processor_workflow import (
         StreamProcessorWorkflow,
@@ -52,7 +51,6 @@ def setup_factories(instrument: Instrument) -> None:
     )
 
     specs.panel_0_view_handle.attach_factory()(_panel_0_view.make_workflow)
-    bind_roi_requests(specs.panel_0_view_handle)
 
     # Area detector view for area_panel (ad00 images)
     specs.area_panel_view_handle.attach_factory()(AreaDetectorView.view_factory())

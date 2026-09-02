@@ -42,7 +42,6 @@ def setup_factories(instrument: Instrument) -> None:
         DetectorViewFactory,
         GeometricViewConfig,
         NeXusDetectorSource,
-        bind_roi_requests,
     )
     from ess.livedata.workflows.detector_view_specs import DetectorViewParams
     from ess.livedata.workflows.stream_processor_workflow import StreamProcessorWorkflow
@@ -94,5 +93,3 @@ def setup_factories(instrument: Instrument) -> None:
             view_config=_view_config,
         )
         return factory.make_workflow(source_name, params)
-
-    bind_roi_requests(specs.projection_handle)

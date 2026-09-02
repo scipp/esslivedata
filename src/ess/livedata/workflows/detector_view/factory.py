@@ -27,7 +27,7 @@ from ..detector_view_specs import (
     DetectorViewParams,
 )
 from ..stream_processor_workflow import StreamProcessorWorkflow
-from ..workflow_factory import SpecHandle
+from ..workflow_factory import WorkflowFactory
 from .data_source import DetectorDataSource, DetectorNumberSource
 from .providers import spectrum_view
 from .types import (
@@ -269,8 +269,17 @@ _ROI_REQUEST_KEYS = {
 }
 
 
-def bind_roi_requests(handle: SpecHandle) -> None:
-    """Bind the ROI request streams of a detector-view spec with ROI support.
+def bind_roi_requests(workflow_factory: WorkflowFactory) -> None:
+    """Bind the ROI request streams of every spec that publishes ROI readbacks.
+
+    Called once from :meth:`~ess.livedata.config.instrument.Instrument.load_factories`.
+    A spec whose outputs model carries the ROI readback fields is served by a
+    detector-view graph with the ROI providers inserted, which cannot build
+    without the request keys -- so the bindings follow from the outputs
+    declaration and are derived here rather than restated next to each factory.
+    The workflow-key import that forces this to live on the factory side, away
+    from the ``specs.py`` the dashboard imports, is the only reason the two are
+    declared apart at all.
 
     One spec-scope context binding per source and ROI geometry, naming the
     stream by :func:`~ess.livedata.config.roi_names.roi_stream_name`. The
@@ -291,13 +300,20 @@ def bind_roi_requests(handle: SpecHandle) -> None:
     it is the dashboard that commits one generation at a time, stopping the
     previous job before starting the next.
     """
-    for source_name in handle.spec.source_names:
-        for geometry in get_roi_mapper().geometries:
-            handle.add_context_binding(
-                stream_name=roi_stream_name(
-                    handle.workflow_id, source_name, geometry.readback_key
-                ),
-                workflow_key=_ROI_REQUEST_KEYS[geometry.geometry_type],
-                dependent_sources={source_name},
-                gating=False,
-            )
+    mapper = get_roi_mapper()
+    readback_keys = set(mapper.readback_keys)
+    for registration in workflow_factory.registrations():
+        spec = registration.spec
+        if not readback_keys <= set(spec.outputs.model_fields):
+            continue
+        handle = workflow_factory.handle(spec.get_id())
+        for source_name in spec.source_names:
+            for geometry in mapper.geometries:
+                handle.add_context_binding(
+                    stream_name=roi_stream_name(
+                        handle.workflow_id, source_name, geometry.readback_key
+                    ),
+                    workflow_key=_ROI_REQUEST_KEYS[geometry.geometry_type],
+                    dependent_sources={source_name},
+                    gating=False,
+                )

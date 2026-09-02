@@ -23,6 +23,7 @@ from ess.livedata.workflows.detector_view.types import (
 from ess.livedata.workflows.detector_view_specs import (
     CoordinateModeSettings,
     DetectorViewOutputs,
+    DetectorViewOutputsBase,
     DetectorViewParams,
 )
 
@@ -41,7 +42,11 @@ def test_import_does_not_pull_in_ess_reduce() -> None:
     subprocess.run([sys.executable, '-c', script], check=True)  # noqa: S603
 
 
-def _register_detector_view(instrument: Instrument, source_names: list[str]):
+def _register_detector_view(
+    instrument: Instrument,
+    source_names: list[str],
+    outputs: type = DetectorViewOutputs,
+):
     """Register a detector view spec the way an instrument's specs.py does."""
     return instrument.register_spec(
         group=DETECTORS,
@@ -51,7 +56,7 @@ def _register_detector_view(instrument: Instrument, source_names: list[str]):
         description='Projection of a detector bank onto an XY-plane.',
         source_names=source_names,
         params=DetectorViewParams,
-        outputs=DetectorViewOutputs,
+        outputs=outputs,
     )
 
 
@@ -64,8 +69,8 @@ class TestBindROIRequests:
     @pytest.fixture
     def instrument(self) -> Instrument:
         instrument = Instrument(name="test_instrument")
-        handle = _register_detector_view(instrument, ["detector1", "detector2"])
-        bind_roi_requests(handle)
+        _register_detector_view(instrument, ["detector1", "detector2"])
+        bind_roi_requests(instrument.workflow_factory)
         return instrument
 
     @pytest.fixture
@@ -96,13 +101,14 @@ class TestBindROIRequests:
         }
         assert len(names) == 2 * len(ROI_KEYS)
 
-    def test_validate_rejects_roi_outputs_without_request_bindings(self) -> None:
+    def test_spec_without_roi_outputs_gets_no_bindings(self) -> None:
         instrument = Instrument(name="test_instrument")
-        handle = _register_detector_view(instrument, ["detector1"])
-        with pytest.raises(ValueError, match="binds no request stream"):
-            instrument.validate()
-        bind_roi_requests(handle)
-        instrument.validate()
+        handle = _register_detector_view(
+            instrument, ["detector1"], outputs=DetectorViewOutputsBase
+        )
+        bind_roi_requests(instrument.workflow_factory)
+        reg = instrument.workflow_factory.registration(handle.workflow_id)
+        assert reg.context_bindings == ()
 
 
 @pytest.fixture(scope='module')
@@ -113,19 +119,48 @@ def tbl() -> Instrument:
     return instrument
 
 
-class TestLogicalViewROIBindings:
-    """``load_factories`` binds ROI requests for logical views with ROI support."""
+@pytest.fixture(scope='module')
+def dummy() -> Instrument:
+    get_config('dummy')
+    instrument = instrument_registry['dummy']
+    instrument.load_factories()
+    return instrument
+
+
+def _expected_roi_bindings(reg) -> set[tuple[str, object]]:
+    workflow_id = reg.spec.get_id()
+    return {
+        (roi_stream_name(workflow_id, source, key), request)
+        for source in reg.spec.source_names
+        for key, request in ROI_KEYS.items()
+    }
+
+
+class TestLoadFactoriesROIBindings:
+    """``load_factories`` binds ROI requests for every spec declaring readbacks."""
+
+    def test_hand_registered_view_declaring_roi_outputs_binds_roi_requests(
+        self, dummy: Instrument
+    ) -> None:
+        workflow_id = WorkflowId(instrument='dummy', name='panel_0_xy', version=1)
+        reg = dummy.workflow_factory.registration(workflow_id)
+        bindings = {(b.stream_name, b.workflow_key) for b in reg.context_bindings}
+        assert bindings == _expected_roi_bindings(reg)
+        assert not any(b.gating for b in reg.context_bindings)
+
+    def test_view_declaring_roi_free_outputs_has_no_bindings(
+        self, dummy: Instrument
+    ) -> None:
+        workflow_id = WorkflowId(instrument='dummy', name='area_panel_xy', version=1)
+        assert dummy.workflow_factory.registration(workflow_id).context_bindings == ()
 
     def test_logical_view_with_roi_support_binds_roi_requests(
         self, tbl: Instrument
     ) -> None:
         workflow_id = WorkflowId(instrument='tbl', name='he3_detector_view', version=1)
         reg = tbl.workflow_factory.registration(workflow_id)
-        assert {(b.stream_name, b.workflow_key) for b in reg.context_bindings} == {
-            (roi_stream_name(workflow_id, source, key), request)
-            for source in reg.spec.source_names
-            for key, request in ROI_KEYS.items()
-        }
+        bindings = {(b.stream_name, b.workflow_key) for b in reg.context_bindings}
+        assert bindings == _expected_roi_bindings(reg)
         assert not any(b.gating for b in reg.context_bindings)
 
     def test_logical_view_without_roi_support_has_no_bindings(

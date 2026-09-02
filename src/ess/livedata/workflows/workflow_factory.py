@@ -221,6 +221,18 @@ class WorkflowFactory(Mapping[WorkflowId, WorkflowSpec]):
         """Return the full registration record for ``workflow_id``, or None."""
         return self._registrations.get(workflow_id)
 
+    def handle(self, workflow_id: WorkflowId) -> SpecHandle:
+        """Return a handle for an already registered spec.
+
+        For code that derives implementation-side declarations from the specs
+        themselves (see
+        :func:`~ess.livedata.workflows.detector_view.bind_roi_requests`) rather
+        than holding the handle :meth:`register_spec` returned.
+        """
+        if workflow_id not in self._registrations:
+            raise KeyError(f"Workflow spec '{workflow_id}' not registered.")
+        return SpecHandle(workflow_id=workflow_id, _factory=self)
+
     def registrations(self) -> Iterable[WorkflowRegistration]:
         """Iterate over all registrations."""
         return self._registrations.values()

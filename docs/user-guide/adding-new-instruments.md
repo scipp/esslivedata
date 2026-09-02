@@ -524,11 +524,13 @@ def _projection_factory(source_name, params):
         view_config=_view_config,
     )
     return factory.make_workflow(source_name, params)
-
-
-# Subscribe each bank's jobs to the ROI requests the dashboard publishes for it.
-bind_roi_requests(projection_handle)
 ```
+
+Nothing is needed to wire up ROI: a spec whose outputs model carries the ROI
+readback fields (`DetectorViewOutputs`) is subscribed to the ROI requests the
+dashboard publishes for each of its banks, by `load_factories`. A view that
+neither reads requests nor publishes readbacks must declare
+`DetectorViewOutputsBase` instead.
 
 Available projections (`ProjectionType` in `workflows/detector_view/types.py`):
 - `xy_plane`: projection onto the XY plane
