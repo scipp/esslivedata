@@ -86,9 +86,7 @@ def setup_factories(instrument: Instrument) -> None:
 
     @specs.projection_handle.attach_factory()
     def _projection_factory(
-        source_name: str,
-        params: TOAOnlyDetectorViewParams,
-        aux_source_names: dict[str, str],
+        source_name: str, params: TOAOnlyDetectorViewParams
     ) -> StreamProcessorWorkflow:
         # Resolve the geometry file lazily so logical views and service startup
         # do not depend on it being registered yet.
@@ -96,4 +94,4 @@ def setup_factories(instrument: Instrument) -> None:
             data_source=NeXusDetectorSource(get_nexus_geometry_filename('magic')),
             view_config=_view_config,
         )
-        return factory.make_workflow(source_name, params, aux_source_names)
+        return factory.make_workflow(source_name, params)

@@ -1,6 +1,6 @@
 # ADR 0003: Unified declaration model for workflow context bindings
 
-- Status: accepted
+- Status: accepted (amended 2026-08-31, 2026-09-02)
 - Deciders: Simon
 - Date: 2026-05-21
 
@@ -105,7 +105,7 @@ flavours share the record, discriminated by the *type* of `workflow_key`:
 
 ### Resolution at job creation
 
-`Instrument.resolve_context_keys(workflow_id, source_name)` merges instrument- and
+`Instrument.bound_context_keys(workflow_id, source_name)` merges instrument- and
 spec-scope bindings filtered by source membership and returns
 `{stream_name: workflow_key}`:
 
@@ -241,12 +241,12 @@ single source of truth and a binding cannot disagree with the stream it patches.
   those into the pipeline.
 - `WorkflowRegistration` carries `context_bindings` and a `skip_instrument_contexts`
   flag; `SpecHandle` gains `add_context_binding(...)` and `skip_instrument_contexts()`.
-- `Instrument.resolve_context_keys` merges instrument + spec bindings; `JobFactory.create`
+- `Instrument.bound_context_keys` merges instrument + spec bindings; `JobFactory.create`
   calls it, hands `context_keys` to the factory (injected via `SupportsContext.build`,
   ADR 0004), sets `Job.gating_streams`, and returns a bare `Job`.
-- `AuxSources` is dynamic, user-selectable aux only. ROI remains an `AuxSources`
-  (`DetectorROIAuxSources`, job-prefixed per job) — it is not a context binding, since
-  ADR 0002 routes ROI as aux rather than gating it.
+- `AuxSources` is dynamic, user-selectable aux only. ROI was originally kept an
+  `AuxSources` (`DetectorROIAuxSources`, prefixed per job), since ADR 0002 routes ROI
+  as aux rather than gating it; the amendment below makes it a non-gating binding.
 - `Workflow.context_keys` is removed from the protocol; `StreamProcessorWorkflow`
   receives the routing
   layer's `context_keys` via `build` (ADR 0004), other implementations drop the stub.
@@ -262,3 +262,36 @@ single source of truth and a binding cannot disagree with the stream it patches.
   failure without putting NeXus introspection on the construction hot path.
 - Per ADR 0002, the gate mechanism inside `JobManager` is unchanged; this ADR settles
   only the declaration model that feeds it.
+
+## Amendment 2026-08-31: ROI streams are view-scoped, non-gating context bindings
+
+The ROI stream name above embedded the `job_id`, giving each job generation its own
+stream. `MessagePreprocessor._accumulators` is insert-only, so that made the map grow
+without bound over a process's lifetime, driven by the wire (#1260).
+
+The stream is now named for the view it configures,
+`{workflow_id}/{source_name}/{readback_key}` (`roi_names.roi_stream_name`), which is
+the `DataKey` the dashboard already keys the corresponding readback output by. The set
+is bounded by the workflow registry. An ROI selection is thereby a property of the view
+rather than of the job generation computing it: it can be published before the job
+starts and survives a restart of it.
+
+With the job number gone the name is fixed at declaration time and varies only per
+source, which is what a spec-scope `ContextBinding` expresses. ROI therefore leaves
+`AuxSources` — which is now purely the user-selectable role→stream mapping this ADR
+describes it as — and becomes one binding per source and geometry, derived rather than declared. A view says
+`roi_support` once, at spec registration; that selects the outputs model carrying the
+ROI readbacks, and `load_factories` binds the request streams of every spec declaring
+those (`workflows.detector_view.bind_roi_requests` sweeps the registry). A spec
+publishing the readbacks is served by a detector-view graph that cannot build without
+the request keys, so the two always coincide. The sweep lives on the factory side only
+because the workflow keys must stay out of the `specs.py` the dashboard imports. The `DetectorROIAuxSources` subclass and the `render`
+override hook it needed are gone, and the dashboard no longer shows or ships ROI aux
+selections.
+
+The one thing a binding could not express was ADR 0002's axis: ROI tolerates absence,
+so it must not gate. `ContextBinding` gains `gating: bool = True`; a non-gating binding
+is routed, latched and delivered like any other context input, but `JobFactory.create`
+leaves it out of `Job.gating_streams`. This declares the "safe default" property on the
+input rather than encoding it in the choice of routing mechanism. The gate itself is
+unchanged.

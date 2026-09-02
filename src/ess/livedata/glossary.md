@@ -53,7 +53,8 @@ The naming stack, from the Kafka wire inwards (see ADR 0004 and
   source names, aux sources, parameter and output models
   (`config/workflow_spec.py`). Purely declarative; contains no runtime values.
 - **WorkflowConfig** — runtime parameter *values* for a spec, sent as a command
-  to start a job. Currently conflates "configure" and "start" (issue #445).
+  to start a job. Conflates "configure" and "start"; the split was considered
+  and dropped, see the `WorkflowConfig` docstring.
 - **Job** — a running instance of a workflow, bound to a `JobId` and its input
   streams (`core/job.py`).
 - **JobNumber** — a `uuid.UUID` minted per commit; the persistent identity
@@ -169,9 +170,11 @@ The naming stack, from the Kafka wire inwards (see ADR 0004 and
   health.
 - **Primary / auxiliary / context data** — *primary* streams
   (the job's `source_names`) trigger computation; *auxiliary* streams
-  (user-selected `AuxSources` plus framework context) accumulate and tolerate
-  absence; *context* streams parametrize the workflow graph and, lacking a safe
-  default, gate the job (ADR 0002/0003).
+  (user-selected `AuxSources`) accumulate and tolerate absence; *context*
+  streams parametrize the workflow graph via `set_context` and, lacking a safe
+  default, gate the job (ADR 0002/0003). A context stream with a safe default
+  (the ROI request) is a `gating=False` binding: routed and latched, not waited
+  for.
 - **Gating** — holding a job in `pending_context` until all its gating (context)
   streams have a value (ADR 0002).
 - **ContextBinding** — declaration mapping a context stream to a Sciline

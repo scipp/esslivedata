@@ -21,6 +21,8 @@ import asyncio
 import structlog
 from tornado.ioloop import IOLoop
 
+from ..core.log_throttle import LogThrottle
+
 logger = structlog.get_logger(__name__)
 
 _PROBE_INTERVAL_S = 0.2
@@ -31,39 +33,6 @@ _BLOCK_THRESHOLD_S = 1.0
 
 _SUMMARY_INTERVAL_S = 60.0
 """How often the accumulated view of loop availability is logged."""
-
-
-class LogThrottle:
-    """Passes the first event, then at most one per cooldown.
-
-    A loop kept saturated by one large grid crosses the reporting thresholds on
-    every data frame, so an unthrottled warning would arrive once a second per
-    session for as long as the grid stays open -- loudest exactly when the
-    journal most needs to stay readable. Counting what is suppressed keeps the
-    frequency in the record: the next event through carries how many it stands
-    for, and the periodic summary carries the severity.
-    """
-
-    def __init__(self, cooldown: float = _SUMMARY_INTERVAL_S) -> None:
-        self._cooldown = cooldown
-        self._last: float | None = None
-        self._suppressed = 0
-
-    def take(self, now: float) -> int | None:
-        """Report this event, or suppress it.
-
-        Returns
-        -------
-        :
-            How many events were suppressed since the last one reported, or
-            ``None`` if this event is itself suppressed.
-        """
-        if self._last is not None and now - self._last < self._cooldown:
-            self._suppressed += 1
-            return None
-        self._last = now
-        suppressed, self._suppressed = self._suppressed, 0
-        return suppressed
 
 
 class LoopMonitor:

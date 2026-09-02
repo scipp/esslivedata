@@ -587,6 +587,132 @@ class TestComposeMixedLayers:
         assert cell_widget.autoscale_controller is not None
 
 
+class TestComposeCellLegend:
+    """Legend placement on a cell that fuses several layers into one figure."""
+
+    @staticmethod
+    def _add_line_layer(plot_grid_tabs, plot_data_service, *, output: str, position):
+        import uuid
+
+        import scipp as sc
+
+        from ess.livedata.config.workflow_spec import DataKey, WorkflowId
+        from ess.livedata.dashboard.data_roles import PRIMARY
+        from ess.livedata.dashboard.plot_data_service import LayerId
+        from ess.livedata.dashboard.plot_orchestrator import (
+            DataSourceConfig,
+            Layer,
+            PlotConfig,
+        )
+        from ess.livedata.dashboard.plot_params import (
+            LegendParams,
+            PlotParams1d,
+        )
+        from ess.livedata.dashboard.plots import LinePlotter
+        from ess.livedata.dashboard.session_layer import SessionLayer
+
+        wf = WorkflowId(instrument='test', name='wf', version=1)
+        params = PlotParams1d(legend=LegendParams(position=position))
+        config = PlotConfig(
+            data_sources={
+                PRIMARY: DataSourceConfig(
+                    workflow_id=wf, source_names=['bank0'], view_name=output
+                )
+            },
+            plot_name='lines',
+            params=params,
+        )
+        layer = Layer(layer_id=LayerId(uuid.uuid4()), config=config)
+
+        plotter = LinePlotter.from_params(params)
+        key = DataKey(workflow_id=wf, source_name='bank0', output_name=output)
+        data = sc.DataArray(
+            sc.array(dims=['x'], values=[1.0, 2.0, 3.0], unit='counts'),
+            coords={'x': sc.array(dims=['x'], values=[10.0, 20.0, 30.0], unit='m')},
+        )
+        plotter.compute({PRIMARY: {key: data}})
+
+        plot_data_service.job_started(layer.layer_id, plotter)
+        plot_data_service.data_arrived(layer.layer_id)
+        state = plot_data_service.get(layer.layer_id)
+        session_layer = SessionLayer(layer_id=layer.layer_id)
+        session_layer.ensure_components(state)
+        plot_grid_tabs._session_layers[layer.layer_id] = session_layer
+        return layer
+
+    def _figure(self, plot_grid_tabs, plot_orchestrator, layers):
+        from uuid import uuid4
+
+        from holoviews.plotting.bokeh import BokehRenderer
+
+        from ess.livedata.dashboard.plot_orchestrator import PlotCell
+        from ess.livedata.dashboard.widgets.plot_grid_tabs import CellId
+
+        cell = PlotCell(geometry=_GEO, layers=layers)
+        grid_id = plot_orchestrator.add_grid(title='Test', nrows=1, ncols=1)
+        cell_widget = plot_grid_tabs._build_cell(CellId(uuid4()), cell, grid_id)
+        assert cell_widget.has_plot
+        return BokehRenderer.instance().get_plot(cell_widget._plot).state
+
+    def test_fused_layers_keep_the_legend_beside_the_plot(
+        self, plot_grid_tabs, plot_data_service, plot_orchestrator
+    ):
+        """Collating drops the layers' own legend opts, so the cell re-applies."""
+        from ess.livedata.dashboard.plot_params import LegendPosition
+
+        layers = [
+            self._add_line_layer(
+                plot_grid_tabs,
+                plot_data_service,
+                output=output,
+                position=LegendPosition.right,
+            )
+            for output in ('counts', 'errors')
+        ]
+        figure = self._figure(plot_grid_tabs, plot_orchestrator, layers)
+
+        (legend,) = figure.legend
+        assert legend in figure.right
+
+    def test_fused_layers_can_drop_the_legend(
+        self, plot_grid_tabs, plot_data_service, plot_orchestrator
+    ):
+        from ess.livedata.dashboard.plot_params import LegendPosition
+
+        layers = [
+            self._add_line_layer(
+                plot_grid_tabs,
+                plot_data_service,
+                output=output,
+                position=LegendPosition.hidden,
+            )
+            for output in ('counts', 'errors')
+        ]
+        figure = self._figure(plot_grid_tabs, plot_orchestrator, layers)
+
+        assert not any(legend.items for legend in figure.legend)
+
+    def test_fused_layers_keep_the_legend_inside_by_default(
+        self, plot_grid_tabs, plot_data_service, plot_orchestrator
+    ):
+        from ess.livedata.dashboard.plot_params import LegendPosition
+
+        layers = [
+            self._add_line_layer(
+                plot_grid_tabs,
+                plot_data_service,
+                output=output,
+                position=LegendPosition.top_right,
+            )
+            for output in ('counts', 'errors')
+        ]
+        figure = self._figure(plot_grid_tabs, plot_orchestrator, layers)
+
+        (legend,) = figure.legend
+        assert legend.location == 'top_right'
+        assert legend not in figure.right
+
+
 class TestComposeTableLayer:
     """Composition of a cell containing a table layer.
 
@@ -1237,37 +1363,6 @@ class TestCellDiffer:
         _tick(plot_grid_tabs)
 
         assert plot_grid_tabs._cells[cell_id] is widget
-
-    def test_failed_build_leaves_the_record_for_the_next_pass(
-        self, plot_orchestrator, plot_data_service, plot_grid_tabs
-    ):
-        """A build that raises must not be recorded as applied, so the next
-        pass retries it instead of leaving the cell frozen at its old plot."""
-        grid_id = plot_orchestrator.add_grid(title='G', nrows=2, ncols=2)
-        cell_id = _inject_plotter_cell(
-            plot_orchestrator,
-            plot_data_service,
-            grid_id,
-            FakePlotter(cached_state=hv.Curve([1, 2, 3])),
-        )
-        _tick(plot_grid_tabs)
-        plot_grid_tabs.tabs.active = plot_grid_tabs._static_tabs_count
-        widget = plot_grid_tabs._cells[cell_id]
-
-        # A plotter swap is a changed input; building its presenter fails once.
-        cell = plot_orchestrator.peek_grid(grid_id).cells[cell_id]
-        layer_id = cell.layers[0].layer_id
-        plot_data_service.job_started(
-            layer_id, _FlakyPresenterPlotter(cached_state=hv.Curve([4, 5, 6]))
-        )
-        plot_data_service.data_arrived(layer_id)
-
-        with pytest.raises(RuntimeError, match='injected presenter failure'):
-            _tick(plot_grid_tabs)
-        assert plot_grid_tabs._cells[cell_id] is widget
-
-        _tick(plot_grid_tabs)
-        assert plot_grid_tabs._cells[cell_id] is not widget
 
 
 class TestCellActions:
@@ -2096,11 +2191,12 @@ class TestRevealPass:
         _tick(deferred_tick_tabs)
         assert 'Second' in deferred_tick_tabs.tabs._names
 
-    def test_prebuild_failure_is_swallowed_and_deferred_build_retries(
+    def test_reveal_survives_a_cell_that_cannot_be_built(
         self, plot_orchestrator, plot_data_service, deferred_tick_tabs
     ):
-        """A failing cell build must not abort the reveal (the tab would stay
-        blank for the session); the stale records make the next tick retry."""
+        """A failing cell build must not abort the reveal, which would leave
+        the tab blank for the rest of the session. The cell reports its own
+        failure instead (see plot_grid_tabs_build_failure_test)."""
         plotter = _FlakyPresenterPlotter(cached_state=hv.Curve([1, 2, 3]))
         grid_id = plot_orchestrator.add_grid(title='G', nrows=2, ncols=2)
         cell_id = _inject_plotter_cell(
@@ -2109,16 +2205,10 @@ class TestRevealPass:
         _tick(deferred_tick_tabs)
         assert cell_id not in deferred_tick_tabs._cells
 
-        # No exception escapes the reveal; the cell stays unbuilt.
         deferred_tick_tabs.tabs.active = deferred_tick_tabs._static_tabs_count
-        assert cell_id not in deferred_tick_tabs._cells
 
-        # The aborted pass never recorded its gate state, so the next tick
-        # runs and the build succeeds.
-        assert deferred_tick_tabs._has_pending_work()
-        _tick(deferred_tick_tabs)
         assert cell_id in deferred_tick_tabs._cells
-        assert deferred_tick_tabs._cells[cell_id].has_plot
+        assert not deferred_tick_tabs._cells[cell_id].has_plot
 
 
 class _MidPassBumpPlotter(FakePlotter):

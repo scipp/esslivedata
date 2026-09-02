@@ -308,7 +308,9 @@ def create_monitor_workflow(
 
     # Only the histogram is accumulated; the scalar totals are derived from the
     # accumulated histogram per mode during finalize, not accumulated separately.
-    cumulative, window = make_no_copy_accumulator_pair(reset_coord=reset_coord)
+    cumulative, window = make_no_copy_accumulator_pair(
+        reset_coords=() if reset_coord is None else (reset_coord,)
+    )
     return StreamProcessorWorkflow(
         workflow,
         # Inject preprocessor output as NeXusData; GenericNeXusWorkflow

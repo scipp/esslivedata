@@ -251,9 +251,8 @@ class StreamProcessorWorkflow(Workflow):
         # present in this batch are updated; absent keys retain the value from
         # the most recent set_context call, or the pipeline's init-time value.
         # If a key has no init-time value and has never been set, finalize()
-        # will fail. See aux_sources / render() in workflow_spec.py for how
-        # the routing layer ensures only jobs that subscribed to a stream
-        # receive its data.
+        # will fail. The routing layer (JobFactory.create) delivers a stream
+        # only to the jobs whose bindings subscribe to it.
         #
         # ValueLog subclasses are typed wrappers around an NXlog DataArray;
         # the raw payload (a DataArray) is wrapped as key(values=raw) so

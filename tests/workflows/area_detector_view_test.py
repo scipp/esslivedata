@@ -15,7 +15,8 @@ class TestAreaDetectorViewFactory:
         assert isinstance(workflow, AreaDetectorView)
 
     def test_view_factory_with_transform(self):
-        def downsample(da: sc.DataArray) -> sc.DataArray:
+        def downsample(da: sc.DataArray, source_name: str) -> sc.DataArray:
+            assert source_name == 'detector'
             da = da.fold(dim='dim_0', sizes={'dim_0': 4, 'y_bin': 2})
             da = da.fold(dim='dim_1', sizes={'dim_1': 4, 'x_bin': 2})
             return da

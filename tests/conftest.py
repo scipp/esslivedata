@@ -14,3 +14,16 @@ def infra_kwargs() -> dict:
         "livedata_roi_topic": "roi",
         "livedata_status_topic": "status",
     }
+
+
+def pytest_configure(config: pytest.Config) -> None:
+    """Turn off xdist when benchmarking.
+
+    ``addopts`` carries ``-n auto``, but pytest-benchmark cannot measure anything
+    under xdist and errors out on every benchmark. Benchmarks want a quiet machine
+    anyway, so drop back to a single process instead of making every caller
+    remember ``-n0``.
+    """
+    if config.option.benchmark_enable or not config.option.benchmark_skip:
+        config.option.numprocesses = 0
+        config.option.dist = "no"

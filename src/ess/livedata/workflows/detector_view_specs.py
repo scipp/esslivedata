@@ -24,9 +24,7 @@ import scipp as sc
 from .. import parameter_models
 from ..config import models
 from ..config.workflow_spec import (
-    AuxSources,
     CumulativeOutput,
-    JobId,
     OutputView,
     WindowOutput,
     WorkflowOutputsBase,
@@ -556,51 +554,3 @@ def make_detector_view_params(
         )
 
     return DetectorViewWithSpectrumParams
-
-
-class DetectorROIAuxSources(AuxSources):
-    """Auxiliary source spec for ROI configuration in detector workflows.
-
-    Subscribes to the supported ROI geometry streams (rectangle, polygon).
-    :meth:`render` prefixes each stream name with the ``job_id`` so every job
-    instance owns its own ROI configuration stream.
-
-    ROI is an auxiliary source, not a gated context binding: the ROI providers
-    treat a missing or empty request as "no ROI selected" (an empty result),
-    so there is nothing to gate on and no cold-start seed is required. The
-    detector-view factory wires the ROI streams into ``set_context`` itself
-    (see :meth:`DetectorViewFactory.make_workflow`).
-    """
-
-    def __init__(self) -> None:
-        super().__init__(
-            {
-                'roi_rectangle': 'roi_rectangle',
-                'roi_polygon': 'roi_polygon',
-            }
-        )
-
-    def render(
-        self,
-        job_id: JobId,
-        selections: dict[str, str] | None = None,
-    ) -> dict[str, str]:
-        """Render ROI stream names with a job-specific prefix.
-
-        Parameters
-        ----------
-        job_id:
-            Job identifier containing source_name and job_number.
-        selections:
-            Ignored — ROI streams are always job-specific.
-
-        Returns
-        -------
-        :
-            Mapping from ROI geometry keys to job-specific stream names
-            (e.g. ``'{job_id}/roi_rectangle'``).
-        """
-        return {
-            'roi_rectangle': f"{job_id}/roi_rectangle",
-            'roi_polygon': f"{job_id}/roi_polygon",
-        }

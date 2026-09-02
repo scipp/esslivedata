@@ -134,9 +134,9 @@ class ContextBinding:
     (:meth:`Instrument.add_context_binding`, for source properties such as
     motion) and spec scope
     (:meth:`ess.livedata.workflows.workflow_factory.SpecHandle.add_context_binding`,
-    for context that is a property of one workflow). Both feed the gate and
-    ``set_context``; the wire name is always the rendered :attr:`stream_name`
-    and there is no cold-start seed.
+    for context that is a property of one workflow). Both feed ``set_context``
+    and, unless :attr:`gating` is off, the gate; the wire name is always the
+    declared :attr:`stream_name` and there is no cold-start seed.
 
     Bindings live in their own list rather than as a field on :class:`Stream`
     because :attr:`dependent_sources` and :attr:`workflow_key` are properties
@@ -156,6 +156,16 @@ class ContextBinding:
     """
     workflow_key: Any
     dependent_sources: frozenset[str]
+    gating: bool = True
+    """Whether a job waits for a first value before it runs (ADR 0002).
+
+    The gate exists for context whose absence is unrepresentable (motion,
+    geometry). A binding for context with a safe default -- the ROI request,
+    where the providers read "no request" as "no ROI selected" -- declares
+    ``gating=False``: the stream is routed and latched like any other context
+    input, but the job runs without it and picks the value up whenever it
+    arrives.
+    """
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)

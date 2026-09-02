@@ -278,22 +278,6 @@ class TestAddLogicalViewSpecOutputs:
         assert 'cumulative' in output_fields
         assert 'current' in output_fields
 
-    def test_roi_support_false_sets_aux_sources_to_none(self):
-        """Verify aux_sources is None when roi_support=False."""
-        instrument = Instrument(name='test', detector_names=['detector1'])
-        handle = instrument.add_logical_view(
-            name='test_view',
-            title='Test View',
-            description='A test view.',
-            source_names=['detector1'],
-            transform=_identity_transform,
-            roi_support=False,
-        )
-        spec = instrument.workflow_factory[handle.workflow_id]
-
-        # aux_sources should be None for no ROI support
-        assert spec.aux_sources is None
-
 
 class TestLogicalViewCoordinateMode:
     """Logical views are TOA-only.

@@ -16,7 +16,7 @@ from .specs import instrument, monitor_names
 
 # Note: Panel size is fake and does not correspond to production setting
 detector_fakes = {
-    'timepix3_detector': (1, 4096**2),
+    'timepix3_detector': (0, 4096**2 - 1),  # 0-based, unlike the banks below
     'he3_detector_bank0': (1, 400),  # 4x100
     'he3_detector_bank1': (401, 800),  # 4x100
     'ngem_detector': (1, 2 * 128**2),

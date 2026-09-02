@@ -206,7 +206,12 @@ class LivedataApp:
             self.consumer.add_message(monitor_message)
 
     def publish_events(
-        self, *, size: int, time: int, reuse_events: bool = False
+        self,
+        *,
+        size: int,
+        time: int,
+        reuse_events: bool = False,
+        id_range: tuple[int, int] | None = None,
     ) -> None:
         """
         Publish events to the consumer.
@@ -214,10 +219,16 @@ class LivedataApp:
         If `reuse_events` is True, the same events are reused for each call to this
         method. This is useful for speeding up tests that need to send many event
         messages but do not require different events for each call.
+
+        `id_range` overrides the detector's configured id range, for tests that
+        need the events to land on a specific part of the panel.
         """
         if not reuse_events or self._detector_events is None:
             events = self.make_serialized_ev44(
-                name=next(iter(self._detector_config)), size=size, with_ids=True
+                name=next(iter(self._detector_config)),
+                size=size,
+                with_ids=True,
+                id_range=id_range,
             )
             self._detector_events = events
         else:
@@ -238,10 +249,16 @@ class LivedataApp:
         )
         self.consumer.add_message(message)
 
-    def make_serialized_ev44(self, name: str, size: int, with_ids: bool) -> bytes:
+    def make_serialized_ev44(
+        self,
+        name: str,
+        size: int,
+        with_ids: bool,
+        id_range: tuple[int, int] | None = None,
+    ) -> bytes:
         time_of_arrival = self._rng.uniform(0, 70_000_000, size).astype(np.int32)
         if with_ids:
-            first, last = self._detector_config[name]
+            first, last = id_range or self._detector_config[name]
             pixel_id = self._rng.integers(first, last + 1, size, dtype=np.int32)
         else:
             pixel_id = np.zeros(size, dtype=np.int32)

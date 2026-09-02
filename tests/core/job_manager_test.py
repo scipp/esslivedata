@@ -56,8 +56,8 @@ class FakeJobFactory(JobFactory):
     def create(self, *, job_id: JobId, config: WorkflowConfig) -> Job:
         # Test convenience only: gate on every declared aux so gating scenarios
         # are easy to drive from a config. This is the inverse of production
-        # semantics, where only ContextBindings gate and rendered aux (ROI,
-        # monitors) never does — see TestJobFactoryDoesNotGateOnAux for that
+        # semantics, where only gating ContextBindings gate and rendered aux
+        # (monitors) never does — see TestJobFactoryDoesNotGateOnAux for that
         # invariant against the real JobFactory.
         aux = config.aux_source_names or {}
         processor = FakeProcessor(context_keys=dict.fromkeys(aux, object))
@@ -1458,34 +1458,25 @@ class TestPushFailureCascade:
 class TestJobFactoryRender:
     """Tests for JobFactory calling render() on aux sources."""
 
-    def test_job_factory_calls_render_on_aux_sources(self) -> None:
-        """Test that JobFactory calls render() when creating a job."""
+    def test_job_factory_passes_config_selections_to_render(self) -> None:
+        """The job routes the streams the config selected, not the defaults."""
         from ess.livedata.config.instrument import Instrument
-        from ess.livedata.config.workflow_spec import AuxSources
+        from ess.livedata.config.workflow_spec import AuxInput, AuxSources
 
-        # Create a custom aux sources model with render spy
-        class TestAuxSources(AuxSources):
-            def __init__(self):
-                super().__init__({'monitor': 'monitor1'})
-
-            def render(self, job_id, selections=None):
-                # Prepend source_name to stream name
-                base = self.get_defaults()
-                return {
-                    field: f"{job_id.source_name}/{stream}"
-                    for field, stream in base.items()
-                }
-
-        # Setup instrument and workflow
         instrument = Instrument(name='test')
-
         handle = instrument.register_spec(
             name='test_workflow',
             version=1,
             title='Test',
             description='Test',
             source_names=['detector1'],
-            aux_sources=TestAuxSources(),
+            aux_sources=AuxSources(
+                {
+                    'monitor': AuxInput(
+                        choices=('monitor1', 'monitor2'), default='monitor1'
+                    )
+                }
+            ),
             outputs=SimpleTestOutputs,
         )
 
@@ -1493,26 +1484,17 @@ class TestJobFactoryRender:
         def test_workflow():
             return FakeProcessor()
 
-        # Create JobFactory and job config
         factory = JobFactory(instrument, service_name='data_reduction')
-        workflow_id = WorkflowId(
-            instrument='test',
-            name='test_workflow',
-            version=1,
-        )
         job_id = JobId(source_name='detector1', job_number=uuid.uuid4())
         config = WorkflowConfig(
-            identifier=workflow_id,
-            aux_source_names={'monitor': 'monitor1'},
+            identifier=handle.workflow_id,
+            aux_source_names={'monitor': 'monitor2'},
             job_id=job_id,
         )
 
-        # Create job
         job = factory.create(job_id=job_id, config=config)
 
-        # Verify that render() was called and result was used
-        # The job should have the rendered aux source names with source prefix
-        assert job.input_stream_names == {f'{job_id.source_name}/monitor1'}
+        assert job.input_stream_names == {'monitor2'}
 
     def test_job_factory_default_render_preserves_names(self) -> None:
         """Test JobFactory with default render() behavior."""
@@ -1637,132 +1619,12 @@ class TestJobFactoryRender:
         # Empty dict triggers model defaults, so should use 'monitor1'
         assert job.input_stream_names == {'monitor1'}
 
-    def test_job_factory_render_uses_source_name(self) -> None:
-        """Test that render() can use source_name from JobId."""
-        from ess.livedata.config.instrument import Instrument
-        from ess.livedata.config.workflow_spec import AuxSources
-
-        class SourcePrefixedAuxSources(AuxSources):
-            def __init__(self):
-                super().__init__({'roi': 'roi_rectangle'})
-
-            def render(self, job_id, selections=None):
-                base = self.get_defaults()
-                return {
-                    field: f"{job_id.source_name}/{stream}"
-                    for field, stream in base.items()
-                }
-
-        instrument = Instrument(name='test')
-
-        handle = instrument.register_spec(
-            name='source_prefix_workflow',
-            version=1,
-            title='Source Prefix',
-            description='Source prefix',
-            source_names=['detector1', 'detector2'],
-            aux_sources=SourcePrefixedAuxSources(),
-            outputs=SimpleTestOutputs,
-        )
-
-        @handle.attach_factory()
-        def source_prefix_workflow():
-            return FakeProcessor()
-
-        factory = JobFactory(instrument, service_name='data_reduction')
-        spec = instrument.workflow_factory[
-            WorkflowId(
-                instrument='test',
-                name='source_prefix_workflow',
-                version=1,
-            )
-        ]
-
-        # Create jobs for different sources
-        job_id_1 = JobId(source_name='detector1', job_number=uuid.uuid4())
-        job_id_2 = JobId(source_name='detector2', job_number=uuid.uuid4())
-        config = WorkflowConfig(
-            identifier=spec.get_id(),
-            aux_source_names={'roi': 'roi_rectangle'},
-            job_id=job_id_1,  # Will be overridden in factory.create call
-        )
-
-        job1 = factory.create(job_id=job_id_1, config=config)
-        config2 = WorkflowConfig(
-            identifier=spec.get_id(),
-            aux_source_names={'roi': 'roi_rectangle'},
-            job_id=job_id_2,
-        )
-        job2 = factory.create(job_id=job_id_2, config=config2)
-
-        # Each job should have source-specific stream name
-        assert job1.input_stream_names == {'detector1/roi_rectangle'}
-        assert job2.input_stream_names == {'detector2/roi_rectangle'}
-
-    def test_job_factory_render_with_empty_dict_uses_defaults(self) -> None:
-        """Test that empty aux_source_names dict triggers model defaults and render."""
-        from ess.livedata.config.instrument import Instrument
-        from ess.livedata.config.workflow_spec import AuxInput, AuxSources
-
-        class DefaultedAuxSources(AuxSources):
-            def __init__(self):
-                super().__init__(
-                    {
-                        'monitor': AuxInput(
-                            choices=('monitor1', 'monitor2'), default='monitor1'
-                        )
-                    }
-                )
-
-            def render(self, job_id, selections=None):
-                base = self.get_defaults()
-                return {
-                    field: f"{job_id.source_name}/{stream}"
-                    for field, stream in base.items()
-                }
-
-        instrument = Instrument(name='test')
-
-        handle = instrument.register_spec(
-            name='defaulted_aux_workflow',
-            version=1,
-            title='Defaulted Aux',
-            description='Defaulted',
-            source_names=['detector1'],
-            aux_sources=DefaultedAuxSources(),
-            outputs=SimpleTestOutputs,
-        )
-
-        @handle.attach_factory()
-        def defaulted_aux_workflow():
-            return FakeProcessor()
-
-        factory = JobFactory(instrument, service_name='data_reduction')
-        spec = instrument.workflow_factory[
-            WorkflowId(
-                instrument='test',
-                name='defaulted_aux_workflow',
-                version=1,
-            )
-        ]
-
-        # Config with empty aux_source_names should use model defaults
-        job_id = JobId(source_name='detector1', job_number=uuid.uuid4())
-        config = WorkflowConfig(
-            identifier=spec.get_id(), aux_source_names={}, job_id=job_id
-        )
-
-        job = factory.create(job_id=job_id, config=config)
-
-        # Should use default 'monitor1' and render it with source prefix
-        assert job.input_stream_names == {'detector1/monitor1'}
-
 
 class TestJobFactoryDoesNotGateOnAux:
-    """Rendered aux sources (ROI, monitor refs) must never appear in gating_streams.
+    """Rendered aux sources (monitor refs) must never appear in gating_streams.
 
-    Only ContextBindings gate a job. Adding aux to gating_streams would deadlock
-    every ROI detector view because ROI streams may never publish.
+    Only gating ContextBindings gate a job. Adding aux to gating_streams would
+    deadlock a job on a selectable stream that may never publish.
     """
 
     def test_aux_only_workflow_has_empty_gating_streams(self) -> None:
@@ -1835,10 +1697,11 @@ def _build_instrument_with_streams():
 class TestJobFactoryContextBinding:
     """JobFactory.create merges instrument- and spec-scope ContextBinding records.
 
-    Both scopes feed the factory's ``context_keys`` and the job's
-    ``gating_streams``. The wire name equals the declared ``stream_name`` (no
-    per-job suffixing) and there is no cold-start seed — gated context streams
-    have no safe default, so the gate stays closed until the producer publishes.
+    Both scopes feed the factory's ``context_keys`` and, unless declared with
+    ``gating=False``, the job's ``gating_streams``. The wire name equals the
+    declared ``stream_name`` (no per-job suffixing) and there is no cold-start
+    seed — gated context streams have no safe default, so the gate stays closed
+    until the producer publishes.
     """
 
     def test_instrument_context_binding_populates_context_keys(self) -> None:
@@ -1948,6 +1811,45 @@ class TestJobFactoryContextBinding:
         assert job.missing_context(set()) == {'temp'}
         assert job.missing_context({'temp'}) == set()
         assert 'temp' in job.input_stream_names
+
+    def test_non_gating_spec_binding_is_routed_but_does_not_gate(self) -> None:
+        """A ``gating=False`` binding is subscribed and delivered like any other
+        context input, but the job runs without it (ADR 0002)."""
+        instrument = _build_instrument_with_streams()
+        handle = instrument.register_spec(
+            name='w',
+            version=1,
+            title='W',
+            description='',
+            source_names=['detector1'],
+            outputs=SimpleTestOutputs,
+        )
+        handle.add_context_binding(stream_name='temp', workflow_key=_CtxKeyA)
+        handle.add_context_binding(
+            stream_name='roi_rectangle', workflow_key=_CtxKeyB, gating=False
+        )
+
+        captured: dict[str, FakeProcessor] = {}
+
+        @handle.attach_factory()
+        def _factory() -> FakeProcessor:
+            proc = FakeProcessor()
+            captured['proc'] = proc
+            return proc
+
+        factory = JobFactory(instrument, service_name='data_reduction')
+        job_id = JobId(source_name='detector1', job_number=uuid.uuid4())
+        config = WorkflowConfig(identifier=handle.workflow_id, job_id=job_id)
+
+        job = factory.create(job_id=job_id, config=config)
+
+        assert captured['proc'].context_keys == {
+            'temp': _CtxKeyA,
+            'roi_rectangle': _CtxKeyB,
+        }
+        assert {'temp', 'roi_rectangle'} <= job.input_stream_names
+        assert job.gating_streams == {'temp'}
+        assert job.missing_context(set()) == {'temp'}
 
     def test_skip_instrument_contexts_excludes_instrument_scope_bindings(self) -> None:
         """A spec with ``skip_instrument_contexts`` ignores instrument-scope inputs.
@@ -2104,6 +2006,23 @@ class TestJobFactoryDeclaredContextStreams:
 
         assert job.missing_context(set()) == {'lut', 'temp'}
         assert proc.context_keys == {'lut': _CtxKeyA, 'temp': _CtxKeyB}
+
+    def test_non_gating_binding_is_routed_but_left_out_of_the_gate(self) -> None:
+        """A requested stream gates; a non-gating binding alongside it does not."""
+        instrument = _build_instrument_with_streams()
+        instrument.offer_context_stream(workflow_key=_CtxKeyA, stream_name='lut')
+        proc = FakeProcessor()
+        proc.requests_context_streams = {_CtxKeyA}
+        handle = self._register(instrument, proc)
+        handle.add_context_binding(
+            stream_name='roi', workflow_key=_CtxKeyB, gating=False
+        )
+
+        job = self._create(instrument, handle)
+
+        assert job.missing_context(set()) == {'lut'}
+        assert {'lut', 'roi'} <= job.input_stream_names
+        assert proc.context_keys == {'lut': _CtxKeyA, 'roi': _CtxKeyB}
 
 
 class ThreadTrackingProcessor(FakeProcessor):

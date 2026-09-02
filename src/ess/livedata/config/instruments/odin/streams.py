@@ -14,7 +14,8 @@ from .._ess import (
 )
 from .specs import instrument
 
-detector_fakes = {'timepix3': (1, 4096**2)}
+# Timepix3 detector_number is 0-based, unlike the He3/multiblade banks.
+detector_fakes = {'timepix3': (0, 4096**2 - 1)}
 
 
 def _make_odin_detectors() -> StreamLUT:

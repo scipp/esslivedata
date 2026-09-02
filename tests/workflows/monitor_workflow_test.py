@@ -1081,7 +1081,7 @@ class TestPixellatedMonitorReset:
     def test_position_reset_silently_fails_for_pixellated_monitor(self):
         """Reset keyed on the dropped ``position`` coord is a no-op: the cumulative
         sums across a move instead of restarting -- the bug this change fixes."""
-        cumulative, _ = make_no_copy_accumulator_pair(reset_coord='position')
+        cumulative, _ = make_no_copy_accumulator_pair(reset_coords=('position',))
         before = histogram_wavelength_monitor(
             self._pixellated_monitor([10.0, 11.0]), self._edges(), geometry=None
         )
@@ -1107,7 +1107,7 @@ class TestPixellatedMonitorReset:
         )
         assert MONITOR_TRANSFORM in before.coords  # survived the collapse
 
-        cumulative, _ = make_no_copy_accumulator_pair(reset_coord=MONITOR_TRANSFORM)
+        cumulative, _ = make_no_copy_accumulator_pair(reset_coords=(MONITOR_TRANSFORM,))
         cumulative.push(before)
         cumulative.push(after)
         assert sc.identical(cumulative.value, after)

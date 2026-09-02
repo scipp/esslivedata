@@ -97,6 +97,11 @@ class SpecHandle:
     workflow_id: WorkflowId
     _factory: WorkflowFactory
 
+    @property
+    def spec(self) -> WorkflowSpec:
+        """The registered spec."""
+        return self._factory[self.workflow_id]
+
     def attach_factory(
         self,
     ) -> Callable[[Callable[..., Workflow]], Callable[..., Workflow]]:
@@ -109,6 +114,7 @@ class SpecHandle:
         stream_name: str,
         workflow_key: Any,
         dependent_sources: Iterable[str] | None = None,
+        gating: bool = True,
     ) -> None:
         """Append a spec-scope :class:`ContextBinding` to the registration.
 
@@ -124,7 +130,9 @@ class SpecHandle:
         ADR 0002); the wire name equals ``stream_name`` (no per-job
         suffixing) and there is no cold-start seed, so the gate stays
         closed until the producer publishes — the correct behaviour for a
-        context with no safe default.
+        context with no safe default. A context *with* a safe default
+        passes ``gating=False`` (see :attr:`ContextBinding.gating`): the
+        job then runs without it and picks the value up on arrival.
 
         Chain-patch contexts (``workflow_key`` is a
         :class:`~ess.livedata.config.value_log.ValueLog` subclass) must be
@@ -145,6 +153,7 @@ class SpecHandle:
             stream_name=stream_name,
             workflow_key=workflow_key,
             dependent_sources=dependent_sources,
+            gating=gating,
         )
 
     def skip_instrument_contexts(self) -> None:
@@ -225,6 +234,18 @@ class WorkflowFactory(Mapping[WorkflowId, WorkflowSpec]):
         """Return the full registration record for ``workflow_id``, or None."""
         return self._registrations.get(workflow_id)
 
+    def handle(self, workflow_id: WorkflowId) -> SpecHandle:
+        """Return a handle for an already registered spec.
+
+        For code that derives implementation-side declarations from the specs
+        themselves (see
+        :func:`~ess.livedata.workflows.detector_view.bind_roi_requests`) rather
+        than holding the handle :meth:`register_spec` returned.
+        """
+        if workflow_id not in self._registrations:
+            raise KeyError(f"Workflow spec '{workflow_id}' not registered.")
+        return SpecHandle(workflow_id=workflow_id, _factory=self)
+
     def registrations(self) -> Iterable[WorkflowRegistration]:
         """Iterate over all registrations."""
         return self._registrations.values()
@@ -295,6 +316,7 @@ class WorkflowFactory(Mapping[WorkflowId, WorkflowSpec]):
         stream_name: str,
         workflow_key: Any,
         dependent_sources: Iterable[str] | None,
+        gating: bool,
     ) -> None:
         # Chain-patch contexts (ValueLog-typed workflow_key) at spec scope
         # would be silent-wrong: Instrument.chain_patch_bindings reads
@@ -317,6 +339,7 @@ class WorkflowFactory(Mapping[WorkflowId, WorkflowSpec]):
             stream_name=stream_name,
             workflow_key=workflow_key,
             dependent_sources=sources,
+            gating=gating,
         )
         self._registrations[workflow_id] = dataclasses.replace(
             reg, context_bindings=(*reg.context_bindings, new_input)

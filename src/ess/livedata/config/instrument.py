@@ -19,6 +19,11 @@ from ess.livedata.workflows.workflow_factory import (
     WorkflowFactory,
 )
 
+from .detector_downsampling import (
+    DetectorDownsampling,
+    is_reachable_resolution,
+    resolve_downsampling,
+)
 from .stream import (
     AxisRange,
     ChainPatchBinding,
@@ -160,6 +165,9 @@ class Instrument:
     source_metadata: dict[str, SourceMetadata] = field(default_factory=dict)
     dim_titles: dict[str, str] = field(default_factory=dict)
     _detector_numbers: dict[str, sc.Variable] = field(default_factory=dict)
+    #: name -> (target resolution, physical maximum resolution)
+    _downsampled_detectors: dict[str, tuple[int, int]] = field(default_factory=dict)
+    _downsampling_cache: dict[str, DetectorDownsampling] = field(default_factory=dict)
     _nexus_file: str | None = None
     _detector_group_names: dict[str, str] = field(default_factory=dict)
     _timeseries_workflow_handle: SpecHandle | None = field(default=None, init=False)
@@ -409,14 +417,15 @@ class Instrument:
     def _matching_bindings(
         self, workflow_id: WorkflowId, source_name: str
     ) -> list[ContextBinding]:
-        """Instrument- and spec-scope bindings declared for a ``(spec, source)``.
+        """Instrument- and spec-scope bindings applying to a ``(spec, source)``.
 
-        ``skip_instrument_contexts`` filters out instrument-scope entries — a
-        spec that explicitly declares a binding cannot opt out of it via the
-        flag.
+        A binding applies when its ``dependent_sources`` include
+        ``source_name``. ``skip_instrument_contexts`` filters out
+        instrument-scope entries — a spec that explicitly declares a binding
+        cannot opt out of it via the flag.
 
         Raises :class:`KeyError` for an unregistered ``workflow_id``: an empty
-        result means "this workflow gates on nothing" and must not be conflated
+        result means "this workflow binds nothing" and must not be conflated
         with "no such workflow".
         """
         registration = self.workflow_factory.registration(workflow_id)
@@ -441,11 +450,12 @@ class Instrument:
 
         Returns ``{stream_name: workflow_key}``, the inverse orientation of
         :attr:`offered_context_streams`; context wire names equal their stream
-        names, so the keys double as the set of gating context streams a binding
-        contributes. A binding applies to every job on a dependent source, which
-        is why this needs no params: a stream only some of a spec's jobs consume
-        is offered instead (see :meth:`offer_context_stream`), and resolved per
-        job against the graph it builds.
+        names, so the keys are the context streams the job subscribes to. The
+        subset it waits for is :meth:`bound_gating_streams`. A binding applies
+        to every job on a dependent source, which is why this needs no params: a
+        stream only some of a spec's jobs consume is offered instead (see
+        :meth:`offer_context_stream`), and resolved per job against the graph it
+        builds.
 
         Two bindings naming one stream for different keys is a declaration
         mistake and is rejected at registration by :meth:`validate`, not here.
@@ -453,6 +463,22 @@ class Instrument:
         return {
             binding.stream_name: binding.workflow_key
             for binding in self._matching_bindings(workflow_id, source_name)
+        }
+
+    def bound_gating_streams(
+        self, workflow_id: WorkflowId, source_name: str
+    ) -> set[str]:
+        """The context streams a ``(spec, source)`` job waits for (ADR 0002).
+
+        The stream names of the matching bindings declared with ``gating=True``,
+        see :attr:`ContextBinding.gating`. This is the binding-declared half of
+        the gate; the streams a job's built graph asks for out of those merely
+        *offered* are the other half, and are added by ``JobFactory`` (ADR 0010).
+        """
+        return {
+            binding.stream_name
+            for binding in self._matching_bindings(workflow_id, source_name)
+            if binding.gating
         }
 
     @property
@@ -478,6 +504,81 @@ class Instrument:
         the group name and the detector name. Otherwise, just the detector name.
         """
         return self._detector_group_names.get(name, name)
+
+    def configure_detector_downsampling(
+        self, name: str, *, resolution: int, max_resolution: int
+    ) -> None:
+        """
+        Ingest a square detector at reduced resolution.
+
+        Opt-in per detector. Event ids are remapped to a coarser
+        ``resolution`` x ``resolution`` grid in the preprocessor, before pixel
+        grouping, so the full-resolution grid is never materialized. For a
+        4096x4096 panel downsampled to 512x512 this replaces a 16.7-million-bin
+        group-and-merge per update with a 262-thousand-bin grouping.
+
+        The resolution the detector is *streaming* is operator-reconfigurable
+        and is not announced on any stream we consume, so the preprocessor
+        infers it from the observed event ids and follows it when it changes;
+        see
+        :class:`~ess.livedata.preprocessors.downsample_pixel_ids.DownsamplePixelIds`.
+        Counts taken at different source resolutions are not commensurable, so
+        a change resets the cumulative accumulators, exactly as a detector move
+        does. What the geometry file is trusted for, and why, is
+        :func:`~ess.livedata.config.detector_downsampling.resolve_downsampling`.
+
+        Only meaningful for logical views, which address pixels by index. A
+        geometric view resolves pixel positions from the file and would need
+        those positions merged to match, which this does not do.
+
+        Parameters
+        ----------
+        name:
+            Name of the detector (must be in ``self.detector_names``).
+        resolution:
+            Side length of the target grid.
+        max_resolution:
+            Largest grid the detector can physically read out. Bounds the
+            inferred source resolution, so that a corrupt id cannot raise it.
+            A hardware fact, which is why it is stated here rather than read
+            from the geometry file: the file records one past configuration of
+            a setting that changes during operation. Must be ``resolution``
+            times a power of two; see ``is_reachable_resolution``.
+        """
+        if name not in self.detector_names:
+            raise ValueError(
+                f"Detector {name} not in declared detector_names. "
+                f"Available detectors: {self.detector_names}"
+            )
+        if resolution <= 0:
+            raise ValueError(f"resolution must be positive, got {resolution}")
+        if not is_reachable_resolution(max_resolution, resolution):
+            raise ValueError(
+                f"max_resolution {max_resolution} must be the resolution "
+                f"{resolution} times a power of two, for detector {name}."
+            )
+        self._downsampled_detectors[name] = (resolution, max_resolution)
+
+    def get_downsampling(self, name: str) -> DetectorDownsampling | None:
+        """
+        Resolved reduced-resolution ingest settings, or None if not configured.
+
+        Resolved lazily so that the geometry file, loaded by
+        :meth:`load_factories`, can be consulted where it is available.
+        Because the result is cached, :meth:`load_factories` resolves every
+        configured detector once the file has been read, so that an earlier
+        caller cannot latch the file-less fallback.
+        """
+        configured = self._downsampled_detectors.get(name)
+        if configured is None:
+            return None
+        if (cached := self._downsampling_cache.get(name)) is None:
+            resolution, max_resolution = configured
+            cached = resolve_downsampling(
+                name, resolution, max_resolution, self._detector_numbers.get(name)
+            )
+            self._downsampling_cache[name] = cached
+        return cached
 
     def configure_detector(
         self,
@@ -524,6 +625,8 @@ class Instrument:
         self._detector_numbers[name] = candidate
 
     def get_detector_number(self, name: str) -> sc.Variable:
+        if (downsampling := self.get_downsampling(name)) is not None:
+            return downsampling.grid
         return self._detector_numbers[name]
 
     def configure_pixellated_monitor(
@@ -601,6 +704,98 @@ class Instrument:
             return metadata.description
         return ''
 
+    def register_detector_view(
+        self,
+        *,
+        name: str,
+        title: str,
+        description: str,
+        source_names: Sequence[str],
+        group: WorkflowGroup = DETECTORS,
+        service: str | None = None,
+        roi_support: bool = True,
+        output_ndim: int | None = None,
+        spectrum_view: SpectrumViewSpec | None = None,
+        params: type[pydantic.BaseModel] | None = None,
+        device_outputs: dict[str, str] | None = None,
+    ) -> SpecHandle:
+        """
+        Register a detector-view spec, deriving its params and outputs models.
+
+        ``roi_support`` is the sole declaration of whether the view has ROI:
+        it selects the outputs model carrying the ROI readbacks, from which
+        :meth:`load_factories` in turn binds the request streams (see
+        :func:`~ess.livedata.workflows.detector_view.bind_roi_requests`).
+
+        Use this for a view whose factory is attached by hand in
+        ``factories.py`` -- a geometric projection, or one reading
+        instrument-specific ``params``. :meth:`add_logical_view` builds on it
+        for views the standard logical-view factory serves, which need no
+        ``factories.py`` code at all.
+
+        Parameters
+        ----------
+        name:
+            Unique name for the view within the given group.
+        title:
+            Human-readable title for the view.
+        description:
+            Description of the view.
+        source_names:
+            List of source names this view applies to.
+        group:
+            Display-oriented :class:`WorkflowGroup` this view belongs to.
+        service:
+            Name of the backend service responsible for running this workflow.
+            Defaults to ``group.name``.
+        roi_support:
+            Whether ROI selection is supported for this view. Geometric
+            projections always support it; a logical view that does not map
+            output pixels back to input pixels does not.
+        output_ndim:
+            Number of dimensions for spatial outputs. Defaults to 2.
+        spectrum_view:
+            Optional ``SpectrumViewSpec`` enabling a ``spectrum_view`` output
+            derived from the cumulative accumulated histogram via a
+            per-instrument transform.
+        params:
+            Params model, when the factory needs fields beyond the standard
+            detector-view ones. Defaults to the model derived from
+            ``spectrum_view``.
+        device_outputs:
+            Outputs of this view exposed to NICOS as derived devices. Pass
+            :data:`~ess.livedata.config.device_contract.COUNTS_TOTAL_DEVICE` on
+            the one view per detector bank whose total is the bank's device.
+
+        Returns
+        -------
+        :
+            Handle for the registered spec.
+        """
+        from ess.livedata.workflows.detector_view_specs import (
+            make_detector_view_outputs,
+            make_detector_view_params,
+        )
+
+        return self.register_spec(
+            group=group,
+            service=service,
+            name=name,
+            version=1,
+            title=title,
+            description=description,
+            source_names=list(source_names),
+            params=(
+                make_detector_view_params(spectrum_view=spectrum_view)
+                if params is None
+                else params
+            ),
+            outputs=make_detector_view_outputs(
+                output_ndim, roi_support=roi_support, spectrum_view=spectrum_view
+            ),
+            device_outputs=device_outputs,
+        )
+
     def add_logical_view(
         self,
         *,
@@ -622,17 +817,11 @@ class Instrument:
 
         This registers the view spec immediately (lightweight) and stores the
         configuration for later factory attachment during load_factories().
+        Parameters other than those below are as for
+        :meth:`register_detector_view`, which registers the spec.
 
         Parameters
         ----------
-        name:
-            Unique name for the view within the given group.
-        title:
-            Human-readable title for the view.
-        description:
-            Description of the view.
-        source_names:
-            List of source names this view applies to.
         transform:
             Function that transforms raw detector data to the view output.
             Signature: ``(da: DataArray, source_name: str) -> DataArray``.
@@ -642,27 +831,10 @@ class Instrument:
             If reduction_dim is specified, the transform should NOT include
             summing - that is handled separately to enable proper ROI index mapping.
             If None, identity (no reshaping).
-        group:
-            Display-oriented :class:`WorkflowGroup` this view belongs to.
-        service:
-            Name of the backend service responsible for running this workflow.
-            Defaults to ``group.name``.
-        roi_support:
-            Whether ROI selection is supported for this view.
-        output_ndim:
-            Number of dimensions for spatial outputs.
         reduction_dim:
             Dimension(s) to sum over after applying transform. If specified,
             enables proper ROI support by tracking which input pixels contribute
             to each output pixel.
-        spectrum_view:
-            Optional ``SpectrumViewSpec`` enabling a ``spectrum_view`` output
-            derived from the cumulative accumulated histogram via a
-            per-instrument transform.
-        device_outputs:
-            Outputs of this view exposed to NICOS as derived devices. Pass
-            :data:`~ess.livedata.config.device_contract.COUNTS_TOTAL_DEVICE` on
-            the one view per detector bank whose total is the bank's device.
 
         Returns
         -------
@@ -670,32 +842,26 @@ class Instrument:
             Handle for the registered spec.
         """
         from ess.livedata.workflows.detector_view_specs import (
-            DetectorROIAuxSources,
             TOAOnlyDetectorViewParams,
-            make_detector_view_outputs,
             make_detector_view_params,
         )
 
-        outputs = make_detector_view_outputs(
-            output_ndim, roi_support=roi_support, spectrum_view=spectrum_view
-        )
         # Logical views are TOA-only: they run on ``InstrumentDetectorSource``,
         # which carries no geometry, so there is no Ltotal to index a wavelength
         # lookup table with. Offering the mode would fail at job start.
-        params = make_detector_view_params(
-            spectrum_view=spectrum_view, base=TOAOnlyDetectorViewParams
-        )
-        handle = self.register_spec(
-            group=group,
-            service=service,
+        handle = self.register_detector_view(
             name=name,
-            version=1,
             title=title,
             description=description,
-            source_names=list(source_names),
-            aux_sources=DetectorROIAuxSources() if roi_support else None,
-            params=params,
-            outputs=outputs,
+            source_names=source_names,
+            group=group,
+            service=service,
+            roi_support=roi_support,
+            output_ndim=output_ndim,
+            spectrum_view=spectrum_view,
+            params=make_detector_view_params(
+                spectrum_view=spectrum_view, base=TOAOnlyDetectorViewParams
+            ),
             device_outputs=device_outputs,
         )
         self._logical_view_handles[name] = handle
@@ -805,7 +971,8 @@ class Instrument:
         2. Auto-attaches timeseries factory if specs were registered
         3. Auto-attaches logical view factories if views were registered
         4. Calls instrument-specific setup_factories(self)
-        5. Auto-loads detector_numbers from nexus for unconfigured detectors
+        5. Binds the ROI request streams of every ROI-publishing spec
+        6. Auto-loads detector_numbers from nexus for unconfigured detectors
 
         Idempotent: a second call on a loaded instrument is a no-op. The steps
         append registration state (context bindings, LUT ranges), and the
@@ -879,6 +1046,10 @@ class Instrument:
 
         self._attach_default_monitor_factories()
 
+        from ess.livedata.workflows.detector_view import bind_roi_requests
+
+        bind_roi_requests(self.workflow_factory)
+
         self.validate()
 
         for name in (*self.detector_names, *self._pixellated_monitors):
@@ -891,6 +1062,11 @@ class Instrument:
                     # dataset — they must provide it via configure_pixellated_monitor)
                     pass
         self._factories_loaded = True
+
+        # Must follow the loop above: get_downsampling caches, so resolving it
+        # any earlier would freeze the file-less fallback for the process.
+        for name in self._downsampled_detectors:
+            self.get_downsampling(name)
 
     def _attach_default_monitor_factories(self) -> None:
         """Attach the shared monitor workflow factory where none was provided.

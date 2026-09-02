@@ -163,11 +163,9 @@ class JobFactory:
             raise WorkflowNotFoundError(f"WorkflowSpec with Id {workflow_id} not found")
         workflow_spec = registration.spec
 
-        # Render dynamic aux source names using the spec's render() method.
         if workflow_spec.aux_sources is not None:
             rendered_aux_names = workflow_spec.aux_sources.render(
-                job_id=job_id,
-                selections=config.aux_source_names if config.aux_source_names else None,
+                selections=config.aux_source_names if config.aux_source_names else None
             )
         else:
             rendered_aux_names = dict(config.aux_source_names or {})
@@ -176,9 +174,8 @@ class JobFactory:
         context_keys = self._instrument.bound_context_keys(
             workflow_id, job_id.source_name
         )
-        bound_streams = set(context_keys)
         # Context wire names equal their stream names — no per-job suffixing.
-        aux_streams = {**rendered_aux_names, **{name: name for name in bound_streams}}
+        aux_streams = {**rendered_aux_names, **{name: name for name in context_keys}}
 
         # Note that this initializes the job immediately, i.e., we pay startup cost now.
         # ``chain_patch_bindings`` carries the instrument-scope dynamic
@@ -197,17 +194,21 @@ class JobFactory:
         # Offered context streams reach every job; only the built graph knows
         # which of them it asks for, so that half of the gate is read back off
         # the workflow rather than predicted here (ADR 0010).
-        gating_streams = bound_streams | (
+        requested_streams = (
             set(stream_processor.requested_context_streams)
             if isinstance(stream_processor, SupportsContext)
             else set()
+        )
+        gating_streams = (
+            self._instrument.bound_gating_streams(workflow_id, job_id.source_name)
+            | requested_streams
         )
         return Job(
             job_id=job_id,
             workflow_id=workflow_id,
             workflow=stream_processor,
             source_names=[job_id.source_name],
-            input_streams=set(aux_streams.values()) | gating_streams,
+            input_streams=set(aux_streams.values()) | requested_streams,
             gating_streams=gating_streams,
             reset_on_run_transition=workflow_spec.reset_on_run_transition,
             supports_reset=workflow_spec.supports_reset,

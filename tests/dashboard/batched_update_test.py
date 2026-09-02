@@ -10,9 +10,9 @@ from bokeh.plotting import figure
 from panel.io.state import set_curdoc
 from structlog.testing import capture_logs
 
+from ess.livedata.core.log_throttle import LogThrottle
 from ess.livedata.dashboard import batched_update as batched_update_module
 from ess.livedata.dashboard.batched_update import _SLOW_UPDATE_S, batched_update
-from ess.livedata.dashboard.loop_monitor import LogThrottle
 
 
 class RecomputeCounter:
