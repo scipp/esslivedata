@@ -1364,37 +1364,6 @@ class TestCellDiffer:
 
         assert plot_grid_tabs._cells[cell_id] is widget
 
-    def test_failed_build_leaves_the_record_for_the_next_pass(
-        self, plot_orchestrator, plot_data_service, plot_grid_tabs
-    ):
-        """A build that raises must not be recorded as applied, so the next
-        pass retries it instead of leaving the cell frozen at its old plot."""
-        grid_id = plot_orchestrator.add_grid(title='G', nrows=2, ncols=2)
-        cell_id = _inject_plotter_cell(
-            plot_orchestrator,
-            plot_data_service,
-            grid_id,
-            FakePlotter(cached_state=hv.Curve([1, 2, 3])),
-        )
-        _tick(plot_grid_tabs)
-        plot_grid_tabs.tabs.active = plot_grid_tabs._static_tabs_count
-        widget = plot_grid_tabs._cells[cell_id]
-
-        # A plotter swap is a changed input; building its presenter fails once.
-        cell = plot_orchestrator.peek_grid(grid_id).cells[cell_id]
-        layer_id = cell.layers[0].layer_id
-        plot_data_service.job_started(
-            layer_id, _FlakyPresenterPlotter(cached_state=hv.Curve([4, 5, 6]))
-        )
-        plot_data_service.data_arrived(layer_id)
-
-        with pytest.raises(RuntimeError, match='injected presenter failure'):
-            _tick(plot_grid_tabs)
-        assert plot_grid_tabs._cells[cell_id] is widget
-
-        _tick(plot_grid_tabs)
-        assert plot_grid_tabs._cells[cell_id] is not widget
-
 
 class TestCellActions:
     """User actions on cells, and the cross-session races around them.
@@ -2222,11 +2191,12 @@ class TestRevealPass:
         _tick(deferred_tick_tabs)
         assert 'Second' in deferred_tick_tabs.tabs._names
 
-    def test_prebuild_failure_is_swallowed_and_deferred_build_retries(
+    def test_reveal_survives_a_cell_that_cannot_be_built(
         self, plot_orchestrator, plot_data_service, deferred_tick_tabs
     ):
-        """A failing cell build must not abort the reveal (the tab would stay
-        blank for the session); the stale records make the next tick retry."""
+        """A failing cell build must not abort the reveal, which would leave
+        the tab blank for the rest of the session. The cell reports its own
+        failure instead (see plot_grid_tabs_build_failure_test)."""
         plotter = _FlakyPresenterPlotter(cached_state=hv.Curve([1, 2, 3]))
         grid_id = plot_orchestrator.add_grid(title='G', nrows=2, ncols=2)
         cell_id = _inject_plotter_cell(
@@ -2235,16 +2205,10 @@ class TestRevealPass:
         _tick(deferred_tick_tabs)
         assert cell_id not in deferred_tick_tabs._cells
 
-        # No exception escapes the reveal; the cell stays unbuilt.
         deferred_tick_tabs.tabs.active = deferred_tick_tabs._static_tabs_count
-        assert cell_id not in deferred_tick_tabs._cells
 
-        # The aborted pass never recorded its gate state, so the next tick
-        # runs and the build succeeds.
-        assert deferred_tick_tabs._has_pending_work()
-        _tick(deferred_tick_tabs)
         assert cell_id in deferred_tick_tabs._cells
-        assert deferred_tick_tabs._cells[cell_id].has_plot
+        assert not deferred_tick_tabs._cells[cell_id].has_plot
 
 
 class _MidPassBumpPlotter(FakePlotter):
