@@ -279,21 +279,12 @@ class JobOrchestrator:
             if config_data and config_data.get('jobs'):
                 jobs_data = config_data['jobs']
                 loaded_count = 0
-                aux_inputs = spec.aux_sources.inputs if spec.aux_sources else {}
                 for source_name, job_data in jobs_data.items():
-                    # Filter to sources and aux inputs that exist in the spec:
-                    # the store may predate a spec change, and the backend
-                    # rejects a config selecting an aux input its spec lacks.
+                    # Filter to sources that exist in the spec
                     if source_name in available_sources:
                         state.staged_jobs[source_name] = JobConfig(
                             params=job_data.get('params', {}),
-                            aux_source_names={
-                                name: stream
-                                for name, stream in job_data.get(
-                                    'aux_source_names', {}
-                                ).items()
-                                if name in aux_inputs
-                            },
+                            aux_source_names=job_data.get('aux_source_names', {}),
                         )
                         loaded_count += 1
                 logger.info(
