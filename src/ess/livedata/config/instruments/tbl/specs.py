@@ -14,7 +14,7 @@ from ess.livedata.config import (
 from ess.livedata.config.device_contract import COUNTS_TOTAL_DEVICE
 from ess.livedata.config.workflow_spec import DETECTORS
 from ess.livedata.workflows.detector_view_specs import (
-    DetectorViewOutputs,
+    DetectorViewOutputsBase,
     SpectrumViewSpec,
 )
 from ess.livedata.workflows.monitor_workflow_specs import (
@@ -147,6 +147,8 @@ orca_view_handle = instrument.register_spec(
     title='Orca Detector',
     description='512x512 image downsampled from full resolution',
     source_names=['orca_detector'],
-    outputs=DetectorViewOutputs,
+    # AreaDetectorView renders images only; it neither reads ROI requests nor
+    # publishes readbacks, so it must not declare the ROI outputs.
+    outputs=DetectorViewOutputsBase,
     device_outputs=COUNTS_TOTAL_DEVICE,
 )

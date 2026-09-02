@@ -27,10 +27,10 @@ def roi_stream_name(
     carries no ``job_number``, so an ROI selection is a property of the view
     rather than of the job generation computing it (ADR 0003, amendment
     2026-08-31; consequences on
-    :class:`~ess.livedata.workflows.detector_view_specs.DetectorROIAuxSources`).
+    :func:`~ess.livedata.workflows.detector_view.bind_roi_requests`).
 
-    Both sides of the wire name streams through here: the backend renders it
-    into a job's aux sources (``DetectorROIAuxSources.render``) and the
+    Both sides of the wire name streams through here: the backend binds it as
+    a context input of the view's jobs (``bind_roi_requests``) and the
     dashboard addresses its publishes with it (``ROIPublisher.publish``).
 
     Parameters

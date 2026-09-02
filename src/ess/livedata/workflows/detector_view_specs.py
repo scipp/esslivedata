@@ -22,13 +22,10 @@ import scipp as sc
 
 from .. import parameter_models
 from ..config import models
-from ..config.roi_names import get_roi_mapper, roi_stream_name
 from ..config.workflow_spec import (
-    AuxSources,
     CumulativeOutput,
     OutputView,
     WindowOutput,
-    WorkflowId,
     WorkflowOutputsBase,
 )
 
@@ -473,60 +470,3 @@ def make_detector_view_params(
         )
 
     return DetectorViewWithSpectrumParams
-
-
-class DetectorROIAuxSources(AuxSources):
-    """Auxiliary source spec for ROI configuration in detector workflows.
-
-    Subscribes to every ROI geometry the instrument configures. :meth:`render`
-    names each stream for the view it configures, via
-    :func:`~ess.livedata.config.roi_names.roi_stream_name`.
-
-    ROI is an auxiliary source, not a gated context binding: the ROI providers
-    treat a missing or empty request as "no ROI selected" (an empty result),
-    so there is nothing to gate on and no cold-start seed is required. The
-    detector-view factory wires the ROI streams into ``set_context`` itself
-    (see :meth:`DetectorViewFactory.make_workflow`).
-
-    The streams are nonetheless preprocessed by a context accumulator, which
-    latches the latest request independently of any job. Together with the
-    job-free stream name that is what lets a selection be published before its
-    job exists — ``JobManager.peek_pending_streams`` hands the latched value to
-    the job as it activates — and survive a restart of it.
-
-    Two concurrent jobs of one view would therefore read one selection. The
-    backend does not rule that out — ``JobManager`` keys jobs by ``JobId`` and
-    never supersedes — and multiple jobs per workflow remain supported; it is
-    the dashboard that commits one generation at a time, stopping the previous
-    job before starting the next.
-    """
-
-    def __init__(self) -> None:
-        super().__init__({key: key for key in get_roi_mapper().readback_keys})
-
-    def render(
-        self,
-        workflow_id: WorkflowId,
-        source_name: str,
-        selections: dict[str, str] | None = None,
-    ) -> dict[str, str]:
-        """Render ROI stream names scoped to the view they configure.
-
-        Parameters
-        ----------
-        workflow_id:
-            The detector view workflow the ROI applies to.
-        source_name:
-            The detector within that workflow.
-        selections:
-            Ignored — the ROI streams a view listens on are not user-selectable.
-
-        Returns
-        -------
-        :
-            Mapping from ROI geometry keys to stream names (e.g.
-            ``'{workflow_id}/{source_name}/roi_rectangle'``).
-        """
-        return {
-            key: roi_stream_name(workflow_id, source_name, key) for key in self.inputs
-        }

@@ -24,6 +24,7 @@ from .detector_downsampling import (
     is_reachable_resolution,
     resolve_downsampling,
 )
+from .roi_names import get_roi_mapper, roi_stream_name
 from .stream import ChainPatchBinding, ContextBinding, Device, F144Stream, Stream
 from .value_log import ValueLog
 from .workflow_spec import (
@@ -321,21 +322,19 @@ class Instrument:
             if _is_chain_patch(binding)
         ]
 
-    def resolve_context_keys(
+    def _matching_bindings(
         self, workflow_id: WorkflowId, source_name: str
-    ) -> dict[str, Any]:
-        """Resolve the ``ContextBinding`` mapping for a ``(spec, source)`` pair.
+    ) -> list[ContextBinding]:
+        """Instrument- and spec-scope bindings applying to a ``(spec, source)``.
 
-        Matches instrument- and spec-scope :class:`ContextBinding` records whose
-        ``dependent_sources`` include ``source_name`` and returns
-        ``{stream_name: workflow_key}``. ``skip_instrument_contexts`` filters out
+        A binding applies when its ``dependent_sources`` include
+        ``source_name``. ``skip_instrument_contexts`` filters out
         instrument-scope entries — a spec that explicitly declares a binding
-        cannot opt out of it via the flag. Context wire names equal their stream
-        names, so the returned keys double as the set of gating context streams.
+        cannot opt out of it via the flag.
 
         Raises :class:`KeyError` for an unregistered ``workflow_id``: an empty
-        result means "this workflow gates on nothing" and must not be
-        conflated with "no such workflow".
+        result means "this workflow binds nothing" and must not be conflated
+        with "no such workflow".
         """
         registration = self.workflow_factory.registration(workflow_id)
         if registration is None:
@@ -346,10 +345,39 @@ class Instrument:
         instrument_bindings = (
             [] if registration.skip_instrument_contexts else self.context_bindings
         )
-        return {
-            binding.stream_name: binding.workflow_key
+        return [
+            binding
             for binding in (*instrument_bindings, *registration.context_bindings)
             if source_name in binding.dependent_sources
+        ]
+
+    def resolve_context_keys(
+        self, workflow_id: WorkflowId, source_name: str
+    ) -> dict[str, Any]:
+        """Resolve the ``ContextBinding`` mapping for a ``(spec, source)`` pair.
+
+        Returns ``{stream_name: workflow_key}`` over the matching bindings (see
+        :meth:`_matching_bindings`). Context wire names equal their stream
+        names, so the keys are the context streams the job subscribes to; the
+        subset it waits for is :meth:`resolve_gating_streams`.
+        """
+        return {
+            binding.stream_name: binding.workflow_key
+            for binding in self._matching_bindings(workflow_id, source_name)
+        }
+
+    def resolve_gating_streams(
+        self, workflow_id: WorkflowId, source_name: str
+    ) -> set[str]:
+        """The context streams a ``(spec, source)`` job waits for (ADR 0002).
+
+        The stream names of the matching bindings declared with
+        ``gating=True``, see :attr:`ContextBinding.gating`.
+        """
+        return {
+            binding.stream_name
+            for binding in self._matching_bindings(workflow_id, source_name)
+            if binding.gating
         }
 
     @property
@@ -644,7 +672,6 @@ class Instrument:
             Handle for the registered spec.
         """
         from ess.livedata.workflows.detector_view_specs import (
-            DetectorROIAuxSources,
             make_detector_view_outputs,
             make_detector_view_params,
         )
@@ -661,7 +688,6 @@ class Instrument:
             title=title,
             description=description,
             source_names=list(source_names),
-            aux_sources=DetectorROIAuxSources() if roi_support else None,
             params=params,
             outputs=outputs,
             device_outputs=device_outputs,
@@ -790,6 +816,7 @@ class Instrument:
             from ess.livedata.workflows.detector_view import (
                 DetectorViewFactory,
                 InstrumentDetectorSource,
+                bind_roi_requests,
             )
             from ess.livedata.workflows.detector_view import (
                 LogicalViewConfig as ScilineLogicalViewConfig,
@@ -808,6 +835,8 @@ class Instrument:
                     view_config=view_config,
                 )
                 handle.attach_factory()(factory.make_workflow)
+                if config.roi_support:
+                    bind_roi_requests(handle)
 
         if self.choppers:
             from ess.livedata.preprocessors.detector_data import (
@@ -882,6 +911,35 @@ class Instrument:
         self._validate_binding_dependent_sources()
         self._validate_context_binding_wire_name_collisions()
         self._validate_chain_patch_value_log_uniqueness()
+        self._validate_roi_request_bindings()
+
+    def _validate_roi_request_bindings(self) -> None:
+        """Raise if a spec publishes ROI readbacks without binding the requests.
+
+        The detector-view graph requires the request keys, so a job of such a
+        spec would fail to build. The bindings are declared next to the factory
+        by ``bind_roi_requests``; forgetting that call is caught here rather
+        than at the first job.
+        """
+        readback_keys = get_roi_mapper().readback_keys
+        for reg in self.workflow_factory.registrations():
+            spec = reg.spec
+            if not set(readback_keys) <= set(spec.outputs.model_fields):
+                continue
+            bound = {binding.stream_name for binding in reg.context_bindings}
+            for source in spec.source_names:
+                missing = [
+                    key
+                    for key in readback_keys
+                    if roi_stream_name(spec.get_id(), source, key) not in bound
+                ]
+                if missing:
+                    raise ValueError(
+                        f"Spec {spec.name!r} publishes ROI readbacks for source "
+                        f"{source!r} but binds no request stream for {missing}; "
+                        "call bind_roi_requests(handle) where its factory is "
+                        "attached"
+                    )
 
     def _validate_binding_dependent_sources(self) -> None:
         """Raise if any binding lists a source name no registered spec advertises."""

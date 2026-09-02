@@ -56,6 +56,7 @@ def setup_factories(instrument: Instrument) -> None:
         DetectorViewFactory,
         GeometricViewConfig,
         NeXusDetectorSource,
+        bind_roi_requests,
     )
     from ess.livedata.workflows.stream_processor_workflow import (
         StreamProcessorWorkflow,
@@ -130,7 +131,6 @@ def setup_factories(instrument: Instrument) -> None:
     def _detector_view_workflow_factory(
         source_name: str,
         params: DetectorViewParams,
-        aux_source_names: dict[str, str],
     ) -> StreamProcessorWorkflow:
         """Factory for LOKI detector view with TOF lookup table support."""
         lookup_table_filename = None
@@ -138,11 +138,10 @@ def setup_factories(instrument: Instrument) -> None:
             lookup_table_filename = _resolve_lookup_table_filename()
 
         return _xy_projection.make_workflow(
-            source_name,
-            params,
-            aux_source_names,
-            lookup_table_filename=lookup_table_filename,
+            source_name, params, lookup_table_filename=lookup_table_filename
         )
+
+    bind_roi_requests(specs.xy_projection_handle)
 
     from ess.livedata.workflows.monitor_workflow import create_monitor_workflow
     from ess.livedata.workflows.monitor_workflow_specs import MonitorDataParams

@@ -540,33 +540,23 @@ class TestAuxSourcesConstruction:
 class TestAuxSourcesRender:
     """Tests for AuxSources render() method."""
 
-    def test_default_render_returns_fixed_values(
-        self, sample_workflow_id: WorkflowId
-    ) -> None:
+    def test_default_render_returns_fixed_values(self) -> None:
         aux_sources = AuxSources({'monitor': 'monitor1'})
 
-        rendered = aux_sources.render(sample_workflow_id, 'detector1')
+        assert aux_sources.render() == {'monitor': 'monitor1'}
 
-        assert rendered == {'monitor': 'monitor1'}
-
-    def test_render_with_selections_overrides_defaults(
-        self, sample_workflow_id: WorkflowId
-    ) -> None:
+    def test_render_with_selections_overrides_defaults(self) -> None:
         aux_sources = AuxSources(
             {
                 'monitor': AuxInput(choices=('mon1', 'mon2'), default='mon1'),
             }
         )
 
-        rendered = aux_sources.render(
-            sample_workflow_id, 'det1', selections={'monitor': 'mon2'}
-        )
+        rendered = aux_sources.render(selections={'monitor': 'mon2'})
 
         assert rendered == {'monitor': 'mon2'}
 
-    def test_render_with_partial_selections(
-        self, sample_workflow_id: WorkflowId
-    ) -> None:
+    def test_render_with_partial_selections(self) -> None:
         aux_sources = AuxSources(
             {
                 'a': AuxInput(choices=('x', 'y'), default='x'),
@@ -574,90 +564,25 @@ class TestAuxSourcesRender:
             }
         )
 
-        rendered = aux_sources.render(sample_workflow_id, 'det1', selections={'a': 'y'})
+        rendered = aux_sources.render(selections={'a': 'y'})
 
         assert rendered == {'a': 'y', 'b': 'p'}
 
-    def test_render_ignores_unknown_selection_keys(
-        self, sample_workflow_id: WorkflowId
-    ) -> None:
+    def test_render_ignores_unknown_selection_keys(self) -> None:
         aux_sources = AuxSources({'monitor': 'mon1'})
 
         rendered = aux_sources.render(
-            sample_workflow_id,
-            'det1',
-            selections={'monitor': 'mon1', 'unknown': 'ignored'},
+            selections={'monitor': 'mon1', 'unknown': 'ignored'}
         )
 
         assert rendered == {'monitor': 'mon1'}
 
-    def test_render_with_none_selections_uses_defaults(
-        self, sample_workflow_id: WorkflowId
-    ) -> None:
+    def test_render_with_none_selections_uses_defaults(self) -> None:
         aux_sources = AuxSources({'monitor': 'mon1'})
 
-        rendered = aux_sources.render(sample_workflow_id, 'det1', selections=None)
+        assert aux_sources.render(selections=None) == {'monitor': 'mon1'}
 
-        assert rendered == {'monitor': 'mon1'}
-
-    def test_custom_render_transforms_stream_names(
-        self, sample_workflow_id: WorkflowId
-    ) -> None:
-        class ViewScopedAuxSources(AuxSources):
-            def render(
-                self,
-                workflow_id: WorkflowId,
-                source_name: str,
-                selections: dict[str, str] | None = None,
-            ) -> dict[str, str]:
-                base = super().render(workflow_id, source_name, selections)
-                return {
-                    field: f"{workflow_id}/{source_name}/{stream}"
-                    for field, stream in base.items()
-                }
-
-        aux_sources = ViewScopedAuxSources(
-            {
-                'roi': AuxInput(
-                    choices=('roi_rectangle', 'roi_polygon'), default='roi_rectangle'
-                )
-            }
-        )
-
-        rendered = aux_sources.render(
-            sample_workflow_id, 'detector1', selections={'roi': 'roi_polygon'}
-        )
-
-        assert rendered == {
-            'roi': 'INSTRUMENT/NAME/1/detector1/roi_polygon',
-        }
-
-    def test_custom_render_with_source_name_prefix(
-        self, sample_workflow_id: WorkflowId
-    ) -> None:
-        class SourcePrefixedAuxSources(AuxSources):
-            def render(
-                self,
-                workflow_id: WorkflowId,
-                source_name: str,
-                selections: dict[str, str] | None = None,
-            ) -> dict[str, str]:
-                base = super().render(workflow_id, source_name, selections)
-                return {
-                    field: f"{source_name}/{stream}" for field, stream in base.items()
-                }
-
-        aux_sources = SourcePrefixedAuxSources(
-            {'monitor': AuxInput(choices=('monitor1', 'monitor2'), default='monitor1')}
-        )
-
-        rendered = aux_sources.render(
-            sample_workflow_id, 'detector1', selections={'monitor': 'monitor2'}
-        )
-
-        assert rendered == {'monitor': 'detector1/monitor2'}
-
-    def test_render_with_multiple_fields(self, sample_workflow_id: WorkflowId) -> None:
+    def test_render_with_multiple_fields(self) -> None:
         aux_sources = AuxSources(
             {
                 'incident_monitor': 'monitor1',
@@ -665,9 +590,7 @@ class TestAuxSourcesRender:
             }
         )
 
-        rendered = aux_sources.render(sample_workflow_id, 'detector1')
-
-        assert rendered == {
+        assert aux_sources.render() == {
             'incident_monitor': 'monitor1',
             'transmission_monitor': 'monitor2',
         }

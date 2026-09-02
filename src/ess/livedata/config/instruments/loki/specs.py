@@ -26,7 +26,6 @@ from ess.livedata.config.workflow_spec import (
     WorkflowOutputsBase,
 )
 from ess.livedata.workflows.detector_view_specs import (
-    DetectorROIAuxSources,
     DetectorViewOutputs,
     DetectorViewParams,
 )
@@ -268,7 +267,6 @@ xy_projection_handle = instrument.register_spec(
     title='Detector XY Projection',
     description='Projection of a detector bank onto an XY-plane.',
     source_names=detector_names,
-    aux_sources=DetectorROIAuxSources(),
     params=DetectorViewParams,
     outputs=DetectorViewOutputs,
     # The projection, not the tube view, carries each bank's NICOS counts device.

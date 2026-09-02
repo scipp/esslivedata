@@ -79,11 +79,7 @@ def main() -> None:
         source_name = spec.source_names[0] if spec.source_names else ""
         job_id = JobId(source_name=source_name, job_number=uuid.uuid4())
         config = WorkflowConfig(identifier=wid, job_id=job_id, params={})
-        aux_source_names = (
-            spec.aux_sources.render(workflow_id=wid, source_name=source_name)
-            if spec.aux_sources
-            else None
-        )
+        aux_source_names = spec.aux_sources.render() if spec.aux_sources else None
         context_keys = instrument.resolve_context_keys(wid, source_name)
         try:
             workflow = factory.create(

@@ -36,6 +36,7 @@ def setup_factories(instrument: Instrument) -> None:
         DetectorViewFactory,
         GeometricViewConfig,
         NeXusDetectorSource,
+        bind_roi_requests,
     )
     from ess.livedata.workflows.stream_processor_workflow import (
         StreamProcessorWorkflow,
@@ -100,7 +101,6 @@ def setup_factories(instrument: Instrument) -> None:
     def _detector_view_workflow_factory(
         source_name: str,
         params: DreamDetectorViewParams,
-        aux_source_names: dict[str, str],
     ) -> StreamProcessorWorkflow:
         """Factory for Sciline-based detector view workflow."""
         lookup_table_filename = None
@@ -110,11 +110,10 @@ def setup_factories(instrument: Instrument) -> None:
             )
 
         return _detector_view_factory.make_workflow(
-            source_name,
-            params,
-            aux_source_names,
-            lookup_table_filename=lookup_table_filename,
+            source_name, params, lookup_table_filename=lookup_table_filename
         )
+
+    bind_roi_requests(specs.projection_handle)
 
     # Monitor workflow factory with DREAM-specific TOF configuration
     from ess.livedata.workflows.monitor_workflow import create_monitor_workflow

@@ -17,6 +17,7 @@ from scippnexus import NXdetector
 
 # Import types unconditionally for runtime type hint resolution
 # (used by workflow_factory.attach_factory to inspect parameter types)
+from ...config.roi_names import get_roi_mapper, roi_stream_name
 from ...config.workflow_spec import Temporality
 from ...preprocessors.accumulators import make_no_copy_accumulator_pair
 from ...preprocessors.downsample_pixel_ids import SOURCE_RESOLUTION
@@ -26,6 +27,7 @@ from ..detector_view_specs import (
     DetectorViewParams,
 )
 from ..stream_processor_workflow import StreamProcessorWorkflow
+from ..workflow_factory import SpecHandle
 from .data_source import DetectorDataSource, DetectorNumberSource
 from .providers import spectrum_view
 from .types import (
@@ -97,7 +99,6 @@ class DetectorViewFactory:
         self,
         source_name: str,
         params: DetectorViewParams,
-        aux_source_names: dict[str, str],
         lookup_table_filename: str | None = None,
     ) -> StreamProcessorWorkflow:
         """
@@ -109,14 +110,6 @@ class DetectorViewFactory:
             Name of the detector source (e.g., 'panel_0').
         params:
             Workflow parameters containing coordinate mode, edges, and ranges.
-        aux_source_names:
-            Rendered auxiliary stream names, mapping role to wire name. ROI
-            roles (``'roi_rectangle'``/``'roi_polygon'``) carry the view-scoped
-            wire names (``'{workflow_id}/{source_name}/roi_rectangle'``) on
-            which ROI requests arrive; the workflow keys its ROI
-            ``context_keys`` by these so
-            ``StreamProcessorWorkflow.accumulate`` routes incoming requests to
-            ``set_context``. Empty for views without ROI support.
         lookup_table_filename:
             Path to lookup table file. Required for 'wavelength' coordinate mode.
             The caller (instrument factory) is responsible for resolving this
@@ -126,11 +119,10 @@ class DetectorViewFactory:
         -------
         :
             StreamProcessorWorkflow wrapping the Sciline-based detector view.
-            Instrument- and spec-scope context bindings are injected by the
-            routing layer after creation; ROI context (an auxiliary source,
-            not a context binding) is set here when ``roi_support`` is set.
+            Every context input, the ROI request streams included (see
+            :func:`bind_roi_requests`), is injected by the routing layer after
+            creation.
         """
-        context_keys: dict[str, type] = {}
         mode = params.coordinate_mode.mode
 
         # Validate wavelength mode requirements
@@ -243,18 +235,6 @@ class DetectorViewFactory:
                     'roi_polygon': ROIPolygonReadback,
                 }
             )
-            # ROI requests are auxiliary context streams delivered via
-            # set_context. They arrive keyed by the view-scoped wire name
-            # ('{workflow_id}/{source_name}/roi_rectangle'), so context_keys
-            # must use those wire names (resolved here from aux_source_names)
-            # for StreamProcessorWorkflow.accumulate to route them. The
-            # readback target_keys above stay keyed by output name.
-            context_keys.update(
-                {
-                    aux_source_names['roi_rectangle']: ROIRectangleRequest,
-                    aux_source_names['roi_polygon']: ROIPolygonRequest,
-                }
-            )
 
         # Reset the cumulative histogram when the detector moves: summing across a
         # move mixes incompatible geometries (geometric views shift screen bins;
@@ -272,7 +252,6 @@ class DetectorViewFactory:
         return StreamProcessorWorkflow(
             workflow,
             dynamic_keys={source_name: NeXusData[NXdetector, SampleRun]},
-            context_keys=context_keys,
             target_keys=target_keys,
             window_outputs=(
                 DetectorViewOutputs if roi_support else DetectorViewOutputsBase
@@ -282,3 +261,43 @@ class DetectorViewFactory:
                 AccumulatedHistogram[Current]: window,
             },
         )
+
+
+_ROI_REQUEST_KEYS = {
+    'rectangle': ROIRectangleRequest,
+    'polygon': ROIPolygonRequest,
+}
+
+
+def bind_roi_requests(handle: SpecHandle) -> None:
+    """Bind the ROI request streams of a detector-view spec with ROI support.
+
+    One spec-scope context binding per source and ROI geometry, naming the
+    stream by :func:`~ess.livedata.config.roi_names.roi_stream_name`. The
+    routing layer thereby subscribes each job to its view's requests and
+    delivers them to ``set_context`` under the request key
+    :func:`make_workflow` wired the ROI providers by.
+
+    The bindings do not gate (ADR 0002): the providers read a missing request
+    as "no ROI selected", so a job runs without one and picks up whatever
+    arrives. The stream is nonetheless latched like any other context input,
+    which together with the job-free name lets a selection be published
+    before its job exists -- ``JobManager.peek_pending_streams`` hands the
+    latched value to the job as it activates -- and survive a restart of it.
+
+    Two concurrent jobs of one view would therefore read one selection. The
+    backend does not rule that out -- ``JobManager`` keys jobs by ``JobId``
+    and never supersedes -- and multiple jobs per workflow remain supported;
+    it is the dashboard that commits one generation at a time, stopping the
+    previous job before starting the next.
+    """
+    for source_name in handle.spec.source_names:
+        for geometry in get_roi_mapper().geometries:
+            handle.add_context_binding(
+                stream_name=roi_stream_name(
+                    handle.workflow_id, source_name, geometry.readback_key
+                ),
+                workflow_key=_ROI_REQUEST_KEYS[geometry.geometry_type],
+                dependent_sources={source_name},
+                gating=False,
+            )

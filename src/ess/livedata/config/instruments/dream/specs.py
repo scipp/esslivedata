@@ -25,7 +25,6 @@ from ess.livedata.config.workflow_spec import (
     WorkflowOutputsBase,
 )
 from ess.livedata.workflows.detector_view_specs import (
-    DetectorROIAuxSources,
     DetectorViewOutputs,
     DetectorViewParams,
 )
@@ -204,7 +203,6 @@ projection_handle = instrument.register_spec(
         'Uses the appropriate projection for each detector.'
     ),
     source_names=detector_names,
-    aux_sources=DetectorROIAuxSources(),
     params=DreamDetectorViewParams,
     outputs=DetectorViewOutputs,
     # The projection covers every bank, so it carries the NICOS counts devices;

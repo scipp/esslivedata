@@ -322,27 +322,11 @@ class AuxSources:
         """Return default selections for all inputs."""
         return {name: inp.default for name, inp in self._inputs.items()}
 
-    def render(
-        self,
-        workflow_id: WorkflowId,
-        source_name: str,
-        selections: dict[str, str] | None = None,
-    ) -> dict[str, str]:
-        """Render auxiliary source stream names for one workflow output.
-
-        The default implementation returns the selected (or default) stream
-        names unchanged. Subclasses can override to transform names, e.g. to
-        scope a stream to the view it belongs to.
+    def render(self, selections: dict[str, str] | None = None) -> dict[str, str]:
+        """The stream name filling each input: the default unless selected.
 
         Parameters
         ----------
-        workflow_id:
-            The workflow the job belongs to.
-        source_name:
-            The source the job processes. Together with ``workflow_id`` this
-            is the view's stable identity; the job's ``job_number`` is
-            deliberately not passed, so a name a subclass renders for itself
-            stays addressable across restarts of the job.
         selections:
             User selections overriding defaults. Keys not present in the
             inputs specification are ignored.

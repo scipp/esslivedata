@@ -22,6 +22,7 @@ from ess.livedata.config.workflow_spec import (
     WorkflowOutputsBase,
 )
 from ess.livedata.workflows.workflow_factory import (
+    SpecHandle,
     Workflow,
     WorkflowFactory,
 )
@@ -685,6 +686,59 @@ class TestContextBindings:
 
         with pytest.raises(KeyError, match=r'not.*registered'):
             instrument.resolve_context_keys(workflow_id, 'det1')
+
+    @pytest.fixture
+    def spec_on_det1(self) -> tuple[Instrument, SpecHandle]:
+        instrument = Instrument(
+            name='test',
+            detector_names=['det1'],
+            streams={'rot': _f144('rot'), 'roi': _f144('roi')},
+        )
+        handle = instrument.register_spec(
+            name='w',
+            version=1,
+            title='W',
+            source_names=['det1'],
+            outputs=SimpleTestOutputs,
+        )
+        return instrument, handle
+
+    def test_spec_binding_gating_defaults_to_true(
+        self, spec_on_det1: tuple[Instrument, SpecHandle]
+    ):
+        instrument, handle = spec_on_det1
+        handle.add_context_binding(stream_name='rot', workflow_key=_Key)
+        handle.add_context_binding(stream_name='roi', workflow_key=_Key, gating=False)
+
+        rot, roi = instrument.workflow_factory.registration(
+            handle.workflow_id
+        ).context_bindings
+        assert rot.gating is True
+        assert roi.gating is False
+
+    def test_resolve_gating_streams_excludes_non_gating_spec_binding(
+        self, spec_on_det1: tuple[Instrument, SpecHandle]
+    ):
+        instrument, handle = spec_on_det1
+        handle.add_context_binding(stream_name='rot', workflow_key=_Key)
+        handle.add_context_binding(stream_name='roi', workflow_key=_Key, gating=False)
+
+        assert instrument.resolve_context_keys(handle.workflow_id, 'det1') == {
+            'rot': _Key,
+            'roi': _Key,
+        }
+        assert instrument.resolve_gating_streams(handle.workflow_id, 'det1') == {'rot'}
+
+    def test_instrument_binding_is_gating(
+        self, spec_on_det1: tuple[Instrument, SpecHandle]
+    ):
+        instrument, handle = spec_on_det1
+        instrument.add_context_binding(
+            stream_name='rot', workflow_key=_Key, dependent_sources=['det1']
+        )
+
+        assert instrument.context_bindings[0].gating is True
+        assert instrument.resolve_gating_streams(handle.workflow_id, 'det1') == {'rot'}
 
 
 class TestInstrumentRegisterSpec:

@@ -375,6 +375,55 @@ class TestJobOrchestratorInitialization:
         assert staged["det_1"].aux_source_names
         assert staged["det_1"].aux_source_names["monitor"] == "monitor_2"
 
+    def test_drops_persisted_aux_source_names_not_declared_by_spec(
+        self,
+        workflow_with_params: WorkflowSpec,
+    ):
+        workflow_id = workflow_with_params.get_id()
+        config_store = {
+            str(workflow_id): {
+                "jobs": {
+                    "det_1": {
+                        "params": {"threshold": 50.0, "mode": "custom"},
+                        "aux_source_names": {"monitor": "monitor_1"},
+                    }
+                }
+            }
+        }
+        orchestrator = make_orchestrator(
+            workflow_with_params, config_store=config_store
+        )
+
+        staged = orchestrator.get_staged_config(workflow_id)
+        assert staged["det_1"].aux_source_names == {}
+        assert staged["det_1"].params == {"threshold": 50.0, "mode": "custom"}
+
+    def test_keeps_declared_and_drops_stale_persisted_aux_source_names(
+        self,
+        workflow_with_params_and_aux: WorkflowSpec,
+    ):
+        workflow_id = workflow_with_params_and_aux.get_id()
+        config_store = {
+            str(workflow_id): {
+                "jobs": {
+                    "det_1": {
+                        "params": {"threshold": 50.0, "mode": "custom"},
+                        "aux_source_names": {
+                            "monitor": "monitor_2",
+                            "stale": "gone",
+                        },
+                    }
+                }
+            }
+        }
+        orchestrator = make_orchestrator(
+            workflow_with_params_and_aux, config_store=config_store
+        )
+
+        staged = orchestrator.get_staged_config(workflow_id)
+        assert staged["det_1"].aux_source_names == {"monitor": "monitor_2"}
+        assert staged["det_1"].params == {"threshold": 50.0, "mode": "custom"}
+
     def test_get_staged_config_never_raises_for_valid_workflow_id(
         self,
         workflow_with_params: WorkflowSpec,
@@ -577,7 +626,8 @@ class TestJobOrchestratorMutationSafety:
         workflow_with_params: WorkflowSpec,
     ):
         """Each JobConfig should have independent params/aux_source_names dicts."""
-        workflow_id = workflow_with_params.get_id()
+        spec = workflow_with_params.model_copy(update={"aux_sources": test_aux_sources})
+        workflow_id = spec.get_id()
 
         # Config store with multiple sources (each with their own params)
         config_store = {
@@ -595,9 +645,7 @@ class TestJobOrchestratorMutationSafety:
             }
         }
 
-        orchestrator = make_orchestrator(
-            workflow_with_params, config_store=config_store
-        )
+        orchestrator = make_orchestrator(spec, config_store=config_store)
 
         # Modify params for one source
         staged = orchestrator.get_staged_config(workflow_id)

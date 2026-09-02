@@ -7,7 +7,11 @@ import scipp as sc
 
 from ess.livedata.workflows.detector_view.data_source import DetectorNumberSource
 from ess.livedata.workflows.detector_view.factory import DetectorViewFactory
-from ess.livedata.workflows.detector_view.types import LogicalViewConfig
+from ess.livedata.workflows.detector_view.types import (
+    LogicalViewConfig,
+    ROIPolygonRequest,
+    ROIRectangleRequest,
+)
 
 
 def make_fake_nexus_detector_data(
@@ -111,11 +115,13 @@ def make_fake_detector_number(y_size: int, x_size: int) -> sc.Variable:
     return sc.arange('detector_number', 1, total_pixels + 1, unit=None)
 
 
-# Identity ROI aux-name mapping: tests that feed bare 'roi_rectangle'/'roi_polygon'
-# directly to workflow.accumulate construct the workflow with these so the
-# context_keys wire names match. Production renders view-scoped names; see tests
-# using DetectorROIAuxSources.render for that path.
-ROI_AUX_NAMES = {'roi_rectangle': 'roi_rectangle', 'roi_polygon': 'roi_polygon'}
+# Stands in for the bindings ``bind_roi_requests`` declares, with the wire names
+# equal to the readback keys for brevity: tests feeding bare 'roi_rectangle' /
+# 'roi_polygon' to ``workflow.accumulate`` build the workflow with these.
+ROI_CONTEXT_KEYS = {
+    'roi_rectangle': ROIRectangleRequest,
+    'roi_polygon': ROIPolygonRequest,
+}
 
 
 def make_test_factory(y_size: int = 4, x_size: int = 4) -> DetectorViewFactory:

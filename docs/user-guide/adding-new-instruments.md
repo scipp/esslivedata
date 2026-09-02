@@ -483,7 +483,6 @@ In `specs.py`:
 ```python
 from ess.livedata.config.workflow_spec import DETECTORS
 from ess.livedata.workflows.detector_view_specs import (
-    DetectorROIAuxSources,
     DetectorViewOutputs,
     DetectorViewParams,
 )
@@ -495,7 +494,6 @@ projection_handle = instrument.register_spec(
     title='Detector Projection',
     description='Projection of the detector banks onto 2D screens.',
     source_names=detector_names,
-    aux_sources=DetectorROIAuxSources(),
     params=DetectorViewParams,
     outputs=DetectorViewOutputs,
 )
@@ -520,12 +518,16 @@ _view_config = {
 
 
 @projection_handle.attach_factory()
-def _projection_factory(source_name, params, aux_source_names):
+def _projection_factory(source_name, params):
     factory = DetectorViewFactory(
         data_source=NeXusDetectorSource(get_nexus_geometry_filename('myinst')),
         view_config=_view_config,
     )
-    return factory.make_workflow(source_name, params, aux_source_names)
+    return factory.make_workflow(source_name, params)
+
+
+# Subscribe each bank's jobs to the ROI requests the dashboard publishes for it.
+bind_roi_requests(projection_handle)
 ```
 
 Available projections (`ProjectionType` in `workflows/detector_view/types.py`):

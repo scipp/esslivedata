@@ -3,9 +3,11 @@
 import pytest
 
 from ess.livedata.config.instrument import Instrument
+from ess.livedata.config.roi_names import roi_stream_name
 from ess.livedata.config.route_derivation import (
     gather_source_names,
     resolve_stream_names,
+    scope_stream_mapping,
 )
 from ess.livedata.config.workflow_spec import (
     DETECTORS,
@@ -236,3 +238,57 @@ class TestResolveStreamNames:
         )
         result = resolve_stream_names(set(), instrument, mapping)
         assert result == set()
+
+
+class TestROIRequestBinding:
+    """ROI request streams are spec-scope bindings whose names sit in no LUT:
+    they arrive on the unconditional ROI route, so scoping must neither
+    subscribe to them by name nor mistake them for a logical detector.
+    """
+
+    @pytest.fixture
+    def instrument(self) -> Instrument:
+        instrument = Instrument(name="test", detector_names=["det_a", "det_b"])
+        handle = instrument.register_spec(
+            group=DETECTORS,
+            name="view",
+            version=1,
+            title="View",
+            source_names=["det_a"],
+            outputs=DefaultOutputs,
+        )
+        handle.add_context_binding(
+            stream_name=roi_stream_name(handle.workflow_id, "det_a", "roi_rectangle"),
+            workflow_key=object(),
+            dependent_sources={"det_a"},
+            gating=False,
+        )
+        return instrument
+
+    @pytest.fixture
+    def mapping(self, infra_kwargs: dict) -> StreamMapping:
+        return StreamMapping(
+            instrument="test",
+            detectors={
+                InputStreamKey(topic="t", source_name="a"): "det_a",
+                InputStreamKey(topic="t", source_name="b"): "det_b",
+            },
+            monitors={},
+            **infra_kwargs,
+        )
+
+    def test_gathered_for_hosting_service_and_dropped_on_resolve(
+        self, instrument: Instrument, mapping: StreamMapping
+    ) -> None:
+        needed = gather_source_names(instrument, "detector_data")
+        assert len(needed) == 2
+        assert "det_a" in needed
+        assert any(name.endswith("/det_a/roi_rectangle") for name in needed)
+
+        assert resolve_stream_names(needed, instrument, mapping) == {"det_a"}
+
+    def test_scoped_mapping_keeps_only_spec_detector(
+        self, instrument: Instrument, mapping: StreamMapping
+    ) -> None:
+        scoped = scope_stream_mapping(instrument, mapping, "detector_data")
+        assert set(scoped.detectors.values()) == {"det_a"}

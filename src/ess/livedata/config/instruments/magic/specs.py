@@ -21,7 +21,6 @@ from ess.livedata.config import (
 from ess.livedata.config.device_contract import COUNTS_TOTAL_DEVICE
 from ess.livedata.config.workflow_spec import DETECTORS
 from ess.livedata.workflows.detector_view_specs import (
-    DetectorROIAuxSources,
     DetectorViewOutputs,
     DetectorViewParams,
 )
@@ -124,7 +123,6 @@ projection_handle = instrument.register_spec(
     title='Detector Projection',
     description='Projection of the cylindrical detector banks onto their mantle.',
     source_names=detector_names,
-    aux_sources=DetectorROIAuxSources(),
     params=DetectorViewParams,
     outputs=DetectorViewOutputs,
     # The projection, not the wire or strip view, carries the NICOS counts devices.

@@ -11,8 +11,8 @@ from ess.livedata.config import F144Stream, Instrument, instrument_registry
 from ess.livedata.config.device_contract import COUNTS_TOTAL_DEVICE
 from ess.livedata.config.workflow_spec import DETECTORS, WorkflowOutputsBase
 from ess.livedata.workflows.detector_view_specs import (
-    DetectorROIAuxSources,
     DetectorViewOutputs,
+    DetectorViewOutputsBase,
     DetectorViewParams,
 )
 from ess.livedata.workflows.monitor_workflow_specs import (
@@ -65,7 +65,6 @@ panel_0_view_handle = instrument.register_spec(
         'restricted to regions of interest.'
     ),
     source_names=['panel_0'],
-    aux_sources=DetectorROIAuxSources(),
     params=DetectorViewParams,
     outputs=DetectorViewOutputs,
     # The primary panel_0 view, not its 3-D 'layers' counterpart, carries the device.
@@ -101,7 +100,9 @@ area_panel_view_handle = instrument.register_spec(
     title='Area Panel',
     description='Area detector image view',
     source_names=['area_panel'],
-    outputs=DetectorViewOutputs,
+    # AreaDetectorView renders images only; it neither reads ROI requests nor
+    # publishes readbacks, so it must not declare the ROI outputs.
+    outputs=DetectorViewOutputsBase,
     device_outputs=COUNTS_TOTAL_DEVICE,
 )
 

@@ -5,7 +5,9 @@ import sys
 
 import pytest
 
-from ess.livedata.config.instrument import Instrument
+from ess.livedata.config.instrument import Instrument, instrument_registry
+from ess.livedata.config.instruments import get_config
+from ess.livedata.config.roi_names import roi_stream_name
 from ess.livedata.config.workflow_spec import DETECTORS, WorkflowId
 from ess.livedata.parameter_models import (
     TimeUnit,
@@ -13,9 +15,13 @@ from ess.livedata.parameter_models import (
     WavelengthRangeFilter,
     WavelengthUnit,
 )
+from ess.livedata.workflows.detector_view import bind_roi_requests
+from ess.livedata.workflows.detector_view.types import (
+    ROIPolygonRequest,
+    ROIRectangleRequest,
+)
 from ess.livedata.workflows.detector_view_specs import (
     CoordinateModeSettings,
-    DetectorROIAuxSources,
     DetectorViewOutputs,
     DetectorViewParams,
 )
@@ -44,79 +50,91 @@ def _register_detector_view(instrument: Instrument, source_names: list[str]):
         title='Detector XY Projection',
         description='Projection of a detector bank onto an XY-plane.',
         source_names=source_names,
-        aux_sources=DetectorROIAuxSources(),
         params=DetectorViewParams,
         outputs=DetectorViewOutputs,
     )
 
 
-class TestDetectorROIAuxSources:
-    """ROI auxiliary sources on detector view specs.
+ROI_KEYS = {'roi_rectangle': ROIRectangleRequest, 'roi_polygon': ROIPolygonRequest}
 
-    ROI is an auxiliary source, not a gated context binding: the factory wires
-    the ROI streams into ``set_context`` itself and the providers treat a
-    missing/empty request as "no ROI selected", so there is nothing to gate.
-    """
 
-    def test_spec_exposes_roi_rectangle_and_polygon_aux_sources(self) -> None:
+class TestBindROIRequests:
+    """ROI request streams are spec-scope, non-gating context bindings."""
+
+    @pytest.fixture
+    def instrument(self) -> Instrument:
         instrument = Instrument(name="test_instrument")
         handle = _register_detector_view(instrument, ["detector1", "detector2"])
+        bind_roi_requests(handle)
+        return instrument
 
-        spec = instrument.workflow_factory[handle.workflow_id]
-        assert isinstance(spec.aux_sources, DetectorROIAuxSources)
-        assert set(spec.aux_sources.inputs) == {'roi_rectangle', 'roi_polygon'}
-        # ROI is not gated, so no context bindings are declared.
-        reg = instrument.workflow_factory.registration(handle.workflow_id)
-        assert reg.context_bindings == ()
+    @pytest.fixture
+    def workflow_id(self, instrument: Instrument) -> WorkflowId:
+        return WorkflowId(
+            instrument='test_instrument', name='detector_xy_projection', version=1
+        )
 
-    def test_roi_aux_render_scopes_names_to_the_view(self) -> None:
-        workflow_id = WorkflowId(instrument='dummy', name='detector_view', version=1)
-        assert DetectorROIAuxSources().render(workflow_id, 'detector1') == {
-            'roi_rectangle': 'dummy/detector_view/1/detector1/roi_rectangle',
-            'roi_polygon': 'dummy/detector_view/1/detector1/roi_polygon',
+    @pytest.mark.parametrize('source', ['detector1', 'detector2'])
+    def test_each_source_resolves_its_own_view_scoped_streams(
+        self, instrument: Instrument, workflow_id: WorkflowId, source: str
+    ) -> None:
+        assert instrument.resolve_context_keys(workflow_id, source) == {
+            roi_stream_name(workflow_id, source, key): request
+            for key, request in ROI_KEYS.items()
         }
 
-    def test_roi_aux_render_is_independent_of_the_job_generation(self) -> None:
-        """The rendered names carry no job_number, so a restart reuses them."""
-        workflow_id = WorkflowId(instrument='dummy', name='detector_view', version=1)
-        aux = DetectorROIAuxSources()
-        assert aux.render(workflow_id, 'detector1') == aux.render(
-            workflow_id, 'detector1'
-        )
+    @pytest.mark.parametrize('source', ['detector1', 'detector2'])
+    def test_roi_streams_do_not_gate(
+        self, instrument: Instrument, workflow_id: WorkflowId, source: str
+    ) -> None:
+        assert instrument.resolve_gating_streams(workflow_id, source) == set()
 
-    def test_roi_aux_render_distinguishes_views_sharing_a_source(self) -> None:
-        """Two ROI-supporting views of one detector must not share a stream."""
-        source = 'detector1'
-        aux = DetectorROIAuxSources()
-        xy = aux.render(WorkflowId(instrument='d', name='xy_view', version=1), source)
-        cyl = aux.render(WorkflowId(instrument='d', name='cyl_view', version=1), source)
-        assert set(xy.values()).isdisjoint(cyl.values())
+    def test_views_sharing_a_source_get_distinct_streams(self) -> None:
+        views = [WorkflowId(instrument='d', name=n, version=1) for n in ('xy', 'cyl')]
+        names = {
+            roi_stream_name(view, 'det', key) for view in views for key in ROI_KEYS
+        }
+        assert len(names) == 2 * len(ROI_KEYS)
 
-    def test_logical_view_with_roi_support_adds_roi_aux_sources(self) -> None:
+    def test_validate_rejects_roi_outputs_without_request_bindings(self) -> None:
         instrument = Instrument(name="test_instrument")
-        handle = instrument.add_logical_view(
-            name='custom_view',
-            title='Custom View',
-            description='',
-            source_names=['detector1'],
-            roi_support=True,
-        )
-        spec = instrument.workflow_factory[handle.workflow_id]
-        assert isinstance(spec.aux_sources, DetectorROIAuxSources)
+        handle = _register_detector_view(instrument, ["detector1"])
+        with pytest.raises(ValueError, match="binds no request stream"):
+            instrument.validate()
+        bind_roi_requests(handle)
+        instrument.validate()
 
-    def test_logical_view_without_roi_support_has_no_aux_sources(self) -> None:
-        instrument = Instrument(name="test_instrument")
-        handle = instrument.add_logical_view(
-            name='no_roi_view',
-            title='No ROI',
-            description='',
-            source_names=['detector1'],
-            roi_support=False,
+
+@pytest.fixture(scope='module')
+def tbl() -> Instrument:
+    get_config('tbl')
+    instrument = instrument_registry['tbl']
+    instrument.load_factories()
+    return instrument
+
+
+class TestLogicalViewROIBindings:
+    """``load_factories`` binds ROI requests for logical views with ROI support."""
+
+    def test_logical_view_with_roi_support_binds_roi_requests(
+        self, tbl: Instrument
+    ) -> None:
+        workflow_id = WorkflowId(instrument='tbl', name='he3_detector_view', version=1)
+        reg = tbl.workflow_factory.registration(workflow_id)
+        assert {(b.stream_name, b.workflow_key) for b in reg.context_bindings} == {
+            (roi_stream_name(workflow_id, source, key), request)
+            for source in reg.spec.source_names
+            for key, request in ROI_KEYS.items()
+        }
+        assert not any(b.gating for b in reg.context_bindings)
+
+    def test_logical_view_without_roi_support_has_no_bindings(
+        self, tbl: Instrument
+    ) -> None:
+        workflow_id = WorkflowId(
+            instrument='tbl', name='multiblade_detector_view', version=1
         )
-        spec = instrument.workflow_factory[handle.workflow_id]
-        assert spec.aux_sources is None
-        reg = instrument.workflow_factory.registration(handle.workflow_id)
-        assert reg.context_bindings == ()
+        assert tbl.workflow_factory.registration(workflow_id).context_bindings == ()
 
 
 class TestDetectorViewParamsGetActiveRange:
