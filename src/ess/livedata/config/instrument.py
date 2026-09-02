@@ -624,7 +624,6 @@ class Instrument:
         it selects the outputs model carrying the ROI readbacks, from which
         :meth:`load_factories` in turn binds the request streams (see
         :func:`~ess.livedata.workflows.detector_view.bind_roi_requests`).
-        Naming an outputs model here instead would state the same fact twice.
 
         Use this for a view whose factory is attached by hand in
         ``factories.py`` -- a geometric projection, or one reading
@@ -716,17 +715,11 @@ class Instrument:
 
         This registers the view spec immediately (lightweight) and stores the
         configuration for later factory attachment during load_factories().
+        Parameters other than those below are as for
+        :meth:`register_detector_view`, which registers the spec.
 
         Parameters
         ----------
-        name:
-            Unique name for the view within the given group.
-        title:
-            Human-readable title for the view.
-        description:
-            Description of the view.
-        source_names:
-            List of source names this view applies to.
         transform:
             Function that transforms raw detector data to the view output.
             Signature: ``(da: DataArray, source_name: str) -> DataArray``.
@@ -736,27 +729,10 @@ class Instrument:
             If reduction_dim is specified, the transform should NOT include
             summing - that is handled separately to enable proper ROI index mapping.
             If None, identity (no reshaping).
-        group:
-            Display-oriented :class:`WorkflowGroup` this view belongs to.
-        service:
-            Name of the backend service responsible for running this workflow.
-            Defaults to ``group.name``.
-        roi_support:
-            Whether ROI selection is supported for this view.
-        output_ndim:
-            Number of dimensions for spatial outputs.
         reduction_dim:
             Dimension(s) to sum over after applying transform. If specified,
             enables proper ROI support by tracking which input pixels contribute
             to each output pixel.
-        spectrum_view:
-            Optional ``SpectrumViewSpec`` enabling a ``spectrum_view`` output
-            derived from the cumulative accumulated histogram via a
-            per-instrument transform.
-        device_outputs:
-            Outputs of this view exposed to NICOS as derived devices. Pass
-            :data:`~ess.livedata.config.device_contract.COUNTS_TOTAL_DEVICE` on
-            the one view per detector bank whose total is the bank's device.
 
         Returns
         -------
