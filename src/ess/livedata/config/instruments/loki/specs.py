@@ -19,16 +19,10 @@ from ess.livedata.config import (
 )
 from ess.livedata.config.device_contract import COUNTS_TOTAL_DEVICE
 from ess.livedata.config.workflow_spec import (
-    DETECTORS,
     MONITORS,
     AuxInput,
     AuxSources,
     WorkflowOutputsBase,
-)
-from ess.livedata.workflows.detector_view_specs import (
-    DetectorROIAuxSources,
-    DetectorViewOutputs,
-    DetectorViewParams,
 )
 from ess.livedata.workflows.monitor_workflow_specs import (
     MonitorDataParams,
@@ -261,16 +255,11 @@ instrument.add_logical_view(
     output_ndim=1,
 )
 
-xy_projection_handle = instrument.register_spec(
-    group=DETECTORS,
+xy_projection_handle = instrument.register_detector_view(
     name='detector_xy_projection',
-    version=1,
     title='Detector XY Projection',
     description='Projection of a detector bank onto an XY-plane.',
     source_names=detector_names,
-    aux_sources=DetectorROIAuxSources(),
-    params=DetectorViewParams,
-    outputs=DetectorViewOutputs,
     # The projection, not the tube view, carries each bank's NICOS counts device.
     device_outputs=COUNTS_TOTAL_DEVICE,
 )

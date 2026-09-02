@@ -244,9 +244,6 @@ class DashboardServices:
         self.job_service = JobService()
         self.service_registry = ServiceRegistry()
 
-        # Create ROI publisher for publishing ROI updates to Kafka. Its
-        # job-number resolver is injected in _setup_workflow_management once
-        # the JobOrchestrator exists.
         self.roi_publisher = ROIPublisher(sink=transport_resources.roi_sink)
 
         self.plotting_controller = PlottingController(
@@ -298,9 +295,6 @@ class DashboardServices:
             instrument_config=self.instrument_config,
             notification_queue=self.notification_queue,
             on_change=self.wakeup_hub.wake_all,
-        )
-        self.roi_publisher.set_job_number_resolver(
-            self.job_orchestrator.get_active_job_number
         )
 
         self.workflow_controller = WorkflowController(

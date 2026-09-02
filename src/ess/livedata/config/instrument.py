@@ -321,21 +321,19 @@ class Instrument:
             if _is_chain_patch(binding)
         ]
 
-    def resolve_context_keys(
+    def _matching_bindings(
         self, workflow_id: WorkflowId, source_name: str
-    ) -> dict[str, Any]:
-        """Resolve the ``ContextBinding`` mapping for a ``(spec, source)`` pair.
+    ) -> list[ContextBinding]:
+        """Instrument- and spec-scope bindings applying to a ``(spec, source)``.
 
-        Matches instrument- and spec-scope :class:`ContextBinding` records whose
-        ``dependent_sources`` include ``source_name`` and returns
-        ``{stream_name: workflow_key}``. ``skip_instrument_contexts`` filters out
+        A binding applies when its ``dependent_sources`` include
+        ``source_name``. ``skip_instrument_contexts`` filters out
         instrument-scope entries — a spec that explicitly declares a binding
-        cannot opt out of it via the flag. Context wire names equal their stream
-        names, so the returned keys double as the set of gating context streams.
+        cannot opt out of it via the flag.
 
         Raises :class:`KeyError` for an unregistered ``workflow_id``: an empty
-        result means "this workflow gates on nothing" and must not be
-        conflated with "no such workflow".
+        result means "this workflow binds nothing" and must not be conflated
+        with "no such workflow".
         """
         registration = self.workflow_factory.registration(workflow_id)
         if registration is None:
@@ -346,10 +344,39 @@ class Instrument:
         instrument_bindings = (
             [] if registration.skip_instrument_contexts else self.context_bindings
         )
-        return {
-            binding.stream_name: binding.workflow_key
+        return [
+            binding
             for binding in (*instrument_bindings, *registration.context_bindings)
             if source_name in binding.dependent_sources
+        ]
+
+    def resolve_context_keys(
+        self, workflow_id: WorkflowId, source_name: str
+    ) -> dict[str, Any]:
+        """Resolve the ``ContextBinding`` mapping for a ``(spec, source)`` pair.
+
+        Returns ``{stream_name: workflow_key}`` over the matching bindings (see
+        :meth:`_matching_bindings`). Context wire names equal their stream
+        names, so the keys are the context streams the job subscribes to; the
+        subset it waits for is :meth:`resolve_gating_streams`.
+        """
+        return {
+            binding.stream_name: binding.workflow_key
+            for binding in self._matching_bindings(workflow_id, source_name)
+        }
+
+    def resolve_gating_streams(
+        self, workflow_id: WorkflowId, source_name: str
+    ) -> set[str]:
+        """The context streams a ``(spec, source)`` job waits for (ADR 0002).
+
+        The stream names of the matching bindings declared with
+        ``gating=True``, see :attr:`ContextBinding.gating`.
+        """
+        return {
+            binding.stream_name
+            for binding in self._matching_bindings(workflow_id, source_name)
+            if binding.gating
         }
 
     @property
@@ -575,6 +602,98 @@ class Instrument:
             return metadata.description
         return ''
 
+    def register_detector_view(
+        self,
+        *,
+        name: str,
+        title: str,
+        description: str,
+        source_names: Sequence[str],
+        group: WorkflowGroup = DETECTORS,
+        service: str | None = None,
+        roi_support: bool = True,
+        output_ndim: int | None = None,
+        spectrum_view: SpectrumViewSpec | None = None,
+        params: type[pydantic.BaseModel] | None = None,
+        device_outputs: dict[str, str] | None = None,
+    ) -> SpecHandle:
+        """
+        Register a detector-view spec, deriving its params and outputs models.
+
+        ``roi_support`` is the sole declaration of whether the view has ROI:
+        it selects the outputs model carrying the ROI readbacks, from which
+        :meth:`load_factories` in turn binds the request streams (see
+        :func:`~ess.livedata.workflows.detector_view.bind_roi_requests`).
+
+        Use this for a view whose factory is attached by hand in
+        ``factories.py`` -- a geometric projection, or one reading
+        instrument-specific ``params``. :meth:`add_logical_view` builds on it
+        for views the standard logical-view factory serves, which need no
+        ``factories.py`` code at all.
+
+        Parameters
+        ----------
+        name:
+            Unique name for the view within the given group.
+        title:
+            Human-readable title for the view.
+        description:
+            Description of the view.
+        source_names:
+            List of source names this view applies to.
+        group:
+            Display-oriented :class:`WorkflowGroup` this view belongs to.
+        service:
+            Name of the backend service responsible for running this workflow.
+            Defaults to ``group.name``.
+        roi_support:
+            Whether ROI selection is supported for this view. Geometric
+            projections always support it; a logical view that does not map
+            output pixels back to input pixels does not.
+        output_ndim:
+            Number of dimensions for spatial outputs. Defaults to 2.
+        spectrum_view:
+            Optional ``SpectrumViewSpec`` enabling a ``spectrum_view`` output
+            derived from the cumulative accumulated histogram via a
+            per-instrument transform.
+        params:
+            Params model, when the factory needs fields beyond the standard
+            detector-view ones. Defaults to the model derived from
+            ``spectrum_view``.
+        device_outputs:
+            Outputs of this view exposed to NICOS as derived devices. Pass
+            :data:`~ess.livedata.config.device_contract.COUNTS_TOTAL_DEVICE` on
+            the one view per detector bank whose total is the bank's device.
+
+        Returns
+        -------
+        :
+            Handle for the registered spec.
+        """
+        from ess.livedata.workflows.detector_view_specs import (
+            make_detector_view_outputs,
+            make_detector_view_params,
+        )
+
+        return self.register_spec(
+            group=group,
+            service=service,
+            name=name,
+            version=1,
+            title=title,
+            description=description,
+            source_names=list(source_names),
+            params=(
+                make_detector_view_params(spectrum_view=spectrum_view)
+                if params is None
+                else params
+            ),
+            outputs=make_detector_view_outputs(
+                output_ndim, roi_support=roi_support, spectrum_view=spectrum_view
+            ),
+            device_outputs=device_outputs,
+        )
+
     def add_logical_view(
         self,
         *,
@@ -596,17 +715,11 @@ class Instrument:
 
         This registers the view spec immediately (lightweight) and stores the
         configuration for later factory attachment during load_factories().
+        Parameters other than those below are as for
+        :meth:`register_detector_view`, which registers the spec.
 
         Parameters
         ----------
-        name:
-            Unique name for the view within the given group.
-        title:
-            Human-readable title for the view.
-        description:
-            Description of the view.
-        source_names:
-            List of source names this view applies to.
         transform:
             Function that transforms raw detector data to the view output.
             Signature: ``(da: DataArray, source_name: str) -> DataArray``.
@@ -616,54 +729,26 @@ class Instrument:
             If reduction_dim is specified, the transform should NOT include
             summing - that is handled separately to enable proper ROI index mapping.
             If None, identity (no reshaping).
-        group:
-            Display-oriented :class:`WorkflowGroup` this view belongs to.
-        service:
-            Name of the backend service responsible for running this workflow.
-            Defaults to ``group.name``.
-        roi_support:
-            Whether ROI selection is supported for this view.
-        output_ndim:
-            Number of dimensions for spatial outputs.
         reduction_dim:
             Dimension(s) to sum over after applying transform. If specified,
             enables proper ROI support by tracking which input pixels contribute
             to each output pixel.
-        spectrum_view:
-            Optional ``SpectrumViewSpec`` enabling a ``spectrum_view`` output
-            derived from the cumulative accumulated histogram via a
-            per-instrument transform.
-        device_outputs:
-            Outputs of this view exposed to NICOS as derived devices. Pass
-            :data:`~ess.livedata.config.device_contract.COUNTS_TOTAL_DEVICE` on
-            the one view per detector bank whose total is the bank's device.
 
         Returns
         -------
         :
             Handle for the registered spec.
         """
-        from ess.livedata.workflows.detector_view_specs import (
-            DetectorROIAuxSources,
-            make_detector_view_outputs,
-            make_detector_view_params,
-        )
-
-        outputs = make_detector_view_outputs(
-            output_ndim, roi_support=roi_support, spectrum_view=spectrum_view
-        )
-        params = make_detector_view_params(spectrum_view=spectrum_view)
-        handle = self.register_spec(
-            group=group,
-            service=service,
+        handle = self.register_detector_view(
             name=name,
-            version=1,
             title=title,
             description=description,
-            source_names=list(source_names),
-            aux_sources=DetectorROIAuxSources() if roi_support else None,
-            params=params,
-            outputs=outputs,
+            source_names=source_names,
+            group=group,
+            service=service,
+            roi_support=roi_support,
+            output_ndim=output_ndim,
+            spectrum_view=spectrum_view,
             device_outputs=device_outputs,
         )
         self._logical_view_handles[name] = handle
@@ -771,7 +856,8 @@ class Instrument:
         2. Auto-attaches timeseries factory if specs were registered
         3. Auto-attaches logical view factories if views were registered
         4. Calls instrument-specific setup_factories(self)
-        5. Auto-loads detector_numbers from nexus for unconfigured detectors
+        5. Binds the ROI request streams of every ROI-publishing spec
+        6. Auto-loads detector_numbers from nexus for unconfigured detectors
         """
         import importlib
 
@@ -827,6 +913,10 @@ class Instrument:
             module.setup_factories(self)
 
         self._attach_default_monitor_factories()
+
+        from ess.livedata.workflows.detector_view import bind_roi_requests
+
+        bind_roi_requests(self.workflow_factory)
 
         self.validate()
 

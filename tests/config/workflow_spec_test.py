@@ -542,11 +542,8 @@ class TestAuxSourcesRender:
 
     def test_default_render_returns_fixed_values(self) -> None:
         aux_sources = AuxSources({'monitor': 'monitor1'})
-        job_id = JobId(source_name='detector1', job_number='test-uuid-123')
 
-        rendered = aux_sources.render(job_id)
-
-        assert rendered == {'monitor': 'monitor1'}
+        assert aux_sources.render() == {'monitor': 'monitor1'}
 
     def test_render_with_selections_overrides_defaults(self) -> None:
         aux_sources = AuxSources(
@@ -554,9 +551,8 @@ class TestAuxSourcesRender:
                 'monitor': AuxInput(choices=('mon1', 'mon2'), default='mon1'),
             }
         )
-        job_id = JobId(source_name='det1', job_number='id-1')
 
-        rendered = aux_sources.render(job_id, selections={'monitor': 'mon2'})
+        rendered = aux_sources.render(selections={'monitor': 'mon2'})
 
         assert rendered == {'monitor': 'mon2'}
 
@@ -567,73 +563,24 @@ class TestAuxSourcesRender:
                 'b': AuxInput(choices=('p', 'q'), default='p'),
             }
         )
-        job_id = JobId(source_name='det1', job_number='id-1')
 
-        rendered = aux_sources.render(job_id, selections={'a': 'y'})
+        rendered = aux_sources.render(selections={'a': 'y'})
 
         assert rendered == {'a': 'y', 'b': 'p'}
 
     def test_render_ignores_unknown_selection_keys(self) -> None:
         aux_sources = AuxSources({'monitor': 'mon1'})
-        job_id = JobId(source_name='det1', job_number='id-1')
 
         rendered = aux_sources.render(
-            job_id, selections={'monitor': 'mon1', 'unknown': 'ignored'}
+            selections={'monitor': 'mon1', 'unknown': 'ignored'}
         )
 
         assert rendered == {'monitor': 'mon1'}
 
     def test_render_with_none_selections_uses_defaults(self) -> None:
         aux_sources = AuxSources({'monitor': 'mon1'})
-        job_id = JobId(source_name='det1', job_number='id-1')
 
-        rendered = aux_sources.render(job_id, selections=None)
-
-        assert rendered == {'monitor': 'mon1'}
-
-    def test_custom_render_transforms_stream_names(self) -> None:
-        class RoiAuxSources(AuxSources):
-            def render(
-                self, job_id: JobId, selections: dict[str, str] | None = None
-            ) -> dict[str, str]:
-                base = super().render(job_id, selections)
-                return {
-                    field: f"{job_id.job_number}/{stream}"
-                    for field, stream in base.items()
-                }
-
-        aux_sources = RoiAuxSources(
-            {
-                'roi': AuxInput(
-                    choices=('roi_rectangle', 'roi_polygon'), default='roi_rectangle'
-                )
-            }
-        )
-        job_id = JobId(source_name='detector1', job_number='abc-123')
-
-        rendered = aux_sources.render(job_id, selections={'roi': 'roi_polygon'})
-
-        assert rendered == {'roi': 'abc-123/roi_polygon'}
-
-    def test_custom_render_with_source_name_prefix(self) -> None:
-        class SourcePrefixedAuxSources(AuxSources):
-            def render(
-                self, job_id: JobId, selections: dict[str, str] | None = None
-            ) -> dict[str, str]:
-                base = super().render(job_id, selections)
-                return {
-                    field: f"{job_id.source_name}/{stream}"
-                    for field, stream in base.items()
-                }
-
-        aux_sources = SourcePrefixedAuxSources(
-            {'monitor': AuxInput(choices=('monitor1', 'monitor2'), default='monitor1')}
-        )
-        job_id = JobId(source_name='detector1', job_number='uuid-456')
-
-        rendered = aux_sources.render(job_id, selections={'monitor': 'monitor2'})
-
-        assert rendered == {'monitor': 'detector1/monitor2'}
+        assert aux_sources.render(selections=None) == {'monitor': 'mon1'}
 
     def test_render_with_multiple_fields(self) -> None:
         aux_sources = AuxSources(
@@ -642,11 +589,8 @@ class TestAuxSourcesRender:
                 'transmission_monitor': 'monitor2',
             }
         )
-        job_id = JobId(source_name='detector1', job_number='test-id')
 
-        rendered = aux_sources.render(job_id)
-
-        assert rendered == {
+        assert aux_sources.render() == {
             'incident_monitor': 'monitor1',
             'transmission_monitor': 'monitor2',
         }
@@ -681,19 +625,6 @@ class TestJobId:
             assert result == f'{source_name}/{job_number}'
             assert '/' in result
             assert result.startswith(source_name + '/')
-
-    def test_str_used_in_stream_names(self) -> None:
-        """Test that __str__ is suitable for use in stream names."""
-        import uuid
-
-        job_number = uuid.uuid4()
-        job_id = JobId(source_name='detector', job_number=job_number)
-
-        # Simulate stream name construction
-        stream_name = f'{job_id}/roi_rectangle'
-
-        expected = f'detector/{job_number}/roi_rectangle'
-        assert stream_name == expected
 
     def test_str_ensures_uniqueness_across_detectors(self) -> None:
         """Test that __str__ provides unique identifiers for different detectors."""

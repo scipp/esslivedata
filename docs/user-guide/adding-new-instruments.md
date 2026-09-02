@@ -66,17 +66,14 @@ ESSlivedata uses a **two-phase registration pattern** to separate specifications
 Register workflow specifications with explicit metadata and return a handle:
 
 ```python
-from ess.livedata.config.workflow_spec import DETECTORS, REDUCTION
+from ess.livedata.config.workflow_spec import REDUCTION
 
 # Register a detector view spec
-view_handle = instrument.register_spec(
-    group=DETECTORS,
+view_handle = instrument.register_detector_view(
     name='detector1_xy',
-    version=1,
     title='Detector 1 XY View',
     description='2D view of detector 1',
     source_names=['detector1'],
-    params=DetectorViewParams,
 )
 
 # Register a data reduction workflow spec
@@ -481,25 +478,18 @@ projection workflow, `factories.py` declares *which* projection each bank uses.
 In `specs.py`:
 
 ```python
-from ess.livedata.config.workflow_spec import DETECTORS
-from ess.livedata.workflows.detector_view_specs import (
-    DetectorROIAuxSources,
-    DetectorViewOutputs,
-    DetectorViewParams,
-)
-
-projection_handle = instrument.register_spec(
-    group=DETECTORS,
+projection_handle = instrument.register_detector_view(
     name='detector_projection',
-    version=1,
     title='Detector Projection',
     description='Projection of the detector banks onto 2D screens.',
     source_names=detector_names,
-    aux_sources=DetectorROIAuxSources(),
-    params=DetectorViewParams,
-    outputs=DetectorViewOutputs,
 )
 ```
+
+`register_detector_view` derives the params and outputs models from
+`roi_support` (default `True`, which is what every geometric projection needs).
+Pass `params=` only when the factory reads instrument-specific fields, as DREAM's
+does.
 
 In `factories.py`, one `GeometricViewConfig` per bank. Banks with different geometries
 can use different projections and still appear under a single workflow in the UI:
@@ -520,13 +510,19 @@ _view_config = {
 
 
 @projection_handle.attach_factory()
-def _projection_factory(source_name, params, aux_source_names):
+def _projection_factory(source_name, params):
     factory = DetectorViewFactory(
         data_source=NeXusDetectorSource(get_nexus_geometry_filename('myinst')),
         view_config=_view_config,
     )
-    return factory.make_workflow(source_name, params, aux_source_names)
+    return factory.make_workflow(source_name, params)
 ```
+
+Nothing further is needed to wire up ROI: `roi_support` selects the outputs
+model carrying the ROI readbacks, and `load_factories` subscribes the view's
+jobs to the ROI requests the dashboard publishes for each of its banks. A view
+whose workflow neither reads requests nor publishes readbacks passes
+`roi_support=False`.
 
 Available projections (`ProjectionType` in `workflows/detector_view/types.py`):
 - `xy_plane`: projection onto the XY plane
@@ -577,8 +573,6 @@ __all__ = ['detector_fakes', 'setup_factories', 'stream_mapping']
 
 ```python
 from ess.livedata.config import Instrument, instrument_registry
-from ess.livedata.config.workflow_spec import DETECTORS
-from ess.livedata.workflows.detector_view_specs import DetectorViewParams
 
 # Create instrument
 instrument = Instrument(
@@ -592,13 +586,11 @@ instrument = Instrument(
 instrument_registry.register(instrument)
 
 # Register detector view spec
-panel_0_view_handle = instrument.register_spec(
-    group=DETECTORS,
+instrument.add_logical_view(
     name='panel_0_xy',
-    version=1,
     title='Panel 0',
+    description='Detector counts per pixel.',
     source_names=['panel_0'],
-    params=DetectorViewParams,
 )
 
 # Register data reduction workflow spec

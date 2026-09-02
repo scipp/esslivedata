@@ -418,18 +418,32 @@ class _DetectorSession:
     take the same route as those drawn in the UI.
     """
 
-    def __init__(self, resources: DashboardResources) -> None:
+    def __init__(self, resources: DashboardResources, *, start: bool = True) -> None:
         self._source = resources.message_source
         self.workflow_id = next(
             workflow_id
             for workflow_id in instrument_registry['dummy'].workflow_factory
             if workflow_id.name == 'panel_0_xy'
         )
-        job_id = JobId(source_name=_DETECTOR_SOURCE, job_number=uuid.uuid4())
+        self._job_id: JobId | None = None
+        self._commands = CommandService(sink=resources.command_sink)
         self.publisher = ROIPublisher(sink=resources.roi_sink)
-        self.publisher.set_job_number_resolver(lambda _: job_id.job_number)
-        CommandService(sink=resources.command_sink).send(
-            WorkflowConfig.from_params(workflow_id=self.workflow_id, job_id=job_id)
+        if start:
+            self.start()
+
+    def start(self) -> None:
+        """Start a fresh job generation, as committing the workflow does.
+
+        Supersedes any previous generation the way ``JobOrchestrator.commit``
+        does: stop the old job, then start one with a new ``job_number``.
+        """
+        if self._job_id is not None:
+            self._commands.send(JobCommand(job_id=self._job_id, action=JobAction.stop))
+        self._job_id = JobId(source_name=_DETECTOR_SOURCE, job_number=uuid.uuid4())
+        self._commands.send(
+            WorkflowConfig.from_params(
+                workflow_id=self.workflow_id, job_id=self._job_id
+            )
         )
 
     def publish(self, rois: dict, geometry_type: ROIGeometryType = 'rectangle') -> None:
@@ -451,13 +465,18 @@ class _DetectorSession:
 
 
 @pytest.fixture
-def session(monkeypatch: pytest.MonkeyPatch) -> Iterator[_DetectorSession]:
+def resources(monkeypatch: pytest.MonkeyPatch) -> Iterator[DashboardResources]:
     # Zero update period makes every poll due, so each poll yields fresh results.
     monkeypatch.setattr(
         'ess.livedata.dashboard.fake_backend._UPDATE_PERIOD_SECONDS', 0.0
     )
     with FakeBackendTransport(instrument='dummy') as resources:
-        yield _DetectorSession(resources)
+        yield resources
+
+
+@pytest.fixture
+def session(resources: DashboardResources) -> _DetectorSession:
+    return _DetectorSession(resources)
 
 
 class TestROILoopback:
@@ -520,10 +539,34 @@ class TestROILoopback:
         readback = session.results()['roi_rectangle']
         assert RectangleROI.from_concatenated_data_array(readback) == rois
 
-    def test_rois_of_other_jobs_are_ignored(self, session: _DetectorSession) -> None:
-        session.publisher.set_job_number_resolver(lambda _: uuid.uuid4())
-        session.publish({0: _rectangle(0.0, 0.0)})
+    def test_rois_of_other_views_are_ignored(self, session: _DetectorSession) -> None:
+        other = WorkflowId(instrument='dummy', name='other_view', version=1)
+        session.publisher.publish(
+            other,
+            _DETECTOR_SOURCE,
+            {0: _rectangle(0.0, 0.0)},
+            get_roi_mapper().geometry_for_type('rectangle'),
+        )
         assert session.results()['roi_spectra_cumulative'].sizes['roi'] == 0
+
+    def test_roi_drawn_before_the_job_starts_is_picked_up(
+        self, resources: DashboardResources
+    ) -> None:
+        """A request outlives the absence of a job; no republish on start."""
+        session = _DetectorSession(resources, start=False)
+        session.publish({0: _rectangle(0.0, 0.0)})
+
+        session.start()
+
+        assert session.results()['roi_spectra_cumulative'].sizes['roi'] == 1
+
+    def test_roi_survives_a_job_restart(self, session: _DetectorSession) -> None:
+        """The stream name carries no generation, so the selection persists."""
+        session.publish({0: _rectangle(0.0, 0.0)})
+
+        session.start()  # a recommit, as restarting the workflow does
+
+        assert session.results()['roi_spectra_cumulative'].sizes['roi'] == 1
 
 
 class TestEmittedTimeCoords:

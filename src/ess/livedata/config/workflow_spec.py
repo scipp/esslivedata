@@ -322,21 +322,11 @@ class AuxSources:
         """Return default selections for all inputs."""
         return {name: inp.default for name, inp in self._inputs.items()}
 
-    def render(
-        self,
-        job_id: JobId,
-        selections: dict[str, str] | None = None,
-    ) -> dict[str, str]:
-        """Render auxiliary source stream names for a specific job.
-
-        The default implementation returns the selected (or default) stream
-        names unchanged. Subclasses can override to transform names, e.g.,
-        to add job-specific prefixes.
+    def render(self, selections: dict[str, str] | None = None) -> dict[str, str]:
+        """The stream name filling each input: the default unless selected.
 
         Parameters
         ----------
-        job_id:
-            The job identifier, containing both source_name and job_number.
         selections:
             User selections overriding defaults. Keys not present in the
             inputs specification are ignored.
@@ -742,18 +732,11 @@ class WorkflowConfig(BaseModel):
       Used in JobId for result routing, job commands (stop/reset), and data
       correlation.
 
-    Currently this message conflates "configure" and "start" into a single command, so
-    both fields are present. Future work (see issue #445) may split into separate
-    WorkflowConfig (config-only) and WorkflowStart messages. In that design:
-
-    - WorkflowConfig would have message_id (for ACK, and as a "config handle") but no
-      job_id (not starting a job yet).
-    - WorkflowStart would have its own message_id (for ACK), job_id (new
-      job identity), and a config_ref pointing to a previously ACK'd
-      config's message_id.
-
-    This split would enable multiple independent jobs (e.g., frontend + NICOS) to share
-    the same configuration while having distinct job lifecycles.
+    This message conflates "configure" and "start" into a single command, so both
+    fields are present. Splitting them was considered and dropped: it would let several
+    clients start independent jobs from one shared configuration, and there is only one
+    client that starts jobs. NICOS consumes contracted outputs and resets them, keyed by
+    ``WorkflowId`` (ADR 0006); it does not configure or start.
     """
 
     kind: Literal['workflow_config'] = 'workflow_config'
