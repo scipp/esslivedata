@@ -28,7 +28,8 @@ def test_kafka(env: str | None):
 
 
 @pytest.mark.parametrize(
-    'protocol', ['PLAINTEXT', 'SASL_PLAINTEXT', 'plaintext', 'sasl_plaintext']
+    'protocol',
+    ['PLAINTEXT', 'SASL_PLAINTEXT', 'plaintext', 'sasl_plaintext', ' plaintext '],
 )
 @pytest.mark.usefixtures('_kafka_env_setup')
 def test_kafka_docker_omits_ca_location_for_plaintext(monkeypatch, protocol):
@@ -37,10 +38,13 @@ def test_kafka_docker_omits_ca_location_for_plaintext(monkeypatch, protocol):
 
     config = load_config(namespace=config_names.kafka, env='docker')
 
+    assert config['security.protocol'] == protocol.strip().upper()
     assert 'ssl.ca.location' not in config
 
 
-@pytest.mark.parametrize('protocol', ['SSL', 'SASL_SSL', 'ssl', 'sasl_ssl'])
+@pytest.mark.parametrize(
+    'protocol', ['SSL', 'SASL_SSL', 'ssl', 'sasl_ssl', ' sasl_ssl ']
+)
 @pytest.mark.usefixtures('_kafka_env_setup')
 def test_kafka_docker_uses_ca_location_for_tls(monkeypatch, protocol):
     monkeypatch.setenv('KAFKA_SECURITY_PROTOCOL', protocol)
@@ -48,6 +52,7 @@ def test_kafka_docker_uses_ca_location_for_tls(monkeypatch, protocol):
 
     config = load_config(namespace=config_names.kafka, env='docker')
 
+    assert config['security.protocol'] == protocol.strip().upper()
     assert config['ssl.ca.location'] == '/etc/ssl/certs/ESS Kafka #1 CA.pem'
 
 
@@ -90,9 +95,13 @@ def test_kafka_docker_preserves_sasl_values_as_strings(monkeypatch, protocol):
     assert config['sasl.password'] == 'true # password: []'
 
 
+@pytest.mark.parametrize('value', [None, '', '   '])
 @pytest.mark.usefixtures('_kafka_env_setup')
-def test_kafka_docker_requires_sasl_variables_for_sasl_protocol(monkeypatch):
-    monkeypatch.delenv('KAFKA_SASL_PASSWORD')
+def test_kafka_docker_requires_sasl_variables_for_sasl_protocol(monkeypatch, value):
+    if value is None:
+        monkeypatch.delenv('KAFKA_SASL_PASSWORD')
+    else:
+        monkeypatch.setenv('KAFKA_SASL_PASSWORD', value)
 
     with pytest.raises(ValueError, match='KAFKA_SASL_PASSWORD'):
         load_config(namespace=config_names.kafka, env='docker')
@@ -111,9 +120,13 @@ def test_kafka_docker_requires_ca_location_for_tls(monkeypatch, ca_location):
         load_config(namespace=config_names.kafka, env='docker')
 
 
+@pytest.mark.parametrize('value', [None, '', '   '])
 @pytest.mark.usefixtures('_kafka_env_setup')
-def test_kafka_docker_requires_other_template_variables(monkeypatch):
-    monkeypatch.delenv('KAFKA_BOOTSTRAP_SERVERS')
+def test_kafka_docker_requires_other_template_variables(monkeypatch, value):
+    if value is None:
+        monkeypatch.delenv('KAFKA_BOOTSTRAP_SERVERS')
+    else:
+        monkeypatch.setenv('KAFKA_BOOTSTRAP_SERVERS', value)
 
     with pytest.raises(ValueError, match='KAFKA_BOOTSTRAP_SERVERS'):
         load_config(namespace=config_names.kafka, env='docker')

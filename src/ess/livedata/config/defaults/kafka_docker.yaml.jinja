@@ -1,6 +1,7 @@
+{# `string` makes StrictUndefined fail before `tojson` attempts serialization. #}
 {% set security_protocol = KAFKA_SECURITY_PROTOCOL | trim | upper %}
 bootstrap.servers: {{ KAFKA_BOOTSTRAP_SERVERS | string | tojson }}
-security.protocol: {{ KAFKA_SECURITY_PROTOCOL | string | tojson }}
+security.protocol: {{ security_protocol | tojson }}
 {% if security_protocol in ['SSL', 'SASL_SSL'] %}
 ssl.ca.location: {{ KAFKA_SSL_CA_LOCATION | string | tojson }}
 {% endif %}

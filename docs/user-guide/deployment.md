@@ -10,8 +10,9 @@ the argument explicitly.
 
 Pin production deployments to a version tag or image digest rather than
 `latest`, so that the same artifact can be promoted and rolled back across
-instruments. Existing instrument-suffixed image tags are not updated by this
-workflow because they carry a different, baked-in instrument contract.
+instruments. The backend image installs every instrument extra. The dashboard
+image installs the `dashboard` extra without instrument extras, since
+instrument-specific processing runs in the backend services.
 
 ## Runtime Reference Data
 
