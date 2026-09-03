@@ -16,6 +16,7 @@ inject a ``FakeClock`` and advance it in lockstep with data time, as a live
 service would experience.
 """
 
+import math
 import random
 
 import numpy as np
@@ -2793,9 +2794,9 @@ class TestBacklogShedding:
     # Generous enough that the data-time bound is the one under test.
     MAX_BACKLOG_BYTES = 10_000 * UNKNOWN_PAYLOAD_BYTES
 
-    def _run(self, calls: int, batcher: RateAwareMessageBatcher):
+    def _run(self, calls: int, batcher: RateAwareMessageBatcher, start: float = 0.0):
         fed = delivered = 0
-        t = 0.0
+        t = start
         last_delivered_end = None
         for _ in range(calls):
             chunk = msgs_at(self.RATE, start=t, duration=self.ITER)
@@ -2847,10 +2848,11 @@ class TestBacklogShedding:
 
     def test_backlog_does_not_grow_with_time(self):
         batcher = self.make()
-        fed, delivered, _, _ = self._run(50, batcher)
-        early = fed - delivered - batcher.total_dropped_messages
-        fed, delivered, _, _ = self._run(200, batcher)
-        late = fed - delivered - batcher.total_dropped_messages
+        _, _, t, _ = self._run(50, batcher)
+        early = self._held(batcher, DETECTOR)
+        self._run(200, batcher, start=t)
+        late = self._held(batcher, DETECTOR)
+        assert early > 0
         assert late <= early + self.RATE * self.ITER
 
     def test_backlog_is_bounded_in_data_time(self):
@@ -2989,6 +2991,25 @@ class TestBacklogShedding:
         )
         assert batcher.total_dropped_messages == 0
 
+    def test_stray_future_timestamp_loses_the_byte_trim_to_valid_traffic(self):
+        """Under byte pressure the trim must sacrifice the disconnected stray,
+        not the valid traffic behind it: oldest-first alone would retain the
+        stray alone and hand the catch-up jump a poisoned anchor."""
+        batcher, start = make_converged_batcher(
+            rate_hz=self.RATE, max_backlog_bytes=10_000
+        )
+        valid = [
+            Message(timestamp=m.timestamp, stream=DETECTOR, value=_numpy_payload(100))
+            for m in msgs_at(self.RATE, start=start + 1.0, duration=self.ITER)
+        ]
+        stray = Message(
+            timestamp=ts(start + 600.0), stream=DETECTOR, value=_numpy_payload(20_000)
+        )
+        batcher.batch([*valid, stray])
+        assert batcher.total_dropped_messages == 1
+        assert batcher.total_dropped_bytes == 20_000
+        assert batcher._active_window.start < ts(start + 100.0)
+
     def test_nothing_dropped_while_keeping_up(self):
         batcher = self.make()
         t = 0.0
@@ -3090,6 +3111,57 @@ class TestBacklogShedding:
             batcher.batch(chunk)
         expected = batcher.total_dropped_messages * payload.nbytes
         assert batcher.total_dropped_bytes == expected
+
+    @pytest.mark.parametrize('pixellated', [False, True])
+    def test_dropped_bytes_count_the_ev44_buffer_pinned_by_event_views(
+        self, pixellated: bool
+    ):
+        """``MonitorEvents``/``DetectorEvents`` view the deserialised ev44
+        buffer, so each retained message pins the whole buffer: the half a
+        monitor keeps visible understates it twofold, and a detector's two
+        views must not count it twice."""
+        from streaming_data_types import eventdata_ev44
+
+        from ess.livedata.preprocessors.to_nxevent_data import (
+            DetectorEvents,
+            MonitorEvents,
+        )
+
+        n = 10_000
+        buffer = eventdata_ev44.serialise_ev44(
+            'src', 1, [0], [0], np.arange(n, dtype=np.int32), np.zeros(n, np.int32)
+        )
+        ev = eventdata_ev44.deserialise_ev44(buffer)
+        events = DetectorEvents if pixellated else MonitorEvents
+        payload = events.from_ev44(ev)
+        batcher = RateAwareMessageBatcher(
+            batch_length_s=self.BATCH_LEN, max_backlog_bytes=10 * len(buffer)
+        )
+        t = 0.0
+        for _ in range(60):
+            chunk = [
+                Message(timestamp=m.timestamp, stream=DETECTOR, value=payload)
+                for m in msgs_at(self.RATE, start=t, duration=self.ITER)
+            ]
+            t += self.ITER
+            batcher.batch(chunk)
+        assert batcher.total_dropped_messages > 0
+        expected = batcher.total_dropped_messages * len(buffer)
+        assert batcher.total_dropped_bytes == expected
+
+    @pytest.mark.parametrize(
+        'limits',
+        [
+            {'max_backlog_s': math.nan},
+            {'max_backlog_s': math.inf},
+            {'max_backlog_s': -1.0},
+            {'max_backlog_batches': -1},
+            {'max_backlog_bytes': -1},
+        ],
+    )
+    def test_rejects_non_finite_or_negative_limits(self, limits):
+        with pytest.raises(ValueError, match='must be finite'):
+            RateAwareMessageBatcher(**limits)
 
     def test_oversized_payloads_never_shed_the_entire_backlog(self):
         """Payloads that each exceed the byte bound must not empty the

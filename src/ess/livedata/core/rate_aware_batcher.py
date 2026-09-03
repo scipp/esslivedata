@@ -47,7 +47,7 @@ import math
 import statistics
 import time
 from collections import defaultdict, deque
-from collections.abc import Callable
+from collections.abc import Callable, Iterable
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -125,11 +125,12 @@ DEFAULT_MAX_BACKLOG_BATCHES = 2
 
 # Secondary hard bound, on memory.  The data-time bound alone does not bound
 # bytes: payload sizes span four orders of magnitude, and one ad00
-# area-detector frame (4096x4096 uint16) is 33.5 MB, so two batch lengths of
-# frames is gigabytes.  Sizing, against a 32 GB production host shared by all
-# backend services and their workflow/job data: 512 MB holds ~13000 ev44
-# chunks while capping area-detector retention at ~15 frames, and every
-# backend service shedding at once still costs only ~2 GB of the host.
+# area-detector frame (4096x4096) is 67 MB as retained -- the adapter widens
+# the uint16 wire dtype to int32 -- so two batch lengths of frames is
+# gigabytes.  Sizing, against a 32 GB production host shared by all backend
+# services and their workflow/job data: 512 MB holds ~13000 ev44 chunks
+# while capping area-detector retention at ~7 frames, and every backend
+# service shedding at once still costs only ~2 GB of the host.
 DEFAULT_MAX_BACKLOG_BYTES = 512 * 1024**2
 
 # Assumed size of a payload whose arrays cannot be measured.  Only the four
@@ -206,28 +207,49 @@ def _payload_nbytes(value: Any) -> int:
     (a dataclass of numpy arrays viewing the source flatbuffer, which is
     what the retained message actually pins) or the ``sc.DataArray`` that
     the da00/ad00 adapters produce upstream of the batcher (monitor counts,
-    area-detector frames).  Numpy exposes ``nbytes``; scipp exposes
-    ``underlying_size()``, which measures the owned buffers a retained
-    slice pins; a dataclass is summed over its array fields.
+    area-detector frames).  Scipp exposes ``underlying_size()``, which
+    measures the owned buffers a retained slice pins; numpy arrays are
+    measured by the allocation they view (:func:`_pinned_nbytes`), and a
+    dataclass over its array fields.
     """
-    nbytes = getattr(value, 'nbytes', None)
-    if isinstance(nbytes, int):
-        return nbytes
     underlying_size = getattr(value, 'underlying_size', None)
     if callable(underlying_size):
         size = underlying_size()
         if isinstance(size, int):
             return size
     if isinstance(value, tuple):
-        parts: Any = value
+        parts: Iterable[Any] = value
+    elif hasattr(value, 'nbytes'):
+        parts = (value,)
     else:
         parts = getattr(value, '__dict__', {}).values()
+    return _pinned_nbytes(parts) or UNKNOWN_PAYLOAD_BYTES
+
+
+def _pinned_nbytes(arrays: Iterable[Any]) -> int:
+    """Bytes kept alive by numpy arrays: each viewed allocation, counted once.
+
+    A view's own ``nbytes`` understates what it retains -- a ``MonitorEvents``
+    keeps only the time-of-arrival half of its ev44 buffer visible but pins
+    the whole buffer -- and two views of one buffer (``DetectorEvents``)
+    must not count it twice.
+    """
+    seen: set[int] = set()
     total = 0
-    for part in parts:
-        part_nbytes = getattr(part, 'nbytes', None)
-        if isinstance(part_nbytes, int):
-            total += part_nbytes
-    return total or UNKNOWN_PAYLOAD_BYTES
+    for array in arrays:
+        if not isinstance(getattr(array, 'nbytes', None), int):
+            continue
+        owner = array
+        while getattr(owner, 'base', None) is not None:
+            owner = owner.base
+        if id(owner) in seen:
+            continue
+        seen.add(id(owner))
+        try:
+            total += memoryview(owner).nbytes
+        except TypeError:
+            total += array.nbytes
+    return total
 
 
 @dataclass(slots=True)
@@ -557,6 +579,13 @@ class RateAwareMessageBatcher(MessageBatcher):
             timeout_s / batch_length_s if timeout_s is not None else 1.2
         )
         _validate_timeout_factor(self._timeout_factor)
+        for name, limit in (
+            ('max_backlog_s', max_backlog_s),
+            ('max_backlog_batches', max_backlog_batches),
+            ('max_backlog_bytes', max_backlog_bytes),
+        ):
+            if not math.isfinite(limit) or limit < 0:
+                raise ValueError(f"{name} must be finite and >= 0, got {limit}")
 
         self._streams: defaultdict[StreamId, _GatedStream] = defaultdict(_GatedStream)
 
@@ -809,7 +838,11 @@ class RateAwareMessageBatcher(MessageBatcher):
         (:func:`plausible_anchor`).
 
         The byte bound stays global -- memory is -- and drops the stalest
-        survivors regardless of stream.
+        survivors regardless of stream, after any message stamped ahead of
+        its stream's frontier: such a message is disconnected from the
+        stream's traffic by construction, and trimming oldest-first alone
+        would shed valid traffic to retain it, then hand the eventual gap
+        jump that stray as its only anchor.
 
         Keeps the newest messages: once the window's own region drains, gap
         detection advances it to the oldest survivor in one jump, so keeping
@@ -846,20 +879,31 @@ class RateAwareMessageBatcher(MessageBatcher):
             self._max_backlog_batches * self._batch_length,
             Duration.from_seconds(self._max_backlog_s),
         )
-        horizons: dict[StreamId, Timestamp] = {}
+        frontiers: dict[StreamId, Timestamp] = {}
         for stream, stamps in by_stream.items():
             frontier = plausible_anchor(stamps, self._batch_length)
             self._backlog_peak_s = max(
                 self._backlog_peak_s, (frontier - stamps[0]).to_seconds()
             )
-            horizons[stream] = frontier - bound
-        kept = [item for item in sized if item[1].timestamp >= horizons[item[1].stream]]
-        retained = sum(nbytes for nbytes, _ in kept)
+            frontiers[stream] = frontier
+        strays: list[tuple[int, Message[Any]]] = []
+        kept: list[tuple[int, Message[Any]]] = []
+        for item in sized:
+            frontier = frontiers[item[1].stream]
+            stamp = item[1].timestamp
+            if stamp > frontier:
+                strays.append(item)
+            elif stamp >= frontier - bound:
+                kept.append(item)
+        candidates = strays + kept
+        retained = sum(nbytes for nbytes, _ in candidates)
         shed_by_bytes = 0
-        while shed_by_bytes < len(kept) - 1 and retained > self._max_backlog_bytes:
-            retained -= kept[shed_by_bytes][0]
+        while (
+            shed_by_bytes < len(candidates) - 1 and retained > self._max_backlog_bytes
+        ):
+            retained -= candidates[shed_by_bytes][0]
             shed_by_bytes += 1
-        survivors = kept[shed_by_bytes:]
+        survivors = candidates[shed_by_bytes:]
         if len(survivors) == len(sized):
             return
         dropped = len(sized) - len(survivors)
