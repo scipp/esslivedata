@@ -454,6 +454,10 @@ class RateAwareMessageBatcher(MessageBatcher):
         self._future: list[Message[Any]] = []
         self._clock = clock
         self._last_close_wall = clock()
+        # Buffer depth at the previous stall check since the last close; None
+        # until a stall check has happened, so a first check has no growth
+        # to compare against (see ``_recover_from_stall``).
+        self._buffered_at_last_stall: int | None = None
 
     @property
     def batch_length_s(self) -> float:
@@ -705,11 +709,14 @@ class RateAwareMessageBatcher(MessageBatcher):
         can never drag the window backwards.  Without buffered traffic
         there is nothing to re-place onto: a quiet stream is not a stall,
         and the data clock must not advance on wall-time evidence alone.
+
+        Held-back traffic counts as buffered: a window that nothing closes
+        strands ``_future`` just as it strands the buckets.
         """
         threshold = _STALL_THRESHOLD_BATCHES * self.batch_length_s
         if self._clock() - self._last_close_wall < threshold:
             return False
-        return bool(self._buffered_messages())
+        return bool(self._buffered_messages() or self._future)
 
     def _recover_from_stall(self, window: _ActiveWindow) -> _ActiveWindow:
         """Re-place the window at the buffered traffic and re-route it.
@@ -735,17 +742,36 @@ class RateAwareMessageBatcher(MessageBatcher):
         and with it a stall per encounter -- until data time reaches it.
 
         An anchor already inside the active window means placement agrees
-        with the buffered traffic and the stall is mere quietness (e.g. the
-        trailing partial batch after a stream stops -- deliberately not
-        delivered, since the data clock must not advance on wall time
-        alone).  Re-placing would only shift the boundaries and log a
-        recovery per threshold interval, so the backstop re-arms instead.
+        with the buffered traffic, and the stall is one of two things.  If
+        the buffer has not grown since the last stall check it is mere
+        quietness (e.g. the trailing partial batch after a stream stops --
+        deliberately not delivered, since the data clock must not advance
+        on wall time alone); re-placing would only shift the boundaries and
+        log a recovery per threshold interval, so the backstop re-arms
+        instead.  If the buffer *has* grown, traffic keeps arriving but its
+        timestamps do not advance -- a producer with a stuck clock -- and
+        no placement can ever close the window: the timeout is what cannot
+        fire, so the backstop fires it, delivering the traffic and bounding
+        the buffer at a stall interval's worth.  This is the one case where
+        wall time advances the data clock, by a single batch length per
+        stall interval, because the data clock itself has stopped.
         """
-        anchor = plausible_anchor(
-            [m.timestamp for m in self._buffered_messages()], self._batch_length
-        )
+        buffered = self._buffered_messages() + self._future
+        anchor = plausible_anchor([m.timestamp for m in buffered], self._batch_length)
         self._last_close_wall = self._clock()
+        previous = self._buffered_at_last_stall
+        arriving = previous is not None and len(buffered) > previous
+        self._buffered_at_last_stall = len(buffered)
         if window.start <= anchor < window.end:
+            if arriving and not math.isinf(self._timeout_factor):
+                logger.warning(
+                    'batcher_stuck_clock_close',
+                    window_start_ns=window.start.to_ns(),
+                    buffered_messages=len(buffered),
+                )
+                self._high_water_mark = window.start + Duration.from_seconds(
+                    self.timeout_s
+                )
             return window
         stashed = self._drain_window() + self._overflow + self._future
         self._overflow = []
@@ -788,6 +814,7 @@ class RateAwareMessageBatcher(MessageBatcher):
 
     def _close_batch(self, window: _ActiveWindow) -> MessageBatch:
         self._last_close_wall = self._clock()
+        self._buffered_at_last_stall = None
         self._refresh_stream_registry(window)
         messages = self._drain_window()
 
