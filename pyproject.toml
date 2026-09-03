@@ -31,6 +31,9 @@ requires-python = ">=3.12"
 dependencies = [
   "PyYAML",
   "confluent_kafka",
+  # Transitive via sciline, pinned directly: earlier versions leave self-referential
+  # graphs behind on every task-graph update, reclaimable only by the cyclic collector.
+  "cyclebane>=26.9.0",
   "dask>=2026.3.0",
   "ess-streaming-data-types",
   "essreduce>=26.6.3",  # Thread-safe wavelength-LUT polygon intersection (no warning suppression race)
