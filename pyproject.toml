@@ -84,6 +84,10 @@ odin = [
     "essimaging>=26.4.0",
 ]
 tbl = []
+# Compose the instrument extras so their dependencies remain defined in one place.
+all-instruments = [
+    "esslivedata[beer,bifrost,dream,dummy,estia,loki,magic,nmx,odin,tbl]",
+]
 dashboard = [
   "bokeh",
   "holoviews>=1.23.0",

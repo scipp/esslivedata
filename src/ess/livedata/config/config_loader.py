@@ -4,23 +4,38 @@ import os
 from importlib import resources
 
 import yaml
-from jinja2 import Environment, Template
+from jinja2 import Environment, StrictUndefined, UndefinedError
 from jinja2.meta import find_undeclared_variables
 
 from .environment import DEFAULT_ENV, ENV_VAR
 
+# These trusted templates render YAML rather than HTML.
+_TEMPLATE_ENVIRONMENT = Environment(
+    autoescape=False,  # noqa: S701
+    undefined=StrictUndefined,
+)
+
 
 def get_template_variables(template_content: str) -> set[str]:
     """Extract variables from Jinja template using AST parser."""
-    env = Environment(autoescape=True)
-    ast = env.parse(template_content)
+    ast = _TEMPLATE_ENVIRONMENT.parse(template_content)
     return find_undeclared_variables(ast)
 
 
 def get_env_vars(template_content: str) -> dict[str, str]:
     """Get environment variables needed for template."""
     variables = get_template_variables(template_content)
-    return {var: os.getenv(var) for var in variables}
+    return {var: value for var in variables if (value := os.getenv(var)) is not None}
+
+
+def _validate_tls_ca_environment(env_vars: dict[str, str]) -> None:
+    protocol = env_vars.get('KAFKA_SECURITY_PROTOCOL', '').strip().upper()
+    ca_location = env_vars.get('KAFKA_SSL_CA_LOCATION', '').strip()
+    if protocol in {'SSL', 'SASL_SSL'} and not ca_location:
+        raise ValueError(
+            'KAFKA_SSL_CA_LOCATION must be set to a non-empty path when '
+            f'KAFKA_SECURITY_PROTOCOL={protocol}'
+        )
 
 
 def load_config(*, namespace: str, env: str | None = None) -> dict:
@@ -55,12 +70,11 @@ def load_config(*, namespace: str, env: str | None = None) -> dict:
             raise FileNotFoundError(
                 f"Neither {config_file} nor {template_file} found in config defaults"
             ) from None
-        template = Template(template_content)
+        template = _TEMPLATE_ENVIRONMENT.from_string(template_content)
         env_vars = get_env_vars(template_content)
-        for var, value in env_vars.items():
-            if value is None:
-                raise ValueError(f"Environment variable {var} not set") from None
-
-        # Render template and parse YAML
-        rendered = template.render(**env_vars)
+        _validate_tls_ca_environment(env_vars)
+        try:
+            rendered = template.render(**env_vars)
+        except UndefinedError as error:
+            raise ValueError(f'Environment variable not set: {error}') from None
         return yaml.safe_load(rendered)

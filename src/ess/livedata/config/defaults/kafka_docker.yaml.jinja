@@ -1,7 +1,13 @@
-bootstrap.servers: {{ KAFKA_BOOTSTRAP_SERVERS }}
-security.protocol: {{ KAFKA_SECURITY_PROTOCOL }}
-sasl.mechanism: {{ KAFKA_SASL_MECHANISM }}
-sasl.username: {{ KAFKA_SASL_USERNAME }}
-sasl.password: {{ KAFKA_SASL_PASSWORD }}
+{% set security_protocol = KAFKA_SECURITY_PROTOCOL | trim | upper %}
+bootstrap.servers: {{ KAFKA_BOOTSTRAP_SERVERS | string | tojson }}
+security.protocol: {{ KAFKA_SECURITY_PROTOCOL | string | tojson }}
+{% if security_protocol in ['SSL', 'SASL_SSL'] %}
+ssl.ca.location: {{ KAFKA_SSL_CA_LOCATION | string | tojson }}
+{% endif %}
+{% if security_protocol in ['SASL_PLAINTEXT', 'SASL_SSL'] %}
+sasl.mechanism: {{ KAFKA_SASL_MECHANISM | string | tojson }}
+sasl.username: {{ KAFKA_SASL_USERNAME | string | tojson }}
+sasl.password: {{ KAFKA_SASL_PASSWORD | string | tojson }}
+{% endif %}
 message.max.bytes: 100971520
 queue.buffering.max.kbytes: 104857600
