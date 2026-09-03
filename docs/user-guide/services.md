@@ -94,8 +94,14 @@ The services can be configured to connect to a Kafka broker using environment va
 
 - `KAFKA_BOOTSTRAP_SERVERS`: Bootstrap servers for the Kafka broker.
 - `KAFKA_SECURITY_PROTOCOL`: Security protocol for the Kafka broker.
-- `KAFKA_SASL_MECHANISM`: SASL mechanism for the Kafka broker.
-- `KAFKA_SASL_USERNAME`: SASL username for the Kafka broker.
-- `KAFKA_SASL_PASSWORD`: SASL password for the Kafka broker.
+- `KAFKA_SASL_MECHANISM`: SASL mechanism for the Kafka broker. Required for
+  `SASL_PLAINTEXT` and `SASL_SSL`.
+- `KAFKA_SASL_USERNAME`: SASL username for the Kafka broker. Required for SASL
+  protocols.
+- `KAFKA_SASL_PASSWORD`: SASL password for the Kafka broker. Required for SASL
+  protocols.
+- `KAFKA_SSL_CA_LOCATION`: Path to the CA certificate inside the process or
+  container. This is required when `KAFKA_SECURITY_PROTOCOL` is `SSL` or
+  `SASL_SSL` and omitted for plaintext protocols.
 
 Note that the security and authentication is not necessary when using the Kafka broker from the Docker container.
