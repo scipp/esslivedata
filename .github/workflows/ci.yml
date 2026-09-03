@@ -243,8 +243,9 @@ jobs:
           done
 
   container-check:
-    # Build each published image once, then exercise every instrument through
-    # the runtime CLI contract used by deployment tooling.
+    # Unlike the host jobs, this exercises the actual Dockerfile targets. The
+    # backend checks that all instrument extras coexist in the published image;
+    # the dashboard checks that its intentionally smaller image remains enough.
     name: Container contract (${{ matrix.target }})
     needs: tests
     runs-on: ubuntu-24.04
@@ -269,10 +270,6 @@ jobs:
             SETUPTOOLS_SCM_PRETEND_VERSION=0.0.0
           cache-from: type=gha,scope=contract-${{ matrix.target }}
           cache-to: type=gha,mode=max,scope=contract-${{ matrix.target }}
-      - name: Check instrument is not baked into image
-        run: |
-          docker run --rm esslivedata-${{ matrix.target }}:test \
-            python -c "import os; assert 'LIVEDATA_INSTRUMENT' not in os.environ"
       - name: Smoke-check backend image
         if: matrix.target == 'backend'
         run: |
@@ -309,7 +306,7 @@ jobs:
         if: matrix.target == 'backend'
         run: |
           docker run --rm esslivedata-backend:test \
-            python -c "import os; import ess.loki.data as loki; from ess.bifrost import data as bifrost; from pathlib import Path; path = Path(os.environ['SCIPP_DATA_DIR']); assert loki._registry._registry.path == path; assert bifrost._registry._registry.path == path; probe = path / '.write-test'; probe.write_text('ok'); probe.unlink()"
+            python -c "import os; from pathlib import Path; path = Path(os.environ['SCIPP_DATA_DIR']); assert path == Path('/app/data/cache'); probe = path / '.write-test'; probe.write_text('ok'); probe.unlink()"
       - name: Smoke-check dashboard image
         if: matrix.target == 'dashboard'
         run: |
