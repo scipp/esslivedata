@@ -256,6 +256,15 @@ viewport" — drive the strip instead (`.jsPanel-btn-sm.jsPanel-btn-normalize`, 
 matching `-close`). A minimized pop-out is deliberately *not* live, so
 `assert_stops_updating` is the check there.
 
+jsPanel moves a window's content out to `document.body`, but the Bokeh box Panel
+wrapped it in stays behind in the component tree at the window's full size, empty.
+The zero-height container rooting the windows therefore has to *clip* as well
+(`styles={'overflow': 'hidden'}`), or that box lands below the fold and hands the
+template's `main.main-content` a scrollbar onto a window-sized band of whitespace.
+Assert this on scrollable overflow (`overflowY` `auto`/`scroll`), never on
+`getBoundingClientRect`: clipping does not shrink the box's layout rect, so a rect
+check reports the bug as present either way.
+
 Resize handles are `.jsPanel-resizeit-{n,e,s,w,ne,se,sw,nw}` (18 px squares on the
 window's edges) and the drag handle is the header — both drive with plain
 `page.mouse` gestures. Resize *before* moving: the `se` handle rides the bottom-right

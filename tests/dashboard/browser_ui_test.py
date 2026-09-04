@@ -21,7 +21,7 @@ through the stable ``lt-*`` automation hooks:
 - a popped-out plot opens within the viewport, floats above other tabs and
   keeps updating there, and stops costing anything once minimized;
 - renaming a popped-out cell leaves its window the size and where the user
-  put it.
+  put it, and opening one adds no scrollable whitespace to the page.
 
 Each test launches its own dashboard for isolation, since grid topology changes
 are process-global; ports are allocated per launch, so concurrent runs of this
@@ -609,6 +609,62 @@ def test_popped_out_window_fits_the_viewport_it_opens_on(viewport_height):
         close_button = page.locator(".jsPanel-btn-close").first.bounding_box()
         assert close_button is not None
         assert close_button["y"] >= 0
+
+
+# Deepest *scrollable* vertical overflow outside the pop-out window itself,
+# which scrolls its own content by design. Only elements that actually scroll
+# count: a clipped one hides its overflow and shows no scrollbar. Light DOM
+# only -- the template's scrolling main region and the boxes rooting the
+# windows in the component tree both live there.
+_PAGE_OVERFLOW = """
+() => {
+  let worst = document.documentElement.scrollHeight
+      - document.documentElement.clientHeight;
+  document.querySelectorAll('*').forEach(e => {
+    if (e.closest('.jsPanel')) return;
+    const overflow = getComputedStyle(e).overflowY;
+    if (overflow !== 'auto' && overflow !== 'scroll') return;
+    worst = Math.max(worst, e.scrollHeight - e.clientHeight);
+  });
+  return worst;
+}
+"""
+
+
+@pytest.mark.browser
+def test_opening_a_popout_does_not_make_the_page_scroll():
+    """A window must cost the page under it no layout at all.
+
+    jsPanel moves the window's content out to ``document.body``, but the box
+    Panel wrapped it in stays behind at the window's full size, empty.
+    Overflowing the zero-height container that roots the windows, it lands
+    below the fold and hands the page a scrollbar onto a window-sized band of
+    whitespace.
+    """
+    with fake_dashboard("dummy") as fake, Dashboard.connect(fake.url) as dash:
+        del fake
+        page = dash.page
+        dash.goto_tab("Detectors")
+        wait_until(
+            dash,
+            lambda: page.locator(".lt-cell-r0c0.lt-tool-arrows-maximize").count() == 1,
+            label="the plot grid to render",
+        )
+        before = page.evaluate(_PAGE_OVERFLOW)
+
+        click_until(
+            dash,
+            ".lt-cell-r0c0.lt-tool-arrows-maximize",
+            lambda: page.locator(".lt-popout-r0c0").count() == 1,
+            label="the pop-out window to open",
+        )
+        wait_until(
+            dash,
+            lambda: page.evaluate(_POPOUT_PLOT_HEIGHT) > 0,
+            label="the popped-out plot to render",
+        )
+
+        assert page.evaluate(_PAGE_OVERFLOW) == before
 
 
 def _drag(dash: Dashboard, selector: str, *, dx: int, dy: int) -> None:

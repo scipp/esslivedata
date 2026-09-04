@@ -269,8 +269,17 @@ class PlotPopoutManager:
         # the windows themselves render as free-floating overlays. The fitter
         # is invisible and only installs document-level handlers, so it costs
         # nothing until a window exists.
+        #
+        # Clipped as well as zero-height: jsPanel moves a window's content out
+        # to ``document.body``, but the Bokeh box Panel wrapped it in stays
+        # here at the window's full size, empty. Overflowing a zero-height
+        # container, it lands below the fold and gives the page a scrollbar
+        # onto a window-sized band of whitespace.
         self._container = pn.Column(
-            PopoutWindowFitter(), height=0, sizing_mode='stretch_width'
+            PopoutWindowFitter(),
+            height=0,
+            sizing_mode='stretch_width',
+            styles={'overflow': 'hidden'},
         )
         self._open: dict[CellId, pn.layout.FloatPanel] = {}
         # Monotone cascade slot counter. Counting open windows instead would
