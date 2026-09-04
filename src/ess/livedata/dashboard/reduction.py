@@ -56,7 +56,9 @@ ANNOUNCEMENTS_URL = (
     'https://public.esss.dk/groups/scipp/esslivedata/_static/announcements.md'
 )
 
-pn.extension('holoviews', 'modal', notifications=True, template='material')
+pn.extension(
+    'holoviews', 'modal', 'floatpanel', notifications=True, template='material'
+)
 hv.extension('bokeh')
 
 # HoloViews defaults its Bokeh renderer to `webgl=True`, which sets
