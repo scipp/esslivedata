@@ -11,6 +11,7 @@ import pydantic
 import scipp as sc
 
 from .. import parameter_models
+from ..config.device_contract import COUNTS_TOTAL_DEVICE
 from ..config.instrument import Instrument
 from ..config.workflow_spec import (
     MONITORS,
@@ -336,7 +337,7 @@ def register_monitor_workflow_specs(
         params=params,
         outputs=MonitorHistogramOutputs,
         # Every instrument's cumulative monitor total is a NICOS derived device.
-        device_outputs={'counts_total_cumulative': '{source_name}_counts_total'},
+        device_outputs=COUNTS_TOTAL_DEVICE,
     )
 
 

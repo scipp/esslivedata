@@ -56,6 +56,19 @@ function and a fixed differ/applier:
   pass; do not add hand-written per-gate terms to it. A new pass input joins
   `_input_stamps` and the end-of-pass recording, nothing else.
 
+The tests follow the same seam, and a new test belongs on the side its
+subject does:
+
+- A materialization or rebuild *rule* is a case in `cell_plan_test.py` —
+  plain data, no fixtures, no Panel. Do not re-assert it through the widget
+  stack; `plot_grid_tabs_test.py` only checks that the pass carries the rules
+  out (`TestCellDiffer`) and that real state reaches the decision
+  (`TestMaterializationWiring`).
+- The wake gate is exercised *only* in `TestWakeGateContract`; everywhere
+  else tests drive `_poll_for_plot_updates` unconditionally. A new stamped
+  input therefore needs its own re-arm test there, and a deliberately
+  unstamped one an asserted hole — nothing else will catch it.
+
 Pop-out windows (`plot_popout.py`) ride entirely on these three seams: a cell
 behind a showing window enters `SessionView.live_cell_ids` (policy), takes a
 viewer token like a visible cell (tokens), and adds its grid to the per-grid
@@ -89,7 +102,7 @@ Where the icon cannot be a widget — a Bokeh tab label is plain text, for insta
 paint it on a `::before` pseudo-element with `mask-image: url(get_icon_data_uri(name,
 color=None))` and `background-color: currentColor`. A mask reads only the alpha channel,
 so the icon inherits the element's text color and follows its active/hover states without
-a second, recolored copy (see `_static_tab_stylesheet` in `plot_grid_tabs.py`).
+a second, recolored copy (see `_tab_stylesheet` in `plot_grid_tabs.py`).
 
 ## Stable CSS hooks for automation
 
@@ -147,7 +160,7 @@ it, on a port other than 5009 (interactive dev uses 5009):
 ```sh
 cp -r tests/dashboard/ui_config_fixtures/dummy "$TMP/cfg/dummy"
 python -m ess.livedata.dashboard.reduction --instrument dummy --transport fake \
-    --port 5011 --config-dir "$TMP/cfg" --no-fetch-announcements --collapsed-sidebar
+    --port 5011 --config-dir "$TMP/cfg" --no-fetch-announcements
 ```
 
 Add `--auto-start` (requires `--transport fake`) to commit every staged workflow on
@@ -205,11 +218,11 @@ button with a *compound* selector on one element:
 - ❌ `.lt-wf-total_counts .lt-tool-player-stop` (matches nothing — the descendant
   crosses a shadow boundary)
 
-**Sidebar.** `--launch` passes `--collapsed-sidebar`, so the main content gets the full
-window width: the sidebar is static in automation runs (announcements are off) and an
-open drawer only narrows the plots under test and their screenshots. Pass the flag when
-running a server by hand too. It sets `MaterialTemplate.collapsed_sidebar`, so the page
-arrives collapsed — no clicking the hamburger, and it survives `page.reload()`.
+**Sidebar.** The drawer starts collapsed by default, so the main content gets the full
+window width and automation never has to click the hamburger; it survives
+`page.reload()`, since it sets `MaterialTemplate.collapsed_sidebar` rather than toggling
+the DOM. `--no-collapsed-sidebar` opens it, which for a driven session only narrows
+the plots under test and their screenshots.
 
 **Tabs.** The top-level tabs are Bokeh-owned `.bk-tab` divs with no `lt-*` hooks, so
 navigate by visible text (`page.get_by_text("Detectors", exact=True)`). Static tab
@@ -367,6 +380,10 @@ or rgba strings in widget files. The shared module provides:
 
 Widget-specific decorative colors (e.g., output chip colors, grid preview cell colors)
 that are not shared across widgets may stay local.
+
+Chrome that a theme owns — the header background and the main tab strip — is the one
+exception: those colors live in `dashboard/theme.py`, next to the `Theme` that selects
+them. `styles.py` stays theme-independent, so a widget must never read `theme.py`.
 
 Panel does not support CSS custom properties (`var()`) in `styles=` dicts or inline
 HTML `style=` attributes — only in `stylesheets=` parameters. This is why we use

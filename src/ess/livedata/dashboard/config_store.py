@@ -44,6 +44,15 @@ import yaml
 
 logger = structlog.get_logger()
 
+_Dumper = getattr(yaml, "CSafeDumper", yaml.SafeDumper)
+"""Emitter used for every store write, libyaml's when the wheel ships it.
+
+The pure-Python emitter costs about a millisecond per KiB, and a store is
+rewritten whole on every mutation, so the choice is worth ~3.5x on a
+dashboard-sized layout. Its output is byte-identical, so a file written by
+either is readable by both.
+"""
+
 # Type alias for config stores - any mutable mapping from str to config dict
 # Keys are typically stringified WorkflowId or other identifiers
 ConfigStore = MutableMapping[str, dict[str, Any]]
@@ -219,9 +228,10 @@ class FileBackedConfigStore(UserDict[str, dict[str, Any]]):
             # Write atomically: write to temp file, then rename
             temp_path = self._file_path.with_suffix(".tmp")
             with open(temp_path, "w") as f:
-                yaml.safe_dump(
+                yaml.dump(
                     self.data,
                     f,
+                    Dumper=_Dumper,
                     default_flow_style=False,
                     sort_keys=False,  # Preserve insertion order for LRU
                 )

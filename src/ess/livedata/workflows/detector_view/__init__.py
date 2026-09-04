@@ -16,7 +16,7 @@ Supports two projection modes:
 """
 
 from .data_source import InstrumentDetectorSource, NeXusDetectorSource
-from .factory import DetectorViewFactory
+from .factory import DetectorViewFactory, bind_roi_requests
 from .types import (
     CoordinateMode,
     GeometricViewConfig,
@@ -32,4 +32,5 @@ __all__ = [
     'LogicalViewConfig',
     'NeXusDetectorSource',
     'SpectrumView',
+    'bind_roi_requests',
 ]

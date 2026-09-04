@@ -24,6 +24,7 @@ from ess.livedata.config.workflow_spec import DataKey
 
 from .data_roles import PRIMARY, X_AXIS, Y_AXIS
 from .plot_params import (
+    LegendPosition,
     Line1dParams,
     Line1dRenderMode,
     PlotDisplayParams1d,
@@ -299,6 +300,20 @@ class CorrelationHistogramPlotter:
     def has_cached_state(self) -> bool:
         """Check if the renderer has computed state."""
         return self._renderer.has_cached_state()
+
+    @property
+    def is_overlayable(self) -> bool:
+        """Delegate to the inner renderer, which knows its combine mode."""
+        return self._renderer.is_overlayable
+
+    @property
+    def legend_position(self) -> LegendPosition | None:
+        """Delegate the legend placement to the inner renderer.
+
+        The renderer draws the legend, so it owns the setting; the cell asks the
+        outer plotter for it when collating layers into a shared figure.
+        """
+        return self._renderer.legend_position
 
     @property
     def autoscale_axes(self) -> frozenset[Axis]:

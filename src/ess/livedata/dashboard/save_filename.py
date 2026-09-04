@@ -11,6 +11,7 @@ from typing import Any
 from ess.livedata.config.workflow_spec import WorkflowId, WorkflowSpec
 
 from .plot_orchestrator import PlotCell
+from .plotter_registry import plotter_registry
 from .widgets.plot_widgets import get_workflow_display_info
 
 _MAX_SOURCES_IN_FILENAME = 3
@@ -107,6 +108,11 @@ def build_save_filename_from_cell(
         if instrument is None:
             instrument = config.workflow_id.instrument
         source_titles.extend(get_source_title(s) for s in config.source_names)
+        # ROI overlays subscribe to the ROI readback output, which names the
+        # geometry stream they draw rather than the data the saved plot shows.
+        entry = plotter_registry.get(config.plot_name)
+        if entry is not None and entry.spec.title_replaces_output:
+            continue
         _, output_title = get_workflow_display_info(
             workflow_registry, config.workflow_id, config.view_name
         )

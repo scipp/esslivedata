@@ -8,3 +8,27 @@ devices:
   workflow_id: tbl/monitor_histogram/1
   source_name: monitor_1
   output_name: counts_total_cumulative
+- device_name: timepix3_detector_counts_total
+  workflow_id: tbl/tbl_detector_timepix3/1
+  source_name: timepix3_detector
+  output_name: counts_total_cumulative
+- device_name: multiblade_detector_counts_total
+  workflow_id: tbl/multiblade_detector_view/1
+  source_name: multiblade_detector
+  output_name: counts_total_cumulative
+- device_name: he3_detector_bank0_counts_total
+  workflow_id: tbl/he3_detector_view/1
+  source_name: he3_detector_bank0
+  output_name: counts_total_cumulative
+- device_name: he3_detector_bank1_counts_total
+  workflow_id: tbl/he3_detector_view/1
+  source_name: he3_detector_bank1
+  output_name: counts_total_cumulative
+- device_name: ngem_detector_counts_total
+  workflow_id: tbl/ngem_detector_view/1
+  source_name: ngem_detector
+  output_name: counts_total_cumulative
+- device_name: orca_detector_counts_total
+  workflow_id: tbl/tbl_area_detector_orca/1
+  source_name: orca_detector
+  output_name: counts_total_cumulative

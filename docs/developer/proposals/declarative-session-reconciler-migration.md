@@ -205,6 +205,25 @@ the existing tests as the equivalence oracle. The reorganization is a
 follow-up after acceptance, and a characterization test is retired only when
 a named `desired()`/differ pair replaces it.
 
+**Outcome.** The reorganization landed after acceptance and matched the
+sketch on three of four points: policy scenarios are plain-data tests of
+`desired_cells`, the surviving integration tests state which mechanism they
+are about (`TestCellDiffer` for the differ rules, `TestCellActions` for
+clicks and cross-session races, `TestMaterializationWiring` for the two
+things only the real chain can show), and the predicate guard collapsed into
+`TestWakeGateContract` — now the only place the gate is exercised, so it
+covers every stamped term explicitly and *asserts* the two deliberate holes
+(a foreign viewer token, and `has_plot` flipping without a transition) that
+were previously only prose.
+
+The fourth point came out differently: the differ has no separate unit to
+test, because #1230 kept it inline in the applier — three comparisons over
+the plans, not a function returning actions. Its rules are therefore
+exercised through the real widgets, as a small fixed class. Extracting an
+action-emitting differ purely to make it unit-testable would add an
+intermediate representation nothing else needs; revisit only if a second
+applier ever appears.
+
 **Cleanup worth doing regardless of the go/no-go** (fits phase 0): move the
 eight ad-hoc fakes into shared test helpers, and hoist the fixture chain
 into a `conftest.py` so the phase-0 characterization tests do not copy it a

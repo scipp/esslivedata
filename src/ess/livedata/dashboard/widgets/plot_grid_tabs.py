@@ -71,6 +71,7 @@ from ..plot_orchestrator import (
 from ..plots import TimeBounds
 from ..session_layer import SessionLayer
 from ..session_updater import SessionUpdater
+from ..theme import DEFAULT_THEME, Theme
 from .cell import CellDeps, CellWidget
 from .cell_properties_modal import CellPropertiesModal
 from .icons import get_icon_data_uri
@@ -79,7 +80,6 @@ from .plot_config_modal import PlotConfigModal
 from .plot_grid import PlotGrid
 from .plot_grid_manager import PlotGridManager
 from .plot_popout import PlotPopoutManager
-from .styles import Colors
 
 logger = structlog.get_logger(__name__)
 
@@ -107,7 +107,7 @@ class _PassStamps(NamedTuple):
     generations: Mapping[GridId | None, int]
 
 
-def _static_tab_stylesheet(icons: Sequence[str]) -> str:
+def _tab_stylesheet(icons: Sequence[str], theme: Theme) -> str:
     """CSS distinguishing the fixed leading tabs from the plot-grid tabs.
 
     Bokeh renders a tab label as plain text, so an icon cannot be part of the
@@ -120,6 +120,8 @@ def _static_tab_stylesheet(icons: Sequence[str]) -> str:
     ----------
     icons:
         Icon name per static tab, in tab order.
+    theme:
+        Supplies the strip palette, which depends on where the strip sits.
     """
     masks = '\n'.join(
         f"""
@@ -151,14 +153,7 @@ def _static_tab_stylesheet(icons: Sequence[str]) -> str:
             -webkit-mask-position: center;
         }}
         {masks}
-        .bk-tab {{
-            border-bottom: 1px solid {Colors.TAB_BORDER} !important;
-        }}
-        .bk-tab.bk-active {{
-            background-color: {Colors.TAB_ACTIVE_BG} !important;
-            border: 1px solid {Colors.TAB_BORDER} !important;
-            border-bottom: none !important;
-        }}
+        {theme.tab_strip_css}
         """
 
 
@@ -224,6 +219,9 @@ class PlotGridTabs:
         Shared service for plot data with version tracking.
     session_updater
         This session's updater for periodic callbacks.
+    theme
+        Shell appearance, determining where the tab strip sits and how it is
+        colored.
     """
 
     def __init__(
@@ -236,6 +234,7 @@ class PlotGridTabs:
         *,
         plot_data_service: PlotDataService,
         session_updater: SessionUpdater,
+        theme: Theme = DEFAULT_THEME,
     ) -> None:
         self._orchestrator = plot_orchestrator
         self._workflow_registry = dict(workflow_registry)
@@ -339,7 +338,8 @@ class PlotGridTabs:
         self._tabs = _BatchedTabs(
             sizing_mode='stretch_both',
             dynamic=True,
-            stylesheets=[_static_tab_stylesheet([icon for _, icon, _ in static_tabs])],
+            tabs_location=theme.tabs_location,
+            stylesheets=[_tab_stylesheet([icon for _, icon, _ in static_tabs], theme)],
         )
 
         # Modal container for plot configuration
@@ -978,23 +978,26 @@ class PlotGridTabs:
            snapshots, and this session's view to a target plan per cell —
            including whether this session should hold a built widget at all
            (``materialize``) and the inputs it must be built from.
-        3. *Act*: cells that left the topology are disposed; materialized
-           plans whose inputs differ from what the applied widget records are
-           rebuilt. A cell that is desired but not materialized — a hidden
-           grid nobody watches — is *deferred*: any number of input changes
-           coalesce into zero builds (#1216), and the input comparison builds
-           it exactly once on reveal or when a watcher appears. A failed build
-           leaves the applied record unchanged, so the next tick retries.
-        4. *Flush*: pending plot data is pushed to the figures this session
+        3. *Flush*: pending plot data is pushed to the figures this session
            renders, gated per grid on a new data-burst frame for *that* grid
            (or a tab switch), so one burst repaints in one frame and a frame
            for a pop-out's grid cannot push the visible grid's half-built
            burst. Hidden tabs have no materialized Bokeh models
            (``dynamic=True``); their presenters keep their dirty flag and the
-           tab switch's own tick sends the latest cached state. Freshness
-           pills age on flush, rebuild, or the wall-clock stall cadence, and
-           only for the visible grid -- a pop-out shows the plot alone, with
-           no pill to age.
+           tab switch's own tick sends the latest cached state. It runs ahead
+           of the widget surgery below, which cannot then stand between a
+           frame and the session's layers (#1276).
+        4. *Act*: cells that left the topology are disposed; materialized
+           plans whose inputs differ from what the applied widget records are
+           rebuilt. A cell that is desired but not materialized — a hidden
+           grid nobody watches — is *deferred*: any number of input changes
+           coalesce into zero builds (#1216), and the input comparison builds
+           it exactly once on reveal or when a watcher appears. A build that
+           fails renders its error in place and records its inputs like any
+           other, so it is not retried until they change. Freshness pills age
+           on flush, rebuild, or the wall-clock stall cadence, and only for
+           the visible grid -- a pop-out shows the plot alone, with no pill to
+           age.
 
         A hidden grid with no pop-out over it therefore does no display work
         at all between switches. Its layers are deactivated, so unless another
@@ -1129,7 +1132,26 @@ class PlotGridTabs:
             viewed.__contains__,
         )
 
-        # 3 · Act. First sweep cells that vanished from topology (cell or grid
+        # 3 · Flush pending data to the figures this session renders: the
+        # visible grid's cells, plus any cell a pop-out window keeps on
+        # screen, and only for a grid whose frame generation moved. Pipes are
+        # session state, independent of the widgets rendering them, and this is
+        # the only push of data into a session's pipes in the codebase — so it
+        # runs before the widget surgery below rather than behind it, where a
+        # cell disposal or build could starve every layer of the session at
+        # once (#1276). A layer whose components are created by a build below
+        # keeps its pending update; its fresh pipe already carries the same
+        # cached state, so nothing is missed.
+        for cell_id, plan in plans.items():
+            rendered = plan.grid_id == active_grid_id or cell_id in live_cells
+            if not (rendered and plan.grid_id in stale_grids):
+                continue
+            for layer_input in plan.inputs.layers:
+                session_layer = self._session_layers.get(layer_input.layer_id)
+                if session_layer is not None:
+                    session_layer.update_pipe()
+
+        # 4 · Act. First sweep cells that vanished from topology (cell or grid
         # removed). Membership is checked against the orchestrator directly,
         # not the ``grids`` view above, so the sweep stays correct even if a
         # reentrant tick observes ``_grid_widgets`` mid-rebuild. A cell on a
@@ -1155,8 +1177,8 @@ class PlotGridTabs:
         # holds the document lock, so a pn.state.execute here would run
         # inline anyway rather than defer. The build samples its inputs again
         # (see _build_cell), so a transition landing between plan and build is
-        # recorded honestly. On a build failure the applied record is
-        # unchanged and the armed gate retries next tick.
+        # recorded honestly. A build that fails renders the failure instead of
+        # raising (see CellWidget), so one broken cell costs one cell.
         rebuilt = False
         for cell_id, plan in plans.items():
             applied = self._cells.get(cell_id)
@@ -1165,19 +1187,16 @@ class PlotGridTabs:
             self._insert_cell(cell_id, grids[plan.grid_id].cells[cell_id], plan.grid_id)
             rebuilt = True
 
-        # 4 · Flush pending data to the figures this session renders and
-        # sample the per-layer time bounds driving the titlebar freshness pill
-        # (merged) and the per-layer time-range panes. Bounds are read from
-        # the plan snapshots, i.e. after activation: the 0→1 transition is
-        # what computes a revealed layer's first frame, and with it the
-        # bounds. Only the visible grid's cells show those panes -- a pop-out
-        # renders the plot alone.
+        # Sample the per-layer time bounds driving the titlebar freshness pill
+        # (merged) and the per-layer time-range panes. Bounds are read from the
+        # plan snapshots, i.e. after activation: the 0→1 transition is what
+        # computes a revealed layer's first frame, and with it the bounds.
+        # Only the visible grid's cells show those panes -- a pop-out renders
+        # the plot alone.
         active_cell_bounds: dict[CellId, dict[LayerId, TimeBounds | None]] = {}
         for cell_id, plan in plans.items():
-            on_active_grid = plan.grid_id == active_grid_id
-            if not (on_active_grid or cell_id in live_cells):
+            if plan.grid_id != active_grid_id:
                 continue
-            flush = plan.grid_id in stale_grids
             per_layer: dict[LayerId, TimeBounds | None] = {}
             for layer_input in plan.inputs.layers:
                 snapshot = layer_input.snapshot
@@ -1186,12 +1205,7 @@ class PlotGridTabs:
                     if snapshot is not None and snapshot.plotter is not None
                     else None
                 )
-                if flush:
-                    session_layer = self._session_layers.get(layer_input.layer_id)
-                    if session_layer is not None:
-                        session_layer.update_pipe()
-            if on_active_grid:
-                active_cell_bounds[cell_id] = per_layer
+            active_cell_bounds[cell_id] = per_layer
 
         # Refresh the freshness/lag indicator for active-grid cells. Runs after
         # rebuilds so cells recreated this poll update their fresh pane handle.

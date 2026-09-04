@@ -16,6 +16,8 @@ from ess.livedata.dashboard import plots
 from ess.livedata.dashboard.extractors import WindowAggregatingExtractor
 from ess.livedata.dashboard.plot_params import (
     ErrorDisplay,
+    LegendParams,
+    LegendPosition,
     Line1dParams,
     Line1dRenderMode,
     PlotParams1d,
@@ -1499,8 +1501,8 @@ class TestPlotterOverlayMode:
         """A non-free aspect must reach every sub-figure of a layout-mode plot.
 
         The frame-aspect hook is declared per element type by the plotter, so it
-        lands on each figure of the rendered Layout, switching it to the
-        one-axis responsive mode. Regression: detector images (square + layout)
+        lands on each figure of the rendered Layout, attaching the CustomJS that
+        letterboxes the frame. Regression: detector images (square + layout)
         collapsed to zero height when the hook only ran on a single shared
         figure and was skipped for Layouts.
         """
@@ -1529,7 +1531,8 @@ class TestPlotterOverlayMode:
 
         figures = [m for m in state.references() if isinstance(m, Plot)]
         assert len(figures) == 2
-        assert all(fig.sizing_mode == 'stretch_width' for fig in figures)
+        assert all(fig.sizing_mode == 'stretch_both' for fig in figures)
+        assert all('change:inner_width' in fig.js_property_callbacks for fig in figures)
 
     def test_empty_data_returns_no_data_text(self):
         """Test that empty data returns 'No data' text element in overlay mode."""
@@ -2411,12 +2414,12 @@ class TestOverlay1DPlotter:
         for elem in result:
             assert isinstance(elem, hv.Curve), f"Expected Curve, got {type(elem)}"
 
-    def test_non_free_aspect_switches_figure_to_one_axis_responsive(
+    def test_non_free_aspect_carries_the_aspect_on_the_frame_hook(
         self, data_2d_with_roi_coord, data_key
     ):
         """A non-free aspect makes the plotter declare the frame-aspect hook on
-        its elements, which switches the figure to a one-axis responsive mode
-        (fill-width -> stretch_width) so aspect can be enforced via JS."""
+        its elements. The figure keeps filling its cell on both axes; the aspect
+        is enforced by the hook's CustomJS sizing the frame inside it."""
         from ess.livedata.dashboard.plot_params import PlotAspect, PlotAspectType
 
         params = PlotParams1d()
@@ -2424,8 +2427,9 @@ class TestOverlay1DPlotter:
         plotter = plots.Overlay1DPlotter.from_params(params)
 
         fig = present_figure(plotter, {data_key: data_2d_with_roi_coord})
-        assert fig.sizing_mode == 'stretch_width'
+        assert fig.sizing_mode == 'stretch_both'
         assert fig.aspect_ratio is None
+        assert 'change:inner_width' in fig.js_property_callbacks
 
     def test_free_aspect_renders_responsive_without_aspect(
         self, data_2d_with_roi_coord, data_key
@@ -3492,3 +3496,89 @@ class TestGetLogScaleClim:
     def test_varying_data_defers_to_holoviews(self) -> None:
         data = self._image([[1.0, 2.0], [3.0, 4.0]])
         assert plots.Plotter._get_log_scale_clim(data) is None
+
+
+class TestLegendPosition:
+    """Legend placement, in particular the placements outside the plot frame."""
+
+    @pytest.fixture
+    def two_curves(self):
+        workflow_id = WorkflowId(instrument='test', name='wf', version=1)
+        coords = {'x': sc.array(dims=['x'], values=[10.0, 20.0, 30.0], unit='m')}
+        return {
+            DataKey(workflow_id=workflow_id, source_name='det', output_name=name): (
+                sc.DataArray(
+                    sc.array(dims=['x'], values=values, unit='counts'), coords=coords
+                )
+            )
+            for name, values in (
+                ('roi_0', [1.0, 2.0, 3.0]),
+                ('roi_1', [4.0, 5.0, 6.0]),
+            )
+        }
+
+    @staticmethod
+    def _line_figure(position: LegendPosition, data: dict):
+        params = PlotParams1d(legend=LegendParams(position=position))
+        return present_figure(plots.LinePlotter.from_params(params), data)
+
+    def test_default_draws_the_legend_inside_the_frame(self, two_curves):
+        figure = self._line_figure(LegendPosition.top_right, two_curves)
+        (legend,) = figure.legend
+        assert legend.location == 'top_right'
+        assert legend not in figure.right
+
+    def test_inside_placement_selects_the_corner(self, two_curves):
+        figure = self._line_figure(LegendPosition.bottom_left, two_curves)
+        (legend,) = figure.legend
+        assert legend.location == 'bottom_left'
+        assert legend not in figure.right
+
+    def test_right_moves_the_legend_out_of_the_frame(self, two_curves):
+        figure = self._line_figure(LegendPosition.right, two_curves)
+        (legend,) = figure.legend
+        assert legend in figure.right
+
+    def test_bottom_moves_the_legend_out_of_the_frame(self, two_curves):
+        figure = self._line_figure(LegendPosition.bottom, two_curves)
+        (legend,) = figure.legend
+        assert legend in figure.below
+
+    def test_hidden_drops_the_legend_entries(self, two_curves):
+        figure = self._line_figure(LegendPosition.hidden, two_curves)
+        assert not any(legend.items for legend in figure.legend)
+
+    def test_overlay_1d_plotter_places_its_legend_beside_the_plot(self):
+        """The per-slice overlay is the plot with the most legend entries."""
+        params = PlotParams1d(legend=LegendParams(position=LegendPosition.right))
+        plotter = plots.Overlay1DPlotter.from_params(params)
+        workflow_id = WorkflowId(instrument='test', name='wf', version=1)
+        data_key = DataKey(
+            workflow_id=workflow_id, source_name='det', output_name='roi'
+        )
+        data = sc.DataArray(
+            sc.array(
+                dims=['roi', 'toa'],
+                values=[[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]],
+                unit='counts',
+            ),
+            coords={
+                'roi': sc.array(dims=['roi'], values=[0, 1], unit=None),
+                'toa': sc.array(dims=['toa'], values=[10.0, 20.0, 30.0], unit='us'),
+            },
+        )
+        figure = present_figure(plotter, {data_key: data})
+        (legend,) = figure.legend
+        assert legend in figure.right
+
+    def test_timeseries_plotter_forwards_the_position(self):
+        from ess.livedata.dashboard.plot_params import PlotParamsTimeseries
+
+        params = PlotParamsTimeseries(
+            legend=LegendParams(position=LegendPosition.right)
+        )
+        plotter = plots.LinePlotter.from_timeseries_params(params)
+        assert plotter.legend_position is LegendPosition.right
+
+    def test_plotter_without_a_legend_declares_no_position(self):
+        assert plots.ImagePlotter.from_params(PlotParams2d()).legend_position is None

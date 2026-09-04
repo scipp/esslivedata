@@ -13,12 +13,14 @@ Coordinates plot creation and management across multiple plot grids:
 
 from __future__ import annotations
 
+import asyncio
 import copy
 import threading
 import traceback
 from collections.abc import Callable, Iterator, Mapping, Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass
+from functools import partial
 from typing import TYPE_CHECKING, Any, Protocol
 from uuid import uuid4
 
@@ -172,6 +174,17 @@ class _LayerJobTracker:
     job_numbers: tuple[JobNumber | None, ...]
 
 
+_PERSIST_DEBOUNCE_S = 1.0
+"""Window over which mutations are coalesced into a single store write.
+
+Writing the store serializes the whole dashboard layout, at roughly a
+millisecond per KiB, on the loop that serves every session. Mutations that
+arrive as a burst -- an ROI dragged across a plot emits one per gesture -- must
+therefore not each pay for a write. Short enough that a crash loses at most a
+second of layout changes, which the user can see and redo.
+"""
+
+
 class PlotOrchestrator:
     """Manages plot grid configurations and plot lifecycle.
 
@@ -187,7 +200,7 @@ class PlotOrchestrator:
 
     ``_topology_lock`` (an ``RLock``) makes those cross-thread reads see a
     consistent multi-dict snapshot. Writers hold it only around the dict
-    mutations themselves -- never across file I/O (``_persist_to_store``),
+    mutations themselves -- never across file I/O (``_flush_persist``),
     pipeline setup, ``plotter.compute``, or ``DataService`` unregistration --
     so ingestion latency never couples to those. Deletes are leaf-first
     (``_layer_to_cell`` before ``_cell_to_grid`` before ``_grids``) and inserts
@@ -215,6 +228,7 @@ class PlotOrchestrator:
         instrument_config: Instrument | None = None,
         frame_clock: FrameClock | None = None,
         on_change: Callable[[], None] | None = None,
+        persist_debounce: float = _PERSIST_DEBOUNCE_S,
     ) -> None:
         """
         Initialize the plot orchestrator.
@@ -245,6 +259,8 @@ class PlotOrchestrator:
         on_change
             Called after every topology-version bump, e.g. to wake sessions so
             grid/cell changes render without waiting for the next poll.
+        persist_debounce
+            Seconds over which mutations are coalesced into one store write.
         """
         self._plotting_controller = plotting_controller
         self._job_orchestrator = job_orchestrator
@@ -257,6 +273,11 @@ class PlotOrchestrator:
         # Read/written only on the IOLoop thread, the sole topology writer,
         # so it needs no lock.
         self._persist_suppressed = False
+        # Debounce state for ``_persist_to_store``. Like ``_persist_suppressed``
+        # these are touched only on the IOLoop thread and need no lock.
+        self._persist_debounce = persist_debounce
+        self._persist_pending = False
+        self._persist_scheduled = False
         self._plot_data_service = plot_data_service
         self._frame_clock = frame_clock or FrameClock()
         self._on_change = on_change
@@ -892,7 +913,9 @@ class PlotOrchestrator:
         """
         try:
             plotter = self._plotting_controller.create_plotter(
-                config.plot_name, params=config.params
+                config.plot_name,
+                params=config.params,
+                on_params_changed=partial(self._store_layer_params, layer_id),
             )
             self._plot_data_service.job_started(layer_id, plotter)
             return plotter
@@ -901,6 +924,25 @@ class PlotOrchestrator:
             self._logger.exception('Failed to create plotter for layer_id=%s', layer_id)
             self._plot_data_service.error_occurred(layer_id, error_msg)
             return None
+
+    def _store_layer_params(
+        self, layer_id: LayerId, params: pydantic.BaseModel
+    ) -> None:
+        """Store params a plotter rewrote from user interaction, e.g. drawn ROIs.
+
+        Without this the edit would live only in the plotter, and every rebuild
+        of it - dashboard restart, layer re-added, new job generation - would
+        silently revert to the config-time params.
+
+        Deliberately does not bump the topology version: the plotter and its
+        presenters are the source of the change and must survive it.
+        """
+        try:
+            self.get_layer_config(layer_id).params = params
+        except KeyError:
+            # Layer removed while one of its presenters was still emitting edits.
+            return
+        self._persist_to_store()
 
     def _build_title_resolver(self, layer_id: LayerId) -> Any:
         """Build a TitleResolver for a layer, checking cell-level view uniqueness.
@@ -1572,9 +1614,46 @@ class PlotOrchestrator:
             self._persist_suppressed = was_suppressed
 
     def _persist_to_store(self) -> None:
-        """Persist plot grid configurations to config store."""
+        """Mark the layout as needing a write, coalescing a burst into one.
+
+        A write serializes every grid, cell and layer of the dashboard, which
+        costs roughly a millisecond per KiB of stored config on the loop that
+        serves all sessions. Mutators therefore only mark the layout dirty
+        here; ``_flush_persist`` does the work once per debounce window. A
+        user dragging an ROI around -- one edit event per gesture, each
+        rewriting the layer's params -- pays for one write per window rather
+        than one per gesture.
+
+        With no loop running there is nothing to defer onto and nothing else
+        contending for the thread, so the write happens inline. That is how
+        layouts are built outside a server, in tests and screenshot runs.
+        """
         if self._config_store is None or self._persist_suppressed:
             return
+
+        self._persist_pending = True
+        if self._persist_scheduled:
+            return
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            self._flush_persist()
+            return
+        self._persist_scheduled = True
+        loop.call_later(self._persist_debounce, self._flush_persist)
+
+    def _flush_persist(self) -> None:
+        """Write the layout to the config store if a mutation marked it dirty.
+
+        Never runs while persistence is suppressed: both suppressing blocks
+        (startup replay, shutdown) are synchronous, so the loop cannot get a
+        turn inside them. ``shutdown`` flushes before it suppresses, leaving
+        nothing pending for the scheduled callback to write after teardown.
+        """
+        self._persist_scheduled = False
+        if not self._persist_pending or self._config_store is None:
+            return
+        self._persist_pending = False
 
         try:
             serialized = self._serialize_grids()
@@ -1640,6 +1719,11 @@ class PlotOrchestrator:
         Call this method when the orchestrator is no longer needed to prevent
         memory leaks.
         """
+        # Write out anything a mutation left pending: after the teardown below
+        # there is no layout left to write, and the deferred flush would find
+        # an empty model.
+        self._flush_persist()
+
         # Remove all grids (which unsubscribes all plots). Persistence is
         # suppressed so tearing down the in-memory model does not overwrite the
         # saved layout with an empty one; the last committed layout must

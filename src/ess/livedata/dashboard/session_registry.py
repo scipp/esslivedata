@@ -16,6 +16,14 @@ if TYPE_CHECKING:
 
 logger = structlog.get_logger(__name__)
 
+# Session lifecycle messages. The log is the only channel that distinguishes the
+# two teardown paths from outside the process -- the UI shows that a session went
+# away, not by which route -- so tests/dashboard/session_churn_test.py parses
+# these. Named here so a reword updates the parser with them.
+SESSION_REGISTERED_MSG = "Registered new session: %s"
+SESSION_UNREGISTERED_MSG = "Unregistered session: %s"
+SESSION_REAPED_MSG = "Cleaned up stale session: %s (no heartbeat for %.1f seconds)"
+
 SessionId = NewType('SessionId', str)
 
 
@@ -93,7 +101,7 @@ class SessionRegistry:
                     self._sessions[session_id].username = username
                 self._sessions[session_id].last_heartbeat = time.monotonic()
             else:
-                logger.info("Registered new session: %s", session_id)
+                logger.info(SESSION_REGISTERED_MSG, session_id)
                 self._sessions[session_id] = SessionInfo(
                     session_id=session_id, username=username, updater=updater
                 )
@@ -115,7 +123,7 @@ class SessionRegistry:
             if session_id in self._sessions:
                 updater = self._sessions[session_id].updater
                 del self._sessions[session_id]
-                logger.info("Unregistered session: %s", session_id)
+                logger.info(SESSION_UNREGISTERED_MSG, session_id)
 
         # Clean up updater outside lock to avoid potential deadlocks
         if updater is not None:
@@ -164,7 +172,7 @@ class SessionRegistry:
                     stale_sessions.append((session_id, info.updater))
                     del self._sessions[session_id]
                     logger.warning(
-                        "Cleaned up stale session: %s (no heartbeat for %.1f seconds)",
+                        SESSION_REAPED_MSG,
                         session_id,
                         now - info.last_heartbeat,
                     )

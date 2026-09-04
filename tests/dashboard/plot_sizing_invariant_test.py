@@ -10,7 +10,8 @@ figure existed, only the *rendered geometry* was wrong.
 Observing the collapse itself needs a real browser (see
 ``render_geometry_test.py``), but its cause is observable headlessly: every
 figure a plotter produces must adopt the responsive sizing mode the cell's pane
-will wrap it in, i.e. the one :func:`pane_sizing_mode` returns. These tests
+will wrap it in -- ``stretch_both``, so that the figure fills its grid cell on
+both axes and a fixed aspect letterboxes inside it. These tests
 render each plotter through the real ``compute -> present -> bokeh`` path and
 assert that invariant across aspect types, combine modes and source counts --
 including the layout-mode sub-figures that the original bug skipped.
@@ -27,7 +28,6 @@ from holoviews.plotting.bokeh import BokehRenderer
 
 from ess.livedata.config.workflow_spec import DataKey, WorkflowId
 from ess.livedata.dashboard import plots
-from ess.livedata.dashboard.frame_aspect import pane_sizing_mode
 from ess.livedata.dashboard.plot_params import (
     CombineMode,
     LayoutParams,
@@ -36,7 +36,6 @@ from ess.livedata.dashboard.plot_params import (
     PlotParams1d,
     PlotParams2d,
     PlotParams3d,
-    StretchMode,
 )
 from ess.livedata.dashboard.slicer_plotter import SlicerPlotter
 
@@ -98,22 +97,13 @@ def _data_3d() -> dict:
     return dict.fromkeys(_keys(1), da)
 
 
-# Every aspect type, and both stretch modes for the constrained ones, since the
-# stretch mode decides which axis the pane and the figure must agree on.
+# Every aspect type, since each takes a different route to its sizing opts.
 _ASPECTS = [
     PlotAspect(aspect_type=PlotAspectType.free),
-    PlotAspect(aspect_type=PlotAspectType.square, stretch_mode=StretchMode.width),
-    PlotAspect(aspect_type=PlotAspectType.square, stretch_mode=StretchMode.height),
-    PlotAspect(aspect_type=PlotAspectType.equal, stretch_mode=StretchMode.width),
-    PlotAspect(aspect_type=PlotAspectType.equal, stretch_mode=StretchMode.height),
-    PlotAspect(
-        aspect_type=PlotAspectType.aspect, ratio=2.0, stretch_mode=StretchMode.width
-    ),
-    PlotAspect(
-        aspect_type=PlotAspectType.data_aspect,
-        ratio=0.5,
-        stretch_mode=StretchMode.height,
-    ),
+    PlotAspect(aspect_type=PlotAspectType.square),
+    PlotAspect(aspect_type=PlotAspectType.equal),
+    PlotAspect(aspect_type=PlotAspectType.aspect, ratio=2.0),
+    PlotAspect(aspect_type=PlotAspectType.data_aspect, ratio=0.5),
 ]
 
 
@@ -127,9 +117,7 @@ _ASPECTS = [
 )
 @pytest.mark.parametrize('combine', [CombineMode.overlay, CombineMode.layout])
 @pytest.mark.parametrize('n_sources', [1, 2])
-@pytest.mark.parametrize(
-    'aspect', _ASPECTS, ids=lambda a: f'{a.aspect_type.name}-{a.stretch_mode.name}'
-)
+@pytest.mark.parametrize('aspect', _ASPECTS, ids=lambda a: a.aspect_type.name)
 def test_every_figure_adopts_the_panes_sizing_mode(
     plotter_cls, params_cls, make_data, combine, n_sources, aspect
 ):
@@ -143,12 +131,10 @@ def test_every_figure_adopts_the_panes_sizing_mode(
 
     assert len(figures) == (n_sources if combine == CombineMode.layout else 1)
     for fig in figures:
-        assert fig.sizing_mode == pane_sizing_mode(aspect)
+        assert fig.sizing_mode == 'stretch_both'
 
 
-@pytest.mark.parametrize(
-    'aspect', _ASPECTS, ids=lambda a: f'{a.aspect_type.name}-{a.stretch_mode.name}'
-)
+@pytest.mark.parametrize('aspect', _ASPECTS, ids=lambda a: a.aspect_type.name)
 def test_slicer_figure_adopts_the_panes_sizing_mode(aspect):
     """The slicer styles each rendered slice instead of its DynamicMap.
 
@@ -163,7 +149,7 @@ def test_slicer_figure_adopts_the_panes_sizing_mode(aspect):
     )
 
     assert len(figures) == 1
-    assert figures[0].sizing_mode == pane_sizing_mode(aspect)
+    assert figures[0].sizing_mode == 'stretch_both'
 
 
 @pytest.mark.parametrize(
@@ -185,9 +171,7 @@ def test_computed_frames_are_styled_before_they_reach_a_session(
     the shared IOLoop. Rendering the cached frame on its own therefore has to
     show the finished styling.
     """
-    aspect = PlotAspect(
-        aspect_type=PlotAspectType.square, stretch_mode=StretchMode.width
-    )
+    aspect = PlotAspect(aspect_type=PlotAspectType.square)
     params = params_cls(layout=LayoutParams(combine_mode=combine), plot_aspect=aspect)
     plotter = plotter_cls.from_params(params)
     plotter.compute({'primary': make_data(2)})
@@ -196,4 +180,4 @@ def test_computed_frames_are_styled_before_they_reach_a_session(
 
     assert figures
     for fig in figures:
-        assert fig.sizing_mode == pane_sizing_mode(aspect)
+        assert fig.sizing_mode == 'stretch_both'

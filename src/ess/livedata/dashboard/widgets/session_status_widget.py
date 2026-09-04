@@ -42,7 +42,7 @@ class SessionUIConstants:
 
     # Margins
     STANDARD_MARGIN: ClassVar[tuple[int, int]] = (5, 5)
-    HEADER_MARGIN: ClassVar[tuple[int, int, int, int]] = (10, 10, 5, 10)
+    HEADER_MARGIN: ClassVar[tuple[int, int, int, int]] = (10, 0, 5, 0)
 
 
 def _format_heartbeat_age(seconds: float | None) -> str:
@@ -177,7 +177,7 @@ class SessionStatusWidget:
         # Summary row
         self._summary = pn.pane.HTML(
             self._format_summary(),
-            margin=(5, 10),
+            margin=(5, 0),
         )
 
         # Table header
@@ -203,10 +203,10 @@ class SessionStatusWidget:
             ),
             styles={"border-bottom": f"2px solid {Colors.BORDER}"},
             sizing_mode="stretch_width",
-            margin=(0, 10),
+            margin=0,
         )
 
-        self._session_list = pn.Column(sizing_mode="stretch_width", margin=(0, 10))
+        self._session_list = pn.Column(sizing_mode="stretch_width", margin=0)
 
         # Initialize with current sessions
         self._update_session_list()

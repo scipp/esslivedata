@@ -19,8 +19,13 @@ from ess.livedata import Service
 from ess.livedata.config.device_contract import DeviceContract
 from ess.livedata.logging_config import configure_logging
 
-from .dashboard import DashboardBase
+from .dashboard import (
+    DEFAULT_UNUSED_SESSION_LIFETIME,
+    DashboardBase,
+)
+from .dashboard_services import DEFAULT_SESSION_STALE_TIMEOUT
 from .session_updater import SessionUpdater
+from .theme import DEFAULT_THEME, THEMES
 from .widgets.log_producer_widget import LogProducerWidget
 from .widgets.plot_grid_tabs import PlotGridTabs
 from .widgets.system_status_widget import SystemStatusWidget
@@ -56,6 +61,28 @@ pn.extension(
 )
 hv.extension('bokeh')
 
+# HoloViews defaults its Bokeh renderer to `webgl=True`, which sets
+# `output_backend='webgl'` on every figure. That gives each plot a second, WebGL
+# canvas: Bokeh then resizes, scissors and clears it before every paint
+# (`prepare_webgl`) and blits it over the 2D canvas afterwards (`blit_webgl` ->
+# a full-canvas `drawImage`), per plot, per renderer, per frame. Because that
+# canvas is shared by the whole page, resizing it to each plot's frame
+# reallocates its drawing buffer whenever neighbouring cells differ in size,
+# which ours do. The cost is therefore fixed per figure, whatever it draws,
+# while the saving scales with content -- and our content stays below where the
+# GL path starts to pay: curves are a few hundred points against a break-even
+# near 30k, and detector images are mostly 320^2 or smaller. Bokeh does have a
+# WebGL path for images, it simply does not earn the round trip at these sizes.
+# On a 12-cell grid of mixed cell sizes, a data update costs the browser's main
+# thread 82 ms on the 2D canvas against 134 ms in WebGL; with uniform cell sizes
+# the reallocation term does not arise and the gap is ~9 ms. Any re-measurement
+# has to run on real graphics hardware: without a GPU, Chromium rasterizes WebGL
+# glyphs on the CPU, which inflates the gap by roughly an order of magnitude and
+# hides the reallocation term behind glyph work. Individual figures can still opt
+# in via `backend_opts={'plot.output_backend': 'webgl'}`; see #1218 for where
+# that might be worth doing.
+hv.renderer('bokeh').webgl = False
+
 # HoloViews registers `apply_nodata` as a data-mode compositor for Image, Raster,
 # QuadMesh and ImageStack, implementing the `nodata` plot option: an integer
 # sentinel value is rewritten to NaN, which draws transparent. It cannot fire here
@@ -73,14 +100,6 @@ Compositor.definitions = [
     for definition in Compositor.definitions
     if definition.operation is not apply_nodata
 ]
-
-# Resolving a colormap imports colorcet, which registers hundreds of colormaps with
-# matplotlib. Left lazy, that lands on a session's IOLoop during its first plot render
-# and blocks every request behind it. Pay it here, at startup, where blocking is free.
-# Costs ~70 ms; with matplotlib < 3.11.2 it is ~2.8 s, since each registration paid
-# difflib "did you mean" generation (matplotlib#32172). The warmup is worth keeping
-# independent of that fix -- remove it only if first-render profiling says otherwise.
-process_cmap('viridis')
 
 # Remove Bokeh logo from Layout toolbars by patching LayoutPlot.initialize_plot
 
@@ -110,10 +129,13 @@ class ReductionApp(DashboardBase):
         transport: str = 'kafka',
         config_dir: str | None = None,
         auto_start: bool = False,
-        collapsed_sidebar: bool = False,
+        collapsed_sidebar: bool = True,
         fetch_announcements: bool = True,
         basic_auth_password: str | None = None,
         basic_auth_cookie_secret: str | None = None,
+        theme: str = DEFAULT_THEME.name,
+        session_stale_timeout_seconds: float = DEFAULT_SESSION_STALE_TIMEOUT,
+        unused_session_lifetime_seconds: float = DEFAULT_UNUSED_SESSION_LIFETIME,
     ):
         super().__init__(
             instrument=instrument,
@@ -127,6 +149,9 @@ class ReductionApp(DashboardBase):
             collapsed_sidebar=collapsed_sidebar,
             basic_auth_password=basic_auth_password,
             basic_auth_cookie_secret=basic_auth_cookie_secret,
+            theme=theme,
+            session_stale_timeout_seconds=session_stale_timeout_seconds,
+            unused_session_lifetime_seconds=unused_session_lifetime_seconds,
         )
         self._fetch_announcements = fetch_announcements
         # Load (and validate) the NICOS derived-device contract once. Fails loud
@@ -211,6 +236,7 @@ class ReductionApp(DashboardBase):
             system_status_widget=system_status_widget,
             plot_data_service=self._services.plot_data_service,
             session_updater=session_updater,
+            theme=self._theme,
         )
 
         # PlotGridTabs registers its own two-tier teardown on the session
@@ -265,11 +291,20 @@ def get_arg_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         '--collapsed-sidebar',
-        action='store_true',
-        default=False,
-        help='Start with the sidebar collapsed. The sidebar holds announcements '
-        'and the version label, so collapsing it gives plots the full window '
-        'width -- useful on small screens and for automation/screenshots.',
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help='Start with the sidebar drawer collapsed, giving plots the full '
+        'window width. It holds announcements and the version label, neither '
+        'of which needs to be on screen while watching plots.',
+    )
+    parser.add_argument(
+        '--theme',
+        choices=sorted(THEMES),
+        default=DEFAULT_THEME.name,
+        help='Shell look and feel. "nicos" (the default) adopts the NICOS '
+        'client\'s teal chrome and puts the main tab strip in a left rail, for '
+        'running the two side by side; "classic" is the previous look, with '
+        'the tabs along the top.',
     )
     parser.add_argument(
         '--no-fetch-announcements',
@@ -291,6 +326,22 @@ def get_arg_parser() -> argparse.ArgumentParser:
         'Can also be set via LIVEDATA_BASIC_AUTH_COOKIE_SECRET env var.',
     )
     parser.add_argument(
+        '--session-stale-timeout-seconds',
+        type=float,
+        default=DEFAULT_SESSION_STALE_TIMEOUT,
+        help='Seconds without a heartbeat before a session is dropped and its '
+        'per-layer state released. Lower it where browsers vanish often, raise it '
+        'where links are slow.',
+    )
+    parser.add_argument(
+        '--unused-session-lifetime-seconds',
+        type=float,
+        default=DEFAULT_UNUSED_SESSION_LIFETIME,
+        help='Seconds Bokeh keeps a session with no connections left before '
+        'dropping its document. Also the poll interval, so a closed session is '
+        'released somewhere between one and two times this.',
+    )
+    parser.add_argument(
         '--check',
         action='store_true',
         default=False,
@@ -302,8 +353,27 @@ def get_arg_parser() -> argparse.ArgumentParser:
     return parser
 
 
+def _warm_up_colormaps() -> None:
+    """Register colorcet's colormaps with matplotlib before serving.
+
+    Resolving a colormap imports colorcet, which registers hundreds of colormaps with
+    matplotlib. Left lazy, that lands on a session's IOLoop during its first plot
+    render and blocks every request behind it. Pay it before the server starts, where
+    blocking is free. Costs ~70 ms; with matplotlib < 3.11.2 it is ~2.8 s, since each
+    registration pays difflib "did you mean" generation (matplotlib#32172). The warmup
+    is worth keeping independent of that fix -- remove it only if first-render
+    profiling says otherwise.
+
+    Deliberately not called at import: it is the single largest import cost in the test
+    suite, where nothing renders.
+    """
+    process_cmap('viridis')
+
+
 def main() -> None:
     import logging
+
+    _warm_up_colormaps()
 
     parser = get_arg_parser()
     args = vars(parser.parse_args())

@@ -11,12 +11,18 @@ from structlog.testing import capture_logs
 from ess.livedata.config import instrument_registry, workflow_spec
 from ess.livedata.config.workflow_spec import JobId
 from ess.livedata.core.job_manager import JobAction, JobCommand
+from ess.livedata.core.message import StreamKind
 from ess.livedata.services.detector_data import make_detector_service_builder
 from tests.helpers.livedata_app import LivedataApp
 
 
 def _job_id(source: str) -> JobId:
     return JobId(source_name=source, job_number=uuid.uuid4())
+
+
+def _data_messages(sink) -> list:
+    """Workflow result messages, excluding the NICOS device stream."""
+    return [m for m in sink.messages if m.stream.kind == StreamKind.LIVEDATA_DATA]
 
 
 def _get_workflow_from_registry(
@@ -70,7 +76,7 @@ def test_can_configure_and_stop_detector_workflow(
     app.publish_config_message(workflow_config)
     service.step()
     # Config ack lands on response_messages, not the data sink
-    assert len(sink.messages) == 0
+    assert len(_data_messages(sink)) == 0
 
     if instrument == 'loki':
         # LOKI rear bank consumes the merged detector_carriage device stream;
@@ -93,27 +99,27 @@ def test_can_configure_and_stop_detector_workflow(
     n_out = 11 if instrument == 'bifrost' else 10
     app.publish_events(size=2000, time=2)
     service.step()
-    assert len(sink.messages) == n_out
-    assert sink.messages[0].value.nansum().value == 2000  # cumulative
-    assert sink.messages[1].value.nansum().value == 2000  # current
+    assert len(_data_messages(sink)) == n_out
+    assert _data_messages(sink)[0].value.nansum().value == 2000  # cumulative
+    assert _data_messages(sink)[1].value.nansum().value == 2000  # current
     # No data -> no data published
     service.step()
-    assert len(sink.messages) == n_out
+    assert len(_data_messages(sink)) == n_out
 
     app.publish_events(size=3000, time=4)
     service.step()
-    assert len(sink.messages) == 2 * n_out
-    assert sink.messages[n_out].value.nansum().value == 5000  # cumulative
-    assert sink.messages[n_out + 1].value.nansum().value == 3000  # current
+    assert len(_data_messages(sink)) == 2 * n_out
+    assert _data_messages(sink)[n_out].value.nansum().value == 5000  # cumulative
+    assert _data_messages(sink)[n_out + 1].value.nansum().value == 3000  # current
 
     # More events but the same time
     app.publish_events(size=1000, time=4)
     # Later time
     app.publish_events(size=1000, time=5)
     service.step()
-    assert len(sink.messages) == 3 * n_out
-    assert sink.messages[2 * n_out].value.nansum().value == 7000  # cumulative
-    assert sink.messages[2 * n_out + 1].value.nansum().value == 2000  # current
+    assert len(_data_messages(sink)) == 3 * n_out
+    assert _data_messages(sink)[2 * n_out].value.nansum().value == 7000  # cumulative
+    assert _data_messages(sink)[2 * n_out + 1].value.nansum().value == 2000  # current
 
     # Stop workflow
     command = JobCommand(action=JobAction.stop)
@@ -122,7 +128,7 @@ def test_can_configure_and_stop_detector_workflow(
     service.step()
     app.publish_events(size=1000, time=20)
     service.step()
-    assert len(sink.messages) == 3 * n_out
+    assert len(_data_messages(sink)) == 3 * n_out
 
 
 def test_loki_cumulative_resets_when_detector_carriage_moves() -> None:
@@ -176,25 +182,73 @@ def test_loki_cumulative_resets_when_detector_carriage_moves() -> None:
     prime_carriage(position=5000.0, time=1)
     app.publish_events(size=2000, time=2)
     service.step()
-    assert len(sink.messages) == n_out
-    assert sink.messages[0].value.nansum().value == 2000  # cumulative
-    assert sink.messages[1].value.nansum().value == 2000  # current
+    assert len(_data_messages(sink)) == n_out
+    assert _data_messages(sink)[0].value.nansum().value == 2000  # cumulative
+    assert _data_messages(sink)[1].value.nansum().value == 2000  # current
 
     # Cycle 2: no move -> cumulative keeps accumulating (no reset).
     app.publish_events(size=3000, time=4)
     service.step()
-    assert len(sink.messages) == 2 * n_out
-    assert sink.messages[n_out].value.nansum().value == 5000  # cumulative
-    assert sink.messages[n_out + 1].value.nansum().value == 3000  # current
+    assert len(_data_messages(sink)) == 2 * n_out
+    assert _data_messages(sink)[n_out].value.nansum().value == 5000  # cumulative
+    assert _data_messages(sink)[n_out + 1].value.nansum().value == 3000  # current
 
     # Cycle 3: move the carriage, then accumulate -> cumulative resets.
     move_carriage(position=6000.0, time=10)
     app.publish_events(size=1000, time=11)
     service.step()
-    assert len(sink.messages) == 3 * n_out
-    cumulative = sink.messages[2 * n_out].value
-    current = sink.messages[2 * n_out + 1].value
+    assert len(_data_messages(sink)) == 3 * n_out
+    cumulative = _data_messages(sink)[2 * n_out].value
+    current = _data_messages(sink)[2 * n_out + 1].value
     # The pre-move 5000 counts are discarded: cumulative restarts from the move.
+    assert cumulative.nansum().value == 1000
+    assert sc.allclose(cumulative.data, current.data)
+
+
+def test_odin_cumulative_resets_when_the_readout_resolution_changes() -> None:
+    """A readout reconfiguration resets the cumulative image.
+
+    ODIN's Timepix3 is ingested at reduced resolution: event ids are remapped
+    onto a 512x512 grid in the preprocessor, using a stride derived from the
+    resolution the detector is currently streaming. That resolution is
+    reconfigurable and is not announced on any stream, so it is inferred from
+    the ids -- which means it can be revised while a job runs. Counts remapped
+    with the old stride land in different pixels than counts remapped with the
+    new one, so summing across the revision would produce a blended image.
+    ``DownsamplePixelIds`` stamps the resolution as a coord and the cumulative
+    accumulator resets on it, exactly as it does on a detector move.
+    """
+    app = make_detector_app('odin')
+    sink = app.sink
+    service = app.service
+    workflow_id, _ = _get_workflow_from_registry('odin')
+
+    source_name = 'timepix3'
+    app.publish_config_message(
+        workflow_spec.WorkflowConfig(
+            identifier=workflow_id, job_id=_job_id(source_name)
+        )
+    )
+    service.step()
+
+    n_out = 10
+    # Only the first rows of the 4096x4096 panel light up, so the ids seen so
+    # far are consistent with a much smaller readout.
+    app.publish_events(size=2000, time=2, id_range=(0, 100 * 4096))
+    service.step()
+    assert _data_messages(sink)[0].value.nansum().value == 2000  # cumulative
+
+    # Still nothing above the inferred resolution -> plain accumulation.
+    app.publish_events(size=3000, time=4, id_range=(0, 100 * 4096))
+    service.step()
+    assert _data_messages(sink)[n_out].value.nansum().value == 5000  # cumulative
+
+    # An id from the far corner proves the panel is the full 4096, so the
+    # stride changes and the 5000 counts mapped with the old one are discarded.
+    app.publish_events(size=1000, time=6, id_range=(4000 * 4096, 4096 * 4096 - 1))
+    service.step()
+    cumulative = _data_messages(sink)[2 * n_out].value
+    current = _data_messages(sink)[2 * n_out + 1].value
     assert cumulative.nansum().value == 1000
     assert sc.allclose(cumulative.data, current.data)
 
@@ -223,7 +277,7 @@ def test_magic_projection_stays_gated_until_rotation_readback_arrives() -> None:
     # published.
     app.publish_events(size=1000, time=1)
     service.step()
-    assert len(sink.messages) == 0
+    assert len(_data_messages(sink)) == 0
 
     for substream, value in (
         ('detector_a_rotation/target_value', 0.0),
@@ -233,7 +287,7 @@ def test_magic_projection_stays_gated_until_rotation_readback_arrives() -> None:
         app.publish_log_message(source_name=substream, time=2, value=value)
     app.publish_events(size=1000, time=3)
     service.step()
-    assert len(sink.messages) > 0
+    assert len(_data_messages(sink)) > 0
 
 
 def test_service_can_recover_after_bad_workflow_id_was_set(
@@ -262,7 +316,7 @@ def test_service_can_recover_after_bad_workflow_id_was_set(
     service.step()
 
     # No error ack sent when message_id not set (error is logged server-side)
-    assert len(sink.messages) == 0
+    assert len(_data_messages(sink)) == 0
 
     good_workflow_config = workflow_spec.WorkflowConfig(
         identifier=workflow_id, job_id=_job_id('panel_0')
@@ -273,7 +327,7 @@ def test_service_can_recover_after_bad_workflow_id_was_set(
     service.step()
     # Service recovered; data only -- the ack is on response_messages
     # First finalize sends 10 data messages (8 + 2 initial ROI readbacks)
-    assert len(sink.messages) == 10
+    assert len(_data_messages(sink)) == 10
 
 
 def test_active_workflow_keeps_running_when_bad_workflow_id_was_set(
@@ -293,7 +347,7 @@ def test_active_workflow_keeps_running_when_bad_workflow_id_was_set(
     app.publish_config_message(workflow_config)
     service.step()
     # Config ack lands on response_messages, not the data sink
-    assert len(sink.messages) == 0
+    assert len(_data_messages(sink)) == 0
 
     # Add events and verify workflow is running
     app.publish_events(size=2000, time=2)
@@ -301,8 +355,8 @@ def test_active_workflow_keeps_running_when_bad_workflow_id_was_set(
     # cumulative, current, roi_spectra_current, roi_spectra_cumulative,
     # counts_total, counts_in_toa, counts_total_cumulative,
     # counts_in_toa_range_cumulative, roi_rectangle, roi_polygon
-    assert len(sink.messages) == 10
-    assert sink.messages[0].value.values.sum() == 2000
+    assert len(_data_messages(sink)) == 10
+    assert _data_messages(sink)[0].value.values.sum() == 2000
 
     # Try to set an invalid workflow ID
     bad_workflow_id = workflow_spec.WorkflowConfig(
@@ -317,8 +371,8 @@ def test_active_workflow_keeps_running_when_bad_workflow_id_was_set(
     app.publish_events(size=3000, time=4)
     service.step()
     # No error ack without message_id, just data messages (10 + 10)
-    assert len(sink.messages) == 20
-    assert sink.messages[10].value.values.sum() == 5000  # cumulative
+    assert len(_data_messages(sink)) == 20
+    assert _data_messages(sink)[10].value.values.sum() == 5000  # cumulative
 
 
 @pytest.fixture
@@ -340,6 +394,29 @@ def configured_dummy_detector() -> LivedataApp:
     return app
 
 
+def test_detector_counts_are_published_as_a_nicos_device(
+    configured_dummy_detector: LivedataApp,
+) -> None:
+    """A running detector view exposes its bank total on the NICOS device topic.
+
+    The device is keyed by the contracted device name rather than by the
+    ``ResultKey``, so the job's random ``job_number`` does not reach NICOS, and it
+    carries ``start_time`` as the generation marker (see ADR 0006).
+    """
+    app = configured_dummy_detector
+    app.publish_events(size=2000, time=2)
+    app.step()
+
+    devices = [
+        m for m in app.sink.messages if m.stream.kind == StreamKind.LIVEDATA_NICOS_DATA
+    ]
+    assert [m.stream.name for m in devices] == ['panel_0_counts_total']
+    value = devices[0].value
+    assert value.value == 2000
+    assert 'start_time' in value.coords
+    assert 'end_time' in value.coords
+
+
 def test_message_with_unknown_schema_is_ignored(
     configured_dummy_detector: LivedataApp,
 ) -> None:
@@ -357,8 +434,8 @@ def test_message_with_unknown_schema_is_ignored(
     # cumulative, current, roi_spectra_current, roi_spectra_cumulative,
     # counts_total, counts_in_toa, counts_total_cumulative,
     # counts_in_toa_range_cumulative + 2 initial ROI readbacks
-    assert len(sink.messages) == 10
-    assert sink.messages[0].value.values.sum() == 2000
+    assert len(_data_messages(sink)) == 10
+    assert _data_messages(sink)[0].value.values.sum() == 2000
 
     # Check log messages for warnings
     warning_logs = [log for log in captured if log['log_level'] == 'warning']
@@ -382,8 +459,8 @@ def test_message_that_cannot_be_decoded_is_ignored(
     # cumulative, current, roi_spectra_current, roi_spectra_cumulative,
     # counts_total, counts_in_toa, counts_total_cumulative,
     # counts_in_toa_range_cumulative + 2 initial ROI readbacks
-    assert len(sink.messages) == 10
-    assert sink.messages[0].value.values.sum() == 2000
+    assert len(_data_messages(sink)) == 10
+    assert _data_messages(sink)[0].value.values.sum() == 2000
 
     # Check log messages for exceptions
     error_logs = [log for log in captured if log['log_level'] == 'error']

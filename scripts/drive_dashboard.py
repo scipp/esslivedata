@@ -77,9 +77,32 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 # an interactive dev dashboard.
 DEFAULT_PORT = 5011
 DEFAULT_URL = f"http://localhost:{DEFAULT_PORT}"
-# Time for Bokeh models to settle / the first refresh tick to rebuild rows after
-# load, before any click. See the "cold start" window in the rule file.
-SETTLE_MS = 5000
+# How long to wait for the rendered UI to stop changing after a load or a tab
+# switch, and how often to look. See :meth:`Dashboard.settle`.
+SETTLE_TIMEOUT_MS = 20000
+SETTLE_POLL_MS = 250
+# Consecutive identical signatures that count as settled.
+SETTLE_STABLE_POLLS = 2
+# Quiescence alone is not enough: the periodic refresh tick rebuilds rows on top
+# of the initial render, and between the two the page looks perfectly still.
+# Hold the floor past one tick (~1 Hz) so that rebuild is behind us. Dropping it
+# reintroduces an intermittent "no data sources rendered after reload" in
+# session-reload tests, at roughly one run in five.
+SETTLE_MIN_MS = 1500
+
+# Models rendered into the page, as counts only. Data values are deliberately
+# excluded: they change on every tick, so a signature carrying them would never
+# hold still. `_all_models` never prunes, so these only ever grow to a plateau.
+_RENDER_SIGNATURE_JS = """() => {
+  let models = 0, sources = 0;
+  for (const doc of (window.Bokeh && Bokeh.documents) || []) {
+    for (const m of Array.from(doc._all_models.values())) {
+      models++;
+      if (m.type === 'ColumnDataSource') sources++;
+    }
+  }
+  return {models, sources};
+}"""
 # Override the Chromium binary when the installed playwright package does not
 # match the browsers available on disk (e.g. a preprovisioned container).
 _CHROMIUM_ENV = "PLAYWRIGHT_CHROMIUM_EXECUTABLE"
@@ -118,12 +141,14 @@ class Dashboard:
 
     @classmethod
     @contextmanager
-    def connect(cls, url: str = DEFAULT_URL, *, settle_ms: int = SETTLE_MS):
+    def connect(
+        cls, url: str = DEFAULT_URL, *, settle_timeout_ms: int = SETTLE_TIMEOUT_MS
+    ):
         """Open a browser on a running dashboard, waiting for it to settle."""
         with sync_playwright() as p:
             browser = _launch_browser(p)
             try:
-                with _sessions(browser, url, 1, settle_ms) as dashboards:
+                with _sessions(browser, url, 1, settle_timeout_ms) as dashboards:
                     yield dashboards[0]
             finally:
                 browser.close()
@@ -131,7 +156,11 @@ class Dashboard:
     @classmethod
     @contextmanager
     def connect_many(
-        cls, n: int, url: str = DEFAULT_URL, *, settle_ms: int = SETTLE_MS
+        cls,
+        n: int,
+        url: str = DEFAULT_URL,
+        *,
+        settle_timeout_ms: int = SETTLE_TIMEOUT_MS,
     ):
         """Open ``n`` independent sessions on the same running dashboard.
 
@@ -145,7 +174,7 @@ class Dashboard:
         with sync_playwright() as p:
             browser = _launch_browser(p)
             try:
-                with _sessions(browser, url, n, settle_ms) as dashboards:
+                with _sessions(browser, url, n, settle_timeout_ms) as dashboards:
                     yield dashboards
             finally:
                 browser.close()
@@ -157,7 +186,46 @@ class Dashboard:
     def goto_tab(self, name: str) -> None:
         """Activate a tab by its visible title and let it render."""
         self.page.get_by_text(name, exact=True).first.click()
-        self.page.wait_for_timeout(SETTLE_MS)
+        self.settle()
+
+    def settle(self, *, timeout_ms: int = SETTLE_TIMEOUT_MS) -> None:
+        """Wait until the rendered UI stops changing.
+
+        Bokeh models settle asynchronously after a load or a tab switch, and the
+        first periodic refresh tick can rebuild status rows on top of that (see
+        the "Cold start" window in the widgets rule). Poll until the page holds
+        still instead of sleeping out a worst case.
+
+        The signature covers both the ``lt-*`` hooks and the count of rendered
+        Bokeh models, because a tab's DOM hooks appear before its figures do:
+        watching the hooks alone returns while the plots are still arriving, and
+        the caller then reads zero data sources.
+
+        Raises
+        ------
+        TimeoutError:
+            If the inventory never holds still, which means the page is still
+            rebuilding and any click would be racing it.
+        """
+        previous: dict | None = None
+        stable = 0
+        waited = 0
+        while True:
+            current = {
+                "hooks": self.inventory()["lt_hooks"],
+                "render": self.page.evaluate(_RENDER_SIGNATURE_JS),
+            }
+            stable = stable + 1 if current == previous and current["hooks"] else 0
+            if stable >= SETTLE_STABLE_POLLS and waited >= SETTLE_MIN_MS:
+                return
+            if waited >= timeout_ms:
+                raise TimeoutError(
+                    f"UI still changing after {timeout_ms} ms; last signature: "
+                    f"{current}"
+                )
+            self.page.wait_for_timeout(SETTLE_POLL_MS)
+            waited += SETTLE_POLL_MS
+            previous = current
 
     def click(self, target: str | Locator, *, retries: int = 3) -> None:
         """Click a stable ``lt-*`` selector, retrying if a rebuild detaches it.
@@ -217,21 +285,21 @@ class Dashboard:
         return {"tabs": self.tab_names(), "lt_hooks": dict(sorted(hooks.items()))}
 
 
-def _open_session(browser: Browser, url: str, settle_ms: int) -> Dashboard:
+def _open_session(browser: Browser, url: str, settle_timeout_ms: int) -> Dashboard:
     """One dashboard session: an isolated context, loaded and settled."""
     context = browser.new_context(viewport={"width": 1600, "height": 1000})
     dash = Dashboard(context.new_page())
     dash.page.goto(url, wait_until="networkidle")
-    dash.page.wait_for_timeout(settle_ms)
+    dash.settle(timeout_ms=settle_timeout_ms)
     return dash
 
 
 @contextmanager
 def _sessions(
-    browser: Browser, url: str, count: int, settle_ms: int
+    browser: Browser, url: str, count: int, settle_timeout_ms: int
 ) -> Iterator[list[Dashboard]]:
     """Open ``count`` sessions, dumping diagnostics if the caller's block raises."""
-    dashboards = [_open_session(browser, url, settle_ms) for _ in range(count)]
+    dashboards = [_open_session(browser, url, settle_timeout_ms) for _ in range(count)]
     try:
         yield dashboards
     except BaseException:
@@ -387,14 +455,30 @@ class FakeDashboard:
     log: Path
 
 
+def _timeout_args(
+    stale_timeout_seconds: float | None, unused_lifetime_seconds: float | None
+) -> list[str]:
+    """Server flags for the session reapers, omitting whichever is left default."""
+    args = []
+    if stale_timeout_seconds is not None:
+        args += ["--session-stale-timeout-seconds", str(stale_timeout_seconds)]
+    if unused_lifetime_seconds is not None:
+        args += ["--unused-session-lifetime-seconds", str(unused_lifetime_seconds)]
+    return args
+
+
 @contextmanager
-def _fake_dashboard(instrument: str, port: int | None = None):
+def _fake_dashboard(
+    instrument: str,
+    port: int | None = None,
+    *,
+    session_stale_timeout_seconds: float | None = None,
+    unused_session_lifetime_seconds: float | None = None,
+):
     """Launch a Kafka-free fake-backend dashboard seeded from the fixture.
 
     Copies the committed fixture to a writable scratch dir (the dashboard writes
     to its config dir), waits for readiness, and tears the server down on exit.
-    The sidebar starts collapsed: it is static here (announcements are off), so
-    an open drawer would only narrow the plots under test and their screenshots.
     Yields a :class:`FakeDashboard`.
 
     Parameters
@@ -406,6 +490,17 @@ def _fake_dashboard(instrument: str, port: int | None = None):
         tests should, so that concurrent runs cannot collide. Pass an explicit
         port only when the URL has to be known in advance, e.g. to open it by
         hand.
+    session_stale_timeout_seconds:
+        Registry stale timeout, in seconds. Only for tests that assert on a
+        session being reaped; at the production default that waits out a minute
+        of real time. Must stay comfortably above the Bokeh lifetime below, or
+        the registry reaps a cleanly-closed session before Bokeh's path
+        unregisters it and the teardown lands on the wrong line.
+    unused_session_lifetime_seconds:
+        Bokeh unused-session lifetime, in seconds. Bounded from below by how long
+        a fresh session takes to get its websocket up: Bokeh starts the clock at
+        session creation, so a value under that reaps sessions before the browser
+        ever connects.
     """
     fixture = REPO_ROOT / "tests/dashboard/ui_config_fixtures" / instrument
     if not fixture.is_dir():
@@ -425,6 +520,12 @@ def _fake_dashboard(instrument: str, port: int | None = None):
             proc = subprocess.Popen(  # noqa: S603
                 [
                     sys.executable,
+                    # Unbuffered: the log file is this server's only observable
+                    # channel, and both readiness detection and the session
+                    # assertions poll it. Block-buffered, a line can sit in the
+                    # process for as long as it takes to fill 8 KB, so a reader
+                    # times out on something the server did long ago.
+                    "-u",
                     "-m",
                     "ess.livedata.dashboard.reduction",
                     "--instrument",
@@ -436,8 +537,11 @@ def _fake_dashboard(instrument: str, port: int | None = None):
                     "--config-dir",
                     str(cfg),
                     "--auto-start",
-                    "--collapsed-sidebar",
                     "--no-fetch-announcements",
+                    *_timeout_args(
+                        session_stale_timeout_seconds,
+                        unused_session_lifetime_seconds,
+                    ),
                 ],
                 cwd=REPO_ROOT,
                 stdout=logf,

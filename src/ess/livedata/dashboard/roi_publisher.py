@@ -2,13 +2,11 @@
 # Copyright (c) 2025 Scipp contributors (https://github.com/scipp)
 """Publisher for ROI updates to Kafka."""
 
-from collections.abc import Callable
-
 import structlog
 
 from ..config.models import PolygonROI, RectangleROI
-from ..config.roi_names import ROIGeometry
-from ..config.workflow_spec import JobId, JobNumber, WorkflowId
+from ..config.roi_names import ROIGeometry, roi_stream_name
+from ..config.workflow_spec import WorkflowId
 from ..core.message import Message, MessageSink, StreamId, StreamKind
 from ..core.timestamp import Timestamp
 
@@ -24,9 +22,10 @@ class ROIPublisher:
     This class provides a simple interface for publishing ROIs to the
     LIVEDATA_ROI Kafka topic.
 
-    Callers address ROIs by stable identity (workflow_id, source_name); the
-    backend stream name needs the current job_number, which is resolved at
-    publish time through a resolver injected once the JobOrchestrator exists.
+    ROIs are addressed by the view they apply to; the stream name the backend
+    listens on comes from
+    :func:`~ess.livedata.config.roi_names.roi_stream_name`. No job need be
+    running to publish.
 
     Parameters
     ----------
@@ -36,15 +35,6 @@ class ROIPublisher:
 
     def __init__(self, sink: MessageSink):
         self._sink = sink
-        self._job_number_resolver: Callable[[WorkflowId], JobNumber | None] | None = (
-            None
-        )
-
-    def set_job_number_resolver(
-        self, resolver: Callable[[WorkflowId], JobNumber | None]
-    ) -> None:
-        """Set the resolver mapping a workflow to its current job_number."""
-        self._job_number_resolver = resolver
 
     def publish(
         self,
@@ -54,15 +44,12 @@ class ROIPublisher:
         geometry: ROIGeometry,
     ) -> None:
         """
-        Publish ROIs to Kafka, addressed to the workflow's current job.
-
-        Skips (with a warning) if the workflow has no active job: there is no
-        backend job the ROI selection could apply to.
+        Publish ROIs to Kafka, addressed to the view they apply to.
 
         Parameters
         ----------
         workflow_id:
-            The workflow whose current job the ROIs apply to.
+            The workflow whose view the ROIs apply to.
         source_name:
             The source within the workflow.
         rois:
@@ -70,16 +57,7 @@ class ROIPublisher:
         geometry:
             The ROI geometry configuration.
         """
-        if self._job_number_resolver is None:
-            raise RuntimeError("ROIPublisher used before job-number resolver was set")
-        job_number = self._job_number_resolver(workflow_id)
-        if job_number is None:
-            logger.warning(
-                "No active job for workflow %s; skipping ROI publish", workflow_id
-            )
-            return
-        job_id = JobId(source_name=source_name, job_number=job_number)
-        stream_name = f"{job_id}/{geometry.readback_key}"
+        stream_name = roi_stream_name(workflow_id, source_name, geometry.readback_key)
         stream_id = StreamId(kind=StreamKind.LIVEDATA_ROI, name=stream_name)
 
         data_array = geometry.roi_class.to_concatenated_data_array(rois)
@@ -96,16 +74,16 @@ class ROIPublisher:
 
         if rois:
             logger.debug(
-                "Published %d %s ROI(s) for job %s",
+                "Published %d %s ROI(s) for %s",
                 len(rois),
                 geometry.geometry_type,
-                job_id,
+                stream_name,
             )
         else:
             logger.debug(
-                "Published empty %s ROI update (cleared all) for job %s",
+                "Published empty %s ROI update (cleared all) for %s",
                 geometry.geometry_type,
-                job_id,
+                stream_name,
             )
 
 
@@ -114,11 +92,6 @@ class FakeROIPublisher:
 
     def __init__(self):
         self.published: list[tuple[WorkflowId, str, ROIs, ROIGeometry]] = []
-
-    def set_job_number_resolver(
-        self, resolver: Callable[[WorkflowId], JobNumber | None]
-    ) -> None:
-        """Accepted for interface parity; the fake records without resolving."""
 
     def publish(
         self,

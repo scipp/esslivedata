@@ -16,7 +16,7 @@ from .specs import instrument, monitor_names
 
 # Note: Panel size is fake and does not correspond to production setting
 detector_fakes = {
-    'timepix3_detector': (1, 4096**2),
+    'timepix3_detector': (0, 4096**2 - 1),  # 0-based, unlike the banks below
     'he3_detector_bank0': (1, 400),  # 4x100
     'he3_detector_bank1': (401, 800),  # 4x100
     'ngem_detector': (1, 2 * 128**2),
@@ -24,7 +24,7 @@ detector_fakes = {
 }
 
 # Area detector fakes: detector_name -> (height, width) shape
-# Actual size is 2048x2048 but that would require higher message size limits for dev
+# Actual size is 4096x4096 but that would require higher message size limits for dev
 area_detector_fakes = {'orca_detector': (512, 512)}
 
 

@@ -1,6 +1,7 @@
 # SPDX-License-Identifier: BSD-3-Clause
 # Copyright (c) 2025 Scipp contributors (https://github.com/scipp)
 
+import asyncio
 import copy
 import uuid
 
@@ -59,6 +60,8 @@ class FakePlotter:
         # Invoked at the start of compute(); lets tests simulate concurrent
         # events (plotter swap, layer removal) landing mid-build.
         self.on_compute = None
+        # Callback injected by the orchestrator for storing rewritten params.
+        self.persist_params = None
 
     def initialize_from_data(self, data):
         self._initialized_data = data
@@ -198,6 +201,7 @@ class FakePlottingController:
         self,
         plot_name: str,
         params: dict,
+        on_params_changed=None,
     ):
         """Create a fake plotter, recording the call for assertions."""
         self._calls.append(
@@ -210,6 +214,8 @@ class FakePlottingController:
         if self._should_raise:
             raise self._exception_to_raise
         plotter = FakePlotter()
+        # Stands in for an ROI request plotter rewriting its own params.
+        plotter.persist_params = on_params_changed
         self.created_plotters.append(plotter)
         return plotter
 
@@ -911,6 +917,17 @@ class TestTopologyVersion:
         before = plot_orchestrator.topology_version()
         plot_orchestrator.remove_layer(layer_id)
         assert plot_orchestrator.topology_version() > before
+
+    def test_removing_the_last_layer_removes_the_cell(
+        self, plot_orchestrator, workflow_id
+    ):
+        grid_id = plot_orchestrator.add_grid(title='Test Grid', nrows=3, ncols=3)
+        cell_id = plot_orchestrator.add_cell(grid_id, DEFAULT_GEOMETRY)
+        layer_id = plot_orchestrator.add_layer(cell_id, make_plot_config(workflow_id))
+
+        plot_orchestrator.remove_layer(layer_id)
+
+        assert cell_id not in plot_orchestrator.peek_grid(grid_id).cells
 
     def test_update_layer_config_bumps_version(
         self, plot_orchestrator, plot_cell, workflow_id
@@ -2733,6 +2750,53 @@ class TestPersistenceRoundTrip:
             config_store=config_store,
         )
 
+    def test_params_rewritten_by_plotter_survive_a_reload(
+        self,
+        job_orchestrator,
+        fake_plotting_controller,
+        fake_data_service,
+        plot_data_service,
+        config_store,
+        workflow_id,
+        workflow_spec,
+    ):
+        """ROI edits reach the store, so a restart does not clobber them.
+
+        The plotter stands in for an ROI request plotter, which rewrites its
+        geometry as the user draws.
+        """
+        orch1 = self._make_orchestrator(
+            job_orchestrator,
+            fake_plotting_controller,
+            fake_data_service,
+            plot_data_service,
+            config_store,
+        )
+        grid_id = orch1.add_grid(title='Test Grid', nrows=1, ncols=1)
+        add_cell_with_layer(
+            orch1, grid_id, DEFAULT_GEOMETRY, make_plot_config(workflow_id)
+        )
+        commit_workflow_for_test(job_orchestrator, workflow_id, workflow_spec)
+        orch1.sync_job_states()
+
+        # The generation change replaced the plotter; the live one holds the
+        # persister, and its edits must outlive the next replacement.
+        fake_plotting_controller.created_plotters[-1].persist_params(
+            FakePlotParams(param1='drawn')
+        )
+
+        orch2 = self._make_orchestrator(
+            job_orchestrator,
+            fake_plotting_controller,
+            fake_data_service,
+            plot_data_service,
+            config_store,
+        )
+        (grid,) = orch2.get_all_grids().values()
+        (cell,) = grid.cells.values()
+        (layer,) = cell.layers
+        assert layer.config.params.param1 == 'drawn'
+
     def test_disabled_grid_restored_on_load(
         self,
         job_orchestrator,
@@ -3581,3 +3645,143 @@ class TestOverlapValidation:
         reloaded = make_orchestrator()
         titles = [reloaded.get_grid(gid).title for gid in reloaded.get_all_grids()]
         assert titles == ['Intact']
+
+
+class CountingConfigStore(dict):
+    """Config store recording how many writes it received."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.writes = 0
+
+    def __setitem__(self, key, value) -> None:
+        self.writes += 1
+        super().__setitem__(key, value)
+
+
+class TestPersistenceCoalescing:
+    """A write serializes the whole layout, so bursts must collapse into one."""
+
+    DEBOUNCE = 0.02
+
+    def _make_orchestrator(
+        self,
+        job_orchestrator,
+        fake_plotting_controller,
+        fake_data_service,
+        plot_data_service,
+        config_store,
+    ):
+        return PlotOrchestrator(
+            plotting_controller=fake_plotting_controller,
+            job_orchestrator=job_orchestrator,
+            data_service=fake_data_service,
+            instrument='dummy',
+            plot_data_service=plot_data_service,
+            config_store=config_store,
+            persist_debounce=self.DEBOUNCE,
+        )
+
+    async def _burst(self, orch, store, n: int) -> None:
+        before = store.writes
+        for i in range(n):
+            orch.add_grid(title=f'Grid {i}', nrows=1, ncols=1)
+        # Deferred: none of the mutations has reached the store yet.
+        assert store.writes == before
+        await asyncio.sleep(self.DEBOUNCE * 5)
+
+    def test_a_burst_of_mutations_costs_one_write(
+        self,
+        job_orchestrator,
+        fake_plotting_controller,
+        fake_data_service,
+        plot_data_service,
+    ):
+        store = CountingConfigStore()
+
+        async def scenario() -> None:
+            orch = self._make_orchestrator(
+                job_orchestrator,
+                fake_plotting_controller,
+                fake_data_service,
+                plot_data_service,
+                store,
+            )
+            await self._burst(orch, store, n=5)
+
+        asyncio.run(scenario())
+
+        assert store.writes == 1
+        assert len(store['plot_grids']['grids']) == 5
+
+    def test_a_later_burst_gets_its_own_write(
+        self,
+        job_orchestrator,
+        fake_plotting_controller,
+        fake_data_service,
+        plot_data_service,
+    ):
+        """The window closes; it does not swallow everything that follows."""
+        store = CountingConfigStore()
+
+        async def scenario() -> None:
+            orch = self._make_orchestrator(
+                job_orchestrator,
+                fake_plotting_controller,
+                fake_data_service,
+                plot_data_service,
+                store,
+            )
+            await self._burst(orch, store, n=2)
+            await self._burst(orch, store, n=2)
+
+        asyncio.run(scenario())
+
+        assert store.writes == 2
+        assert len(store['plot_grids']['grids']) == 4
+
+    def test_shutdown_writes_the_pending_layout(
+        self,
+        job_orchestrator,
+        fake_plotting_controller,
+        fake_data_service,
+        plot_data_service,
+    ):
+        """Teardown empties the model, so anything pending must land first."""
+        store = CountingConfigStore()
+
+        async def scenario() -> None:
+            orch = self._make_orchestrator(
+                job_orchestrator,
+                fake_plotting_controller,
+                fake_data_service,
+                plot_data_service,
+                store,
+            )
+            orch.add_grid(title='Grid', nrows=1, ncols=1)
+            orch.shutdown()
+
+        asyncio.run(scenario())
+
+        assert len(store['plot_grids']['grids']) == 1
+
+    def test_without_a_running_loop_the_write_is_immediate(
+        self,
+        job_orchestrator,
+        fake_plotting_controller,
+        fake_data_service,
+        plot_data_service,
+    ):
+        """Screenshot runs and tests build layouts with no loop to defer onto."""
+        store = CountingConfigStore()
+        orch = self._make_orchestrator(
+            job_orchestrator,
+            fake_plotting_controller,
+            fake_data_service,
+            plot_data_service,
+            store,
+        )
+
+        orch.add_grid(title='Grid', nrows=1, ncols=1)
+
+        assert len(store['plot_grids']['grids']) == 1

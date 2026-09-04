@@ -31,10 +31,14 @@ requires-python = ">=3.12"
 dependencies = [
   "PyYAML",
   "confluent_kafka",
+  # Transitive via sciline, pinned directly: earlier versions leave self-referential
+  # graphs behind on every task-graph update, reclaimable only by the cyclic collector.
+  "cyclebane>=26.9.0",
   "dask>=2026.3.0",
   "ess-streaming-data-types",
   "essreduce>=26.6.3",  # Thread-safe wavelength-LUT polygon intersection (no warning suppression race)
   "jinja2",
+  "numba",  # Compiled wavelength-LUT interpolation, see core/numba_threading.py
   "pydantic>=2",
   "scipp>=25.02.0",  # Improved performance of scipp.group
   "scippneutron>=25.11.1",  # For DREAM unit conversion fixes
@@ -80,6 +84,10 @@ odin = [
     "essimaging>=26.4.0",
 ]
 tbl = []
+# Compose the instrument extras so their dependencies remain defined in one place.
+all-instruments = [
+    "esslivedata[beer,bifrost,dream,dummy,estia,loki,magic,nmx,odin,tbl]",
+]
 dashboard = [
   "bokeh",
   "holoviews>=1.23.0",
@@ -108,6 +116,8 @@ addopts = """
 --benchmark-skip
 -m "not integration and not slow and not browser"
 -ra
+-n auto
+--dist worksteal
 """
 testpaths = "tests"
 markers = [

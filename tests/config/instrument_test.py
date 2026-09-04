@@ -22,6 +22,7 @@ from ess.livedata.config.workflow_spec import (
     WorkflowOutputsBase,
 )
 from ess.livedata.workflows.workflow_factory import (
+    SpecHandle,
     Workflow,
     WorkflowFactory,
 )
@@ -686,6 +687,59 @@ class TestContextBindings:
         with pytest.raises(KeyError, match=r'not.*registered'):
             instrument.resolve_context_keys(workflow_id, 'det1')
 
+    @pytest.fixture
+    def spec_on_det1(self) -> tuple[Instrument, SpecHandle]:
+        instrument = Instrument(
+            name='test',
+            detector_names=['det1'],
+            streams={'rot': _f144('rot'), 'roi': _f144('roi')},
+        )
+        handle = instrument.register_spec(
+            name='w',
+            version=1,
+            title='W',
+            source_names=['det1'],
+            outputs=SimpleTestOutputs,
+        )
+        return instrument, handle
+
+    def test_spec_binding_gating_defaults_to_true(
+        self, spec_on_det1: tuple[Instrument, SpecHandle]
+    ):
+        instrument, handle = spec_on_det1
+        handle.add_context_binding(stream_name='rot', workflow_key=_Key)
+        handle.add_context_binding(stream_name='roi', workflow_key=_Key, gating=False)
+
+        rot, roi = instrument.workflow_factory.registration(
+            handle.workflow_id
+        ).context_bindings
+        assert rot.gating is True
+        assert roi.gating is False
+
+    def test_resolve_gating_streams_excludes_non_gating_spec_binding(
+        self, spec_on_det1: tuple[Instrument, SpecHandle]
+    ):
+        instrument, handle = spec_on_det1
+        handle.add_context_binding(stream_name='rot', workflow_key=_Key)
+        handle.add_context_binding(stream_name='roi', workflow_key=_Key, gating=False)
+
+        assert instrument.resolve_context_keys(handle.workflow_id, 'det1') == {
+            'rot': _Key,
+            'roi': _Key,
+        }
+        assert instrument.resolve_gating_streams(handle.workflow_id, 'det1') == {'rot'}
+
+    def test_instrument_binding_is_gating(
+        self, spec_on_det1: tuple[Instrument, SpecHandle]
+    ):
+        instrument, handle = spec_on_det1
+        instrument.add_context_binding(
+            stream_name='rot', workflow_key=_Key, dependent_sources=['det1']
+        )
+
+        assert instrument.context_bindings[0].gating is True
+        assert instrument.resolve_gating_streams(handle.workflow_id, 'det1') == {'rot'}
+
 
 class TestInstrumentRegisterSpec:
     """Test the new register_spec() convenience method for two-phase registration."""
@@ -947,3 +1001,104 @@ class TestDimTitles:
         Instrument(name='test', dim_titles={'wavelength': 'λ'})
 
         assert DEFAULT_DIM_TITLES == before
+
+
+class TestDetectorDownsampling:
+    """Opt-in reduced-resolution ingest, configured per detector.
+
+    The rules for resolving the settings against a geometry file live in
+    ``detector_downsampling_test``; what is tested here is the opt-in itself:
+    argument validation, which detectors it applies to, and that the resolved
+    settings reach the rest of ``Instrument``.
+    """
+
+    @pytest.fixture
+    def instrument(self) -> Instrument:
+        return Instrument(name='test', detector_names=['det', 'other'])
+
+    @staticmethod
+    def square_grid(side: int, first_id: int = 0) -> sc.Variable:
+        return sc.arange(
+            'detector_number', first_id, first_id + side * side, unit=None
+        ).fold(dim='detector_number', sizes={'dim_0': side, 'dim_1': side})
+
+    def configure(self, instrument: Instrument, name: str = 'det') -> None:
+        instrument.configure_detector_downsampling(
+            name, resolution=512, max_resolution=4096
+        )
+
+    def test_is_off_unless_configured(self, instrument: Instrument) -> None:
+        assert instrument.get_downsampling('det') is None
+
+    def test_applies_only_to_the_configured_detector(
+        self, instrument: Instrument
+    ) -> None:
+        instrument.configure_detector('det', detector_number=self.square_grid(4096))
+        instrument.configure_detector('other', detector_number=self.square_grid(4096))
+        self.configure(instrument)
+
+        assert instrument.get_downsampling('det').resolution == 512
+        assert instrument.get_downsampling('other') is None
+
+    def test_detector_number_becomes_the_target_grid(
+        self, instrument: Instrument
+    ) -> None:
+        instrument.configure_detector('det', detector_number=self.square_grid(4096))
+        self.configure(instrument)
+
+        assert instrument.get_detector_number('det').sizes == {
+            'dim_0': 512,
+            'dim_1': 512,
+        }
+
+    def test_resolves_against_the_configured_detector_number(
+        self, instrument: Instrument
+    ) -> None:
+        # The settings are resolved lazily, so that the geometry file loaded by
+        # load_factories is consulted rather than the file-less fallback.
+        instrument.configure_detector(
+            'det', detector_number=self.square_grid(4096, first_id=1)
+        )
+        self.configure(instrument)
+
+        assert instrument.get_downsampling('det').first_id == 1
+
+    def test_records_the_configured_maximum_resolution(
+        self, instrument: Instrument
+    ) -> None:
+        instrument.configure_detector('det', detector_number=self.square_grid(4096))
+        self.configure(instrument)
+
+        assert instrument.get_downsampling('det').max_resolution == 4096
+
+    def test_rejects_unknown_detector(self, instrument: Instrument) -> None:
+        with pytest.raises(ValueError, match='not in declared detector_names'):
+            self.configure(instrument, 'nope')
+
+    @pytest.mark.parametrize('resolution', [0, -1])
+    def test_rejects_a_resolution_that_is_not_positive(
+        self, instrument: Instrument, resolution: int
+    ) -> None:
+        with pytest.raises(ValueError, match='must be positive'):
+            instrument.configure_detector_downsampling(
+                'det', resolution=resolution, max_resolution=4096
+            )
+
+    @pytest.mark.parametrize('max_resolution', [0, -256, 768, 256])
+    def test_rejects_a_maximum_the_resolution_cannot_reach_by_doubling(
+        self, instrument: Instrument, max_resolution: int
+    ) -> None:
+        # Below the target, or above it by a ratio that is not a power of two.
+        with pytest.raises(ValueError, match='times a power of two'):
+            instrument.configure_detector_downsampling(
+                'det', resolution=512, max_resolution=max_resolution
+            )
+
+    def test_accepts_resolutions_that_are_not_powers_of_two(
+        self, instrument: Instrument
+    ) -> None:
+        instrument.configure_detector_downsampling(
+            'det', resolution=250, max_resolution=4000
+        )
+
+        assert instrument.get_downsampling('det').resolution == 250

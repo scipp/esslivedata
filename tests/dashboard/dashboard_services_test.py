@@ -109,3 +109,55 @@ def test_on_transport_failure_is_noop_on_main_thread() -> None:
     target = DashboardServices.__new__(DashboardServices)
     # Should return without raising and without sending a signal.
     DashboardServices._on_transport_failure(target)
+
+
+class _FakeJobOrchestrator:
+    def expire_pending_commands(self) -> None:
+        pass
+
+    def reconcile_observed_jobs(self) -> None:
+        pass
+
+
+class _RecordingPlotOrchestrator:
+    """Records the calls teardown ordering depends on."""
+
+    def __init__(self, events: list[str]) -> None:
+        self._events = events
+
+    def sync_job_states(self) -> None:
+        pass
+
+    def flush_frames(self) -> None:
+        self._events.append('flush')
+
+    def shutdown(self) -> None:
+        self._events.append('shutdown')
+
+
+class _RecordingTransport:
+    def __init__(self, events: list[str]) -> None:
+        self._events = events
+
+    def stop(self) -> None:
+        self._events.append('transport')
+
+
+def test_stop_shuts_down_the_orchestrator_after_the_update_loop() -> None:
+    """Teardown is what writes a layout change the debounced write left pending.
+
+    Ordered after the update thread has been joined: the loop drives the plot
+    model, so nothing may still be touching it while it is torn down.
+    """
+    events: list[str] = []
+    target = _make_loop_target(_FakeMessagePump())
+    target.job_orchestrator = _FakeJobOrchestrator()
+    target.plot_orchestrator = _RecordingPlotOrchestrator(events)
+    target._transport = _RecordingTransport(events)
+    target._update_thread = None
+    target._start_update_thread()
+
+    DashboardServices.stop(target)
+
+    assert 'flush' in events, 'the update loop never ran'
+    assert events[events.index('shutdown') :] == ['shutdown', 'transport']

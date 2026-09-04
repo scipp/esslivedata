@@ -104,6 +104,15 @@ class PlotterSpec(pydantic.BaseModel):
         default=PlotterCategory.DATA,
         description="Category of plotter: DATA (requires workflow) or STATIC (overlay)",
     )
+    title_replaces_output: bool = pydantic.Field(
+        default=False,
+        description=(
+            "Label layers with the plotter title alone, omitting the workflow "
+            "output name. For plotters whose subscribed output is a means to an "
+            "end rather than the thing on screen (ROI overlays), naming the "
+            "output is at best redundant and at worst wrong."
+        ),
+    )
 
 
 class PlotterFactory[P: pydantic.BaseModel](Protocol):
@@ -138,6 +147,7 @@ class PlotterRegistry(UserDict[str, PlotterEntry]):
         category: PlotterCategory = PlotterCategory.DATA,
         params_factory: Callable[[tuple[str, ...]], type[pydantic.BaseModel]]
         | None = None,
+        title_replaces_output: bool = False,
     ) -> None:
         # Try to get the type hint of the 'params' argument if it exists
         # Use get_type_hints to resolve forward references, in case we used
@@ -150,6 +160,7 @@ class PlotterRegistry(UserDict[str, PlotterEntry]):
             params=type_hints['params'],
             data_requirements=data_requirements,
             category=category,
+            title_replaces_output=title_replaces_output,
         )
         self[name] = PlotterEntry(
             spec=spec, factory=factory, params_factory=params_factory
@@ -412,15 +423,17 @@ def _register_all_plotters() -> None:
     # Register ROI rectangle plotters (readback + request)
     plotter_registry.register_plotter(
         name='rectangles_readback',
-        title='ROI Rectangles (Readback)',
-        description='Display ROI rectangles from workflow output. '
-        'Each rectangle is colored by its ROI index.',
+        title='ROI Rectangles',
+        description='Display the rectangle ROIs currently confirmed by the '
+        'backend. Each rectangle is colored by its ROI index. Read-only: use '
+        '"Edit ROI Rectangles" to change them.',
         data_requirements=DataRequirements(**_rectangle_roi_requirements),
         factory=RectanglesReadbackPlotter.from_params,
+        title_replaces_output=True,
     )
     plotter_registry.register_plotter(
         name='rectangles_request',
-        title='ROI Rectangles (Interactive)',
+        title='Edit ROI Rectangles',
         description='Draw and edit ROI rectangles interactively. '
         'Publishes ROI updates to backend for processing.'
         '<ul>'
@@ -433,20 +446,23 @@ def _register_all_plotters() -> None:
         '</ul>',
         data_requirements=DataRequirements(**_rectangle_roi_requirements),
         factory=RectanglesRequestPlotter.from_params,
+        title_replaces_output=True,
     )
 
     # Register ROI polygon plotters (readback + request)
     plotter_registry.register_plotter(
         name='polygons_readback',
-        title='ROI Polygons (Readback)',
-        description='Display ROI polygons from workflow output. '
-        'Each polygon is colored by its ROI index.',
+        title='ROI Polygons',
+        description='Display the polygon ROIs currently confirmed by the '
+        'backend. Each polygon is colored by its ROI index. Read-only: use '
+        '"Edit ROI Polygons" to change them.',
         data_requirements=DataRequirements(**_polygon_roi_requirements),
         factory=PolygonsReadbackPlotter.from_params,
+        title_replaces_output=True,
     )
     plotter_registry.register_plotter(
         name='polygons_request',
-        title='ROI Polygons (Interactive)',
+        title='Edit ROI Polygons',
         description='Draw and edit ROI polygons interactively. '
         'Publishes ROI updates to backend for processing.'
         '<ul>'
@@ -460,6 +476,7 @@ def _register_all_plotters() -> None:
         '</ul>',
         data_requirements=DataRequirements(**_polygon_roi_requirements),
         factory=PolygonsRequestPlotter.from_params,
+        title_replaces_output=True,
     )
 
 

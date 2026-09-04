@@ -146,6 +146,24 @@ def test_bad_placeholder_in_template_raises() -> None:
 
 
 @pytest.mark.parametrize('name', available_instruments())
+def test_every_monitor_and_detector_has_a_counts_device(name: str) -> None:
+    # NICOS reads a static device list and expects a cumulative total for every
+    # beam monitor and detector bank of every instrument. Monitors get theirs from
+    # the shared monitor-workflow registration; a detector bank is covered by
+    # several views, exactly one of which must designate COUNTS_TOTAL_DEVICE, so
+    # a new bank (or a new instrument) can otherwise silently miss its device.
+    get_config(name)
+    instrument = instrument_registry[name]
+    contract = DeviceContract.from_instrument(instrument)
+    device_names = {entry.device_name for entry in contract}
+    expected = {
+        f'{source}_counts_total'
+        for source in (*instrument.monitors, *instrument.detector_names)
+    }
+    assert expected <= device_names
+
+
+@pytest.mark.parametrize('name', available_instruments())
 def test_committed_export_is_in_sync(name: str) -> None:
     # The committed device_contract.yaml is a generated export; a drift here means
     # someone changed device_outputs without rerunning

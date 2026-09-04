@@ -22,7 +22,6 @@ cells:
       plot_aspect:
         aspect_type: Free
         ratio: 1.0
-        stretch_mode: Fill width
       plot_scale:
         x_scale: linear
         y_scale: linear
@@ -60,7 +59,6 @@ cells:
       plot_aspect:
         aspect_type: Free
         ratio: 1.0
-        stretch_mode: Fill width
       plot_scale:
         x_scale: linear
         y_scale: linear

@@ -17,17 +17,12 @@ from ess.livedata.config import (
     instrument_registry,
     name_streams,
 )
+from ess.livedata.config.device_contract import COUNTS_TOTAL_DEVICE
 from ess.livedata.config.workflow_spec import (
-    DETECTORS,
     MONITORS,
     AuxInput,
     AuxSources,
     WorkflowOutputsBase,
-)
-from ess.livedata.workflows.detector_view_specs import (
-    DetectorROIAuxSources,
-    DetectorViewOutputs,
-    DetectorViewParams,
 )
 from ess.livedata.workflows.monitor_workflow_specs import (
     MonitorDataParams,
@@ -90,16 +85,18 @@ class BeamCenterXY(pydantic.BaseModel):
 loki_aux_sources = AuxSources(
     {
         'incident_monitor': AuxInput(
-            choices=('beam_monitor_m1',),
-            default='beam_monitor_m1',
+            choices=('beam_monitor_m1', 'beam_monitor_m2'),
+            default='beam_monitor_m2',
             title='Incident Monitor',
             description='Incident beam monitor for normalization.',
         ),
         'transmission_monitor': AuxInput(
-            choices=('beam_monitor_m3',),
+            choices=('beam_monitor_m3', 'beam_monitor_m4'),
             default='beam_monitor_m3',
             title='Transmission Monitor',
-            description='Transmission monitor for sample transmission calculation.',
+            description='Transmission monitor for sample transmission calculation.'
+            ' Which of the downstream monitors is in the beam depends on the'
+            ' instrument setup.',
         ),
     }
 )
@@ -258,16 +255,13 @@ instrument.add_logical_view(
     output_ndim=1,
 )
 
-xy_projection_handle = instrument.register_spec(
-    group=DETECTORS,
+xy_projection_handle = instrument.register_detector_view(
     name='detector_xy_projection',
-    version=1,
     title='Detector XY Projection',
     description='Projection of a detector bank onto an XY-plane.',
     source_names=detector_names,
-    aux_sources=DetectorROIAuxSources(),
-    params=DetectorViewParams,
-    outputs=DetectorViewOutputs,
+    # The projection, not the tube view, carries each bank's NICOS counts device.
+    device_outputs=COUNTS_TOTAL_DEVICE,
 )
 
 # Register tube view for all detector banks

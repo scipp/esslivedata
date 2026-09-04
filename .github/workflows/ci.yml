@@ -146,10 +146,15 @@ jobs:
       - run: python -m pip install -r requirements/ci.txt
       - name: Install chromium system libraries
         # The chromium binary itself is installed by the tox env (matching its
-        # playwright version); only the apt-level libraries need sudo here.
+        # playwright version); only the apt-level libraries need sudo here. On
+        # ubuntu-24.04 that resolves to fonts alone -- the runner image already
+        # carries chromium's shared libraries -- so a broken apt mirror must not
+        # cost us the job. Bound the attempt and continue without the fonts;
+        # the browser tests measure layout geometry, not glyphs.
         run: |
           python -m pip install playwright
-          playwright install-deps chromium
+          timeout -k 30 180 playwright install-deps chromium || echo \
+            "::warning title=install-deps::apt failed or timed out; continuing without extra fonts."
       - name: Run browser tests
         shell: bash
         run: |
@@ -191,7 +196,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        instrument: [beer, bifrost, dream, dummy, estia, loki, nmx, odin, tbl]
+        instrument: [beer, bifrost, dream, dummy, estia, loki, magic, nmx, odin, tbl]
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -229,10 +234,90 @@ jobs:
       - run: python -m pip install ".[dashboard]"
       - name: Smoke-check dashboard for each instrument
         run: |
-          for inst in dummy tbl bifrost dream loki odin estia nmx beer; do
+          for inst in $(python -c 'from ess.livedata.config.instruments import available_instruments; print(" ".join(available_instruments()))'); do
             echo "::group::$inst"
             python -m ess.livedata.dashboard.reduction \
-              --instrument $inst --transport none \
+              --instrument "$inst" --transport none \
+              --no-fetch-announcements --check
+            echo "::endgroup::"
+          done
+
+  container-check:
+    # Unlike the host jobs, this exercises the actual Dockerfile targets. The
+    # backend checks that all instrument extras coexist in the published image;
+    # the dashboard checks that its intentionally smaller image remains enough.
+    name: Container contract (${{ matrix.target }})
+    needs: tests
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        target: [backend, dashboard]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: docker/setup-buildx-action@v3
+      - name: Build image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          target: ${{ matrix.target }}
+          load: true
+          tags: esslivedata-${{ matrix.target }}:test
+          build-args: |
+            SETUPTOOLS_SCM_PRETEND_VERSION=0.0.0
+          cache-from: type=gha,scope=contract-${{ matrix.target }}
+          cache-to: type=gha,mode=max,scope=contract-${{ matrix.target }}
+      - name: Smoke-check backend image
+        if: matrix.target == 'backend'
+        run: |
+          instruments=$(docker run --rm esslivedata-backend:test \
+            python -c 'from ess.livedata.config.instruments import available_instruments; print(" ".join(available_instruments()))')
+          for inst in $instruments; do
+            for svc in monitor_data detector_data data_reduction timeseries; do
+              echo "::group::$inst/$svc"
+              docker run --rm \
+                -e KAFKA_BOOTSTRAP_SERVERS=kafka:9092 \
+                -e KAFKA_SECURITY_PROTOCOL=SASL_PLAINTEXT \
+                -e KAFKA_SASL_MECHANISM=SCRAM-SHA-256 \
+                -e KAFKA_SASL_USERNAME=test \
+                -e KAFKA_SASL_PASSWORD=test \
+                esslivedata-backend:test \
+                python -m ess.livedata.services.$svc \
+                  --instrument "$inst" --check
+              echo "::endgroup::"
+            done
+          done
+      - name: Check Kafka TLS configuration in backend image
+        if: matrix.target == 'backend'
+        run: |
+          docker run --rm \
+            -e KAFKA_BOOTSTRAP_SERVERS=kafka:9092 \
+            -e KAFKA_SECURITY_PROTOCOL=SASL_SSL \
+            -e KAFKA_SASL_MECHANISM=SCRAM-SHA-256 \
+            -e KAFKA_SASL_USERNAME=test \
+            -e KAFKA_SASL_PASSWORD=test \
+            -e KAFKA_SSL_CA_LOCATION=/etc/ssl/certs/ca-certificates.crt \
+            esslivedata-backend:test \
+            python -c "from ess.livedata.config.config_loader import load_config; config = load_config(namespace='kafka'); assert config['ssl.ca.location'] == '/etc/ssl/certs/ca-certificates.crt'"
+      - name: Check writable reference-data cache in backend image
+        if: matrix.target == 'backend'
+        run: |
+          docker run --rm esslivedata-backend:test \
+            python -c "import os; from pathlib import Path; path = Path(os.environ['SCIPP_DATA_DIR']); assert path == Path('/app/data/cache'); probe = path / '.write-test'; probe.write_text('ok'); probe.unlink()"
+      - name: Smoke-check dashboard image
+        if: matrix.target == 'dashboard'
+        run: |
+          instruments=$(docker run --rm esslivedata-dashboard:test \
+            python -c 'from ess.livedata.config.instruments import available_instruments; print(" ".join(available_instruments()))')
+          for inst in $instruments; do
+            echo "::group::$inst"
+            docker run --rm \
+              esslivedata-dashboard:test \
+              python -m ess.livedata.dashboard.reduction \
+              --instrument "$inst" --transport none \
               --no-fetch-announcements --check
             echo "::endgroup::"
           done

@@ -13,10 +13,16 @@ from ess.livedata.dashboard.frame_aspect import make_frame_aspect_opts
 from ess.livedata.dashboard.plot_params import (
     PlotAspect,
     PlotAspectType,
-    StretchMode,
 )
 
 hv.extension('bokeh')
+
+_CONSTRAINED = [
+    PlotAspectType.square,
+    PlotAspectType.aspect,
+    PlotAspectType.equal,
+    PlotAspectType.data_aspect,
+]
 
 
 def _image(data: np.ndarray) -> hv.Image:
@@ -30,11 +36,7 @@ def _n_js_callbacks(model) -> int:
 @pytest.fixture
 def rendered_dmap():
     """Render a data-aspect DynamicMap and return (figure, pipe) for updates."""
-    opts = make_frame_aspect_opts(
-        PlotAspect(
-            aspect_type=PlotAspectType.data_aspect, stretch_mode=StretchMode.width
-        )
-    )
+    opts = make_frame_aspect_opts(PlotAspect(aspect_type=PlotAspectType.data_aspect))
     pipe = Pipe(data=np.zeros((4, 8)))
     dmap = hv.DynamicMap(lambda data: _image(data).opts(**opts), streams=[pipe])
     plot = hv.renderer('bokeh').get_plot(dmap)
@@ -46,35 +48,27 @@ class TestMakeFrameAspectOpts:
         opts = make_frame_aspect_opts(PlotAspect(aspect_type=PlotAspectType.free))
         assert opts == {'responsive': True}
 
+    @pytest.mark.parametrize('aspect_type', _CONSTRAINED)
+    def test_constrained_aspect_adds_a_hook(self, aspect_type: PlotAspectType) -> None:
+        opts = make_frame_aspect_opts(PlotAspect(aspect_type=aspect_type))
+        assert opts['responsive'] is True
+        assert len(opts['hooks']) == 1
+
     @pytest.mark.parametrize(
-        'aspect_type',
-        [
-            PlotAspectType.square,
-            PlotAspectType.aspect,
-            PlotAspectType.equal,
-            PlotAspectType.data_aspect,
-        ],
+        'aspect_type', [PlotAspectType.free, *_CONSTRAINED], ids=lambda t: t.name
     )
-    def test_fill_width_fixes_height_so_holoviews_stretches_width(
+    def test_figure_fills_its_container_on_both_axes(
         self, aspect_type: PlotAspectType
     ) -> None:
-        opts = make_frame_aspect_opts(
-            PlotAspect(aspect_type=aspect_type, stretch_mode=StretchMode.width)
-        )
-        fig = hv.render(_image(np.zeros((4, 8))).opts(**opts))
-        assert fig.sizing_mode == 'stretch_width'
-        assert fig.height == opts['height']
-        assert fig.width is None
+        """The frame carries the aspect, so the figure itself never leaves the cell.
 
-    def test_fill_height_fixes_width_so_holoviews_stretches_height(self) -> None:
-        opts = make_frame_aspect_opts(
-            PlotAspect(
-                aspect_type=PlotAspectType.square, stretch_mode=StretchMode.height
-            )
-        )
+        A figure sized along one axis only would overflow its grid cell along
+        the other and paint over the neighbouring cell (#931).
+        """
+        opts = make_frame_aspect_opts(PlotAspect(aspect_type=aspect_type))
         fig = hv.render(_image(np.zeros((4, 8))).opts(**opts))
-        assert fig.sizing_mode == 'stretch_height'
-        assert fig.width == opts['width']
+        assert fig.sizing_mode == 'stretch_both'
+        assert fig.width is None
         assert fig.height is None
 
 
@@ -93,13 +87,21 @@ class TestHookAcrossUpdates:
         assert _n_js_callbacks(fig.x_range) == 2
         assert _n_js_callbacks(fig.y_range) == 2
 
-    def test_updates_leave_figure_geometry_untouched(self, rendered_dmap) -> None:
+    def test_reapplied_opts_reset_the_letterbox_padding(self, rendered_dmap) -> None:
+        """Re-applying element opts rewrites ``min_border_*``, wiping the letterbox.
+
+        This fixture re-applies the opts per frame, which the dashboard's own
+        update path does not do (data arrives through pipes, leaving figure
+        properties alone). It pins the hazard the callback is written against:
+        anything that re-applies opts wipes the padding, so the rule has to be
+        idempotent and has to re-derive its input from the current layout
+        rather than remember what it applied.
+        """
         fig, pipe = rendered_dmap
-        # Simulate the browser-side CustomJS having adjusted the height.
-        fig.height = 513
+        # Simulate the browser-side CustomJS having letterboxed the frame.
+        fig.min_border_left = 120
 
-        for _ in range(3):
-            pipe.send(np.ones((4, 8)))
+        pipe.send(np.ones((4, 8)))
 
-        assert fig.sizing_mode == 'stretch_width'
-        assert fig.height == 513
+        assert fig.sizing_mode == 'stretch_both'
+        assert fig.min_border_left != 120

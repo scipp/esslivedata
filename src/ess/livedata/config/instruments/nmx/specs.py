@@ -10,12 +10,7 @@ from ess.livedata.config import (
     instrument_registry,
     name_streams,
 )
-from ess.livedata.config.workflow_spec import DETECTORS
-from ess.livedata.workflows.detector_view_specs import (
-    DetectorROIAuxSources,
-    DetectorViewOutputs,
-    DetectorViewParams,
-)
+from ess.livedata.config.device_contract import COUNTS_TOTAL_DEVICE
 from ess.livedata.workflows.monitor_workflow_specs import (
     TOAOnlyMonitorDataParams,
     register_monitor_workflow_specs,
@@ -43,14 +38,10 @@ register_monitor_workflow_specs(
 )
 
 # Register detector view spec for the panel_xy view
-panel_xy_view_handle = instrument.register_spec(
-    group=DETECTORS,
+instrument.add_logical_view(
     name='panel_xy',
-    version=1,
     title='Detector counts',
     description='Detector counts per pixel.',
     source_names=detector_names,
-    aux_sources=DetectorROIAuxSources(),
-    params=DetectorViewParams,
-    outputs=DetectorViewOutputs,
+    device_outputs=COUNTS_TOTAL_DEVICE,
 )

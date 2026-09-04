@@ -4,14 +4,44 @@
 
 from __future__ import annotations
 
+import time
 from collections.abc import Iterator
 from contextlib import contextmanager
 from typing import TYPE_CHECKING
 
 import panel as pn
+import structlog
+
+from ..core.log_throttle import LogThrottle
 
 if TYPE_CHECKING:
     from bokeh.document import Document
+
+logger = structlog.get_logger(__name__)
+
+_SLOW_UPDATE_S = 0.5
+"""Duration above which one batch is reported as harmful to other sessions.
+
+Every session on a dashboard process shares one IOLoop, so a batch this long
+is time during which none of the others is served. Chosen above the steady-state
+cost of a large grid, so what it reports is a grid being built or revealed rather
+than the per-frame repaint.
+"""
+
+_depth = 0
+"""Nesting depth, so one pass is reported once rather than once per batch."""
+
+_slow_updates = LogThrottle()
+"""Throttle for the slow-batch warning.
+
+A grid big enough to exceed the threshold on its steady-state repaint would
+otherwise warn on every data frame, for as long as it stays open.
+
+Shared by every session rather than held per session: the question the warning
+answers is whether this process is stalling, and one throttle per session would
+scale the volume with the number of sessions, which is the wrong direction.
+Which session a reported batch belonged to is in the message.
+"""
 
 
 @contextmanager
@@ -31,13 +61,48 @@ def batched_update() -> Iterator[None]:
     :func:`_frozen_models`.
 
     Nesting is a no-op: an inner batch is already covered by the outer one.
+
+    Every path that blocks the loop with document work passes through here --
+    the session tick and the tab reveal alike -- so this is also where that work
+    is timed, and where a batch long enough to stall the other sessions on the
+    process is reported -- at most once per cooldown, since a grid large enough
+    to cross the threshold does so on every frame.
     """
+    global _depth
     doc = pn.state.curdoc
-    # The freeze is the inner context so that it recomputes before the hold
-    # dispatches: a model added during the pass must be attached to the document
-    # by the time the queued events are serialized.
-    with pn.io.hold(), _frozen_models(doc):
-        yield
+    outermost = _depth == 0
+    _depth += 1
+    start = time.monotonic()
+    try:
+        # The freeze is the inner context so that it recomputes before the hold
+        # dispatches: a model added during the pass must be attached to the
+        # document by the time the queued events are serialized.
+        with pn.io.hold(), _frozen_models(doc):
+            yield
+    finally:
+        _depth -= 1
+        end = time.monotonic()
+        elapsed = end - start
+        # Reported on the exception path too: a pass that blocks the loop and
+        # then raises is the one most worth seeing.
+        if outermost and elapsed >= _SLOW_UPDATE_S:
+            suppressed = _slow_updates.take(end)
+            if suppressed is not None:
+                logger.warning(
+                    'dashboard_slow_update',
+                    elapsed_seconds=round(elapsed, 3),
+                    session_id=_session_id(doc),
+                    suppressed=suppressed,
+                )
+
+
+def _session_id(doc: Document | None) -> str | None:
+    """Identify the session a batch belongs to, if it has one.
+
+    ``None`` off a server session, which is where the widget tests run.
+    """
+    context = getattr(doc, 'session_context', None)
+    return None if context is None else context.id
 
 
 @contextmanager

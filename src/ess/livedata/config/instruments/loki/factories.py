@@ -130,7 +130,6 @@ def setup_factories(instrument: Instrument) -> None:
     def _detector_view_workflow_factory(
         source_name: str,
         params: DetectorViewParams,
-        aux_source_names: dict[str, str],
     ) -> StreamProcessorWorkflow:
         """Factory for LOKI detector view with TOF lookup table support."""
         lookup_table_filename = None
@@ -138,10 +137,7 @@ def setup_factories(instrument: Instrument) -> None:
             lookup_table_filename = _resolve_lookup_table_filename()
 
         return _xy_projection.make_workflow(
-            source_name,
-            params,
-            aux_source_names,
-            lookup_table_filename=lookup_table_filename,
+            source_name, params, lookup_table_filename=lookup_table_filename
         )
 
     from ess.livedata.workflows.monitor_workflow import create_monitor_workflow

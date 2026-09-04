@@ -28,7 +28,6 @@ from ess.livedata.config.workflow_spec import WorkflowId, WorkflowSpec
 from ..cell_autoscale import CellAutoscaleController, build_controller_from_layers
 from ..cell_plan import CellBuildInputs
 from ..format_utils import extract_error_summary
-from ..frame_aspect import pane_sizing_mode
 from ..hover_suspend import make_hover_suspend_hook
 from ..plot_data_service import LayerSnapshot, LayerState, PlotDataService
 from ..plot_orchestrator import (
@@ -39,8 +38,12 @@ from ..plot_orchestrator import (
     PlotCell,
     PlotOrchestrator,
 )
-from ..plot_params import PlotAspect, PlotAspectType
-from ..plots import TimeBounds, format_time_info, merge_time_bounds
+from ..plots import (
+    TimeBounds,
+    format_time_info,
+    legend_overlay_opts,
+    merge_time_bounds,
+)
 from ..save_filename import build_save_filename_from_cell, make_save_filename_hook
 from ..session_layer import SessionLayer
 from .plot_grid import GridCellStyles
@@ -49,16 +52,13 @@ from .plot_widgets import (
     create_layer_info_row,
     derive_cell_title,
     get_plot_cell_display_info,
-    get_workflow_display_info,
 )
 from .styles import Colors, StatusColors, StatusPill
 
 logger = structlog.get_logger(__name__)
 
-
-# Params without a configurable aspect size like an unconstrained plot.
-_FREE_ASPECT = PlotAspect(aspect_type=PlotAspectType.free)
-
+# Fill behind cell content that reports a failure rather than a plot.
+_ERROR_BG = '#ffe6e6'
 
 # Data-age thresholds in seconds (now minus the oldest data's end time) that
 # classify freshness for the titlebar pill.
@@ -181,6 +181,29 @@ def create_layer_time_pane() -> pn.pane.HTML:
     )
 
 
+def _build_error_panel(message: str) -> pn.Column:
+    """Last-resort content for a cell whose own chrome failed to build.
+
+    The titlebar carries the cell's configure and rename actions, so a cell
+    reduced to this panel can no longer be fixed from the UI. Plot composition
+    -- by far the likelier failure, and the one seen in the wild -- is guarded
+    separately for that reason, keeping the chrome intact.
+    """
+    return pn.Column(
+        pn.pane.Markdown(
+            "**Cell failed to build**\n\n"
+            f"<span style='color: {StatusColors.ERROR}'>{message}</span>",
+            styles={'text-align': 'left', 'padding': '20px'},
+        ),
+        sizing_mode='stretch_both',
+        styles={
+            'background-color': _ERROR_BG,
+            'border': f'2px solid {StatusColors.ERROR}',
+        },
+        margin=GridCellStyles.CELL_MARGIN,
+    )
+
+
 @dataclass(frozen=True)
 class CellDeps:
     """Shared, session-stable dependencies for building cell widgets.
@@ -255,6 +278,7 @@ class CellWidget:
         # One pane per rendered view of the plot: the grid cell's, plus one
         # per pop-out window. Kept so dispose() can unsubscribe them all.
         self._plot_panes: list[pn.pane.HoloViews] = []
+        self._build_error: str | None = None
         self._title = (
             cell.user_title
             if cell.user_title is not None
@@ -264,9 +288,32 @@ class CellWidget:
                 get_source_title=deps.orchestrator.get_source_title,
             )
         )
-        # Composing builds the autoscale controller as a side effect.
-        self._plot = self._compose_plot()
-        self._view = self._build()
+        # A cell build must never abort its caller. The poll pass builds every
+        # other cell of the session and pushes the session's frame data in the
+        # same loop, so a single raising plotter would starve every plot in the
+        # session (#1276). Both stages degrade instead of propagating, and the
+        # widget is kept with its build inputs recorded: the differ then treats
+        # the failure as applied and rebuilds only once an input changes. A
+        # failure deterministic in the cell's config would otherwise re-raise
+        # on every tick, forever.
+        try:
+            # Composing builds the autoscale controller as a side effect.
+            self._plot = self._compose_plot()
+        except Exception as exc:
+            logger.exception("Composing the plot for cell %s failed", cell_id)
+            self._build_error = f'{type(exc).__name__}: {exc}'
+            self.dispose()
+            self._plot = None
+        try:
+            self._view = self._build()
+        except Exception as exc:
+            logger.exception("Building cell %s failed", cell_id)
+            self.dispose()
+            # Nothing that follows is in the document, so freeze the panes the
+            # poll loop would otherwise keep writing to.
+            self._layer_time_panes.clear()
+            self._pill_frozen = True
+            self._view = _build_error_panel(f'{type(exc).__name__}: {exc}')
 
     @property
     def view(self) -> pn.Column:
@@ -406,11 +453,11 @@ class CellWidget:
     ) -> None:
         """Freeze the titlebar pill to a status pill when the cell is not live.
 
-        Any errored layer wins (needs attention); otherwise all dynamic layers
-        stopped means the cell shows a deliberate frozen snapshot. Static
-        overlay layers never run a job, so they are ignored for the stopped
-        aggregate. State changes bump layer versions and rebuild the cell, so
-        deciding at build time is sufficient.
+        A failed build or any errored layer wins (needs attention); otherwise
+        all dynamic layers stopped means the cell shows a deliberate frozen
+        snapshot. Static overlay layers never run a job, so they are ignored
+        for the stopped aggregate. State changes bump layer versions and
+        rebuild the cell, so deciding at build time is sufficient.
         """
         self._stopped_layers = frozenset(
             layer_id
@@ -422,7 +469,9 @@ class CellWidget:
             for layer in self._cell.layers
             if not layer.config.is_static()
         ]
-        if any(s.state is LayerState.ERROR for s in layer_states.values()):
+        if self._build_error is not None or any(
+            s.state is LayerState.ERROR for s in layer_states.values()
+        ):
             frozen = format_error_html()
         elif dynamic_ids and all(lid in self._stopped_layers for lid in dynamic_ids):
             frozen = format_stopped_html()
@@ -457,12 +506,12 @@ class CellWidget:
             bg_color = None
         else:
             content = self._build_placeholder(layer_states)
-            # Check if any layer has an error
-            has_error = any(
+            # Check if the build or any layer has an error
+            has_error = self._build_error is not None or any(
                 state.error_message is not None for state in layer_states.values()
             )
             if has_error:
-                bg_color = '#ffe6e6'
+                bg_color = _ERROR_BG
                 border = f'2px solid {StatusColors.ERROR}'
             else:
                 bg_color = Colors.BG_LIGHT
@@ -603,7 +652,7 @@ class CellWidget:
         layer_states: dict[LayerId, LayerSnapshot],
     ) -> pn.pane.Markdown:
         """
-        Create placeholder content showing layer status.
+        Create placeholder content showing why the cell shows no plot.
 
         Parameters
         ----------
@@ -613,16 +662,25 @@ class CellWidget:
         Returns
         -------
         :
-            Markdown pane showing status for all layers.
+            Markdown pane showing the build failure, if any, and the status of
+            every layer.
         """
         # Build status info for each layer
         status_lines = []
+        if self._build_error is not None:
+            status_lines.append(
+                "**Plot failed to build**: "
+                f"<span style='color: {StatusColors.ERROR}'>"
+                f"{self._build_error}</span>"
+            )
         for layer in self._cell.layers:
             config = layer.config
             state = layer_states[layer.layer_id]
 
-            workflow_title, output_title = get_workflow_display_info(
-                self._deps.workflow_registry, config.workflow_id, config.view_name
+            layer_title, _ = get_plot_cell_display_info(
+                config,
+                self._deps.workflow_registry,
+                get_source_title=self._deps.orchestrator.get_source_title,
             )
 
             # Determine status from explicit state enum
@@ -648,8 +706,7 @@ class CellWidget:
                     text_color = Colors.TEXT_MUTED
 
             status_lines.append(
-                f"**{workflow_title} → {output_title}**: "
-                f"<span style='color: {text_color}'>{status}</span>"
+                f"**{layer_title}**: <span style='color: {text_color}'>{status}</span>"
             )
 
         content = "\n\n".join(status_lines)
@@ -677,14 +734,6 @@ class CellWidget:
         :
             Layout containing the plot pane and any DynamicMap kdim widgets.
         """
-        # Use sizing mode from first layer (they should be consistent for overlay)
-        if self._cell.layers:
-            params = self._cell.layers[0].config.params
-            aspect = getattr(params, 'plot_aspect', _FREE_ASPECT)
-        else:
-            aspect = _FREE_ASPECT
-        sizing_mode = pane_sizing_mode(aspect)
-
         # Use .layout to preserve widgets for DynamicMaps with kdims.
         # When pn.pane.HoloViews wraps a DynamicMap with kdims, it generates
         # widgets. However, these widgets don't render when the pane is placed
@@ -713,7 +762,7 @@ class CellWidget:
         # - Allows proper multi-layer composition via hv.Overlay
         # - Each grid cell's plot remains independent
         plot_pane_wrapper = pn.pane.HoloViews(
-            self._plot, sizing_mode=sizing_mode, linked_axes=False
+            self._plot, sizing_mode='stretch_both', linked_axes=False
         )
         # Kept so dispose() can unsubscribe the rendered plots from the layer
         # pipes; see dispose().
@@ -809,4 +858,16 @@ class CellWidget:
         if controller is not None:
             self._autoscale_controller = controller
             hooks.append(controller.make_hook())
-        return result.opts(hooks=hooks)
+        # Collating hands the legend to the outer OverlayPlot, which does not
+        # inherit the collated layers' legend opts, so the cell re-applies the
+        # setting. Only layers that draw a legend declare one; the first such
+        # layer decides, as it does for the frame-aspect hook.
+        legend_position = next(
+            (
+                plotter.legend_position
+                for plotter in cell_plotters
+                if plotter.legend_position is not None
+            ),
+            None,
+        )
+        return result.opts(hooks=hooks, **legend_overlay_opts(legend_position))

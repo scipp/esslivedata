@@ -635,3 +635,35 @@ class TestGetConfigDir:
         assert config_dir.name == 'dummy'
         # Parent should be esslivedata config directory
         assert 'esslivedata' in str(config_dir.parent)
+
+
+def test_written_file_is_what_the_reference_emitter_would_write():
+    """The store picks libyaml's emitter for speed; it must not change the file.
+
+    A file written by one emitter has to stay readable and diffable against one
+    written by the other, since which is available depends on the wheel.
+    """
+    config = {
+        'grids': [
+            {
+                'title': 'Detectors',
+                'nrows': 2,
+                'ncols': 1,
+                'enabled': False,
+                'cells': [{'layers': [{'params': {'coordinates': '[0.1,2,3,4]'}}]}],
+                'source_names': ['bank0', 'bank1'],
+                'threshold': 1.5e-11,
+                'view_name': None,
+            }
+        ]
+    }
+    with tempfile.TemporaryDirectory() as tmpdir:
+        store = FileBackedConfigStore(file_path=Path(tmpdir) / 'plot_grids.yaml')
+        store['plot_grids'] = config
+        written = (Path(tmpdir) / 'plot_grids.yaml').read_text()
+
+    reference = yaml.safe_dump(
+        {'plot_grids': config}, default_flow_style=False, sort_keys=False
+    )
+    assert written == reference
+    assert yaml.safe_load(written) == {'plot_grids': config}

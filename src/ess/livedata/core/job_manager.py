@@ -159,11 +159,9 @@ class JobFactory:
             raise WorkflowNotFoundError(f"WorkflowSpec with Id {workflow_id} not found")
         workflow_spec = registration.spec
 
-        # Render dynamic aux source names using the spec's render() method.
         if workflow_spec.aux_sources is not None:
             rendered_aux_names = workflow_spec.aux_sources.render(
-                job_id=job_id,
-                selections=config.aux_source_names if config.aux_source_names else None,
+                selections=config.aux_source_names if config.aux_source_names else None
             )
         else:
             rendered_aux_names = dict(config.aux_source_names or {})
@@ -171,10 +169,11 @@ class JobFactory:
         context_keys = self._instrument.resolve_context_keys(
             workflow_id, job_id.source_name
         )
+        gating_streams = self._instrument.resolve_gating_streams(
+            workflow_id, job_id.source_name
+        )
         # Context wire names equal their stream names — no per-job suffixing.
-        context_streams = set(context_keys)
-
-        aux_streams = {**rendered_aux_names, **{name: name for name in context_streams}}
+        aux_streams = {**rendered_aux_names, **{name: name for name in context_keys}}
 
         # Note that this initializes the job immediately, i.e., we pay startup cost now.
         # ``chain_patch_bindings`` carries the instrument-scope dynamic
@@ -194,7 +193,7 @@ class JobFactory:
             workflow=stream_processor,
             source_names=[job_id.source_name],
             input_streams=set(aux_streams.values()),
-            gating_streams=context_streams,
+            gating_streams=gating_streams,
             reset_on_run_transition=workflow_spec.reset_on_run_transition,
             supports_reset=workflow_spec.supports_reset,
         )
