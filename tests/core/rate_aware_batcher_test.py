@@ -24,6 +24,7 @@ from structlog.testing import capture_logs
 from ess.livedata.core.message import Message, StreamId, StreamKind
 from ess.livedata.core.message_batcher import MessageBatch
 from ess.livedata.core.rate_aware_batcher import (
+    _STALL_THRESHOLD_BATCHES,
     MIN_DIFFS_FOR_GATE,
     RateAwareMessageBatcher,
 )
@@ -2573,6 +2574,41 @@ class TestStallBackstop:
             clock.advance(10.0)
             assert batcher.batch([]) is None
         assert batcher._active_window.start == before
+
+    @pytest.mark.parametrize(
+        ('stream', 'offset'),
+        [
+            # Converged gated stream: the frozen stamp lands in its bucket.
+            (DETECTOR, 0.1),
+            # Fresh ungridded stream stamped just past the window: held back
+            # in ``_future``, which the stall check must not overlook.
+            (StreamId(kind=StreamKind.AREA_DETECTOR, name='frames'), 1.1),
+        ],
+    )
+    def test_stuck_clock_is_delivered_and_bounded(self, stream, offset):
+        """A producer whose timestamp stops advancing can never satisfy a
+        gate or reach the timeout, and as the only traffic nothing else
+        closes the window.  The backstop must deliver it anyway, and hold no
+        more than a couple of stall intervals' worth."""
+        clock = FakeClock()
+        batcher, _ = make_converged_batcher(rate_hz=14.0, clock=clock)
+        for _ in range(5):  # drain pending timeout closes
+            batcher.batch([])
+        frozen = batcher._active_window.start.to_ns() / 1e9 + offset
+        delivered = 0
+        peak = 0
+        for _ in range(600):
+            clock.advance(1.0)
+            out = batcher.batch([msg(frozen, stream=stream)])
+            if out is not None:
+                delivered += len(out.messages)
+            held = len(batcher._buffered_messages()) + len(batcher._future)
+            peak = max(peak, held)
+        assert delivered > 0
+        assert delivered + held == 600, "stuck-clock traffic was lost"
+        # One message per call and per batch length of wall time: a close
+        # takes a stall check to establish growth and one more to fire.
+        assert peak <= 3 * _STALL_THRESHOLD_BATCHES
 
     def test_backstop_waits_out_the_threshold(self):
         """A window parked ahead of traffic recovers via the backstop, but
