@@ -29,6 +29,7 @@ from ess.livedata.dashboard.plot_params import PlotParams1d
 from ess.livedata.dashboard.plots import LinePlotter
 from ess.livedata.dashboard.session_layer import SessionLayer
 from ess.livedata.dashboard.static_plots import LinesCoordinates, VLinesParams
+from ess.livedata.dashboard.theme import DEFAULT_THEME
 
 hv.extension('bokeh')
 
@@ -330,6 +331,14 @@ class TestPopoutLifecycle:
         plot_grid_tabs._show_popout(line_cell)
 
         assert len(_open_windows(plot_grid_tabs)) == 1
+
+    def test_the_window_wears_the_shell_header_color(self, plot_grid_tabs, line_cell):
+        """A window floating over the dashboard is part of the shell, and the
+        shell's chrome color is the theme's to pick."""
+        plot_grid_tabs._show_popout(line_cell)
+
+        (window,) = _open_windows(plot_grid_tabs)
+        assert window.theme == DEFAULT_THEME.header_background
 
     def test_closing_the_window_drops_it(self, plot_grid_tabs, line_cell):
         plot_grid_tabs._show_popout(line_cell)

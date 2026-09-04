@@ -304,7 +304,8 @@ class PlotGridTabs:
         # ``_current_modal``: that field gates the poll loop's data flush, and
         # a pop-out must keep updating.
         self._popouts = PlotPopoutManager(
-            on_window_change=self._on_popout_window_change
+            on_window_change=self._on_popout_window_change,
+            header_color=theme.header_background,
         )
 
         # The manager reports locally-initiated grid creations so this session

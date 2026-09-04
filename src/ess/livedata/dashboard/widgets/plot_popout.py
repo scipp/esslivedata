@@ -72,7 +72,6 @@ from panel.reactive import ReactiveHTML
 
 from ..plot_orchestrator import CellId
 from .cell import CellWidget
-from .styles import Colors
 
 # Initial window size. Generous, but small enough that the grid stays partly
 # visible behind it — the pop-out is a detail view of a cell, not a replacement
@@ -196,6 +195,7 @@ def _build_window(
     pane: pn.viewable.Viewable,
     css_classes: list[str],
     cascade: int,
+    header_color: str,
 ) -> pn.layout.FloatPanel:
     """Build the floating window for one cell's plot.
 
@@ -210,6 +210,8 @@ def _build_window(
     cascade:
         Cascade slot for this window, offsetting it so it does not land
         exactly on top of an already-open one.
+    header_color:
+        Title-bar color. jsPanel derives the header's text color from it.
     """
     offset = _CASCADE_STEP * (cascade % _CASCADE_WRAP)
     return pn.layout.FloatPanel(
@@ -240,7 +242,10 @@ def _build_window(
         # looks like the natural fit but jsPanel applies it only to interactive
         # resizing, not to the size it opens at.)
         config={'contentSize': f'{_POPOUT_WIDTH} {_CONTENT_HEIGHT}'},
-        theme=Colors.TAB_BORDER,
+        # A pop-out is part of the shell, so its title bar wears the shell's
+        # own color rather than one of its own: a window floating over the
+        # dashboard in an unrelated hue reads as something else's.
+        theme=header_color,
         css_classes=css_classes,
     )
 
@@ -262,9 +267,15 @@ class PlotPopoutManager:
         a close additionally needs the cell behind it rebuilt. Opening reports
         nothing: the pop-out button lives in a cell titlebar, so the cell is on
         the visible tab and already live and rendering.
+    header_color:
+        Title-bar color for the windows, passed in rather than read from the
+        theme: shell chrome is the theme's to choose, and this module is not
+        the shell.
     """
 
-    def __init__(self, on_window_change: Callable[[CellId, str], None]) -> None:
+    def __init__(
+        self, on_window_change: Callable[[CellId, str], None], header_color: str
+    ) -> None:
         # Zero-height so the container does not compete for vertical space;
         # the windows themselves render as free-floating overlays. The fitter
         # is invisible and only installs document-level handlers, so it costs
@@ -288,6 +299,7 @@ class PlotPopoutManager:
         # button -- the very thing the cascade offset exists to avoid.
         self._cascade = 0
         self._on_window_change = on_window_change
+        self._header_color = header_color
 
     @property
     def container(self) -> pn.Column:
@@ -349,6 +361,7 @@ class PlotPopoutManager:
             # titlebar's — a CellId is a UUID, useless as a stable selector.
             css_classes=['lt-popout', f'lt-popout-r{geometry.row}c{geometry.col}'],
             cascade=self._cascade,
+            header_color=self._header_color,
         )
         self._cascade += 1
         window.param.watch(lambda event: self._on_status(cell_id, event.new), 'status')
