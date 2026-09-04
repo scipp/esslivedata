@@ -305,7 +305,7 @@ class PlotGridTabs:
         # a pop-out must keep updating.
         self._popouts = PlotPopoutManager(
             on_window_change=self._on_popout_window_change,
-            header_color=theme.header_background,
+            header_color=theme.floating_header_background,
         )
 
         # The manager reports locally-initiated grid creations so this session

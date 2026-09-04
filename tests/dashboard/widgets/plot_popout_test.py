@@ -338,7 +338,7 @@ class TestPopoutLifecycle:
         plot_grid_tabs._show_popout(line_cell)
 
         (window,) = _open_windows(plot_grid_tabs)
-        assert window.theme == DEFAULT_THEME.header_background
+        assert window.theme == DEFAULT_THEME.floating_header_background
 
     def test_closing_the_window_drops_it(self, plot_grid_tabs, line_cell):
         plot_grid_tabs._show_popout(line_cell)
