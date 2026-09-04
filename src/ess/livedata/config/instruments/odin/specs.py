@@ -27,10 +27,12 @@ TIMEPIX3_IMAGE_RESOLUTION = 512
 TIMEPIX3_PANEL_RESOLUTION = 4096
 
 #: Choppers feeding the wavelength-LUT cascade, in beam order. The geometry
-#: artifact also holds a ``t0`` chopper, left out here because its PVs are
-#: still simulation sources (``SIM_odin:instrument:t0:*``) that have never
-#: connected: a chopper whose setpoints never arrive would hold the cascade
-#: permanently unlocked. Add it once the real device streams.
+#: artifact also holds a ``t0`` chopper, left out because that chopper does not
+#: exist yet; its NeXus entry is a placeholder on simulation PVs
+#: (``SIM_odin:instrument:t0:*``) that have never connected. The cascade fires
+#: only once every configured chopper has locked, so listing a device that
+#: cannot stream would hold the LUT permanently pending. Add it when the
+#: chopper is installed.
 #:
 #: The artifact's ``wfm1``/``wfm2`` axle positions carry a hand repair: the run
 #: file chains their offsets onto an NXlog that streams 0 m, placing them
