@@ -26,10 +26,34 @@ TIMEPIX3_IMAGE_RESOLUTION = 512
 #: resolution rather than stating it.
 TIMEPIX3_PANEL_RESOLUTION = 4096
 
+#: Choppers feeding the wavelength-LUT cascade, in beam order. The geometry
+#: artifact also holds a ``t0`` chopper, left out here because its PVs are
+#: still simulation sources (``SIM_odin:instrument:t0:*``) that have never
+#: connected: a chopper whose setpoints never arrive would hold the cascade
+#: permanently unlocked. Add it once the real device streams.
+#:
+#: The artifact's ``wfm1``/``wfm2`` axle positions carry a hand repair: the run
+#: file chains their offsets onto an NXlog that streams 0 m, placing them
+#: downstream of the sample, so the artifact substitutes the static -60.5 m
+#: moderator position their offsets are measured from. Both are pending
+#: upstream fixes to the ODIN structure file.
+ODIN_CHOPPERS = [
+    'wfm1',
+    'wfm2',
+    'bpc1',
+    'bpc2',
+    'foc1',
+    'foc2',
+    'foc3',
+    'foc4',
+    'foc5',
+]
+
 instrument = Instrument(
     name='odin',
     detector_names=['timepix3'],
     monitors=['monitor1', 'monitor2'],
+    choppers=ODIN_CHOPPERS,
     streams=name_streams(filter_authorized_streams(PARSED_STREAMS)),
 )
 
