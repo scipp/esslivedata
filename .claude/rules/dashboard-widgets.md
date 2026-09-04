@@ -89,10 +89,14 @@ Two consequences to preserve:
 - **Rebuild after any removal that leaves a survivor.** Closing a pop-out runs
   Panel's pane cleanup, so `PlotGridTabs._close_popout` rebuilds the cell
   behind it. Adding a view is free; removing one is not.
-- **Sever before the replacement renders.** `_build_cell` closes the window,
-  builds the new widget, disposes the old one, and only then reopens the
-  window — the reopened pane must subscribe *after* the disposal has cleared
-  the pipes.
+- **Sever before the replacement renders.** `_build_cell` builds the new
+  widget, disposes the old one, and only then rebinds the window to it — the
+  window's new pane must subscribe *after* the disposal has cleared the pipes,
+  and `PlotPopoutManager.rebind` empties the window before refilling it for
+  the same reason. Rebinding rather than reopening is also what keeps the
+  window's size and position: jsPanel owns both and reports neither back to
+  Panel, so a replacement window can only come back at the default size in the
+  next cascade slot.
 
 ## Icons
 
@@ -251,6 +255,14 @@ still matches the parked panel and any click on it times out as "outside of the
 viewport" — drive the strip instead (`.jsPanel-btn-sm.jsPanel-btn-normalize`, or the
 matching `-close`). A minimized pop-out is deliberately *not* live, so
 `assert_stops_updating` is the check there.
+
+Resize handles are `.jsPanel-resizeit-{n,e,s,w,ne,se,sw,nw}` (18 px squares on the
+window's edges) and the drag handle is the header — both drive with plain
+`page.mouse` gestures. Resize *before* moving: the `se` handle rides the bottom-right
+corner, which a window dragged down and right has already carried out of the viewport,
+and a drag whose grip is off-screen silently does nothing. jsPanel's geometry is
+client-only — `FloatPanel` syncs `status` and nothing else — so `bounding_box()` on
+`.jsPanel` is the only way to assert it.
 
 The window hangs from the top of the viewport and is sized in `vh`, because its title
 bar holds the only close/minimize controls: centring a fixed pixel height puts them

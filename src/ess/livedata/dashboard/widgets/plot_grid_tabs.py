@@ -809,18 +809,15 @@ class PlotGridTabs:
         autoscale reference cycle and severing its pipe subscriptions) before
         the replacement renders — ordering #1224 relies on.
 
-        A pop-out window renders the displaced widget's pane, so it is rebuilt
-        on the new widget rather than left behind. Reopening rather than
-        closing keeps the window following its cell: a rebuild is triggered by
-        things the user did elsewhere (a rename, a job restart), and having the
-        floating view vanish in response would look like a crash. The status
-        carries over, so a minimized window stays minimized -- and its cell
-        asleep -- instead of popping open. Its position and size do not.
+        A pop-out window renders the displaced widget's pane, so it is rebound
+        to the new widget rather than left behind. The window itself survives:
+        a rebuild follows things the user did elsewhere (a rename, a job
+        restart), and having the floating view vanish -- or jump back to its
+        default size and position, which is all a replacement window could do
+        (see :meth:`PlotPopoutManager.rebind`) -- would read as a fault.
         """
         previous = self._cells.get(cell_id)
         toolbars_visible = previous.toolbars_shown if previous is not None else False
-        popout_status = self._popouts.status_of(cell_id)
-        self._popouts.close(cell_id)
         cell_widget = CellWidget(
             cell_id,
             cell,
@@ -832,10 +829,9 @@ class PlotGridTabs:
         self._cells[cell_id] = cell_widget
         if previous is not None:
             previous.dispose()
-        # After the sever above, never before: the reopened window's pane
+        # After the sever above, never before: the window's new pane
         # subscribes to the same pipes the disposal clears.
-        if popout_status is not None:
-            self._popouts.open(cell_id, cell_widget, status=popout_status)
+        self._popouts.rebind(cell_id, cell_widget)
         return cell_widget
 
     def _prebuild_revealed_grid(self) -> None:

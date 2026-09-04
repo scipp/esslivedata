@@ -349,11 +349,12 @@ class TestPopoutLifecycle:
     def test_cell_rebuild_carries_the_window_along(
         self, plot_grid_tabs, plot_orchestrator, line_cell
     ):
-        """A rebuilt cell composes fresh plots, so the window is rebuilt too.
+        """A rebuilt cell composes fresh plots; the window must show those.
 
-        It must not simply vanish: rebuilds follow ordinary user actions
-        elsewhere in the dashboard (a rename, a job restart), and a floating
-        view disappearing in response would read as a crash.
+        The window itself has to be the same one: its size and position live
+        in jsPanel and never round-trip to Python, so a replacement can only
+        come back at the default size in the next cascade slot -- a rename
+        would fling the window across the screen and shrink it.
         """
         plot_grid_tabs._show_popout(line_cell)
         window_before = _open_windows(plot_grid_tabs)[0]
@@ -361,10 +362,10 @@ class TestPopoutLifecycle:
         plot_orchestrator.set_cell_title(line_cell, 'Renamed')
         plot_grid_tabs._poll_for_plot_updates()
 
-        windows = _open_windows(plot_grid_tabs)
-        assert len(windows) == 1
-        assert windows[0] is not window_before
-        assert windows[0].name == 'Renamed'
+        (window,) = _open_windows(plot_grid_tabs)
+        assert window is window_before
+        assert window.name == 'Renamed'
+        assert _rendered_plot(window) is plot_grid_tabs._cells[line_cell]._plot
 
     def test_cell_removal_closes_the_window(
         self, plot_grid_tabs, plot_orchestrator, line_cell
@@ -438,6 +439,20 @@ class TestPopoutLifecycle:
 
         plot_grid_tabs._show_popout(cell_id)
 
+        assert _open_windows(plot_grid_tabs) == []
+
+    def test_a_rebuild_into_a_placeholder_closes_the_window(
+        self, plot_grid_tabs, plot_orchestrator, plot_data_service, line_cell
+    ):
+        """A restarted job drops the cell back to a placeholder until its
+        first frame arrives, and a placeholder has nothing to show."""
+        plot_grid_tabs._show_popout(line_cell)
+        layer_id = plot_orchestrator.get_cell(line_cell).layers[0].layer_id
+
+        plot_data_service.job_started(layer_id, LinePlotter.from_params(PlotParams1d()))
+        _tick(plot_grid_tabs)
+
+        assert not plot_grid_tabs._cells[line_cell].has_plot
         assert _open_windows(plot_grid_tabs) == []
 
 
@@ -525,29 +540,14 @@ class TestPopoutKeepsItsCellLive:
             plot_grid_tabs, plot_orchestrator, plot_data_service, line_cell
         )
 
-    def test_rebuild_keeps_a_minimized_window_minimized(
-        self, plot_grid_tabs, plot_orchestrator, line_cell
-    ):
-        """Reopening normalized would pop every parked window open on a job
-        restart, letting rebuilds defeat the minimize-to-sleep handle."""
-        plot_grid_tabs._show_popout(line_cell)
-        _open_windows(plot_grid_tabs)[0].status = 'minimized'
-
-        plot_orchestrator.set_cell_title(line_cell, 'Renamed')
-        _tick(plot_grid_tabs)
-
-        (window,) = _open_windows(plot_grid_tabs)
-        assert window.name == 'Renamed'
-        assert window.status == 'minimized'
-
     def test_minimized_window_still_survives_a_cell_rebuild(
         self, plot_grid_tabs, plot_orchestrator, plot_data_service, line_cell
     ):
         """Sleeping is not closing: the user's window must still be there.
 
-        And still be *sleeping*: reopening normalized would pop every parked
-        window open on a job restart and wake every cell behind them, letting
-        rebuilds defeat the minimize-to-sleep handle.
+        And still be *sleeping*, or a job restart would pop every parked
+        window open and wake every cell behind them, letting rebuilds defeat
+        the minimize-to-sleep handle.
         """
         plot_grid_tabs._show_popout(line_cell)
         plot_grid_tabs.tabs.active = 0
@@ -557,9 +557,8 @@ class TestPopoutKeepsItsCellLive:
         plot_orchestrator.set_cell_title(line_cell, 'Renamed')
         _tick(plot_grid_tabs)
 
-        windows = _open_windows(plot_grid_tabs)
-        assert len(windows) == 1
-        assert windows[0].status == 'minimized'
+        (window,) = _open_windows(plot_grid_tabs)
+        assert window.status == 'minimized'
         assert not _layer_is_active(
             plot_grid_tabs, plot_orchestrator, plot_data_service, line_cell
         )

@@ -67,6 +67,7 @@ from collections.abc import Callable
 from typing import ClassVar
 
 import panel as pn
+import param
 from panel.reactive import ReactiveHTML
 
 from ..plot_orchestrator import CellId
@@ -167,6 +168,23 @@ class PopoutWindowFitter(ReactiveHTML):
         super().__init__(**params)
 
 
+def _set_header_title(window: pn.layout.FloatPanel, title: str) -> None:
+    """Retitle an open window's header bar.
+
+    ``FloatPanel`` carries a ``name`` script that hands the new title to
+    jsPanel's ``setHeaderTitle``, but nothing can reach it: ``name`` is
+    constant on every ``Parameterized``, and ``ReactiveHTML`` routes a change
+    to any ``Reactive`` parameter -- ``name`` among them -- to the outer model
+    instead of the ``data`` model its scripts watch. So the parameter is
+    updated for whatever re-renders the window later, and the data model is
+    written directly to run the script now.
+    """
+    with param.parameterized.edit_constant(window):
+        window.name = title
+    for model, _ in window._models.values():
+        model.data.name = title
+
+
 # jsPanel statuses in which the window actually renders its content. The others
 # ('minimized', and the two 'smallified' variants, which collapse the window to
 # its title bar) show no plot, so the cell behind them may sleep.
@@ -178,7 +196,6 @@ def _build_window(
     pane: pn.viewable.Viewable,
     css_classes: list[str],
     cascade: int,
-    status: str,
 ) -> pn.layout.FloatPanel:
     """Build the floating window for one cell's plot.
 
@@ -193,9 +210,6 @@ def _build_window(
     cascade:
         Cascade slot for this window, offsetting it so it does not land
         exactly on top of an already-open one.
-    status:
-        Initial jsPanel status. ``FloatPanel`` applies a non-default status on
-        render, so a window rebuilt from a minimized one opens minimized.
     """
     offset = _CASCADE_STEP * (cascade % _CASCADE_WRAP)
     return pn.layout.FloatPanel(
@@ -228,7 +242,6 @@ def _build_window(
         config={'contentSize': f'{_POPOUT_WIDTH} {_CONTENT_HEIGHT}'},
         theme=Colors.TAB_BORDER,
         css_classes=css_classes,
-        status=status,
     )
 
 
@@ -299,9 +312,7 @@ class PlotPopoutManager:
             if window.status in _VISIBLE_STATUSES
         )
 
-    def open(
-        self, cell_id: CellId, cell_widget: CellWidget, status: str | None = None
-    ) -> None:
+    def open(self, cell_id: CellId, cell_widget: CellWidget) -> None:
         """Open (or re-open) the pop-out for a cell.
 
         Re-opening replaces an existing window for the same cell rather than
@@ -317,11 +328,6 @@ class PlotPopoutManager:
             The cell to open a window for.
         cell_widget:
             The cell's widget, which builds (and owns) the pane rendered here.
-        status:
-            jsPanel status to open with; a cell rebuild passes the old
-            window's status so a minimized window stays minimized (and its
-            cell asleep). The window's position and size are not carried
-            over. Defaults to a normal window.
         """
         if not cell_widget.has_plot:
             return
@@ -334,12 +340,44 @@ class PlotPopoutManager:
             # titlebar's — a CellId is a UUID, useless as a stable selector.
             css_classes=['lt-popout', f'lt-popout-r{geometry.row}c{geometry.col}'],
             cascade=self._cascade,
-            status=status if status is not None else 'normalized',
         )
         self._cascade += 1
         window.param.watch(lambda event: self._on_status(cell_id, event.new), 'status')
         self._open[cell_id] = window
         self._container.append(window)
+
+    def rebind(self, cell_id: CellId, cell_widget: CellWidget) -> None:
+        """Point an open window at a rebuilt cell widget.
+
+        A rebuild composes fresh plots and disposes the old ones, so the
+        window must render the new widget's pane or show a dead one. The
+        window itself is kept, and that is the whole point: jsPanel's size and
+        position never round-trip to Python (``FloatPanel`` syncs ``status``
+        alone), so a window replaced here would come back at the default size
+        on the next cascade slot — renaming a cell would fling its window
+        across the screen and shrink it.
+
+        Nothing happens for a cell with no window. A rebuild that leaves the
+        cell without a plot (its job stopped, say) has nothing to show, so its
+        window closes instead.
+
+        Call after the displaced widget is disposed: the new pane subscribes
+        to the pipes the disposal clears.
+        """
+        window = self._open.get(cell_id)
+        if window is None:
+            return
+        if not cell_widget.has_plot:
+            self.close(cell_id)
+            return
+        _set_header_title(window, cell_widget.title)
+        content = window[0]
+        # Emptied before it is refilled, never in one assignment: dropping the
+        # displaced pane runs Panel's cleanup, which severs every subscriber on
+        # the layer's pipe — the replacement's included, were it already
+        # rendered (holoviews#6988).
+        content[:] = []
+        content.append(cell_widget.build_plot_pane())
 
     def close(self, cell_id: CellId) -> None:
         """Close the pop-out for a cell, if one is open.

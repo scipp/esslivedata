@@ -19,7 +19,9 @@ through the stable ``lt-*`` automation hooks:
   without a server-side exception or a duplicated/lost tab;
 - uploading a grid config whose cells claim the same slot is rejected;
 - a popped-out plot opens within the viewport, floats above other tabs and
-  keeps updating there, and stops costing anything once minimized.
+  keeps updating there, and stops costing anything once minimized;
+- renaming a popped-out cell leaves its window the size and where the user
+  put it.
 
 Each test launches its own dashboard for isolation, since grid topology changes
 are process-global; ports are allocated per launch, so concurrent runs of this
@@ -607,6 +609,76 @@ def test_popped_out_window_fits_the_viewport_it_opens_on(viewport_height):
         close_button = page.locator(".jsPanel-btn-close").first.bounding_box()
         assert close_button is not None
         assert close_button["y"] >= 0
+
+
+def _drag(dash: Dashboard, selector: str, *, dx: int, dy: int) -> None:
+    """Drag an element's centre by (dx, dy), as a mouse gesture."""
+    page = dash.page
+    grip = page.locator(selector).first.bounding_box()
+    assert grip is not None
+    x, y = grip["x"] + grip["width"] / 2, grip["y"] + grip["height"] / 2
+    page.mouse.move(x, y)
+    page.mouse.down()
+    page.mouse.move(x + dx, y + dy, steps=10)
+    page.mouse.up()
+
+
+@pytest.mark.browser
+def test_renaming_a_popped_out_cell_leaves_its_window_where_it_was():
+    """A cell rebuild must replace the window's contents, not the window.
+
+    jsPanel owns the window's size and position and reports neither back to
+    Panel, so a rebuild that replaces the window can only bring it back at the
+    default size in the next cascade slot -- from the user's side, a rename
+    throws the window across the screen and shrinks it. Renaming is both the
+    cheapest rebuild to drive from the UI and the one most likely to happen
+    with a window open alongside.
+    """
+    with fake_dashboard("dummy") as fake, Dashboard.connect(fake.url) as dash:
+        del fake
+        page = dash.page
+        dash.goto_tab("Detectors")
+
+        click_until(
+            dash,
+            ".lt-cell-r0c0.lt-tool-arrows-maximize",
+            lambda: page.locator(".lt-popout-r0c0").count() == 1,
+            label="the pop-out window to open",
+        )
+        wait_until(
+            dash,
+            lambda: page.evaluate(_POPOUT_PLOT_HEIGHT) > 0,
+            label="the popped-out plot to render",
+        )
+        opened = page.locator(".jsPanel").first.bounding_box()
+        # Place and size it by hand, as a user would: clear of the cell
+        # titlebar the rename is driven from, and far enough from the default
+        # that a replacement window could not land here by chance.
+        # Shrunk before it is moved: the resize handle sits on the window's
+        # bottom-right corner, which a window moved down and right first has
+        # already carried off the bottom of the viewport.
+        _drag(dash, ".jsPanel-resizeit-se", dx=-160, dy=-220)
+        _drag(dash, ".jsPanel-title", dx=140, dy=180)
+        placed = page.locator(".jsPanel").first.bounding_box()
+        assert placed["x"] != opened["x"], "the window did not move"
+        assert placed["height"] != opened["height"], "the window did not resize"
+
+        dash.open_modal(".lt-cell-r0c0.lt-tool-pencil")
+        page.locator(_CELL_TITLE_INPUT).fill("Renamed")
+        page.get_by_role("button", name="Save", exact=True).click()
+        wait_until(
+            dash,
+            lambda: (
+                page.locator(".jsPanel-title").first.inner_text().strip() == "Renamed"
+            ),
+            label="the window header to follow the rename",
+        )
+
+        assert page.locator(".jsPanel").first.bounding_box() == pytest.approx(
+            placed, abs=1
+        )
+        assert page.evaluate(_POPOUT_PLOT_HEIGHT) > 0
+        assert_updating(dash, "pop-out whose cell was renamed")
 
 
 @pytest.mark.browser
