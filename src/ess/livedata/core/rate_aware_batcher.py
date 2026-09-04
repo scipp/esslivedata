@@ -24,6 +24,21 @@ buffered, the window is re-placed at the plausible anchor of that traffic
 (see ``_recover_from_stall``).  The backstop is self-correcting: a wrong
 re-placement is just another stall, corrected the same way, so it needs no
 per-pathology analysis of *how* the window got misplaced.
+
+Freshness policy
+----------------
+The batcher bounds its backlog and, when the service cannot keep up, stays
+live rather than complete: the stalest surplus of bulk data is shed, and the
+window jumps to the newest retained data instead of replaying a queue it can
+never clear.  Operators steer beam, samples and detector commissioning from
+this output, where a stale reading is worse than an intermittent hole.  Only
+``GATED_STREAM_KINDS`` can be shed -- control, log and context data never
+reach the overflow, so the selectivity is structural rather than stated.
+Shedding is an exception state to be fixed upstream, not a mode to run in:
+drops are counted, logged (``batcher_backlog_shedding``) and reported via
+``drain_metrics``.  The bounds and their sizing rationale are documented at
+``DEFAULT_MAX_BACKLOG_S``, ``DEFAULT_MAX_BACKLOG_BATCHES`` and
+``DEFAULT_MAX_BACKLOG_BYTES``.
 """
 
 from __future__ import annotations
@@ -32,7 +47,7 @@ import math
 import statistics
 import time
 from collections import defaultdict, deque
-from collections.abc import Callable
+from collections.abc import Callable, Iterable
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -41,6 +56,7 @@ import structlog
 from ess.livedata.core.message import Message, StreamId, StreamKind
 from ess.livedata.core.message_batcher import (
     MAX_TIMESTAMP_AHEAD_BATCHES,
+    BatcherMetrics,
     MessageBatch,
     MessageBatcher,
     plausible_anchor,
@@ -61,6 +77,71 @@ GATED_STREAM_KINDS = frozenset(
 MIN_DIFFS_FOR_GATE = 4
 DIFF_BUFFER_SIZE = 32
 ABSENT_BATCHES_FOR_EVICTION = 5
+
+# Bounds on the retained gated overflow, enforcing the module docstring's
+# freshness policy.  A window advances by at most one batch length per
+# ``batch()`` call, so whenever a service iteration takes longer than the
+# batch length the caller hands over more data than the window can release
+# and the surplus stays in ``_overflow`` for the life of the process --
+# unbounded memory, while the Kafka consumer reports zero lag because the
+# backlog is downstream of it.  This is the same bounded-buffer policy the
+# consumer queue already applies (``BackgroundMessageSource``,
+# ``max_queue_size``): drop rather than grow, and say so.
+#
+# The primary bound is *data time*, not memory: retained backlog is data the
+# service has not caught up with, and under genuine overload -- the loop
+# itself too slow -- the batcher only catches up at ``batch_length -
+# iteration_time`` per call, so a deep backlog buys late data at the price
+# of showing everything late for as long as the replay takes.  A bound in
+# data time caps the lag a stall can leave behind regardless of how deep
+# the stall was.  Expressing it in data time also makes it uniform across
+# instruments -- a byte budget buys ~20 s of ev44 but ~1.5 s of
+# area-detector frames.  It is applied per stream, against each stream's
+# own frontier: a single horizon for the whole backlog would shed a
+# stream's fresh data merely because a peer is stamped further ahead (see
+# ``_shed_backlog``).
+#
+# The bound is the larger of two terms.  ``DEFAULT_MAX_BACKLOG_S`` is the
+# burst tolerance: a delivery gap (consumer-group rebalance, broker blip,
+# producer restart) that hands over less than this in one poll is replayed
+# in full rather than holed -- and cheaply, because an *idle* service
+# recovers a retained burst by a gap jump plus timeout closes at poll rate,
+# not by the slow crawl of an overloaded loop.  Its price is paid only
+# under sustained overload past what escalation absorbs, where the steady
+# lag approaches the bound.  No pre-production statistics on gap durations
+# exist; 10 s sits above single-rebalance scale, and the ``max_backlog_s``
+# metric and drop counters are the instrument for tuning it.
+#
+# ``DEFAULT_MAX_BACKLOG_BATCHES`` is a floor that scales with the window:
+# the overflow legitimately holds up to about one batch length of
+# in-transit next-window traffic, so a fixed seconds bound below the
+# escalated batch length would shed healthy traffic.  Two batch lengths
+# leaves ordinary jitter alone -- an iteration merely overshooting its
+# window sheds nothing -- and follows the adaptive wrapper's escalated
+# windows (16 s at the 8 s ceiling, where the floor exceeds the seconds
+# term and takes over).
+DEFAULT_MAX_BACKLOG_S = 10.0
+DEFAULT_MAX_BACKLOG_BATCHES = 2
+
+# Secondary hard bound, on memory.  The data-time bound alone does not bound
+# bytes: payload sizes span four orders of magnitude, and one ad00
+# area-detector frame (4096x4096) is 67 MB as retained -- the adapter widens
+# the uint16 wire dtype to int32 -- so two batch lengths of frames is
+# gigabytes.  Sizing, against a 32 GB production host shared by all backend
+# services and their workflow/job data: 512 MB holds ~13000 ev44 chunks
+# while capping area-detector retention at ~7 frames, and every backend
+# service shedding at once still costs only ~2 GB of the host.
+DEFAULT_MAX_BACKLOG_BYTES = 512 * 1024**2
+
+# Assumed size of a payload whose arrays cannot be measured.  Only the four
+# bulk kinds reach the overflow and all of them carry numpy arrays, so this
+# is a floor for exotic payloads rather than a value the services rely on.
+UNKNOWN_PAYLOAD_BYTES = 1024
+
+# Shedding is intermittent by nature -- each jump clears the backlog, which
+# then refills -- so per-event logging would flap once per service iteration.
+# Report a cumulative summary at a fixed wall-clock interval instead.
+SHED_LOG_INTERVAL_S = 60.0
 
 # Wall-clock stall threshold for the liveness backstop, in multiples of the
 # batch length (see the module docstring's clock policy).  It must sit above
@@ -117,6 +198,58 @@ _MAX_ORIGIN_OFFSET_BATCHES = 1000
 # Three batches allows one pulse's worth of HWM advance to cover the
 # preceding empty batch, matching the natural cadence of 0.5 Hz-and-below
 # gated streams.
+
+
+def _payload_nbytes(value: Any) -> int:
+    """Best-effort retained size of a message payload.
+
+    Payloads reaching the overflow are ``DetectorEvents``/``MonitorEvents``
+    (a dataclass of numpy arrays viewing the source flatbuffer, which is
+    what the retained message actually pins) or the ``sc.DataArray`` that
+    the da00/ad00 adapters produce upstream of the batcher (monitor counts,
+    area-detector frames).  Scipp exposes ``underlying_size()``, which
+    measures the owned buffers a retained slice pins; numpy arrays are
+    measured by the allocation they view (:func:`_pinned_nbytes`), and a
+    dataclass over its array fields.
+    """
+    underlying_size = getattr(value, 'underlying_size', None)
+    if callable(underlying_size):
+        size = underlying_size()
+        if isinstance(size, int):
+            return size
+    if isinstance(value, tuple):
+        parts: Iterable[Any] = value
+    elif hasattr(value, 'nbytes'):
+        parts = (value,)
+    else:
+        parts = getattr(value, '__dict__', {}).values()
+    return _pinned_nbytes(parts) or UNKNOWN_PAYLOAD_BYTES
+
+
+def _pinned_nbytes(arrays: Iterable[Any]) -> int:
+    """Bytes kept alive by numpy arrays: each viewed allocation, counted once.
+
+    A view's own ``nbytes`` understates what it retains -- a ``MonitorEvents``
+    keeps only the time-of-arrival half of its ev44 buffer visible but pins
+    the whole buffer -- and two views of one buffer (``DetectorEvents``)
+    must not count it twice.
+    """
+    seen: set[int] = set()
+    total = 0
+    for array in arrays:
+        if not isinstance(getattr(array, 'nbytes', None), int):
+            continue
+        owner = array
+        while getattr(owner, 'base', None) is not None:
+            owner = owner.base
+        if id(owner) in seen:
+            continue
+        seen.add(id(owner))
+        try:
+            total += memoryview(owner).nbytes
+        except TypeError:
+            total += array.nbytes
+    return total
 
 
 @dataclass(slots=True)
@@ -437,12 +570,22 @@ class RateAwareMessageBatcher(MessageBatcher):
         batch_length_s: float = 1.0,
         timeout_s: float | None = None,
         clock: Callable[[], float] = time.monotonic,
+        max_backlog_s: float = DEFAULT_MAX_BACKLOG_S,
+        max_backlog_batches: int = DEFAULT_MAX_BACKLOG_BATCHES,
+        max_backlog_bytes: int = DEFAULT_MAX_BACKLOG_BYTES,
     ) -> None:
         self._batch_length = Duration.from_seconds(batch_length_s)
         self._timeout_factor = (
             timeout_s / batch_length_s if timeout_s is not None else 1.2
         )
         _validate_timeout_factor(self._timeout_factor)
+        for name, limit in (
+            ('max_backlog_s', max_backlog_s),
+            ('max_backlog_batches', max_backlog_batches),
+            ('max_backlog_bytes', max_backlog_bytes),
+        ):
+            if not math.isfinite(limit) or limit < 0:
+                raise ValueError(f"{name} must be finite and >= 0, got {limit}")
 
         self._streams: defaultdict[StreamId, _GatedStream] = defaultdict(_GatedStream)
 
@@ -454,10 +597,40 @@ class RateAwareMessageBatcher(MessageBatcher):
         self._future: list[Message[Any]] = []
         self._clock = clock
         self._last_close_wall = clock()
+        self._max_backlog_s = max_backlog_s
+        self._max_backlog_batches = max_backlog_batches
+        self._max_backlog_bytes = max_backlog_bytes
+        self._total_dropped_messages = 0
+        self._total_dropped_bytes = 0
+        self._dropped_messages_since_drain = 0
+        self._dropped_bytes_since_drain = 0
+        self._backlog_peak_s = 0.0
+        self._last_shed_log = -math.inf
 
     @property
     def batch_length_s(self) -> float:
         return self._batch_length.to_seconds()
+
+    @property
+    def total_dropped_messages(self) -> int:
+        """Total gated messages dropped to keep the backlog bounded."""
+        return self._total_dropped_messages
+
+    @property
+    def total_dropped_bytes(self) -> int:
+        """Total payload bytes dropped to keep the backlog bounded."""
+        return self._total_dropped_bytes
+
+    def drain_metrics(self) -> BatcherMetrics:
+        metrics = BatcherMetrics(
+            max_backlog_s=self._backlog_peak_s,
+            dropped_messages=self._dropped_messages_since_drain,
+            dropped_bytes=self._dropped_bytes_since_drain,
+        )
+        self._backlog_peak_s = 0.0
+        self._dropped_messages_since_drain = 0
+        self._dropped_bytes_since_drain = 0
+        return metrics
 
     @property
     def tracked_streams(self) -> set[StreamId]:
@@ -503,6 +676,9 @@ class RateAwareMessageBatcher(MessageBatcher):
 
         for msg in messages:
             self._route_message(msg, window)
+
+        # Shed before the gap check so a jump targets the surviving backlog.
+        self._shed_backlog()
 
         if self._should_recover_from_gap(window):
             window = self._recover_from_gap(window)
@@ -644,6 +820,112 @@ class RateAwareMessageBatcher(MessageBatcher):
                 return False
         return has_gating
 
+    def _shed_backlog(self) -> None:
+        """Drop the stalest overflow until it fits both backlog bounds.
+
+        Each stream retains at most the data-time bound -- the larger of
+        ``max_backlog_batches`` batch lengths and ``max_backlog_s`` -- and
+        the backlog as a whole at most ``max_backlog_bytes``; see the
+        bounds' rationale at the top of this module.
+
+        The data-time horizon is per stream, anchored on that stream's own
+        frontier.  A single horizon for the whole backlog would conflate
+        depth with the offset between streams: a stream stamped seconds
+        ahead of its peers would set the horizon for all of them and shed
+        their fresh data as if it were stale.  Each frontier is the stream's
+        plausible anchor rather than its bare maximum, so one stray
+        far-future timestamp cannot condemn the real backlog behind it
+        (:func:`plausible_anchor`).
+
+        The byte bound stays global -- memory is -- and drops the stalest
+        survivors regardless of stream, after any message stamped ahead of
+        its stream's frontier: such a message is disconnected from the
+        stream's traffic by construction, and trimming oldest-first alone
+        would shed valid traffic to retain it, then hand the eventual gap
+        jump that stray as its only anchor.
+
+        Keeps the newest messages: once the window's own region drains, gap
+        detection advances it to the oldest survivor in one jump, so keeping
+        the newest is what lets the window catch up to live traffic instead
+        of crawling through a backlog it can never clear.  The alternative
+        -- dropping the newest -- bounds memory just as well but leaves the
+        window falling permanently further behind, delivering ever-staler
+        data.  The newest message survives unconditionally, even alone over
+        the byte bound: without a survivor there is nothing for that jump
+        to anchor the new window on.
+
+        Shedding deliberately does *not* force the jump itself.  Gap
+        recovery is vetoed while any gated stream still has messages in the
+        window, and that veto must hold: a shed can be a byte-bound trim of
+        one oversized stream while a peer gates normally in the current
+        window, and jumping then overruns the peer's live traffic --
+        leaving its gate permanently unsatisfiable and delivery stalled
+        until the wall-clock backstop.  When a shed does strand the window
+        behind the survivors, its region is empty by construction (the data
+        was just discarded), so the ordinary gap check fires on the next
+        call and jumps in one step.  Bounded lag arrives one call late;
+        livelock never.
+        """
+        if not self._overflow:
+            return
+        sized = sorted(
+            ((_payload_nbytes(msg.value), msg) for msg in self._overflow),
+            key=lambda item: item[1].timestamp,
+        )
+        by_stream: defaultdict[StreamId, list[Timestamp]] = defaultdict(list)
+        for _, msg in sized:
+            by_stream[msg.stream].append(msg.timestamp)
+        bound = max(
+            self._max_backlog_batches * self._batch_length,
+            Duration.from_seconds(self._max_backlog_s),
+        )
+        frontiers: dict[StreamId, Timestamp] = {}
+        for stream, stamps in by_stream.items():
+            frontier = plausible_anchor(stamps, self._batch_length)
+            self._backlog_peak_s = max(
+                self._backlog_peak_s, (frontier - stamps[0]).to_seconds()
+            )
+            frontiers[stream] = frontier
+        strays: list[tuple[int, Message[Any]]] = []
+        kept: list[tuple[int, Message[Any]]] = []
+        for item in sized:
+            frontier = frontiers[item[1].stream]
+            stamp = item[1].timestamp
+            if stamp > frontier:
+                strays.append(item)
+            elif stamp >= frontier - bound:
+                kept.append(item)
+        candidates = strays + kept
+        retained = sum(nbytes for nbytes, _ in candidates)
+        shed_by_bytes = 0
+        while (
+            shed_by_bytes < len(candidates) - 1 and retained > self._max_backlog_bytes
+        ):
+            retained -= candidates[shed_by_bytes][0]
+            shed_by_bytes += 1
+        survivors = candidates[shed_by_bytes:]
+        if len(survivors) == len(sized):
+            return
+        dropped = len(sized) - len(survivors)
+        dropped_bytes = sum(nbytes for nbytes, _ in sized) - retained
+        self._overflow = [msg for _, msg in survivors]
+        self._total_dropped_messages += dropped
+        self._total_dropped_bytes += dropped_bytes
+        self._dropped_messages_since_drain += dropped
+        self._dropped_bytes_since_drain += dropped_bytes
+        now = self._clock()
+        if now - self._last_shed_log >= SHED_LOG_INTERVAL_S:
+            self._last_shed_log = now
+            logger.warning(
+                'batcher_backlog_shedding',
+                backlog_limit_s=bound.to_seconds(),
+                backlog_limit_bytes=self._max_backlog_bytes,
+                max_backlog_s=round(self._backlog_peak_s, 3),
+                total_dropped_messages=self._total_dropped_messages,
+                total_dropped_bytes=self._total_dropped_bytes,
+                batch_length_s=self.batch_length_s,
+            )
+
     def _should_recover_from_gap(self, window: _ActiveWindow) -> bool:
         """True if gated overflow exists but no gated stream has contributed.
 
@@ -668,6 +950,23 @@ class RateAwareMessageBatcher(MessageBatcher):
         still fits in the current window) the window is kept but draining
         resets per-stream slot placement so re-routing recomputes it from
         scratch against the same ``start_time``.
+
+        Despite the name, this is not only a silence-gap path: it is also how
+        the window catches up whenever a call hands over more data time than
+        one batch length.  A batch closes at most once per call, so the close
+        path alone advances the window by one batch length per call -- a
+        ceiling that binds only while the window sits inside continuous data.
+        When a call's gated arrivals all land past the window, no gridded
+        stream has contributed and this path advances the window in one jump
+        instead.
+
+        Jumping does not skip delivery.  Stashed and pending messages older
+        than the new ``window.start`` re-route to negative slots: they ride
+        along in the next batch (whose ``start_time`` then understates its
+        contents, as in ``SimpleMessageBatcher._split_messages``) rather than
+        being dropped.  Only ``_shed_backlog`` discards messages, so the data
+        actually lost under overload is well below the surplus the window
+        could not release.
         """
         stashed = self._drain_window()
         pending = self._overflow

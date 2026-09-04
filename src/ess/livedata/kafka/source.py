@@ -97,8 +97,16 @@ class BackgroundMessageSource(KafkaMessageSource):
     timeout:
         Timeout in seconds for each consume call.
     max_queue_size:
-        Maximum number of message batches to keep in the queue. If the queue
-        fills up, older batches will be dropped.
+        Maximum number of message batches to keep in the queue; each batch
+        holds up to ``num_messages`` messages, so this retains up to
+        ``max_queue_size * num_messages`` of them. If the queue fills up,
+        older batches will be dropped. Note that this bounds a count, not
+        memory: payloads at this layer span four orders of magnitude (~8 kB
+        monitor counts to 33.5 MB area-detector frames), so a full queue
+        varies in footprint by the same factor. See the backlog bounds in
+        :mod:`ess.livedata.core.rate_aware_batcher` for the same problem
+        solved downstream, where the byte cap exists precisely because no
+        single count works across payload kinds.
     max_consecutive_errors:
         Maximum number of consecutive errors before stopping consumption.
         Set to 0 to disable the circuit breaker (not recommended).

@@ -16,15 +16,22 @@ inject a ``FakeClock`` and advance it in lockstep with data time, as a live
 service would experience.
 """
 
+import math
 import random
 
+import numpy as np
 import pytest
+import scipp as sc
 from structlog.testing import capture_logs
 
 from ess.livedata.core.message import Message, StreamId, StreamKind
 from ess.livedata.core.message_batcher import MessageBatch
 from ess.livedata.core.rate_aware_batcher import (
+    DEFAULT_MAX_BACKLOG_BATCHES,
+    DEFAULT_MAX_BACKLOG_BYTES,
+    DEFAULT_MAX_BACKLOG_S,
     MIN_DIFFS_FOR_GATE,
+    UNKNOWN_PAYLOAD_BYTES,
     RateAwareMessageBatcher,
 )
 from ess.livedata.core.timestamp import Timestamp
@@ -109,6 +116,7 @@ def make_converged_batcher(
     streams: dict[StreamId, float] | None = None,
     timeout_s: float | None = None,
     clock: FakeClock | None = None,
+    max_backlog_bytes: int = DEFAULT_MAX_BACKLOG_BYTES,
 ) -> tuple[RateAwareMessageBatcher, float]:
     """Create a batcher with converged rate estimates.
 
@@ -132,6 +140,7 @@ def make_converged_batcher(
         batch_length_s=batch_length_s,
         timeout_s=convergence_timeout,
         clock=clock if clock is not None else FakeClock(),
+        max_backlog_bytes=max_backlog_bytes,
     )
 
     # Initial batch seeds the timeline
@@ -2757,3 +2766,452 @@ class TestClockCreep:
                         last_delivery = t
                     worst = max(worst, t - last_delivery)
         assert worst < 5.0, f"delivery silent for {worst:.1f}s of data time"
+
+
+def _numpy_payload(nbytes: int) -> np.ndarray:
+    return np.zeros(nbytes // 8, dtype=np.float64)
+
+
+def _scipp_payload(nbytes: int) -> sc.DataArray:
+    return sc.DataArray(sc.array(dims=['x'], values=_numpy_payload(nbytes)))
+
+
+class TestBacklogShedding:
+    """A service iteration slower than the batch length hands the batcher more
+    data than the window can release, and the surplus is retained forever
+    (scipp/esslivedata#378).  The backlog must stay bounded -- in data time
+    first, so the service stays close to live, and in bytes as a memory
+    backstop -- and only bulk event data may be sacrificed to bound it.
+    """
+
+    BATCH_LEN = 1.0
+    RATE = 20.0
+    # Each call delivers two batch lengths of data but the window advances by
+    # one, so half of every call's traffic is surplus.
+    ITER = 2.0
+    MAX_BACKLOG_BATCHES = 2
+    # Payloads here carry no arrays, so each costs UNKNOWN_PAYLOAD_BYTES.
+    # Generous enough that the data-time bound is the one under test.
+    MAX_BACKLOG_BYTES = 10_000 * UNKNOWN_PAYLOAD_BYTES
+
+    def _run(self, calls: int, batcher: RateAwareMessageBatcher, start: float = 0.0):
+        fed = delivered = 0
+        t = start
+        last_delivered_end = None
+        for _ in range(calls):
+            chunk = msgs_at(self.RATE, start=t, duration=self.ITER)
+            t += self.ITER
+            fed += len(chunk)
+            out = batcher.batch(chunk)
+            if out is not None:
+                delivered += len(out.messages)
+                last_delivered_end = out.end_time
+        return fed, delivered, t, last_delivered_end
+
+    def make(self, **kwargs) -> RateAwareMessageBatcher:
+        # max_backlog_s=0 puts the batch-length floor in charge, so the
+        # bounded-backlog properties are exercised at the floor; the seconds
+        # term has its own tests below.
+        return RateAwareMessageBatcher(
+            batch_length_s=self.BATCH_LEN,
+            max_backlog_s=0.0,
+            max_backlog_batches=self.MAX_BACKLOG_BATCHES,
+            max_backlog_bytes=self.MAX_BACKLOG_BYTES,
+            **kwargs,
+        )
+
+    def _held(self, batcher: RateAwareMessageBatcher, stream: StreamId) -> int:
+        buffered = sum(
+            1
+            for buf in (batcher._overflow, batcher._non_gated, batcher._future)
+            for m in buf
+            if m.stream == stream
+        )
+        return buffered + sum(
+            1 for m in batcher._streams[stream].messages if m.stream == stream
+        )
+
+    def _backlog_s(self, batcher: RateAwareMessageBatcher) -> float:
+        if not batcher._overflow:
+            return 0.0
+        stamps = [m.timestamp for m in batcher._overflow]
+        return (max(stamps) - min(stamps)).to_seconds()
+
+    def test_retained_backlog_stays_bounded_under_sustained_overload(self):
+        batcher = self.make()
+        fed, delivered, _, _ = self._run(200, batcher)
+        retained = fed - delivered - batcher.total_dropped_messages
+        assert batcher.total_dropped_messages > 0
+        # Whatever is neither delivered nor dropped is still held in memory.
+        max_retained = self.MAX_BACKLOG_BATCHES * self.BATCH_LEN * self.RATE
+        assert 0 <= retained <= max_retained + self.RATE * self.ITER
+
+    def test_backlog_does_not_grow_with_time(self):
+        batcher = self.make()
+        _, _, t, _ = self._run(50, batcher)
+        early = self._held(batcher, DETECTOR)
+        self._run(200, batcher, start=t)
+        late = self._held(batcher, DETECTOR)
+        assert early > 0
+        assert late <= early + self.RATE * self.ITER
+
+    def test_backlog_is_bounded_in_data_time(self):
+        """The bound that keeps the service close to live: however deep the
+        stall, the retained backlog spans at most a few batch lengths."""
+        batcher = self.make()
+        worst = 0.0
+        t = 0.0
+        for _ in range(50):
+            batcher.batch(msgs_at(self.RATE, start=t, duration=self.ITER))
+            t += self.ITER
+            worst = max(worst, self._backlog_s(batcher))
+        assert batcher.total_dropped_messages > 0
+        assert worst <= self.MAX_BACKLOG_BATCHES * self.BATCH_LEN
+
+    def test_single_long_stall_costs_bounded_lag(self):
+        """One deep stall must not leave the service replaying old data: after
+        the stall the window sits within the bound of the newest data fed, no
+        matter how far behind it fell.  The jump lands via gap detection on
+        the call after the shed (one poll iteration), so allow one empty call
+        for it."""
+        batcher, start = make_converged_batcher(rate_hz=self.RATE)
+        batcher.batch(msgs_at(self.RATE, start=start, duration=120.0))
+        batcher.batch([])
+        newest = start + 120.0
+        lag_s = newest - batcher._active_window.start.to_ns() / 1e9
+        assert batcher.total_dropped_messages > 0
+        assert lag_s <= DEFAULT_MAX_BACKLOG_S + self.BATCH_LEN
+
+    def test_delivery_hiccup_within_seconds_bound_replays_in_full(self):
+        """The seconds term is the burst tolerance: a delivery gap that hands
+        over less than it in one poll (consumer rebalance, broker blip) is
+        replayed completely instead of leaving a hole, and delivery carries
+        on once live traffic resumes."""
+        batcher, start = make_converged_batcher(rate_hz=self.RATE)
+        burst = msgs_at(self.RATE, start=start, duration=DEFAULT_MAX_BACKLOG_S - 2)
+        fed = len(burst)
+        delivered = 0
+        out = batcher.batch(burst)
+        if out is not None:
+            delivered += len(out.messages)
+        t = start + DEFAULT_MAX_BACKLOG_S - 2
+        for _ in range(30):
+            chunk = msgs_at(self.RATE, start=t, duration=self.BATCH_LEN)
+            fed += len(chunk)
+            t += self.BATCH_LEN
+            out = batcher.batch(chunk)
+            if out is not None:
+                delivered += len(out.messages)
+        assert batcher.total_dropped_messages == 0
+        assert delivered > 0.8 * fed, "replay wedged instead of catching up"
+
+    def test_batch_floor_governs_at_escalated_batch_lengths(self):
+        """At an escalated window the in-transit traffic alone can exceed the
+        seconds term, so the floor of two batch lengths takes over: a backlog
+        the seconds bound alone would shed is retained."""
+        batcher, start = make_converged_batcher(rate_hz=self.RATE, batch_length_s=8.0)
+        batcher.batch(
+            msgs_at(self.RATE, start=start, duration=DEFAULT_MAX_BACKLOG_S + 2.0)
+        )
+        assert batcher.total_dropped_messages == 0
+
+    def test_stream_is_not_shed_for_a_peer_being_stamped_ahead(self):
+        """The data-time horizon is per stream: a peer whose timestamps run
+        ahead must not make a stream's own fresh data look stale.  Offsets
+        between streams are not backlog depth, and a single horizon for the
+        whole backlog cannot tell them apart.  Under overload each stream
+        loses at most its own surplus -- the peer's offset adds nothing,
+        where a global horizon anchored on the ahead peer would shed the
+        lagging stream's entire retained backlog.
+        """
+        ahead = StreamId(kind=StreamKind.DETECTOR_EVENTS, name="ahead")
+        skew = (DEFAULT_MAX_BACKLOG_BATCHES + 1) * self.BATCH_LEN
+        batcher = self.make()
+        t = 0.0
+        fed = delivered = 0
+        for _ in range(60):
+            chunk = msgs_at(self.RATE, start=t, duration=self.ITER)
+            fed += len(chunk)
+            chunk += msgs_at(
+                self.RATE, start=t + skew, duration=self.ITER, stream=ahead
+            )
+            out = batcher.batch(sorted(chunk, key=lambda m: m.timestamp))
+            t += self.ITER
+            if out is not None:
+                delivered += sum(1 for m in out.messages if m.stream == DETECTOR)
+        lost = fed - delivered - self._held(batcher, DETECTOR)
+        # The window releases at most one batch length of the two fed per
+        # call, so the stream's own surplus is half its feed.
+        assert batcher.total_dropped_messages > 0, "the ahead stream should still shed"
+        assert 0 <= lost <= fed // 2, "peer offset cost the lagging stream extra data"
+
+    def test_byte_shedding_one_stream_does_not_disturb_a_healthy_peer(self):
+        """A byte-bound trim of one oversized stream while a peer gates
+        normally in the current window must not advance the window past the
+        peer's live traffic: shedding leaves the jump to gap detection, whose
+        veto (no jump while a gated stream still has messages in the window)
+        protects the peer.  Forcing the jump on every shed livelocked exactly
+        this topology -- see ``_shed_backlog``."""
+        frames = StreamId(kind=StreamKind.AREA_DETECTOR, name="frames")
+        payload = _numpy_payload(8_000)
+        batcher, start = make_converged_batcher(
+            rate_hz=self.RATE,
+            streams={DETECTOR: self.RATE, frames: self.RATE},
+            # Every frame alone exceeds the cap, so the frames stream is
+            # trimmed by bytes on every call while DETECTOR keeps up.
+            max_backlog_bytes=100,
+        )
+        fed = delivered = 0
+        t = start
+        for _ in range(100):
+            chunk = msgs_at(self.RATE, start=t, duration=self.BATCH_LEN)
+            fed += len(chunk)
+            # Mild overload on the frames stream only, so it keeps a byte
+            # backlog while DETECTOR delivers one window per call.
+            chunk += [
+                Message(timestamp=m.timestamp, stream=frames, value=payload)
+                for m in msgs_at(self.RATE, start=t, duration=1.5 * self.BATCH_LEN)
+            ]
+            out = batcher.batch(sorted(chunk, key=lambda m: m.timestamp))
+            t += self.BATCH_LEN
+            if out is not None:
+                delivered += sum(1 for m in out.messages if m.stream == DETECTOR)
+        held = self._held(batcher, DETECTOR)
+        assert batcher.total_dropped_messages > 0, "frames should shed by bytes"
+        assert fed - delivered - held == 0, "byte shedding cost the healthy peer data"
+        assert delivered > 0.9 * (fed - held), "healthy peer delivery stalled"
+
+    def test_stray_future_timestamp_does_not_condemn_the_backlog(self):
+        """The data-time bound is measured against the plausible anchor of the
+        backlog, so one far-future stray cannot make every real message look
+        stale enough to shed."""
+        batcher, start = make_converged_batcher(rate_hz=self.RATE)
+        batcher.batch(
+            [*msgs_at(self.RATE, start=start, duration=self.ITER), msg(start + 600.0)]
+        )
+        assert batcher.total_dropped_messages == 0
+
+    def test_stray_future_timestamp_loses_the_byte_trim_to_valid_traffic(self):
+        """Under byte pressure the trim must sacrifice the disconnected stray,
+        not the valid traffic behind it: oldest-first alone would retain the
+        stray alone and hand the catch-up jump a poisoned anchor."""
+        batcher, start = make_converged_batcher(
+            rate_hz=self.RATE, max_backlog_bytes=10_000
+        )
+        valid = [
+            Message(timestamp=m.timestamp, stream=DETECTOR, value=_numpy_payload(100))
+            for m in msgs_at(self.RATE, start=start + 1.0, duration=self.ITER)
+        ]
+        stray = Message(
+            timestamp=ts(start + 600.0), stream=DETECTOR, value=_numpy_payload(20_000)
+        )
+        batcher.batch([*valid, stray])
+        assert batcher.total_dropped_messages == 1
+        assert batcher.total_dropped_bytes == 20_000
+        assert batcher._active_window.start < ts(start + 100.0)
+
+    def test_nothing_dropped_while_keeping_up(self):
+        batcher = self.make()
+        t = 0.0
+        for _ in range(200):
+            # One batch length of data per call: the window keeps pace.
+            batcher.batch(msgs_at(self.RATE, start=t, duration=self.BATCH_LEN))
+            t += self.BATCH_LEN
+        assert batcher.total_dropped_messages == 0
+
+    def test_window_keeps_up_with_live_data_while_shedding(self):
+        """Shedding keeps the newest messages, so the delivered window must
+        track live traffic rather than crawling through a stale backlog."""
+        batcher = self.make()
+        _, _, newest_fed, last_end = self._run(200, batcher)
+        assert last_end is not None
+        lag_s = newest_fed - last_end.to_ns() / 1e9
+        assert lag_s < self.MAX_BACKLOG_BATCHES * self.BATCH_LEN + 2 * self.ITER
+
+    def test_log_stream_is_never_dropped(self):
+        """Only GATED_STREAM_KINDS reach the overflow, so context data must
+        survive an overload that sheds detector events."""
+        log_stream = StreamId(kind=StreamKind.LOG, name="context")
+        batcher = self.make()
+        t = 0.0
+        logs_fed = 0
+        logs_out = 0
+        for i in range(200):
+            chunk = msgs_at(self.RATE, start=t, duration=self.ITER)
+            # Stop feeding before the end so the last one is not merely still
+            # buffered when the loop finishes.
+            if i < 198:
+                chunk.append(msg(t, log_stream, value="ctx"))
+                logs_fed += 1
+            t += self.ITER
+            out = batcher.batch(chunk)
+            if out is not None:
+                logs_out += sum(1 for m in out.messages if m.stream == log_stream)
+        assert batcher.total_dropped_messages > 0
+        assert logs_out == logs_fed
+
+    def test_shedding_is_logged(self):
+        batcher = self.make()
+        with capture_logs() as logs:
+            self._run(200, batcher)
+        events = [entry['event'] for entry in logs]
+        assert 'batcher_backlog_shedding' in events
+
+    @pytest.mark.parametrize('payload_of', [_numpy_payload, _scipp_payload])
+    def test_memory_backstop_shortens_retention_for_large_payloads(self, payload_of):
+        """The byte bound must bite before the data-time bound once payloads
+        are frame-sized: a budget that holds seconds of ev44 holds only a
+        fraction of a second of area-detector frames.  The scipp variant is
+        what the da00/ad00 adapters actually deliver to the batcher.
+        """
+
+        def retained_s(nbytes_each: int) -> float:
+            batcher = RateAwareMessageBatcher(
+                batch_length_s=self.BATCH_LEN,
+                max_backlog_batches=10,
+                max_backlog_bytes=1_000_000,
+            )
+            payload = payload_of(nbytes_each)
+            t = 0.0
+            for _ in range(60):
+                chunk = [
+                    Message(
+                        timestamp=ts(m.timestamp.to_ns() / 1e9),
+                        stream=DETECTOR,
+                        value=payload,
+                    )
+                    for m in msgs_at(self.RATE, start=t, duration=self.ITER)
+                ]
+                t += self.ITER
+                batcher.batch(chunk)
+            return self._backlog_s(batcher)
+
+        small = retained_s(1_000)
+        large = retained_s(100_000)
+        # 100x the payload means the budget is exhausted 100x sooner, so far
+        # less data time survives in the backlog.
+        assert large < small / 10
+
+    def test_dropped_bytes_tracks_dropped_payload(self):
+        batcher = RateAwareMessageBatcher(
+            batch_length_s=self.BATCH_LEN, max_backlog_bytes=200_000
+        )
+        payload = np.zeros(1000, dtype=np.float64)  # 8000 bytes
+        t = 0.0
+        for _ in range(60):
+            chunk = [
+                Message(
+                    timestamp=ts(m.timestamp.to_ns() / 1e9),
+                    stream=DETECTOR,
+                    value=payload,
+                )
+                for m in msgs_at(self.RATE, start=t, duration=self.ITER)
+            ]
+            t += self.ITER
+            batcher.batch(chunk)
+        expected = batcher.total_dropped_messages * payload.nbytes
+        assert batcher.total_dropped_bytes == expected
+
+    @pytest.mark.parametrize('pixellated', [False, True])
+    def test_dropped_bytes_count_the_ev44_buffer_pinned_by_event_views(
+        self, pixellated: bool
+    ):
+        """``MonitorEvents``/``DetectorEvents`` view the deserialised ev44
+        buffer, so each retained message pins the whole buffer: the half a
+        monitor keeps visible understates it twofold, and a detector's two
+        views must not count it twice."""
+        from streaming_data_types import eventdata_ev44
+
+        from ess.livedata.preprocessors.to_nxevent_data import (
+            DetectorEvents,
+            MonitorEvents,
+        )
+
+        n = 10_000
+        buffer = eventdata_ev44.serialise_ev44(
+            'src', 1, [0], [0], np.arange(n, dtype=np.int32), np.zeros(n, np.int32)
+        )
+        ev = eventdata_ev44.deserialise_ev44(buffer)
+        events = DetectorEvents if pixellated else MonitorEvents
+        payload = events.from_ev44(ev)
+        batcher = RateAwareMessageBatcher(
+            batch_length_s=self.BATCH_LEN, max_backlog_bytes=10 * len(buffer)
+        )
+        t = 0.0
+        for _ in range(60):
+            chunk = [
+                Message(timestamp=m.timestamp, stream=DETECTOR, value=payload)
+                for m in msgs_at(self.RATE, start=t, duration=self.ITER)
+            ]
+            t += self.ITER
+            batcher.batch(chunk)
+        assert batcher.total_dropped_messages > 0
+        expected = batcher.total_dropped_messages * len(buffer)
+        assert batcher.total_dropped_bytes == expected
+
+    @pytest.mark.parametrize(
+        'limits',
+        [
+            {'max_backlog_s': math.nan},
+            {'max_backlog_s': math.inf},
+            {'max_backlog_s': -1.0},
+            {'max_backlog_batches': -1},
+            {'max_backlog_bytes': -1},
+        ],
+    )
+    def test_rejects_non_finite_or_negative_limits(self, limits):
+        with pytest.raises(ValueError, match='must be finite'):
+            RateAwareMessageBatcher(**limits)
+
+    def test_oversized_payloads_never_shed_the_entire_backlog(self):
+        """Payloads that each exceed the byte bound must not empty the
+        overflow: the catch-up gap jump needs a surviving message to anchor
+        the new window on, so the newest one is kept and delivery goes on."""
+        payload = _numpy_payload(8_000)
+        batcher, start = make_converged_batcher(
+            rate_hz=self.RATE, max_backlog_bytes=100
+        )
+
+        def feed(t: float, duration: float) -> MessageBatch | None:
+            return batcher.batch(
+                [
+                    Message(timestamp=m.timestamp, stream=DETECTOR, value=payload)
+                    for m in msgs_at(self.RATE, start=t, duration=duration)
+                ]
+            )
+
+        feed(start, duration=3.0)
+        assert batcher.total_dropped_messages > 0
+        delivered = 0
+        t = start + 3.0
+        for _ in range(5):
+            out = feed(t, duration=1.0)
+            t += 1.0
+            if out is not None:
+                delivered += len(out.messages)
+        assert delivered > 0
+
+    def test_metrics_report_backlog_depth_and_drops(self):
+        batcher = self.make()
+        self._run(50, batcher)
+        metrics = batcher.drain_metrics()
+        assert metrics.max_backlog_s > self.BATCH_LEN
+        # First drain, so the interval spans everything since start.
+        assert metrics.dropped_messages == batcher.total_dropped_messages
+        assert metrics.dropped_bytes == batcher.total_dropped_bytes
+
+    def test_metrics_reset_on_drain(self):
+        """Fields are per interval, so a quiet interval must not inherit the
+        previous one's excursion or drops; the totals keep the full history."""
+        batcher = self.make()
+        self._run(50, batcher)
+        first = batcher.drain_metrics()
+        t = 0.0
+        for _ in range(10):
+            batcher.batch(msgs_at(self.RATE, start=t, duration=self.BATCH_LEN))
+            t += self.BATCH_LEN
+        second = batcher.drain_metrics()
+        assert second.max_backlog_s < first.max_backlog_s
+        assert second.dropped_messages == 0
+        assert second.dropped_bytes == 0
+        assert batcher.total_dropped_messages == first.dropped_messages
