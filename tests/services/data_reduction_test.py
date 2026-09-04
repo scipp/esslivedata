@@ -758,3 +758,51 @@ def test_message_with_bad_timestamp_is_ignored(
     app.step()
     assert len(sink.messages) == 1
     assert sink.messages[0].value.values.sum() == 2000
+
+
+@pytest.mark.slow
+def test_bifrost_elastic_monitor_qmap_maps_once_rotation_context_arrives() -> None:
+    """The elastic monitor Q-map runs off monitor events plus a3/a4 context.
+
+    Unlike the detector Q-maps this workflow's source is a monitor
+    (``elastic_monitor``, cbm5), so it exercises the monitor route into
+    ``data_reduction``. The tank angle arrives as a chain-patch binding — it
+    places the monitor *and* supplies the a4 grouping coordinate — while the
+    sample rotation is a direct spec-scope bind, so the gate must open on both
+    devices even though the instrument-scope binds name ``unified_detector``.
+    """
+    app = make_reduction_app(instrument='bifrost')
+    sink = app.sink
+    service = app.service
+    workflow_id, _ = _get_workflow_from_registry('bifrost', 'elastic_monitor_qmap')
+
+    workflow_config = workflow_spec.WorkflowConfig(
+        identifier=workflow_id, job_id=_job_id('elastic_monitor')
+    )
+    app.publish_config_message(workflow_config)
+    service.step()
+    sink.messages.clear()
+
+    # Monitor events before any rotation context: gate holds, no crash.
+    app.publish_monitor_events(size=2000, time=2)
+    service.step()
+    assert len(sink.messages) == 0
+
+    for device in ('detector_tank_angle_r0', 'rotation_stage'):
+        for substream, value in (
+            ('target_value', 0.0),
+            ('idle_flag', 1),
+            ('value', 0.0),
+        ):
+            app.publish_log_message(
+                source_name=f'{device}/{substream}', time=4, value=value
+            )
+    service.step()
+
+    sink.messages.clear()
+    app.publish_monitor_events(size=2000, time=5)
+    service.step()
+    assert len(sink.messages) >= 1
+    result = sink.messages[-1].value
+    assert result.dims == ('Q_perpendicular', 'Q_parallel')
+    assert result.data.sum().value > 0

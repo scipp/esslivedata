@@ -9,6 +9,7 @@ from functools import cache
 import scipp as sc
 
 from ess.livedata.config import Instrument
+from ess.livedata.config.value_log import ValueLog
 from ess.livedata.config.workflow_spec import Temporality
 
 from . import specs
@@ -19,7 +20,18 @@ from .specs import (
     BifrostQMapParams,
     DetectorRatemeterParams,
     DetectorRatemeterRegionParams,
+    ElasticMonitorQMapParams,
 )
+
+
+class DetectorTankAngleLog(ValueLog):
+    """Per-binding Sciline key for the BIFROST detector-tank rotation readback.
+
+    The elastic monitor rides the tank, so its ``depends_on`` chain runs
+    through ``detector_tank_angle_r0`` and its position is only known once the
+    live readback arrives.
+    """
+
 
 # Q-vector basis for Q-map calculations
 _Q_VECTORS = {
@@ -45,6 +57,12 @@ def setup_factories(instrument: Instrument) -> None:
         CutAxis2,
         CutData,
     )
+    from ess.bifrost.single_crystal import BifrostBraggPeakMonitorWorkflow
+    from ess.bifrost.single_crystal.types import (
+        IntensityQparQperp,
+        QParallelBins,
+        QPerpendicularBins,
+    )
     from ess.reduce.nexus.types import (
         Filename,
         NeXusData,
@@ -54,6 +72,7 @@ def setup_factories(instrument: Instrument) -> None:
     from ess.reduce.unwrap import LookupTableFilename
     from ess.reduce.unwrap.types import LookupTableRelativeErrorThreshold
     from ess.spectroscopy.types import (
+        ElasticMonitor,
         InstrumentAngle,
         PreopenNeXusFile,
         ProtonCharge,
@@ -89,6 +108,26 @@ def setup_factories(instrument: Instrument) -> None:
     )
     specs.detector_ratemeter_handle.skip_instrument_contexts()
     specs.unified_detector_view_handle.skip_instrument_contexts()
+
+    # The elastic monitor rides the detector tank, so the tank angle serves it
+    # twice: as geometry, patched into the monitor's ``depends_on`` chain, and as
+    # the a4 coordinate ``group_by_rotation`` bins on. A stream carries one
+    # context key per spec, so the chain patch is the binding and
+    # ``_instrument_angle_from_tank_log`` below derives the coordinate from it.
+    # Chain-patch bindings must live at instrument scope; the sample rotation is
+    # direct-bind and stays spec-scope.
+    instrument.add_context_binding(
+        stream_name='detector_tank_angle_r0',
+        dependent_sources={'elastic_monitor'},
+        workflow_key=DetectorTankAngleLog,
+    )
+    # The plain monitor histogram is counts-over-TOA and never resolves a
+    # position, so it must not wait on the tank readback.
+    specs.monitor_handle.skip_instrument_contexts()
+    specs.elastic_monitor_qmap_handle.add_context_binding(
+        stream_name='rotation_stage',
+        workflow_key=SampleAngle[SampleRun],
+    )
 
     # Create base reduction workflow
     (
@@ -218,6 +257,59 @@ def setup_factories(instrument: Instrument) -> None:
         wf[CutAxis1] = axis1
         wf[CutAxis2] = axis2
         return _make_cut_stream_processor(wf)
+
+    # Elastic monitor Q-map workflow
+    @cache
+    def _init_elastic_monitor_qmap_workflow() -> sciline.Pipeline:
+        """Initialize the elastic monitor Q-map workflow.
+
+        Geometry comes from the geometry artifact rather than the McStas
+        simulation file the Q-cut workflows use: the tank angle is patched into
+        the monitor's ``depends_on`` chain at the path the f144 stream targets,
+        and only the artifact writes the chain entry at that path. The
+        simulation file keys the same transform one level up and carries a
+        720-sample rotation scan in it, which no live readback can replace.
+        """
+        fname = instrument.nexus_file
+        with snx.File(fname) as f:
+            monitor_names = list(f['entry/instrument'][snx.NXmonitor])
+        workflow = BifrostBraggPeakMonitorWorkflow()
+        workflow[Filename[SampleRun]] = fname
+        workflow[LookupTableFilename] = lookup_table_simulation()
+        workflow[LookupTableRelativeErrorThreshold] = {
+            'detector': float('inf'),
+            **{name: float('inf') for name in monitor_names},
+        }
+        workflow[PreopenNeXusFile] = PreopenNeXusFile(True)
+        return workflow
+
+    def _instrument_angle_from_tank_log(
+        log: DetectorTankAngleLog,
+    ) -> InstrumentAngle[SampleRun]:
+        """Reuse the chain-patched tank readback as the a4 grouping coordinate."""
+        return InstrumentAngle[SampleRun](log.values)
+
+    @specs.elastic_monitor_qmap_handle.attach_factory()
+    def _elastic_monitor_qmap_workflow(
+        params: ElasticMonitorQMapParams,
+    ) -> StreamProcessorWorkflow:
+        # The map is accumulated here rather than emitted as a scalar for the
+        # dashboard's correlation histogram to bin: the full wavelength band puts
+        # a distribution of Q in every update, not a scalar, and over a
+        # multi-day run a timeseries would grow without bound where a histogram
+        # does not.
+        wf = _init_elastic_monitor_qmap_workflow().copy()
+        wf.insert(_instrument_angle_from_tank_log)
+        wf[QParallelBins] = params.q_parallel_edges.get_edges().rename(Q='Q_parallel')
+        wf[QPerpendicularBins] = params.q_perpendicular_edges.get_edges().rename(
+            Q='Q_perpendicular'
+        )
+        return StreamProcessorWorkflow(
+            wf,
+            dynamic_keys={'elastic_monitor': NeXusData[ElasticMonitor, SampleRun]},
+            target_keys={'q_map': IntensityQparQperp[SampleRun]},
+            accumulators=(IntensityQparQperp[SampleRun],),
+        )
 
 
 def _transpose_with_coords(data: sc.DataArray, dims: tuple[str, ...]) -> sc.DataArray:
