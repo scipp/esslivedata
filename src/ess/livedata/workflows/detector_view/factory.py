@@ -11,7 +11,6 @@ from __future__ import annotations
 
 import scipp as sc
 from ess.reduce.nexus.types import NeXusData, SampleRun
-from ess.reduce.unwrap import LookupTableFilename
 from ess.reduce.unwrap.types import LookupTableRelativeErrorThreshold
 from scippnexus import NXdetector
 
@@ -24,8 +23,9 @@ from ...preprocessors.downsample_pixel_ids import SOURCE_RESOLUTION
 from ..detector_view_specs import (
     DetectorViewOutputs,
     DetectorViewOutputsBase,
-    DetectorViewParams,
+    DetectorViewParamsBase,
 )
+from ..lut_context import detector_lookup_table
 from ..stream_processor_workflow import StreamProcessorWorkflow
 from ..workflow_factory import WorkflowFactory
 from .data_source import DetectorDataSource, DetectorNumberSource
@@ -98,8 +98,7 @@ class DetectorViewFactory:
     def make_workflow(
         self,
         source_name: str,
-        params: DetectorViewParams,
-        lookup_table_filename: str | None = None,
+        params: DetectorViewParamsBase,
     ) -> StreamProcessorWorkflow:
         """
         Factory method that creates a detector view workflow.
@@ -110,10 +109,6 @@ class DetectorViewFactory:
             Name of the detector source (e.g., 'panel_0').
         params:
             Workflow parameters containing coordinate mode, edges, and ranges.
-        lookup_table_filename:
-            Path to lookup table file. Required for 'wavelength' coordinate mode.
-            The caller (instrument factory) is responsible for resolving this
-            from instrument-specific params.
 
         Returns
         -------
@@ -127,8 +122,6 @@ class DetectorViewFactory:
 
         # Validate wavelength mode requirements
         if mode == 'wavelength':
-            if lookup_table_filename is None:
-                raise ValueError(f"{mode} mode requires lookup_table_filename")
             if isinstance(self._data_source, DetectorNumberSource):
                 raise ValueError(
                     f"{mode} mode requires geometry for Ltotal computation; "
@@ -156,9 +149,14 @@ class DetectorViewFactory:
             coordinate_mode=mode,
         )
 
-        # Set lookup table filename and error threshold for wavelength mode
+        # The lookup table arrives as context from the LUT workflow. Inserting
+        # the provider is the whole of the wiring: the instrument declares which
+        # stream carries its key, and the build gates the job on that stream
+        # only if the targets reach the provider. Hence the unconditional insert
+        # -- in TOA mode nothing reaches it, so the job neither waits for the
+        # table nor needs one (ADR 0010).
+        workflow.insert(detector_lookup_table)
         if mode == 'wavelength':
-            workflow[LookupTableFilename] = lookup_table_filename
             workflow[LookupTableRelativeErrorThreshold] = {source_name: float('inf')}
 
         # Configure detector data source (EmptyDetector)

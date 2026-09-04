@@ -35,6 +35,7 @@ def make_reduction_service_builder(
         RoutingAdapterBuilder(stream_mapping=scoped, stream_counter=stream_counter)
         .with_routes_from_mapping()
         .with_livedata_commands_route()
+        .with_livedata_context_route()
         .with_run_control_route()
         .build()
     )

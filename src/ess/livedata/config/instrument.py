@@ -24,7 +24,14 @@ from .detector_downsampling import (
     is_reachable_resolution,
     resolve_downsampling,
 )
-from .stream import ChainPatchBinding, ContextBinding, Device, F144Stream, Stream
+from .stream import (
+    AxisRange,
+    ChainPatchBinding,
+    ContextBinding,
+    Device,
+    F144Stream,
+    Stream,
+)
 from .value_log import ValueLog
 from .workflow_spec import (
     DETECTORS,
@@ -131,6 +138,20 @@ class Instrument:
     #: ``DiskChoppers`` and declares per-chopper setpoint context bindings) and
     #: the ``ChopperSynthesizer`` wired into the timeseries service.
     choppers: list[str] = field(default_factory=list)
+    #: Value ranges of the instrument's moving axes, keyed by NeXus transform
+    #: path. Needed because the geometry artifact stores an f144-driven
+    #: transform as an empty NXlog, carrying no value at all; the range is
+    #: therefore a declaration. Consumed when deriving per-component wavelength
+    #: lookup-table ranges. Which components ride an axis is derived from their
+    #: ``depends_on`` chains, not restated here.
+    axis_ranges: dict[str, AxisRange] = field(default_factory=dict)
+    #: Components the lookup-table workflow can actually place, filled in when
+    #: its factory is attached. Empty until then, and for chopperless
+    #: instruments.
+    _lut_components: frozenset[str] = field(default_factory=frozenset, init=False)
+    #: Context streams a workflow can request by asking for the key, filled in
+    #: by :meth:`offer_context_stream`.
+    _offered_context_streams: dict[Any, str] = field(default_factory=dict, init=False)
     #: Stability tolerance for chopper delay readbacks. The readback stream's
     #: unit is enforced to ``ns`` by ``declare_chopper_setpoint_streams``.
     #: Shared by ``ChopperSynthesizer`` for noise rejection (rolling-window std
@@ -156,6 +177,7 @@ class Instrument:
         default_factory=dict, init=False
     )
     _pixellated_monitors: set[str] = field(default_factory=set, init=False)
+    _factories_loaded: bool = field(default=False, init=False)
 
     def __post_init__(self) -> None:
         """Auto-register standard workflow specs based on instrument metadata."""
@@ -296,6 +318,77 @@ class Instrument:
         self._validate_binding_stream_name(binding)
         self.context_bindings.append(binding)
 
+    def offer_context_stream(self, *, workflow_key: Any, stream_name: str) -> None:
+        """Offer a stream to every workflow, keyed by the Sciline key it fills.
+
+        The counterpart to :meth:`add_context_binding`. Both end up as
+        ``{stream name: workflow key}`` entries in a job's ``context_keys`` and
+        in its gate; they differ in what decides *which jobs* get the entry.
+
+        An offer names no spec, source or params. A graph asks for the stream
+        simply by containing ``workflow_key``, and the workflow build
+        (``StreamProcessorWorkflow.build``) reads that request off the finished
+        graph. The streamed wavelength lookup table (ADR 0010) is the motivating
+        case: one spec feeds a job either through the table or straight from
+        time-of-arrival depending on its params, and only the built graph knows
+        which.
+
+        A binding is needed where that reading cannot work: when the key reaches
+        the graph only because the binding puts it there (a chain patch is
+        injected into a graph that never mentions it, so there is no request to
+        read back), or when the stream filling a key varies per source. Offers
+        are bijective -- one stream per key and one key per stream,
+        instrument-wide -- and so cannot express the latter.
+
+        A binding also routes more precisely, which is what keeps a stream
+        private to one spec off the offer side. Route derivation runs at startup
+        with no params, whereas an offer is taken up per job from the built
+        graph, so every service hosting any spec must subscribe to every offered
+        stream. A spec-scope binding subscribes only the service running that
+        spec -- the wavelength-LUT chopper setpoints, consumed by one workflow on
+        the timeseries service, stay bindings for this reason.
+
+        Offer only streams that are actually published; :meth:`validate` checks
+        this. Gating on a stream nobody publishes would leave the job in
+        ``pending_context`` forever, whereas a graph asking for a key nobody
+        offers fails loudly at job creation on the unsatisfied key.
+        """
+        if (previous := self._offered_context_streams.get(workflow_key)) not in (
+            None,
+            stream_name,
+        ):
+            raise ValueError(
+                f"Context stream for workflow key {workflow_key} already "
+                f"offered as {previous!r}, cannot also offer {stream_name!r}"
+            )
+        for key, name in self._offered_context_streams.items():
+            if name == stream_name and key != workflow_key:
+                raise ValueError(
+                    f"Context stream {stream_name!r} is already offered for "
+                    f"workflow key {key}, cannot also serve {workflow_key}"
+                )
+        self._offered_context_streams[workflow_key] = stream_name
+
+    @property
+    def offered_context_streams(self) -> dict[Any, str]:
+        """Offered context streams, as workflow key -> wire name.
+
+        Handed to every workflow build, which keeps whichever entries its graph
+        turns out to need (see :meth:`offer_context_stream`).
+        """
+        return dict(self._offered_context_streams)
+
+    @property
+    def lut_components(self) -> frozenset[str]:
+        """Components covered by a block of a wavelength lookup table.
+
+        A component riding a live axis with no declared :class:`AxisRange`
+        cannot be placed from the geometry artifact, so no block covers it. A
+        group with no such component publishes no table, which is what decides
+        whether its context stream is declared at all.
+        """
+        return self._lut_components
+
     @property
     def chain_patch_bindings(self) -> list[ChainPatchBinding]:
         """Instrument-scope chain-patch bindings resolved for transform wiring.
@@ -350,28 +443,37 @@ class Instrument:
             if source_name in binding.dependent_sources
         ]
 
-    def resolve_context_keys(
+    def bound_context_keys(
         self, workflow_id: WorkflowId, source_name: str
     ) -> dict[str, Any]:
-        """Resolve the ``ContextBinding`` mapping for a ``(spec, source)`` pair.
+        """The context keys bound by :class:`ContextBinding` for a ``(spec, source)``.
 
-        Returns ``{stream_name: workflow_key}`` over the matching bindings (see
-        :meth:`_matching_bindings`). Context wire names equal their stream
-        names, so the keys are the context streams the job subscribes to; the
-        subset it waits for is :meth:`resolve_gating_streams`.
+        Returns ``{stream_name: workflow_key}``, the inverse orientation of
+        :attr:`offered_context_streams`; context wire names equal their stream
+        names, so the keys are the context streams the job subscribes to. The
+        subset it waits for is :meth:`bound_gating_streams`. A binding applies
+        to every job on a dependent source, which is why this needs no params: a
+        stream only some of a spec's jobs consume is offered instead (see
+        :meth:`offer_context_stream`), and resolved per job against the graph it
+        builds.
+
+        Two bindings naming one stream for different keys is a declaration
+        mistake and is rejected at registration by :meth:`validate`, not here.
         """
         return {
             binding.stream_name: binding.workflow_key
             for binding in self._matching_bindings(workflow_id, source_name)
         }
 
-    def resolve_gating_streams(
+    def bound_gating_streams(
         self, workflow_id: WorkflowId, source_name: str
     ) -> set[str]:
         """The context streams a ``(spec, source)`` job waits for (ADR 0002).
 
-        The stream names of the matching bindings declared with
-        ``gating=True``, see :attr:`ContextBinding.gating`.
+        The stream names of the matching bindings declared with ``gating=True``,
+        see :attr:`ContextBinding.gating`. This is the binding-declared half of
+        the gate; the streams a job's built graph asks for out of those merely
+        *offered* are the other half, and are added by ``JobFactory`` (ADR 0010).
         """
         return {
             binding.stream_name
@@ -739,6 +841,14 @@ class Instrument:
         :
             Handle for the registered spec.
         """
+        from ess.livedata.workflows.detector_view_specs import (
+            TOAOnlyDetectorViewParams,
+            make_detector_view_params,
+        )
+
+        # Logical views are TOA-only: they run on ``InstrumentDetectorSource``,
+        # which carries no geometry, so there is no Ltotal to index a wavelength
+        # lookup table with. Offering the mode would fail at job start.
         handle = self.register_detector_view(
             name=name,
             title=title,
@@ -749,6 +859,9 @@ class Instrument:
             roi_support=roi_support,
             output_ndim=output_ndim,
             spectrum_view=spectrum_view,
+            params=make_detector_view_params(
+                spectrum_view=spectrum_view, base=TOAOnlyDetectorViewParams
+            ),
             device_outputs=device_outputs,
         )
         self._logical_view_handles[name] = handle
@@ -781,6 +894,7 @@ class Instrument:
         aux_sources: AuxSources | None = None,
         outputs: type[Any],
         device_outputs: dict[str, str] | None = None,
+        context_outputs: dict[str, str] | None = None,
         reset_on_run_transition: bool = True,
         supports_reset: bool = True,
     ) -> SpecHandle:
@@ -842,6 +956,7 @@ class Instrument:
             aux_sources=aux_sources,
             outputs=outputs,
             device_outputs=device_outputs or {},
+            context_outputs=context_outputs or {},
             reset_on_run_transition=reset_on_run_transition,
             supports_reset=supports_reset,
         )
@@ -858,8 +973,16 @@ class Instrument:
         4. Calls instrument-specific setup_factories(self)
         5. Binds the ROI request streams of every ROI-publishing spec
         6. Auto-loads detector_numbers from nexus for unconfigured detectors
+
+        Idempotent: a second call on a loaded instrument is a no-op. The steps
+        append registration state (context bindings, LUT ranges), and the
+        synthesised per-chopper setpoint keys are fresh objects on every run,
+        so re-running would leave duplicate bindings with conflicting keys.
         """
         import importlib
+
+        if self._factories_loaded:
+            return
 
         module = importlib.import_module(f'ess.livedata.config.instruments.{self.name}')
 
@@ -899,15 +1022,24 @@ class Instrument:
             from ess.livedata.preprocessors.detector_data import (
                 get_nexus_geometry_filename,
             )
+            from ess.livedata.workflows.lut_context import (
+                offer_lut_context_streams,
+            )
             from ess.livedata.workflows.wavelength_lut_workflow import (
                 attach_wavelength_lut_factory,
             )
 
-            attach_wavelength_lut_factory(
+            self._lut_components = attach_wavelength_lut_factory(
                 self._wavelength_lut_handle,
                 choppers=self.choppers,
                 nexus_filename=str(get_nexus_geometry_filename(self.name)),
+                detectors=self.detector_names,
+                monitors=self.monitors,
+                axis_ranges=self.axis_ranges,
             )
+            # Before setup_factories: a consuming spec neither declares nor
+            # inherits anything here, it just inserts a provider taking the key.
+            offer_lut_context_streams(self)
 
         if hasattr(module, 'setup_factories'):
             module.setup_factories(self)
@@ -929,6 +1061,7 @@ class Instrument:
                     # the expected path (e.g., monitors lack a detector_number
                     # dataset — they must provide it via configure_pixellated_monitor)
                     pass
+        self._factories_loaded = True
 
         # Must follow the loop above: get_downsampling caches, so resolving it
         # any earlier would freeze the file-less fallback for the process.
@@ -966,12 +1099,37 @@ class Instrument:
         synthetic instrument assembled in a test can be checked without the
         package-import and NeXus-loading machinery. Raises :class:`ValueError`
         on the first violation. The order matches ``load_factories``: unknown
-        dependent sources are reported before the finer wire-name and
+        dependent sources are reported before the finer binding and
         chain-patch checks, since those assume the sources are real.
         """
         self._validate_binding_dependent_sources()
-        self._validate_context_binding_wire_name_collisions()
+        self._validate_context_binding_declarations()
         self._validate_chain_patch_value_log_uniqueness()
+        self._validate_offered_context_streams()
+
+    def _validate_offered_context_streams(self) -> None:
+        """Raise if an offered context stream is not published by anything.
+
+        A gate on a name nothing publishes never opens, leaving every consuming
+        job in ``pending_context`` forever. Two publishers are legitimate: a
+        declared instrument stream, and a workflow output republished as a
+        context stream (:attr:`WorkflowSpec.context_outputs`). Device substreams
+        are excluded for the reason spelled out in
+        :meth:`_validate_binding_stream_name` — ``DeviceSynthesizer`` suppresses
+        them in favour of the merged device stream.
+        """
+        published = set(self.streams) - {
+            name for device in self.devices.values() for name in device.substream_names
+        }
+        for spec in self.workflow_factory.values():
+            published.update(spec.context_outputs.values())
+        for key, name in self._offered_context_streams.items():
+            if name not in published:
+                raise ValueError(
+                    f"Context stream {name!r} offered for workflow key {key} is "
+                    "published by neither a declared stream nor a workflow's "
+                    "context_outputs; jobs asking for the key would gate forever"
+                )
 
     def _validate_binding_dependent_sources(self) -> None:
         """Raise if any binding lists a source name no registered spec advertises."""
@@ -1032,15 +1190,22 @@ class Instrument:
             by_key[binding.workflow_key] = binding.stream_name
             by_stream[binding.stream_name] = binding.workflow_key
 
-    def _validate_context_binding_wire_name_collisions(self) -> None:
-        """Raise if context-stream wire names collide.
+    def _validate_context_binding_declarations(self) -> None:
+        """Raise if context bindings that apply together disagree.
 
-        Two collisions are detected:
+        Three collisions are detected, all of them properties of the
+        declarations alone: a stream name is fixed at declaration time and a
+        binding applies to every job on a dependent source, so no job can create
+        or avoid one.
 
+        - **Conflicting keys.** Two bindings naming one stream for different
+          Sciline keys. The gate maps each name to one key, so one of the two
+          would silently win.
         - **Instrument-vs-spec.** For every (spec, source) pair where both
           instrument-level and spec-level :class:`ContextBinding` entries
           apply, the ``stream_name`` (which equals the wire name) must be
-          unique across the two scopes.
+          unique across the two scopes. Rejected even where the keys agree:
+          the redundancy means one scope is unaware of the other.
         - **Context-vs-aux.** A context wire name must not match any
           ``aux_sources`` field name on the spec: at ``JobFactory.create``
           time the context and aux mappings are merged into a single
@@ -1056,6 +1221,18 @@ class Instrument:
                 [] if reg.skip_instrument_contexts else self.context_bindings
             )
             for source in spec.source_names:
+                keys: dict[str, Any] = {}
+                for binding in self._matching_bindings(spec.get_id(), source):
+                    previous = keys.setdefault(
+                        binding.stream_name, binding.workflow_key
+                    )
+                    if previous != binding.workflow_key:
+                        raise ValueError(
+                            f"ContextBindings of spec {spec.name!r} on source "
+                            f"{source!r} name stream {binding.stream_name!r} for "
+                            f"conflicting workflow keys {previous} and "
+                            f"{binding.workflow_key}"
+                        )
                 instrument_names: set[str] = {
                     binding.stream_name
                     for binding in instrument_bindings

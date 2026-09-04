@@ -84,3 +84,7 @@ def configure_logging(
         root_logger.addHandler(file_handler)
 
     root_logger.setLevel(level)
+
+    # scipp.transform_coords logs the full derivation graph at INFO, once per call.
+    # Workflow setup and every workflow call would drown out our own output.
+    logging.getLogger('scipp').setLevel(logging.WARNING)

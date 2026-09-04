@@ -41,11 +41,14 @@ class SupportsContext(Protocol):
     Workflows wrapping ``ess.reduce.streaming.StreamProcessor`` defer building
     their graph so the routing layer (:meth:`WorkflowFactory.create`) can inject
     per-job bindings the factory does not know: context streams (motion/geometry/
-    ROI) and f144-driven chain-patch transforms. :meth:`build` takes both and
+    ROI) and f144-driven chain-patch transforms. :meth:`build` takes them and
     materializes the workflow in one call, so the caller need not sequence
     separate configuration steps and factories need not thread these through
-    their signature. (Aux-role resolution is not among these: factories key
-    ``dynamic_keys`` by canonical stream name directly, via the
+    their signature. It also reports back, via
+    :attr:`requested_context_streams`, which of the instrument's offered
+    context streams the finished graph asks for -- the routing layer cannot know
+    that before the graph exists. (Aux-role resolution is not among these:
+    factories key ``dynamic_keys`` by canonical stream name directly, via the
     ``aux_source_names`` map passed to the factory.)
     """
 
@@ -54,7 +57,11 @@ class SupportsContext(Protocol):
         *,
         context_keys: Mapping[str, Any] | None = None,
         chain_patch_bindings: Iterable[ChainPatchBinding] = (),
+        offered_context_streams: Mapping[Any, str] | None = None,
     ) -> None: ...
+
+    @property
+    def requested_context_streams(self) -> frozenset[str]: ...
 
 
 @dataclass(frozen=True)
@@ -134,6 +141,12 @@ class SpecHandle:
         :attr:`Instrument.chain_patch_bindings` reads only instrument-scope
         records, so a spec-scope chain-patch context would route the f144
         value to a Sciline parameter that no provider consumes — silent-wrong.
+
+        A binding applies to every job on a dependent source. A stream only
+        *some* of a spec's jobs consume — one a params model can switch on — is
+        not a binding but an offered context stream on the instrument, which
+        the build derives per job from the graph (see
+        :meth:`Instrument.offer_context_stream`).
         """
         self._factory._add_context_binding(
             self.workflow_id,
@@ -338,14 +351,33 @@ class WorkflowFactory(Mapping[WorkflowId, WorkflowSpec]):
             reg, skip_instrument_contexts=True
         )
 
+    def validate_params(self, config: WorkflowConfig) -> Any:
+        """Validate a config's raw params against its spec's params model.
+
+        Split out of :meth:`create` because the caller needs the validated model
+        *before* building the workflow, to resolve param-dependent context
+        bindings (ADR 0010). Validating in one place keeps the two uses from
+        drifting and keeps a ``ValidationError`` surfacing from a single site.
+        """
+        workflow_id = config.identifier
+        if workflow_id not in self._registrations:
+            raise KeyError(f"Unknown workflow ID: {workflow_id}")
+        # NoParams forbids extra fields, so params sent to a workflow that takes
+        # none are rejected here rather than silently dropped.
+        return self._registrations[workflow_id].spec.params.model_validate(
+            config.params
+        )
+
     def create(
         self,
         *,
         source_name: str,
         config: WorkflowConfig,
+        params: Any,
         aux_source_names: dict[str, str] | None = None,
         context_keys: dict[str, Any] | None = None,
         chain_patch_bindings: Iterable[ChainPatchBinding] = (),
+        offered_context_streams: Mapping[Any, str] | None = None,
     ) -> Workflow:
         """
         Create a workflow instance using the registered factory.
@@ -355,7 +387,12 @@ class WorkflowFactory(Mapping[WorkflowId, WorkflowSpec]):
         source_name:
             Name of the data source.
         config:
-            Configuration for the workflow, including the identifier and parameters.
+            Configuration for the workflow, including the identifier and the raw
+            parameters.
+        params:
+            The validated params model, from :meth:`validate_params`. Passed in
+            rather than re-derived so that the gate resolution and the workflow
+            see the same object.
         aux_source_names:
             Rendered auxiliary source names (already resolved by JobFactory).
         context_keys:
@@ -369,6 +406,11 @@ class WorkflowFactory(Mapping[WorkflowId, WorkflowSpec]):
             :meth:`SupportsContext.build`, which wires them as f144-driven
             dynamic transforms while materializing the graph. Only applied to
             workflows that defer their build (:class:`SupportsContext`).
+        offered_context_streams:
+            The instrument's offered context streams (workflow key → wire
+            name). Passed to :meth:`SupportsContext.build`, which keeps the
+            entries the built graph asks for and reports them back as
+            :attr:`SupportsContext.requested_context_streams`.
         """
         workflow_id = config.identifier
         if workflow_id not in self._registrations:
@@ -376,9 +418,6 @@ class WorkflowFactory(Mapping[WorkflowId, WorkflowSpec]):
 
         reg = self._registrations[workflow_id]
         workflow_spec = reg.spec
-        # NoParams forbids extra fields, so params sent to a workflow that takes
-        # none are rejected here rather than silently dropped.
-        workflow_params = workflow_spec.params.model_validate(config.params)
 
         # Validate aux_sources configuration
         if workflow_spec.aux_sources is None:
@@ -413,7 +452,7 @@ class WorkflowFactory(Mapping[WorkflowId, WorkflowSpec]):
         if 'source_name' in sig.parameters:
             kwargs['source_name'] = source_name
         if 'params' in sig.parameters:
-            kwargs['params'] = workflow_params
+            kwargs['params'] = params
         if 'aux_source_names' in sig.parameters:
             kwargs['aux_source_names'] = aux_source_names or {}
 
@@ -428,6 +467,7 @@ class WorkflowFactory(Mapping[WorkflowId, WorkflowSpec]):
             workflow.build(
                 context_keys=context_keys,
                 chain_patch_bindings=chain_patch_bindings,
+                offered_context_streams=offered_context_streams,
             )
         elif context_keys:
             # No symmetric check for chain_patch_bindings: context_keys are

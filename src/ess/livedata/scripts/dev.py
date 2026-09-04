@@ -192,14 +192,7 @@ def ensure_topics_exist(instrument: str) -> None:
         | mapping.area_detector_topics
         | mapping.monitor_topics
         | mapping.log_topics
-        | {
-            mapping.topics.livedata_commands,
-            mapping.topics.livedata_data,
-            mapping.topics.livedata_responses,
-            mapping.topics.livedata_roi,
-            mapping.topics.livedata_status,
-            mapping.topics.filewriter,
-        }
+        | mapping.topics.all_topics
     )
     admin = AdminClient(load_config(namespace=config_names.kafka, env='dev'))
     futures = admin.create_topics(

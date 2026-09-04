@@ -22,6 +22,7 @@ from ess.livedata.config.workflow_spec import (
     WorkflowId,
     WorkflowSpec,
 )
+from ess.livedata.workflows.workflow_factory import SupportsContext
 
 from .job import Job, JobData, JobReply, JobResult, JobState, JobStatus
 from .message import RunStart, RunStop, StreamId
@@ -140,10 +141,13 @@ class JobFactory:
     def create(self, *, job_id: JobId, config: WorkflowConfig) -> Job:
         """Build a Job from its workflow config.
 
-        Resolves the matching instrument- and spec-scope ``ContextBinding``
-        declarations for this ``(spec, source)`` and populates the job's
-        ``context_keys`` (wired into ``set_context``) and ``gating_streams``
-        (the JobManager gates the job until each is available; see ADR 0002).
+        Validates the config's params, then collects the job's context streams
+        from both sides: the instrument- and spec-scope ``ContextBinding``
+        declarations matching this ``(spec, source)``, and the offered context
+        streams the built workflow turns out to request (ADR 0010). Together
+        they populate the job's ``context_keys`` (wired into ``set_context``)
+        and ``gating_streams`` (the JobManager gates the job until each is
+        available; see ADR 0002).
         """
         workflow_id = config.identifier
         if workflow_id is None:
@@ -166,10 +170,8 @@ class JobFactory:
         else:
             rendered_aux_names = dict(config.aux_source_names or {})
 
-        context_keys = self._instrument.resolve_context_keys(
-            workflow_id, job_id.source_name
-        )
-        gating_streams = self._instrument.resolve_gating_streams(
+        params = factory.validate_params(config)
+        context_keys = self._instrument.bound_context_keys(
             workflow_id, job_id.source_name
         )
         # Context wire names equal their stream names — no per-job suffixing.
@@ -183,16 +185,30 @@ class JobFactory:
         stream_processor = factory.create(
             source_name=job_id.source_name,
             config=config,
+            params=params,
             aux_source_names=aux_streams,
             context_keys=context_keys,
             chain_patch_bindings=self._instrument.chain_patch_bindings,
+            offered_context_streams=self._instrument.offered_context_streams,
+        )
+        # Offered context streams reach every job; only the built graph knows
+        # which of them it asks for, so that half of the gate is read back off
+        # the workflow rather than predicted here (ADR 0010).
+        requested_streams = (
+            set(stream_processor.requested_context_streams)
+            if isinstance(stream_processor, SupportsContext)
+            else set()
+        )
+        gating_streams = (
+            self._instrument.bound_gating_streams(workflow_id, job_id.source_name)
+            | requested_streams
         )
         return Job(
             job_id=job_id,
             workflow_id=workflow_id,
             workflow=stream_processor,
             source_names=[job_id.source_name],
-            input_streams=set(aux_streams.values()),
+            input_streams=set(aux_streams.values()) | requested_streams,
             gating_streams=gating_streams,
             reset_on_run_transition=workflow_spec.reset_on_run_transition,
             supports_reset=workflow_spec.supports_reset,

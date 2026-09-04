@@ -21,7 +21,11 @@ from ..config.workflow_spec import (
     WindowOutput,
     WorkflowOutputsBase,
 )
-from .detector_view_specs import CoordinateMode, CoordinateModeSettings
+from .detector_view_specs import (
+    CoordinateMode,
+    CoordinateModeSettings,
+    TOAOnlyCoordinateModeSettings,
+)
 from .workflow_factory import SpecHandle
 
 _TOA_EDGES_DESCRIPTION = (
@@ -33,39 +37,20 @@ _TOA_EDGES_DESCRIPTION = (
 )
 
 
-class TOAOnlyCoordinateModeSettings(pydantic.BaseModel):
-    """
-    Coordinate mode settings restricted to TOA only.
-
-    Use this for instruments that don't have TOF lookup tables available.
-    """
-
-    mode: CoordinateMode = pydantic.Field(
-        default='toa',
-        description="Coordinate system for event data. Only TOA (time-of-arrival) "
-        "is available for this instrument.",
-        json_schema_extra={'labels': {'toa': 'Time of arrival (TOA)'}},
-    )
-
-    @pydantic.field_validator('mode')
-    @classmethod
-    def _validate_toa_only(cls, v: CoordinateMode) -> CoordinateMode:
-        if v != 'toa':
-            raise ValueError(
-                f"Only 'toa' mode is supported for this instrument, got '{v}'. "
-                "TOF mode requires instrument-specific lookup tables."
-            )
-        return v
-
-
 class MonitorDataParamsBase(pydantic.BaseModel, abc.ABC):
     """Common interface for monitor histogram parameter models.
 
-    Subclasses expose the active coordinate mode together with the edges and
-    range filter for that mode. This lets a single workflow factory
-    (:func:`create_monitor_workflow_factory`) serve every monitor spec
-    regardless of which coordinate modes the instrument offers.
+    Subclasses expose the edges and range filter for the coordinate mode they
+    offer, narrowing :attr:`coordinate_mode` to the modes they support. This
+    lets a single workflow factory (:func:`create_monitor_workflow_factory`)
+    serve every monitor spec regardless of which coordinate modes it offers.
     """
+
+    coordinate_mode: CoordinateModeSettings = pydantic.Field(
+        title="Coordinate Mode",
+        description="Select coordinate system for monitor data.",
+        default_factory=CoordinateModeSettings,
+    )
 
     @abc.abstractmethod
     def get_active_edges(self) -> sc.Variable:
@@ -75,24 +60,18 @@ class MonitorDataParamsBase(pydantic.BaseModel, abc.ABC):
     def get_active_range(self) -> tuple[sc.Variable, sc.Variable] | None:
         """Return the range filter for the active coordinate mode, if enabled."""
 
-    @abc.abstractmethod
     def get_coordinate_mode(self) -> CoordinateMode:
         """Return the active coordinate mode."""
+        return self.coordinate_mode.mode
 
 
-class TOAOnlyMonitorDataParams(MonitorDataParamsBase):
+class _MonitorTOAFields(pydantic.BaseModel):
+    """TOA histogram edges and range filter, shared by both monitor models.
+
+    Fields only — which mode is *active* stays with the concrete params model,
+    so a both-modes model cannot silently inherit TOA as the answer.
     """
-    Monitor data parameters restricted to TOA mode only.
 
-    Use this for instruments that don't have TOF lookup tables available.
-    """
-
-    coordinate_mode: TOAOnlyCoordinateModeSettings = pydantic.Field(
-        title="Coordinate Mode",
-        description="Select coordinate system for monitor data. "
-        "Only TOA mode is available for this instrument.",
-        default_factory=TOAOnlyCoordinateModeSettings,
-    )
     toa_edges: parameter_models.TOAEdges = pydantic.Field(
         title="Time of Arrival Edges",
         description=_TOA_EDGES_DESCRIPTION,
@@ -109,6 +88,21 @@ class TOAOnlyMonitorDataParams(MonitorDataParamsBase):
         default=parameter_models.TOARange(),
     )
 
+
+class TOAOnlyMonitorDataParams(_MonitorTOAFields, MonitorDataParamsBase):
+    """
+    Monitor data parameters restricted to TOA mode only.
+
+    Use this for instruments that don't have TOF lookup tables available.
+    """
+
+    coordinate_mode: TOAOnlyCoordinateModeSettings = pydantic.Field(
+        title="Coordinate Mode",
+        description="Select coordinate system for monitor data. "
+        "Only TOA mode is available for this instrument.",
+        default_factory=TOAOnlyCoordinateModeSettings,
+    )
+
     def get_active_edges(self) -> sc.Variable:
         """Return the TOA edges."""
         return self.toa_edges.get_edges()
@@ -117,35 +111,10 @@ class TOAOnlyMonitorDataParams(MonitorDataParamsBase):
         """Return the TOA range if enabled."""
         return self.toa_range.range if self.toa_range.enabled else None
 
-    def get_coordinate_mode(self) -> CoordinateMode:
-        """Return the active coordinate mode (always 'toa')."""
-        return self.coordinate_mode.mode
 
+class MonitorDataParams(_MonitorTOAFields, MonitorDataParamsBase):
+    """Parameters for monitor histogram workflow offering both coordinate modes."""
 
-class MonitorDataParams(MonitorDataParamsBase):
-    """Parameters for monitor histogram workflow."""
-
-    coordinate_mode: CoordinateModeSettings = pydantic.Field(
-        title="Coordinate Mode",
-        description="Select coordinate system for monitor data.",
-        default_factory=CoordinateModeSettings,
-    )
-    # TOA (time-of-arrival) settings
-    toa_edges: parameter_models.TOAEdges = pydantic.Field(
-        title="Time of Arrival Edges",
-        description=_TOA_EDGES_DESCRIPTION,
-        default=parameter_models.TOAEdges(
-            start=0.0,
-            stop=parameter_models.ESS_PULSE_PERIOD_MS,
-            num_bins=100,
-            unit=parameter_models.TimeUnit.MS,
-        ),
-    )
-    toa_range: parameter_models.TOARange = pydantic.Field(
-        title="Time of Arrival Range",
-        description="Time of arrival range filter for TOA mode.",
-        default=parameter_models.TOARange(),
-    )
     # Wavelength settings
     wavelength_edges: parameter_models.WavelengthEdges = pydantic.Field(
         title="Wavelength Edges",
@@ -182,10 +151,6 @@ class MonitorDataParams(MonitorDataParamsBase):
                     if self.wavelength_range.enabled
                     else None
                 )
-
-    def get_coordinate_mode(self) -> CoordinateMode:
-        """Return the currently selected coordinate mode."""
-        return self.coordinate_mode.mode
 
 
 class MonitorHistogramOutputs(WorkflowOutputsBase):

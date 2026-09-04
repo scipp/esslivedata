@@ -3,6 +3,7 @@
 import subprocess
 import sys
 
+import pydantic
 import pytest
 
 from ess.livedata.config.instrument import Instrument, instrument_registry
@@ -25,6 +26,9 @@ from ess.livedata.workflows.detector_view_specs import (
     DetectorViewOutputs,
     DetectorViewOutputsBase,
     DetectorViewParams,
+    SpectrumViewSpec,
+    TOAOnlyDetectorViewParams,
+    make_detector_view_params,
 )
 
 
@@ -83,7 +87,7 @@ class TestBindROIRequests:
     def test_each_source_resolves_its_own_view_scoped_streams(
         self, instrument: Instrument, workflow_id: WorkflowId, source: str
     ) -> None:
-        assert instrument.resolve_context_keys(workflow_id, source) == {
+        assert instrument.bound_context_keys(workflow_id, source) == {
             roi_stream_name(workflow_id, source, key): request
             for key, request in ROI_KEYS.items()
         }
@@ -92,7 +96,7 @@ class TestBindROIRequests:
     def test_roi_streams_do_not_gate(
         self, instrument: Instrument, workflow_id: WorkflowId, source: str
     ) -> None:
-        assert instrument.resolve_gating_streams(workflow_id, source) == set()
+        assert instrument.bound_gating_streams(workflow_id, source) == set()
 
     def test_views_sharing_a_source_get_distinct_streams(self) -> None:
         views = [WorkflowId(instrument='d', name=n, version=1) for n in ('xy', 'cyl')]
@@ -211,3 +215,43 @@ class TestDetectorViewParamsGetActiveRange:
             toa_range=TOARange(enabled=False),
         )
         assert params.get_active_range() is None
+
+
+class TestDetectorViewCoordinateModeRestriction:
+    """A spec can restrict its params to time-of-arrival.
+
+    Logical views run on sources without geometry, so there is no ``Ltotal``
+    to index a wavelength lookup table with (ADR 0011); offering the mode
+    would fail at job start. Everywhere else coordinate mode stays a parameter
+    on one spec (ADR 0010).
+    """
+
+    def test_toa_only_params_reject_wavelength(self):
+        with pytest.raises(pydantic.ValidationError):
+            TOAOnlyDetectorViewParams(coordinate_mode={'mode': 'wavelength'})
+
+    def test_toa_only_params_carry_no_wavelength_fields(self):
+        assert 'wavelength_edges' not in TOAOnlyDetectorViewParams.model_fields
+        assert 'wavelength_range' not in TOAOnlyDetectorViewParams.model_fields
+
+    def test_both_modes_remain_available_on_the_unrestricted_model(self):
+        for mode in ('toa', 'wavelength'):
+            params = DetectorViewParams(coordinate_mode={'mode': mode})
+            assert params.coordinate_mode.mode == mode
+
+    def test_make_params_keeps_the_requested_base(self):
+        params = make_detector_view_params(base=TOAOnlyDetectorViewParams)
+        assert params is TOAOnlyDetectorViewParams
+
+    def test_make_params_extends_the_requested_base_with_spectrum_params(self):
+        class SpectrumParams(pydantic.BaseModel):
+            value: int = 3
+
+        spec = SpectrumViewSpec(
+            transform=lambda da: da,
+            output_dims=['group'],
+            params_model=SpectrumParams,
+        )
+        params = make_detector_view_params(spec, base=TOAOnlyDetectorViewParams)
+        assert issubclass(params, TOAOnlyDetectorViewParams)
+        assert params().spectrum_params.value == 3

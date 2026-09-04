@@ -12,7 +12,7 @@ import pydantic
 import pytest
 import scipp as sc
 import scippnexus as snx
-from scipp.testing import assert_identical
+from scipp.testing import assert_allclose, assert_identical
 
 from ess.livedata.config.chopper import delay_setpoint_stream, speed_setpoint_stream
 from ess.livedata.kafka.scipp_da00_compat import da00_to_scipp, scipp_to_da00
@@ -22,8 +22,8 @@ from ess.livedata.workflows.wavelength_lut_workflow import (
 )
 from ess.livedata.workflows.wavelength_lut_workflow_specs import (
     CHOPPER_CASCADE_SOURCE,
+    DETECTOR_LUT_OUTPUT,
     WAVELENGTH_BANDS_OUTPUT,
-    WAVELENGTH_LUT_OUTPUT,
     CascadeBands,
     Pulse,
     SourceOffset,
@@ -113,6 +113,11 @@ def _nxlog(value: float, unit: str | None) -> sc.DataArray:
     )
 
 
+#: The test geometry files carry choppers only, so the range the detector table
+#: covers is supplied directly rather than derived from detector positions.
+DETECTOR_RANGES = [(sc.scalar(5.0, unit='m'), sc.scalar(30.0, unit='m'))]
+
+
 @pytest.fixture
 def no_chopper_geometry(tmp_path: Path) -> Path:
     path = tmp_path / 'no_choppers.nxs'
@@ -123,7 +128,11 @@ def no_chopper_geometry(tmp_path: Path) -> Path:
 def _build_no_chopper_workflow(geom: Path):
     """Build the LUT workflow against a chopper-free geometry file."""
     wf = create_wavelength_lut_workflow(
-        params=_params(), setpoint_keys={}, nexus_filename=str(geom)
+        params=_params(),
+        setpoint_keys={},
+        nexus_filename=str(geom),
+        detector_ranges=DETECTOR_RANGES,
+        monitor_ranges=[],
     )
     wf.build()
     return wf
@@ -133,7 +142,7 @@ def _build_no_chopper_workflow(geom: Path):
 def lut(no_chopper_geometry: Path) -> sc.DataArray:
     wf = _build_no_chopper_workflow(no_chopper_geometry)
     wf.accumulate(_trigger(), start_time=0, end_time=1)
-    return wf.finalize()[WAVELENGTH_LUT_OUTPUT]
+    return wf.finalize()[DETECTOR_LUT_OUTPUT]
 
 
 class TestCascadeBands:
@@ -177,14 +186,25 @@ class TestNoChopperWorkflow:
         # Some finite wavelength values are expected; not all NaN.
         assert np.isfinite(lut.values).any()
 
-    def test_provenance_coords_attached(self, no_chopper_geometry: Path) -> None:
+    def test_scalar_field_coords_describe_the_built_table(
+        self, no_chopper_geometry: Path
+    ) -> None:
+        """The coords are the ``LookupTable`` dataclass fields, which describe the
+        table that was built -- not the parameters that were requested. For the
+        time axis the two differ: the builder fits a whole number of bins into
+        the frame period, so the achieved resolution is finer than the request.
+        """
         params = _params()
         wf = create_wavelength_lut_workflow(
-            params=params, setpoint_keys={}, nexus_filename=str(no_chopper_geometry)
+            params=params,
+            setpoint_keys={},
+            nexus_filename=str(no_chopper_geometry),
+            detector_ranges=DETECTOR_RANGES,
+            monitor_ranges=[],
         )
         wf.build()
         wf.accumulate(_trigger(), start_time=0, end_time=1)
-        table = wf.finalize()[WAVELENGTH_LUT_OUTPUT]
+        table = wf.finalize()[DETECTOR_LUT_OUTPUT]
 
         for name in (
             'pulse_period',
@@ -193,12 +213,19 @@ class TestNoChopperWorkflow:
             'time_resolution',
         ):
             assert name in table.coords, name
-        assert_identical(table.coords['pulse_period'], params.pulse.get_period())
+
+        distance = table.coords['distance']
+        time_offset = table.coords['event_time_offset']
+        assert_identical(table.coords['distance_resolution'], distance[1] - distance[0])
         assert_identical(
-            table.coords['distance_resolution'],
-            params.distance_resolution.get(),
+            table.coords['time_resolution'], time_offset[1] - time_offset[0]
         )
-        assert_identical(table.coords['time_resolution'], params.time_resolution.get())
+        assert not sc.identical(
+            table.coords['time_resolution'], params.time_resolution.get()
+        )
+        assert_allclose(
+            table.coords['pulse_period'].to(unit='s'), params.pulse.get_period()
+        )
         assert int(table.coords['pulse_stride'].value) == params.pulse.stride
 
     def test_clear_then_retrigger_produces_fresh_table(
@@ -206,10 +233,10 @@ class TestNoChopperWorkflow:
     ) -> None:
         wf = _build_no_chopper_workflow(no_chopper_geometry)
         wf.accumulate(_trigger(), start_time=0, end_time=1)
-        first = wf.finalize()[WAVELENGTH_LUT_OUTPUT]
+        first = wf.finalize()[DETECTOR_LUT_OUTPUT]
         wf.clear()
         wf.accumulate(_trigger(), start_time=2, end_time=3)
-        second = wf.finalize()[WAVELENGTH_LUT_OUTPUT]
+        second = wf.finalize()[DETECTOR_LUT_OUTPUT]
         assert first is not second
         assert first.dims == second.dims
         assert first.unit == second.unit
@@ -229,7 +256,11 @@ def _run_chopper_workflow(
     """
     keys = {name: make_chopper_setpoint_keys(name) for name in names}
     wf = create_wavelength_lut_workflow(
-        params=params or _params(), setpoint_keys=keys, nexus_filename=str(geom)
+        params=params or _params(),
+        setpoint_keys=keys,
+        nexus_filename=str(geom),
+        detector_ranges=DETECTOR_RANGES,
+        monitor_ranges=[],
     )
     context_keys = {}
     for name in names:
@@ -252,7 +283,7 @@ def _run_chopper_lut(
     params: WavelengthLutParams | None = None,
 ) -> sc.DataArray:
     """Build the chopper LUT workflow and return just the lookup-table output."""
-    return _run_chopper_workflow(geom, names, setpoints, params)[WAVELENGTH_LUT_OUTPUT]
+    return _run_chopper_workflow(geom, names, setpoints, params)[DETECTOR_LUT_OUTPUT]
 
 
 @pytest.fixture

@@ -9,7 +9,12 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 import numpy as np
-from streaming_data_types import eventdata_ev44, logdata_f144
+import scipp as sc
+from streaming_data_types import (
+    dataarray_da00,
+    eventdata_ev44,
+    logdata_f144,
+)
 
 from ess.livedata import Service, StreamKind
 from ess.livedata.config.env import StreamingEnv
@@ -19,6 +24,7 @@ from ess.livedata.core.job_manager import Command
 from ess.livedata.core.message_batcher import NaiveMessageBatcher
 from ess.livedata.fakes import FakeMessageSink
 from ess.livedata.kafka.message_adapter import FakeKafkaMessage, KafkaMessage
+from ess.livedata.kafka.scipp_da00_compat import scipp_to_da00
 from ess.livedata.kafka.sink import UnrollingSinkAdapter
 from ess.livedata.kafka.source import KafkaConsumer
 from ess.livedata.service_factory import DataServiceBuilder
@@ -125,6 +131,53 @@ class LivedataApp:
             timestamp=int(time * 1_000_000_000),
         )
         self.consumer.add_message(message)
+
+    def publish_lookup_tables(self, *, time: float = 1.0) -> None:
+        """Publish the detector and monitor lookup tables on the context topic.
+
+        Opens the gate of any job bound to either table. The tables themselves
+        are a minimal placeholder: what these tests exercise is the routing and
+        gating, not the wavelength values. One block spanning every component
+        is a legitimate table, so both streams carry the same array.
+        """
+        from ess.livedata.workflows.wavelength_lut_workflow_specs import (
+            LUT_STREAM_NAMES,
+        )
+
+        table = sc.DataArray(
+            # Variances are not optional: the uncertainty mask in the wavelength
+            # conversion reads standard deviations unconditionally.
+            sc.ones(
+                dims=['distance', 'event_time_offset'],
+                shape=[2, 2],
+                unit='angstrom',
+                with_variances=True,
+            ),
+            coords={
+                'distance': sc.array(dims=['distance'], values=[0.0, 1e4], unit='m'),
+                'event_time_offset': sc.array(
+                    dims=['event_time_offset'], values=[0.0, 1e9], unit='ns'
+                ),
+                'block': sc.zeros(dims=['distance'], shape=[2], dtype='int64'),
+                'pulse_period': sc.scalar(1 / 14, unit='s'),
+                'pulse_stride': sc.scalar(1),
+                'distance_resolution': sc.scalar(1e4, unit='m'),
+                'time_resolution': sc.scalar(250.0, unit='us'),
+            },
+        )
+        for stream_name in LUT_STREAM_NAMES.values():
+            message = FakeKafkaMessage(
+                value=dataarray_da00.serialise_da00(
+                    source_name=stream_name,
+                    timestamp_ns=int(time * 1_000_000_000),
+                    data=scipp_to_da00(table),
+                ),
+                topic=stream_kind_to_topic(
+                    instrument=self.instrument, kind=StreamKind.LIVEDATA_CONTEXT
+                ),
+                timestamp=int(time * 1_000_000_000),
+            )
+            self.consumer.add_message(message)
 
     def publish_monitor_events(
         self, *, size: int, time: int, reuse_events: bool = False

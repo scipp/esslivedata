@@ -37,6 +37,16 @@ dashboard-safe `workflow_key` (a `ValueLog` chain-patch marker, which subclasses
 
 ### Param-dependent context — explicit non-goal
 
+> **Amended by ADR 0010.** The over-gate below is still accepted for motion, and a
+> `ContextBinding` still gates every job on its dependent sources regardless of params.
+> What ADR 0010 adds is a second mechanism for the streamed lookup table: a stream is
+> *offered* to every job and gates only the ones whose built graph asks for its key, so
+> a TOA job does not wait for a table it never reads. The remedy prescribed below —
+> splitting the spec — was tried and reverted, because the dashboard keys its data plane
+> by `(workflow_id, source_name, output_name)` and two specs give the two coordinate
+> modes different output identities. See "The gate is per job and depends on the job's
+> parameters" in ADR 0010.
+
 Detector-view and monitor-view factories wire position context unconditionally for
 sources that have a motion binding, regardless of `coordinate_mode` (TOA vs
 wavelength). A precise design would gate only in wavelength mode (TOA does not consume
@@ -89,7 +99,7 @@ flavours share the record, discriminated by the *type* of `workflow_key`:
 
 ### Resolution at job creation
 
-`Instrument.resolve_context_keys(workflow_id, source_name)` merges instrument- and
+`Instrument.bound_context_keys(workflow_id, source_name)` merges instrument- and
 spec-scope bindings filtered by source membership and returns
 `{stream_name: workflow_key}`:
 
@@ -225,7 +235,7 @@ single source of truth and a binding cannot disagree with the stream it patches.
   those into the pipeline.
 - `WorkflowRegistration` carries `context_bindings` and a `skip_instrument_contexts`
   flag; `SpecHandle` gains `add_context_binding(...)` and `skip_instrument_contexts()`.
-- `Instrument.resolve_context_keys` merges instrument + spec bindings; `JobFactory.create`
+- `Instrument.bound_context_keys` merges instrument + spec bindings; `JobFactory.create`
   calls it, hands `context_keys` to the factory (injected via `SupportsContext.build`,
   ADR 0004), sets `Job.gating_streams`, and returns a bare `Job`.
 - `AuxSources` is dynamic, user-selectable aux only. ROI was originally kept an

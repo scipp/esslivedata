@@ -22,20 +22,11 @@ from .processor import Processor
 class ServiceBase(ABC):
     def __init__(self, *, name: str | None = None, log_level: int = logging.INFO):
         self._logger = structlog.get_logger()
-        self._silence_noisy_loggers()
         self._running = False
         # Set by anything that asks for shutdown -- a signal, a worker loop that
         # died, an explicit stop() -- so that a blocking start() wakes up.
         self._shutdown_requested = threading.Event()
         self._shutdown_signum: int | None = None
-
-    @staticmethod
-    def _silence_noisy_loggers() -> None:
-        """Silence third-party loggers that produce excessive output."""
-        # scipp.transform_coords logs info messages that are not useful and would show
-        # with every workflow call
-        scipp_logger = logging.getLogger('scipp')  # noqa: TID251
-        scipp_logger.setLevel(logging.WARNING)
 
     @property
     def is_running(self) -> bool:

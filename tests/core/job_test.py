@@ -48,6 +48,10 @@ class FakeProcessor(Workflow):
         # § "Workflow protocol stays pure". JobFactory derives the gate set
         # from ContextBinding records, independent of this capability.
         self.context_keys: dict[str, Any] = dict(context_keys or {})
+        # Declared context streams this fake claims its graph asks for; a real
+        # workflow derives them from the built graph, a test states them.
+        self.requests_context_streams: set[Any] = set()
+        self.offered_context_streams: dict[Any, str] = {}
         self.build_calls = 0
         self.data: dict[str, Any] = {}
         self.accumulate_calls = []
@@ -62,10 +66,27 @@ class FakeProcessor(Workflow):
         *,
         context_keys: dict[str, Any] | None = None,
         chain_patch_bindings=(),
+        offered_context_streams: dict[Any, str] | None = None,
     ) -> None:
         if context_keys:
             self.context_keys.update(context_keys)
+        self.offered_context_streams = dict(offered_context_streams or {})
+        self.context_keys.update(
+            {
+                self.offered_context_streams[key]: key
+                for key in self.requests_context_streams
+                if key in self.offered_context_streams
+            }
+        )
         self.build_calls += 1
+
+    @property
+    def requested_context_streams(self) -> frozenset[str]:
+        return frozenset(
+            self.offered_context_streams[key]
+            for key in self.requests_context_streams
+            if key in self.offered_context_streams
+        )
 
     def accumulate(
         self, data: dict[str, Any], *, start_time: int, end_time: int

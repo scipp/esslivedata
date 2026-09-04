@@ -17,13 +17,14 @@ from ess.reduce.nexus.types import (
     RawMonitor,
     SampleRun,
 )
-from ess.reduce.unwrap import GenericUnwrapWorkflow, LookupTableFilename
+from ess.reduce.unwrap import GenericUnwrapWorkflow
 from ess.reduce.unwrap.types import LookupTableRelativeErrorThreshold, WavelengthMonitor
 from scippnexus import NXmonitor
 
 from ..config.workflow_spec import Temporality
 from ..preprocessors.accumulation_mode import AccumulationMode, Cumulative, Current
 from .geometry_signal import geometry_signal
+from .lut_context import monitor_lookup_table
 from .monitor_workflow_specs import MonitorHistogramOutputs
 from .monitor_workflow_types import (
     AccumulatedMonitorHistogram,
@@ -229,7 +230,6 @@ def create_monitor_workflow(
     range_filter: tuple[sc.Variable, sc.Variable] | None = None,
     coordinate_mode: Literal['toa', 'wavelength'] = 'toa',
     geometry_filename: str | None = None,
-    lookup_table_filename: str | None = None,
     reset_coord: str | None = MONITOR_TRANSFORM,
 ):
     """
@@ -249,8 +249,6 @@ def create_monitor_workflow(
     geometry_filename:
         Path to NeXus file containing monitor geometry. Required for 'wavelength' mode
         (needed for Ltotal computation). Optional for 'toa' mode.
-    lookup_table_filename:
-        Path to lookup table file. Required for 'wavelength' mode.
     reset_coord:
         The cumulative histogram resets when this scalar coord changes, so a
         moving monitor restarts accumulation rather than summing across
@@ -269,8 +267,6 @@ def create_monitor_workflow(
 
     # Validate wavelength mode requirements
     if coordinate_mode == 'wavelength':
-        if lookup_table_filename is None:
-            raise ValueError("lookup_table_filename is required for 'wavelength' mode")
         if geometry_filename is None:
             raise ValueError(
                 "geometry_filename is required for 'wavelength' mode "
@@ -300,9 +296,14 @@ def create_monitor_workflow(
         # undetectable without geometry, so there is nothing to reset on.
         workflow[EmptyMonitor[SampleRun, NXmonitor]] = _create_minimal_empty_monitor()
 
-    # Configure lookup table and error threshold for wavelength mode
+    # The lookup table arrives as context from the LUT workflow. Inserting the
+    # provider is the whole of the wiring: the instrument declares which stream
+    # carries its key, and the build gates the job on that stream only if the
+    # targets reach the provider. Hence the unconditional insert -- in TOA mode
+    # nothing reaches it, so the job neither waits for the table nor needs one
+    # (ADR 0010).
+    workflow.insert(monitor_lookup_table)
     if coordinate_mode == 'wavelength':
-        workflow[LookupTableFilename] = lookup_table_filename
         workflow[LookupTableRelativeErrorThreshold] = {source_name: float('inf')}
 
     # Only the histogram is accumulated; the scalar totals are derived from the

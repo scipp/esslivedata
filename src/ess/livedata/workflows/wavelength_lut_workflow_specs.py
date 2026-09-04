@@ -9,7 +9,7 @@ import scipp as sc
 
 from ..config.instrument import Instrument
 from ..config.workflow_spec import REDUCTION, WorkflowOutputsBase
-from ..parameter_models import LengthUnit, RangeModel, TimeUnit, parse_number_list
+from ..parameter_models import LengthUnit, TimeUnit, parse_number_list
 from .workflow_factory import SpecHandle
 
 #: Logical primary stream name for the synthesized chopper-cascade tick. The
@@ -18,11 +18,10 @@ from .workflow_factory import SpecHandle
 #: instruments). The workflow uses presence of this signal as its trigger.
 CHOPPER_CASCADE_SOURCE = 'chopper_cascade'
 
-#: Output key returned by the workflow's ``finalize`` and the field name on
-#: :class:`WavelengthLutOutputs`. Also the workflow ``name`` in the spec.
-WAVELENGTH_LUT_OUTPUT = 'wavelength_lut'
+#: Workflow ``name`` in the spec.
+WAVELENGTH_LUT_WORKFLOW_NAME = 'wavelength_lut'
 
-#: Output key for the per-component wavelength bands diagnostic. Field name on
+#: Output key for the wavelength bands diagnostic. Field name on
 #: :class:`WavelengthLutOutputs`.
 WAVELENGTH_BANDS_OUTPUT = 'chopper_cascade_bands'
 
@@ -79,16 +78,6 @@ class TimeResolution(pydantic.BaseModel):
 
     def get(self) -> sc.Variable:
         return sc.scalar(self.value, unit=self.unit.value)
-
-
-class LtotalRange(RangeModel):
-    """Range of total flight paths covered by the lookup table."""
-
-    start: float = pydantic.Field(default=5.0, description="Shortest L_total.")
-    stop: float = pydantic.Field(default=30.0, description="Longest L_total.")
-    unit: LengthUnit = pydantic.Field(
-        default=LengthUnit.METER, description="Unit of the L_total range."
-    )
 
 
 class SourceOffset(pydantic.BaseModel):
@@ -172,11 +161,6 @@ class WavelengthLutParams(pydantic.BaseModel):
         description='Offset of the neutron source along the beam.',
         default_factory=SourceOffset,
     )
-    distance_range: LtotalRange = pydantic.Field(
-        title='Distance range',
-        description='Range of total flight-path lengths covered by the table.',
-        default_factory=LtotalRange,
-    )
     distance_resolution: DistanceResolution = pydantic.Field(
         title='Distance resolution',
         description='Resolution of the distance axis in the lookup table.',
@@ -199,7 +183,7 @@ class WavelengthLutParams(pydantic.BaseModel):
     )
 
 
-def _empty_wavelength_lut_template() -> sc.DataArray:
+def _empty_table_template() -> sc.DataArray:
     """Empty placeholder used by the spec until the first computation."""
     return sc.DataArray(
         sc.zeros(dims=['distance', 'event_time_offset'], shape=[0, 0], unit='angstrom'),
@@ -212,32 +196,55 @@ def _empty_wavelength_lut_template() -> sc.DataArray:
     )
 
 
-def _empty_wavelength_bands_template() -> sc.DataArray:
-    """Empty placeholder used by the spec until the first computation."""
-    return sc.DataArray(
-        sc.zeros(dims=['distance', 'event_time_offset'], shape=[0, 0], unit='angstrom'),
-        coords={
-            'distance': sc.array(dims=['distance'], values=[], unit='m'),
-            'event_time_offset': sc.array(
-                dims=['event_time_offset'], values=[], unit='us'
-            ),
-        },
-    )
+#: Output field and context stream carrying the detectors' shared table.
+DETECTOR_LUT_OUTPUT = 'detector_lut'
+
+#: Output field and context stream carrying the monitors' shared table.
+MONITOR_LUT_OUTPUT = 'monitor_lut'
+
+#: Prefix for the context stream names, keeping the namespace greppable and
+#: collision-free against device and motion stream names.
+LUT_STREAM_PREFIX = 'wavelength_lut'
+
+#: Context stream name per output. Two streams rather than one: a monitor job
+#: has no use for the detectors' dense table, which is the large payload.
+LUT_STREAM_NAMES = {
+    DETECTOR_LUT_OUTPUT: f'{LUT_STREAM_PREFIX}/detectors',
+    MONITOR_LUT_OUTPUT: f'{LUT_STREAM_PREFIX}/monitors',
+}
 
 
 class WavelengthLutOutputs(WorkflowOutputsBase):
-    """Outputs of the wavelength lookup-table workflow."""
+    """Outputs of the lookup-table workflow.
 
-    wavelength_lut: sc.DataArray = pydantic.Field(
-        default_factory=_empty_wavelength_lut_template,
-        title='Wavelength lookup table',
+    Two tables, not one per component: a table is a function of ``distance``
+    and ``event_time_offset`` alone, so components sharing a stretch of
+    beamline share a table (see
+    :mod:`~ess.livedata.workflows.lut_blocks` for how the blocks are laid out).
+    The outputs are therefore the same for every instrument.
+    """
+
+    detector_lut: sc.DataArray = pydantic.Field(
+        default_factory=_empty_table_template,
+        title='Wavelength lookup table: detectors',
         description=(
-            'Wavelength as a function of distance and event-time-offset, '
-            'computed from the current chopper cascade.'
+            'Wavelength as a function of distance and event-time-offset over the '
+            'flight-path range of every detector, computed from the current '
+            'chopper cascade. One dense block covering all banks.'
+        ),
+    )
+    monitor_lut: sc.DataArray = pydantic.Field(
+        default_factory=_empty_table_template,
+        title='Wavelength lookup table: monitors',
+        description=(
+            'Wavelength as a function of distance and event-time-offset at each '
+            'monitor, computed from the current chopper cascade. A few rows per '
+            'monitor and nothing in between, so the distance axis is not '
+            'uniform: plot with the "Overlay 1D" plotter, one curve per row.'
         ),
     )
     chopper_cascade_bands: sc.DataArray = pydantic.Field(
-        default_factory=_empty_wavelength_bands_template,
+        default_factory=_empty_table_template,
         title='Chopper cascade bands',
         description=(
             'Wavelength band transmitted along the beamline: always one curve at '
@@ -276,7 +283,7 @@ def register_wavelength_lut_workflow_spec(
     return instrument.register_spec(
         group=REDUCTION,
         service='timeseries',
-        name=WAVELENGTH_LUT_OUTPUT,
+        name=WAVELENGTH_LUT_WORKFLOW_NAME,
         version=1,
         title='Wavelength lookup table',
         description=(
@@ -286,6 +293,7 @@ def register_wavelength_lut_workflow_spec(
         source_names=[CHOPPER_CASCADE_SOURCE],
         params=params,
         outputs=WavelengthLutOutputs,
+        context_outputs=LUT_STREAM_NAMES,
         reset_on_run_transition=False,
         # The LUT is recomputed from the retained chopper-setpoint history on
         # the next trigger regardless, so a reset achieves nothing.
