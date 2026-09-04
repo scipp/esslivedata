@@ -44,7 +44,7 @@ dashboard-safe `workflow_key` (a `ValueLog` chain-patch marker, which subclasses
 > a TOA job does not wait for a table it never reads. The remedy prescribed below —
 > splitting the spec — was tried and reverted, because the dashboard keys its data plane
 > by `(workflow_id, source_name, output_name)` and two specs give the two coordinate
-> modes different output identities. See "The gate is resolved from the job's
+> modes different output identities. See "The gate is per job and depends on the job's
 > parameters" in ADR 0010.
 
 Detector-view and monitor-view factories wire position context unconditionally for

@@ -218,11 +218,12 @@ class TestDetectorViewParamsGetActiveRange:
 
 
 class TestDetectorViewCoordinateModeRestriction:
-    """Coordinate mode is a spec-level property, not a runtime choice.
+    """A spec can restrict its params to time-of-arrival.
 
-    The wavelength path consumes a lookup table as gated context, and gating
-    is resolved per ``(workflow_id, source_name)`` and never per parameter
-    value, so the two modes need separate specs (ADR 0010).
+    Logical views run on sources without geometry, so there is no ``Ltotal``
+    to index a wavelength lookup table with (ADR 0011); offering the mode
+    would fail at job start. Everywhere else coordinate mode stays a parameter
+    on one spec (ADR 0010).
     """
 
     def test_toa_only_params_reject_wavelength(self):

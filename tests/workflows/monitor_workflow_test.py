@@ -324,11 +324,11 @@ class TestCreateMonitorWorkflow:
             )
 
     def test_context_keys_injected_after_creation(self, toa_edges):
-        """Context bindings are injected post-creation, not via the factory.
+        """Context keys are injected post-creation, not via the factory.
 
-        The factory declares no stream names at all -- the lookup-table
-        stream -> key mapping lives on the spec's ContextBinding alone and
-        arrives via injection, so it is declared exactly once (ADR 0010).
+        The factory declares no stream names at all -- the stream -> key
+        mapping is the instrument's declaration and arrives via injection, so
+        it is stated exactly once (ADR 0003, ADR 0010).
         """
         from ess.livedata.workflows.stream_processor_workflow import (
             StreamProcessorWorkflow,

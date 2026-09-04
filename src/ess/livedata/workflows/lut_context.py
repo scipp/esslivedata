@@ -2,7 +2,7 @@
 # Copyright (c) 2025 Scipp contributors (https://github.com/scipp)
 """Consumption of a streamed wavelength lookup table as workflow context.
 
-The lookup-table workflow publishes two tables as context streams (ADR 0010):
+The lookup-table workflow publishes two tables as context streams (ADR 0011):
 one for the detectors, one for the monitors. A consuming workflow inserts the
 matching provider and says nothing else: the provider takes one of the context
 keys here as its argument, the instrument offers the stream carrying that key
@@ -22,7 +22,7 @@ deliberate. That loader's matching branch is a backwards-compatibility shim for
 tables written before the dataclass existed; depending on it would tie us to a
 deprecated path. Neither path transports the ``choppers`` field -- the old
 format cannot carry it -- so the reassembled dataclass leaves it at its
-``None`` default; ADR 0010 assigns chopper provenance to the table's identity
+``None`` default; ADR 0011 assigns chopper provenance to the table's identity
 stamp rather than to this field.
 
 The wire value is a single ``DataArray``; taking it apart is

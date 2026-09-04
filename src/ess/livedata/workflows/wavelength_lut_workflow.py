@@ -399,7 +399,7 @@ def create_wavelength_lut_workflow(
     ``detector_ranges`` and ``monitor_ranges`` are the flight-path ranges of the
     placeable components in each group; the group's table covers them as blocks.
     A group with no placeable component produces no table and no output: the
-    only consumers are its components, and they bind nothing (ADR 0010).
+    only consumers are its components, and they bind nothing (ADR 0011).
     """
     pipeline = _build_pipeline(params)
     pipeline[Filename[AnyRun]] = nexus_filename

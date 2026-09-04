@@ -147,7 +147,7 @@ def pack_blocks(blocks: Sequence[LookupTable]) -> sc.DataArray:
     asked for. The two differ: ``pulse_stride`` may be guessed from the choppers
     instead of supplied, and the builder honours the requested time resolution
     only up to fitting a whole number of bins into the frame period. Parameter
-    provenance rides on the identity coord instead (ADR 0010).
+    provenance rides on the identity coord instead (ADR 0011).
 
     The blocks share every scalar field: they are built from one cascade with
     one set of parameters, differing only in the range they cover. Which
