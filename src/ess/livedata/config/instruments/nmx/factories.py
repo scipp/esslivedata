@@ -15,14 +15,16 @@ def setup_factories(instrument: Instrument) -> None:
     """Initialize NMX-specific factories and configure detectors.
 
     Each panel enumerates its ids contiguously in row-major order, 1-based and
-    one block per panel, which is the layout the reduced-resolution ingest
-    configured in ``specs.py`` inverts.
+    one block per panel, matching ``detector_number`` in the run files exactly.
+    That is the layout the reduced-resolution ingest configured in ``specs.py``
+    inverts.
 
-    TODO Unclear if this is transposed or not. Wait for updated files. The
-    ingest decomposes an id exactly as this fold does, and the two axes are the
-    same length and share a block size, so a transposed fold transposes the
-    reduced image the same way it already transposes the full-resolution one.
-    The fix, when the files arrive, is to swap the names here.
+    The axis order follows the run files too, where ``x_pixel_offset`` carries
+    ``axis=1`` and ``y_pixel_offset`` ``axis=2``, making x the slow dimension.
+    Nothing has confirmed that against an installed detector. If it disagrees,
+    the image is transposed and swapping the two names here is the whole fix:
+    the ingest decomposes an id exactly as this fold does, and the axes are the
+    same length and share a block size, so a transposition is all it can be.
     """
     dim = 'detector_number'
     sizes = {'x': PANEL_RESOLUTION, 'y': PANEL_RESOLUTION}
