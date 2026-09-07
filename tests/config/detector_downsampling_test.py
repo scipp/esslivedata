@@ -30,6 +30,14 @@ class TestTargetGrid:
     def test_does_not_depend_on_the_declared_grid(self) -> None:
         assert sc.identical(resolve(square_grid(4096)).grid, resolve(None).grid)
 
+    def test_keeps_the_declared_dimension_names(self) -> None:
+        # The coarse grid is the same detector, so an instrument that names its
+        # axes gets them back and needs no rename in its view transform.
+        declared = sc.arange('detector_number', 1024 * 1024, unit=None).fold(
+            dim='detector_number', sizes={'x': 1024, 'y': 1024}
+        )
+        assert resolve(declared).grid.sizes == {'x': 512, 'y': 512}
+
 
 class TestIdBase:
     def test_is_taken_from_the_declared_grid(self) -> None:

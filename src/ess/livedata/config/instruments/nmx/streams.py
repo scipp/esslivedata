@@ -12,10 +12,11 @@ from .._ess import (
     make_dev_stream_mapping,
     make_f144_log_lut,
 )
-from .specs import instrument
+from .specs import PANEL_RESOLUTION, instrument
 
 detector_fakes = {
-    f'detector_panel_{i}': (i * 1280**2 + 1, (i + 1) * 1280**2) for i in range(3)
+    f'detector_panel_{i}': (i * PANEL_RESOLUTION**2 + 1, (i + 1) * PANEL_RESOLUTION**2)
+    for i in range(3)
 }
 
 
