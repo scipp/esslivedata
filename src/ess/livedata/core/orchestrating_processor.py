@@ -378,6 +378,7 @@ class OrchestratingProcessor[Tin, Tout]:
                 )
                 self._log_stream_lag(self._stream_stats_provider.drain_lag())
 
+            batcher_metrics = self._message_batcher.drain_metrics()
             logger.info(
                 'processor_metrics',
                 batches=self._batches_processed,
@@ -386,6 +387,13 @@ class OrchestratingProcessor[Tin, Tout]:
                 errors=self._errors_since_last_metrics,
                 interval_seconds=window_seconds,
                 stream_stats=self._pending_stream_stats,
+                # How far behind live data the batcher fell, and what it shed
+                # to stay bounded.  A rising backlog is the earliest warning
+                # that the service is not keeping up; drops mean data for the
+                # shed interval never reached any workflow.
+                max_backlog_s=round(batcher_metrics.max_backlog_s, 3),
+                dropped_messages=batcher_metrics.dropped_messages,
+                dropped_bytes=batcher_metrics.dropped_bytes,
             )
             self._batches_processed = 0
             self._empty_batches = 0
