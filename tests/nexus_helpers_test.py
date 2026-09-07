@@ -79,6 +79,29 @@ class TestExtractStreamInfo:
         assert result[0].parent_nx_class == 'NXdetector'
         assert result[0].writer_module == 'ev44'
 
+    def test_ignores_ess_writer_bookkeeping_groups(self, in_memory_file) -> None:
+        """``.ESS*`` groups are the file writer's private bookkeeping, which data
+        reduction ignores by contract. ``.ESS_monitor`` duplicates every real
+        monitor, so collecting it would mint a second stream name per monitor.
+        """
+        real = in_memory_file.create_group('entry/instrument/monitor_1/events')
+        real.attrs['topic'] = 'beam_monitor'
+        real.attrs['source'] = 'cbm1'
+        real.attrs['NX_class'] = 'NXevent_data'
+        real.attrs['writer_module'] = 'ev44'
+
+        hidden = in_memory_file.create_group('entry/.ESS_monitor/monitor_1/events')
+        hidden.attrs['topic'] = 'beam_monitor'
+        hidden.attrs['source'] = 'cbm1'
+        hidden.attrs['NX_class'] = 'NXevent_data'
+        hidden.attrs['writer_module'] = 'ev44'
+
+        result = extract_stream_info(in_memory_file)
+
+        assert [info.group_path for info in result] == [
+            'entry/instrument/monitor_1/events'
+        ]
+
     def test_extracts_multiple_streaming_groups(self, in_memory_file) -> None:
         # Create first streaming group
         group1 = in_memory_file.create_group('entry/detector/events')

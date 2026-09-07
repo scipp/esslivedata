@@ -304,16 +304,32 @@ def _make_workflow(pipeline: sciline.Pipeline) -> StreamProcessorWorkflow:
 
 
 def _component_position(filename: str, nx_class: type) -> sc.Variable | None:
-    """Position of the file's unique component of ``nx_class``, or ``None``.
+    """Position of the file's neutron component of ``nx_class``, or ``None``.
 
-    Returns ``None`` when the file has no such component.
+    Returns ``None`` when the file has no such component. A file may hold more
+    than one group of a class: ESS files describe the accelerator in a second
+    ``NXsource`` (``probe='proton'``), and ODIN adds a lab ``xray_source``. Where
+    several are present the one with ``probe='neutron'`` is the beamline source;
+    a single group is taken as-is, since ``probe`` is not always written.
     """
     with snx.File(filename, definitions=snx.base_definitions()) as f:
         groups = f['entry/instrument'][nx_class]
         if not groups:
             return None
-        (group,) = groups.values()
-        positions = snx.compute_positions(group[...], store_position='position')
+        loaded = {name: group[...] for name, group in groups.items()}
+        if len(loaded) > 1:
+            loaded = {
+                name: dg for name, dg in loaded.items() if dg.get('probe') == 'neutron'
+            }
+            if len(loaded) != 1:
+                raise ValueError(
+                    f'{filename} has {len(groups)} {nx_class.__name__} groups '
+                    f'({", ".join(sorted(groups))}), and {len(loaded)} of them '
+                    "carry probe='neutron'. Exactly one is needed to identify "
+                    'the beamline source.'
+                )
+        (data_group,) = loaded.values()
+        positions = snx.compute_positions(data_group, store_position='position')
     return positions['position']
 
 
