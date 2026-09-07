@@ -53,18 +53,21 @@ class ServiceBase(ABC):
         self._logger.info("Registered signal handlers")
 
     def _handle_shutdown(self, signum: int, _: Any) -> None:
-        """Ask the main thread to shut down, doing nothing that can block.
+        """Ask the main thread to shut down, taking no lock at all.
 
         A handler runs on the main thread between bytecodes, so it must not
         take a lock the interrupted frame may hold. Logging here deadlocks the
         process whenever the signal lands inside another log call -- and a
-        service logs constantly, so this happens. Everything that logs, stops
-        threads or finalizes runs in :meth:`_shut_down` instead; raising
-        SystemExit is the async-signal-safe way to unwind the main thread out
-        of whatever it is blocked in and get there.
+        service logs constantly, so this happens. Setting
+        ``_shutdown_requested`` deadlocks the same way: :meth:`run_forever`
+        waits on that event, and ``Event.wait`` holds the event's own lock
+        across a stretch of bytecodes the signal can land in. Setting it here
+        buys nothing anyway -- SystemExit unwinds the main thread out of the
+        wait on its own, and :meth:`stop` sets the event on the way out.
+        Everything that logs, stops threads or finalizes runs in
+        :meth:`_shut_down` instead.
         """
         self._shutdown_signum = signum
-        self._shutdown_requested.set()
         sys.exit(self._exit_code)
 
     @property

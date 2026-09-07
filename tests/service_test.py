@@ -71,6 +71,45 @@ def test_clean_shutdown_exits_zero() -> None:
     assert proc.wait(timeout=30) == 0
 
 
+# The one lock a handler is in reach of is the shutdown event's own:
+# run_forever() waits on that event, and Event.wait() holds the lock across a
+# stretch of bytecodes, so a signal landing there runs the handler on a main
+# thread that already owns it. Reaching into the Condition is the only way to
+# aim at that window on purpose; under load it is hit by chance.
+_LOCKED_WINDOW_SCRIPT = textwrap.dedent(
+    """
+    import signal
+    from ess.livedata import Service
+
+    class Processor:
+        def process(self):
+            pass
+        def finalize(self, *, error=None):
+            pass
+
+    class HitTheWindow(Service):
+        def run_forever(self):
+            with self._shutdown_requested._cond:
+                signal.raise_signal(signal.SIGTERM)
+            super().run_forever()
+
+    HitTheWindow(processor=Processor(), poll_interval=0.005).start()
+    """
+)
+
+
+def test_signal_inside_shutdown_event_lock_exits_cleanly() -> None:
+    """A signal delivered while the main thread holds a lock the handler wants
+    must still shut the service down, rather than hang until it is killed."""
+    result = subprocess.run(  # noqa: S603
+        [sys.executable, "-c", _LOCKED_WINDOW_SCRIPT],
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+    assert result.returncode == 0
+
+
 def _shutdown_during_startup() -> int:
     """Start a service, SIGTERM it as it starts up, and return its exit code.
 

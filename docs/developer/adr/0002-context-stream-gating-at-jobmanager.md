@@ -1,6 +1,6 @@
 # ADR 0002: Gate workflow execution at the JobManager on context-stream readiness
 
-- Status: accepted
+- Status: accepted (amended 2026-09-02)
 - Deciders: Simon
 - Date: 2026-05-21
 
@@ -184,3 +184,12 @@ not started.
 - The declaration model that feeds `gating_streams` and `context_keys`, and the
   routing that ensures the gated streams are actually subscribed, are settled in
   ADR 0003.
+
+## Amendment 2026-09-02: ROI is a non-gating context binding
+
+ROI is no longer routed as an auxiliary source. It is a spec-scope `ContextBinding`
+declared with `gating=False`, so it reaches `set_context` through the same routing as
+motion while staying out of `gating_streams`. The gating axis stated above — *does this
+input tolerate absence?* — is unchanged and is now a declared property of the binding
+rather than a consequence of which routing mechanism carries the stream. See the
+2026-09-02 amendment of ADR 0003.

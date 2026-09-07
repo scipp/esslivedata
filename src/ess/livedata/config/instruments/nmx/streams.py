@@ -12,10 +12,11 @@ from .._ess import (
     make_dev_stream_mapping,
     make_f144_log_lut,
 )
-from .specs import instrument
+from .specs import PANEL_RESOLUTION, instrument
 
 detector_fakes = {
-    f'detector_panel_{i}': (i * 1280**2 + 1, (i + 1) * 1280**2) for i in range(3)
+    f'detector_panel_{i}': (i * PANEL_RESOLUTION**2 + 1, (i + 1) * PANEL_RESOLUTION**2)
+    for i in range(3)
 }
 
 
@@ -23,13 +24,14 @@ def _make_nmx_detectors() -> StreamLUT:
     """
     NMX detector mapping.
 
-    Input keys based on
-    https://confluence.ess.eu/display/ECDC/Kafka+Topics+Overview+for+Instruments
+    All three panels publish under the same source name and are told apart by
+    their topic alone, as confirmed by the ``topic`` and ``source`` attributes
+    the file writer records on each panel's ``NXevent_data`` group.
     """
     return {
         InputStreamKey(
             topic=f'nmx_detector_p{panel}', source_name='nmx'
-        ): 'nmx_detector'
+        ): f'detector_panel_{panel}'
         for panel in range(3)
     }
 

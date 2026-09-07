@@ -24,7 +24,11 @@ from ess.livedata.config.workflow_spec import WorkflowId
 from ess.livedata.core.timestamp import Timestamp
 from ess.livedata.workflows.detector_view.data_source import DetectorNumberSource
 from ess.livedata.workflows.detector_view.factory import DetectorViewFactory
-from ess.livedata.workflows.detector_view.types import LogicalViewConfig
+from ess.livedata.workflows.detector_view.types import (
+    LogicalViewConfig,
+    ROIPolygonRequest,
+    ROIRectangleRequest,
+)
 from ess.livedata.workflows.detector_view_specs import (
     SpectrumViewSpec,
     make_detector_view_params,
@@ -34,7 +38,11 @@ from ess.livedata.workflows.detector_view_specs import (
 MULTIBLADE_SIZES = {'blade': 14, 'wire': 32, 'strip': 64}
 HE3_SIZES = {'dim_0': 4, 'dim_1': 100}
 
-ROI_AUX_NAMES = {'roi_rectangle': 'roi_rectangle', 'roi_polygon': 'roi_polygon'}
+# Stands in for the bindings ``bind_roi_requests`` declares on ROI-supporting views.
+ROI_CONTEXT_KEYS = {
+    'roi_rectangle': ROIRectangleRequest,
+    'roi_polygon': ROIPolygonRequest,
+}
 
 
 @pytest.fixture(scope='module')
@@ -92,9 +100,8 @@ def _run_view(
     workflow = factory.make_workflow(
         'detector',
         params=make_detector_view_params(spectrum_view=spectrum_spec)(),
-        aux_source_names=ROI_AUX_NAMES,
     )
-    workflow.build()
+    workflow.build(context_keys=ROI_CONTEXT_KEYS if roi_support else None)
     workflow.accumulate(
         {
             'detector': RawDetector[SampleRun](
@@ -170,7 +177,8 @@ def test_multiblade_spectrum_sums_strips():
     assert spectrum.sizes['blade'] == MULTIBLADE_SIZES['blade']
     assert spectrum.sizes['wire'] == MULTIBLADE_SIZES['wire']
     # Summing strips redistributes but does not lose counts.
-    assert sc.isclose(spectrum.sum().data, result['cumulative'].sum().data).value
+    # 'cumulative' is published as float32; compare values, not scipp variables.
+    assert spectrum.sum().value == pytest.approx(result['cumulative'].sum().value)
 
 
 def test_he3_spectrum_keeps_every_pixel():
@@ -188,7 +196,8 @@ def test_he3_spectrum_keeps_every_pixel():
     assert spectrum.dims == ('tube', 'pixel', 'time_of_arrival')
     assert spectrum.sizes['tube'] == HE3_SIZES['dim_0']
     assert spectrum.sizes['pixel'] == HE3_SIZES['dim_1']
-    assert sc.isclose(spectrum.sum().data, result['cumulative'].sum().data).value
+    # 'cumulative' is published as float32; compare values, not scipp variables.
+    assert spectrum.sum().value == pytest.approx(result['cumulative'].sum().value)
 
 
 def test_he3_spectrum_does_not_alias_the_accumulator_buffer():

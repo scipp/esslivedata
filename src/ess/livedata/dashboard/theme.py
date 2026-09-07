@@ -15,10 +15,25 @@ the plots and carry semantics (status greens and reds) that must not shift with
 the surrounding chrome.
 """
 
+import colorsys
 from dataclasses import dataclass
 from typing import Literal
 
 from .widgets.styles import Colors
+
+
+def _lighten(color: str, amount: float) -> str:
+    """Raise a ``#rrggbb`` color's lightness, keeping its hue and saturation."""
+    r, g, b = (int(color[i : i + 2], 16) / 255 for i in (1, 3, 5))
+    hue, lightness, saturation = colorsys.rgb_to_hls(r, g, b)
+    rgb = colorsys.hls_to_rgb(hue, min(1.0, lightness + amount), saturation)
+    return '#' + ''.join(f'{round(c * 255):02x}' for c in rgb)
+
+
+# How far a floating window's title bar is lifted off the chrome color. Enough
+# to read as a separate surface where a window overlaps the header or the rail,
+# little enough that it is plainly the same color.
+_FLOATING_LIFT = 0.12
 
 _CLASSIC_TAB_CSS = f"""
     .bk-tab {{
@@ -126,6 +141,17 @@ class Theme:
     """Rules layered over Bokeh's tab CSS, valid for ``tabs_location``."""
     template_css: str = ''
     """Rules for the page around the tabs, injected as the template's raw CSS."""
+
+    @property
+    def floating_header_background(self) -> str:
+        """Title-bar color for windows floating above the page.
+
+        A floating window is chrome too, so it wears the chrome color -- but
+        not the same shade: matched exactly, its title bar disappears into the
+        header and the rail wherever it overlaps them. Lifted, it still reads
+        as part of the shell while marking itself as something above the page.
+        """
+        return _lighten(self.header_background, _FLOATING_LIFT)
 
 
 CLASSIC_THEME = Theme(

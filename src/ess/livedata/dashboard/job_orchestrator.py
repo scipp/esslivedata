@@ -490,13 +490,10 @@ class JobOrchestrator:
         # Note: Currently all jobs use same params, but aux_source_names may
         # differ
         for source_name, job_config in state.staged_jobs.items():
-            # Currently WorkflowConfig conflates "configure" and "start"
-            # into one command. Both message_id (for ACK) and job_number
-            # (for job identity) are sent together. See #445 for plans to
-            # split into separate config and start messages. In that design,
-            # config's message_id would serve as a "config handle" that
-            # start references, enabling multiple jobs to share the same
-            # configuration.
+            # One WorkflowConfig per source, all sharing this commit's
+            # message_id, so the ack count below matches the source count.
+            # Folding them into one command carrying the whole source set is
+            # #1268.
             workflow_config = WorkflowConfig.from_params(
                 workflow_id=workflow_id,
                 job_id=JobId(source_name=source_name, job_number=job_set.job_number),

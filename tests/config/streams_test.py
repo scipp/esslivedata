@@ -2,9 +2,14 @@
 # Copyright (c) 2025 Scipp contributors (https://github.com/scipp)
 import pytest
 
-from ess.livedata.config import streams
-from ess.livedata.config.instruments import available_instruments
+from ess.livedata.config import instrument_registry, streams
+from ess.livedata.config.instruments import available_instruments, get_config
 from ess.livedata.kafka import InputStreamKey, StreamMapping
+
+#: Instruments that merge many physical streams into one logical detector, and
+#: for which a declared detector therefore has no LUT entry of its own. Bifrost
+#: merges 45 triplets into ``unified_detector``; see ``resolve_stream_names``.
+MERGING_INSTRUMENTS = {'bifrost'}
 
 
 @pytest.mark.parametrize('instrument', available_instruments())
@@ -19,6 +24,43 @@ def test_get_stream_mapping_production(instrument: str) -> None:
     stream_mapping = streams.get_stream_mapping(instrument=instrument, dev=False)
     assert stream_mapping is not None
     assert isinstance(stream_mapping, streams.StreamMapping)
+
+
+@pytest.mark.parametrize('dev', [True, False], ids=['dev', 'production'])
+@pytest.mark.parametrize(
+    'instrument', sorted(set(available_instruments()) - MERGING_INSTRUMENTS)
+)
+def test_every_declared_detector_is_the_target_of_an_input_stream(
+    instrument: str, dev: bool
+) -> None:
+    """A detector no LUT entry names receives nothing, silently.
+
+    ``resolve_stream_names`` subscribes to every detector topic when a spec's
+    source name matches no LUT value, which is what lets Bifrost's merge work.
+    Everywhere else that fallback masks the mistake instead of surfacing it:
+    the service subscribes, the messages arrive tagged with a stream name no
+    job consumes, and the detector looks idle rather than misconfigured.
+    """
+    get_config(instrument)  # Register
+    declared = set(instrument_registry[instrument].detector_names)
+    mapping = streams.get_stream_mapping(instrument=instrument, dev=dev)
+    served = set(mapping.detectors.values()) | set(mapping.area_detectors.values())
+
+    assert declared <= served
+
+
+def test_nmx_panels_are_told_apart_by_topic_alone() -> None:
+    # The file writer records source='nmx' and topic='nmx_detector_p{i}' on
+    # every panel's NXevent_data group, so the topic carries the whole
+    # distinction and the panel index has to line up with it.
+    mapping = streams.get_stream_mapping(instrument='nmx', dev=False)
+
+    assert mapping.detectors == {
+        InputStreamKey(topic=f'nmx_detector_p{panel}', source_name='nmx'): (
+            f'detector_panel_{panel}'
+        )
+        for panel in range(3)
+    }
 
 
 class TestStreamMappingLogTopics:

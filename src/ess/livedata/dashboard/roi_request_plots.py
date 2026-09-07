@@ -776,6 +776,10 @@ class BaseROIRequestPlotter[
                 self._params_persister(params)
             return accepted
 
+        # Seeds a backend that has never seen this selection: the backend
+        # latches ROI requests by stream name, but only for the lifetime of the
+        # service process, so a restarted one starts blank. Stored params are
+        # therefore the authority and overwrite whatever the backend holds.
         with self._roi_lock:
             if not self._published_initial and self._publish_rois(self._current_rois):
                 self._published_initial = True

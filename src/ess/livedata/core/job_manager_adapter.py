@@ -28,7 +28,7 @@ class JobManagerAdapter:
         except KeyError:
             # Job not found. Similar to DifferentInstrument for workflows: multiple
             # backend services receive the same commands, but only the one owning the
-            # job should respond. Future work may add device-based filtering (#445).
+            # job should respond.
             logger.debug(
                 "job_not_found",
                 job_id=str(command.job_id),

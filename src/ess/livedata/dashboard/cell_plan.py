@@ -110,9 +110,16 @@ class SessionView:
 
     ``active_grid_id`` is None when no grid tab is visible — including while a
     modal is open, which obscures the plots.
+
+    ``live_cell_ids`` are cells this session renders outside the visible grid:
+    those behind a showing pop-out window (``widgets/plot_popout.py``), which
+    floats above whatever tab is up. A minimized window renders nothing and
+    contributes no cell, so parking a pop-out costs exactly what a hidden tab
+    does.
     """
 
     active_grid_id: GridId | None
+    live_cell_ids: frozenset[CellId] = frozenset()
 
 
 def desired_cells(
@@ -128,13 +135,15 @@ def desired_cells(
     applier disposes only cells that left the topology, so a re-enable or
     reveal finds them intact).
 
-    A cell is in the plans when its grid is the one this session displays, or
-    when any of its layers is watched (holds a viewer token — in practice
-    another session's, since the caller releases this session's tokens on
-    hidden layers before asking). A watched layer's plot is computed centrally
-    anyway, so the build is a real plot pre-warming this session's tab switch;
-    an unwatched hidden cell's build would be a placeholder that the reveal's
-    first-viewer activation immediately invalidates (#1216).
+    A cell is in the plans when its grid is the one this session displays,
+    when this session renders it anyway (``view.live_cell_ids``), or when any
+    of its layers is watched (holds a viewer token — another session's, or
+    this session's own on a live pop-out, since the caller releases this
+    session's tokens on hidden layers before asking). A watched layer's plot
+    is computed centrally anyway, so the build is a real plot pre-warming this
+    session's tab switch; an unwatched hidden cell's build would be a
+    placeholder that the reveal's first-viewer activation immediately
+    invalidates (#1216).
 
     Parameters
     ----------
@@ -147,7 +156,8 @@ def desired_cells(
         Accessor for per-layer lifecycle snapshots
         (:meth:`PlotDataService.get`).
     view:
-        This session's view state.
+        This session's view state: the grid tab it shows, and any further
+        cells it renders in floating windows.
     watched:
         Whether any session holds a viewer token on a layer (the caller's
         one-shot read of :meth:`PlotDataService.viewed_layers`).
@@ -168,7 +178,11 @@ def desired_cells(
             # empty state defensively.
             if not cell.layers:
                 continue
-            if not (is_active or any(watched(layer.layer_id) for layer in cell.layers)):
+            if not (
+                is_active
+                or cell_id in view.live_cell_ids
+                or any(watched(layer.layer_id) for layer in cell.layers)
+            ):
                 continue
             plans[cell_id] = CellPlan(
                 grid_id=grid_id,

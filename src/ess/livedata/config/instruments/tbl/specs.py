@@ -14,7 +14,7 @@ from ess.livedata.config import (
 from ess.livedata.config.device_contract import COUNTS_TOTAL_DEVICE
 from ess.livedata.config.workflow_spec import DETECTORS
 from ess.livedata.workflows.detector_view_specs import (
-    DetectorViewOutputs,
+    DetectorViewOutputsBase,
     SpectrumViewSpec,
 )
 from ess.livedata.workflows.monitor_workflow_specs import (
@@ -78,7 +78,8 @@ register_monitor_workflow_specs(
 instrument.configure_detector_downsampling(
     'timepix3_detector',
     resolution=TIMEPIX3_IMAGE_RESOLUTION,
-    max_resolution=TIMEPIX3_PANEL_RESOLUTION,
+    source_resolution=TIMEPIX3_PANEL_RESOLUTION,
+    reconfigurable=True,
 )
 
 instrument.add_logical_view(
@@ -147,6 +148,8 @@ orca_view_handle = instrument.register_spec(
     title='Orca Detector',
     description='512x512 image downsampled from full resolution',
     source_names=['orca_detector'],
-    outputs=DetectorViewOutputs,
+    # AreaDetectorView renders images only; it neither reads ROI requests nor
+    # publishes readbacks, so it must not declare the ROI outputs.
+    outputs=DetectorViewOutputsBase,
     device_outputs=COUNTS_TOTAL_DEVICE,
 )

@@ -301,7 +301,9 @@ class TestDetectorImageProviders:
         assert result.dims == ('y', 'x')
         assert result.sizes == {'y': 4, 'x': 4}
         # Each pixel should have sum of 10 spectral bins
-        expected = sc.full(dims=['y', 'x'], shape=[4, 4], value=10.0, unit='counts')
+        expected = sc.full(
+            dims=['y', 'x'], shape=[4, 4], value=10.0, unit='counts', dtype='float32'
+        )
         assert sc.allclose(result.data, expected)
 
     def test_detector_image_with_histogram_slice(self):
@@ -328,6 +330,57 @@ class TestDetectorImageProviders:
 
         # Should only sum ~5 bins (0-50000 ns from 0-100000 ns range)
         assert result.dims == ('y', 'x')
+
+    @pytest.mark.parametrize("use_weighting", [False, True])
+    def test_detector_image_is_published_as_float32(self, use_weighting):
+        """The image is cast on the way out to halve the da00 payload."""
+        data = sc.DataArray(
+            sc.ones(
+                dims=['y', 'x', 'event_time_offset'],
+                shape=[4, 4, 10],
+                unit='counts',
+                dtype='float64',
+            )
+        )
+        weights = PixelWeights(sc.full(dims=['y', 'x'], shape=[4, 4], value=2.0))
+
+        result = detector_image(
+            histogram=AccumulatedHistogram[Cumulative](data),
+            histogram_slice=None,
+            weights=weights,
+            use_weighting=UsePixelWeighting(use_weighting),
+        )
+
+        assert result.dtype == 'float32'
+        expected = 5.0 if use_weighting else 10.0
+        assert sc.allclose(
+            result.data,
+            sc.full(dims=['y', 'x'], shape=[4, 4], value=expected, unit='counts').to(
+                dtype='float32'
+            ),
+        )
+
+    def test_detector_image_cast_leaves_accumulated_histogram_untouched(self):
+        """Accumulation must stay float64: float32 stops counting at 2**24."""
+        data = sc.DataArray(
+            sc.full(
+                dims=['y', 'x', 'event_time_offset'],
+                shape=[1, 1, 1],
+                value=2.0**24,
+                unit='counts',
+            )
+        )
+        histogram = AccumulatedHistogram[Cumulative](data)
+
+        detector_image(
+            histogram=histogram,
+            histogram_slice=None,
+            weights=PixelWeights(sc.ones(dims=['y', 'x'], shape=[1, 1])),
+            use_weighting=UsePixelWeighting(False),
+        )
+
+        assert histogram.dtype == 'float64'
+        assert (histogram + sc.scalar(1.0, unit='counts')).sum().value == 2.0**24 + 1
 
 
 class TestCountProviders:

@@ -3,6 +3,7 @@
 """Integration tests for the unified spectrum-view output."""
 
 import pydantic
+import pytest
 import scipp as sc
 from ess.reduce.nexus.types import RawDetector, SampleRun
 
@@ -16,7 +17,7 @@ from ess.livedata.workflows.detector_view_specs import (
 )
 
 from .utils import (
-    ROI_AUX_NAMES,
+    ROI_CONTEXT_KEYS,
     make_fake_detector_number,
     make_fake_nexus_detector_data,
 )
@@ -60,10 +61,8 @@ class TestSpectrumViewIntegration:
         )
         factory = _make_factory_with_spectrum(spec)
         params = make_detector_view_params(spectrum_view=spec)()
-        workflow = factory.make_workflow(
-            'detector', params=params, aux_source_names=ROI_AUX_NAMES
-        )
-        workflow.build()
+        workflow = factory.make_workflow('detector', params=params)
+        workflow.build(context_keys=ROI_CONTEXT_KEYS)
 
         events = make_fake_nexus_detector_data(y_size=4, x_size=4, n_events_per_pixel=5)
         workflow.accumulate(
@@ -78,7 +77,8 @@ class TestSpectrumViewIntegration:
         assert spectrum.dims == ('x', 'time_of_arrival')
         cumulative = result['cumulative']
         # Cumulative is summed over time_of_arrival => total counts match total events.
-        assert sc.isclose(spectrum.sum().data, cumulative.sum().data).value
+        # It is published as float32, so compare values rather than scipp variables.
+        assert spectrum.sum().value == pytest.approx(cumulative.sum().value)
 
     def test_spectrum_view_rebin_factor_applied(self):
         spec = SpectrumViewSpec(
@@ -89,10 +89,8 @@ class TestSpectrumViewIntegration:
         factory = _make_factory_with_spectrum(spec, y_size=4, x_size=4)
         Params = make_detector_view_params(spectrum_view=spec)
         params = Params(spectrum_params=_RebinParams(factor=2))
-        workflow = factory.make_workflow(
-            'detector', params=params, aux_source_names=ROI_AUX_NAMES
-        )
-        workflow.build()
+        workflow = factory.make_workflow('detector', params=params)
+        workflow.build(context_keys=ROI_CONTEXT_KEYS)
 
         events = make_fake_nexus_detector_data(y_size=4, x_size=4, n_events_per_pixel=5)
         workflow.accumulate(
@@ -120,10 +118,8 @@ class TestSpectrumViewIntegration:
             view_config=LogicalViewConfig(transform=logical_transform),
         )
         params = make_detector_view_params()()
-        workflow = factory.make_workflow(
-            'detector', params=params, aux_source_names=ROI_AUX_NAMES
-        )
-        workflow.build()
+        workflow = factory.make_workflow('detector', params=params)
+        workflow.build(context_keys=ROI_CONTEXT_KEYS)
 
         events = make_fake_nexus_detector_data(y_size=4, x_size=4, n_events_per_pixel=2)
         workflow.accumulate(
