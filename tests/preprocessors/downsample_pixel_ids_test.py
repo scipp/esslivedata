@@ -61,14 +61,20 @@ def ts(seconds: float = 0.0) -> Timestamp:
 
 
 def downsampling(
-    resolution: int, *, first_id: int = 0, max_resolution: int | None = None
+    resolution: int,
+    *,
+    first_id: int = 0,
+    max_resolution: int | None = None,
+    source_resolution: int | None = None,
 ) -> DetectorDownsampling:
     grid = sc.arange('detector_number', resolution * resolution, unit=None).fold(
         dim='detector_number', sizes={'dim_0': resolution, 'dim_1': resolution}
     )
     if max_resolution is None:
-        max_resolution = resolution * 1024
-    return DetectorDownsampling(resolution, max_resolution, first_id, grid)
+        max_resolution = source_resolution or resolution * 1024
+    return DetectorDownsampling(
+        resolution, max_resolution, source_resolution, first_id, grid
+    )
 
 
 def make(
@@ -337,6 +343,56 @@ class TestIdBase:
         assert entry['dropped'] == 1
         # Outside the target grid, so grouping discards it.
         assert inner.batches[0].pixel_id[0] < 0
+
+
+class TestFixedSourceResolution:
+    """A readout that cannot be reconfigured has nothing to infer."""
+
+    def test_uses_the_configured_stride_from_the_first_batch(self) -> None:
+        inner = RecordingAccumulator()
+        acc = make(2, inner=inner, source_resolution=8)
+        # A batch confined to the first rows: the inference would read this as
+        # a 2x2 or 4x4 source and scramble it. id = x * 8 + y, block 4.
+        acc.add(ts(), events([0, 3, 4, 7, 8, 32, 35]))
+        assert acc.source_resolution == 8
+        np.testing.assert_array_equal(inner.batches[0].pixel_id, [0, 0, 1, 1, 0, 2, 2])
+
+    def test_the_stride_never_changes(self) -> None:
+        inner = RecordingAccumulator()
+        clock = Clock()
+        acc = make(512, inner=inner, source_resolution=4096, clock=clock)
+        acc.add(ts(), events([4095 * 4096 + 4095]))
+        # Evidence of the far corner expires, and only low ids follow. An
+        # inferring accumulator would shrink here and discard what it holds.
+        clock.advance(2 * WINDOW)
+        with capture_logs() as logs:
+            acc.add(ts(), events([0] * 2000))
+
+        assert acc.source_resolution == 4096
+        assert not [e for e in logs if e['event'] == 'detector_resolution_changed']
+        assert len(inner.batches) == 2
+
+    def test_is_stamped_before_any_event_arrives(self) -> None:
+        # Unlike an inferred one, which has nothing to stamp until it has seen
+        # an id, so a job that starts on a silent detector already publishes
+        # the stride it will keep.
+        acc = make(
+            512,
+            inner=GroupByPixel(
+                ToNXevent_data(), sc.arange('detector_number', 512 * 512, unit=None)
+            ),
+            source_resolution=4096,
+        )
+        acc.add(ts(), events([]))
+        assert acc.get().coords[SOURCE_RESOLUTION].value == 4096
+
+    def test_ids_beyond_the_grid_are_still_counted_and_logged(self) -> None:
+        acc = make(512, source_resolution=4096)
+        with capture_logs() as logs:
+            acc.add(ts(), events([0, 4096**2, 4096**2 + 1]))
+
+        report = next(e for e in logs if e['event'] == 'event_id_above_max_resolution')
+        assert report['dropped'] == 2
 
 
 class TestSourceResolutionCoord:

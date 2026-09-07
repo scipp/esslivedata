@@ -1102,3 +1102,33 @@ class TestDetectorDownsampling:
         )
 
         assert instrument.get_downsampling('det').resolution == 250
+
+    @pytest.mark.parametrize(
+        'bounds', [{}, {'max_resolution': 4096, 'source_resolution': 4096}]
+    )
+    def test_rejects_naming_neither_or_both_ways_to_get_the_source_resolution(
+        self, instrument: Instrument, bounds: dict[str, int]
+    ) -> None:
+        with pytest.raises(ValueError, match='exactly one'):
+            instrument.configure_detector_downsampling('det', resolution=512, **bounds)
+
+    def test_a_fixed_source_needs_only_to_tile(self, instrument: Instrument) -> None:
+        # Nothing is inferred, so nothing has to be reachable by doubling:
+        # 1280 = 256 * 5 is fine, where a bound of 1280 would be rejected.
+        instrument.configure_detector_downsampling(
+            'det', resolution=256, source_resolution=1280
+        )
+
+        downsampling = instrument.get_downsampling('det')
+        assert downsampling.source_resolution == 1280
+        # Ids beyond the streamed grid are corruption, as they are for a bound.
+        assert downsampling.max_resolution == 1280
+
+    @pytest.mark.parametrize('source_resolution', [1000, 513])
+    def test_rejects_a_fixed_source_the_target_does_not_tile(
+        self, instrument: Instrument, source_resolution: int
+    ) -> None:
+        with pytest.raises(ValueError, match='must be a multiple'):
+            instrument.configure_detector_downsampling(
+                'det', resolution=512, source_resolution=source_resolution
+            )

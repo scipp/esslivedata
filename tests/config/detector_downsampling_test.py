@@ -14,9 +14,15 @@ def square_grid(side: int, first_id: int = 0) -> sc.Variable:
 
 
 def resolve(
-    declared: sc.Variable | None, *, resolution: int = 512, max_resolution: int = 4096
+    declared: sc.Variable | None,
+    *,
+    resolution: int = 512,
+    max_resolution: int = 4096,
+    source_resolution: int | None = None,
 ):
-    return resolve_downsampling('det', resolution, max_resolution, declared)
+    return resolve_downsampling(
+        'det', resolution, max_resolution, source_resolution, declared
+    )
 
 
 class TestTargetGrid:
@@ -61,6 +67,23 @@ class TestNonPowerOfTwoResolutions:
         downsampling = resolve(square_grid(1000), resolution=250, max_resolution=4000)
         assert downsampling.resolution == 250
         assert downsampling.grid.sizes == {'dim_0': 250, 'dim_1': 250}
+
+
+class TestFixedSourceResolution:
+    """Where the readout cannot be reconfigured, the stride is stated."""
+
+    def test_accepts_a_ratio_that_is_not_a_power_of_two(self) -> None:
+        # Only the inference needs to reach the source by doubling.
+        downsampling = resolve(
+            square_grid(1280), resolution=256, source_resolution=1280
+        )
+        assert downsampling.source_resolution == 1280
+
+    def test_rejects_a_declared_side_that_disagrees(self) -> None:
+        # Nothing revises a fixed stride at runtime, so the disagreement has to
+        # be loud here rather than a quietly scrambled image later.
+        with pytest.raises(ValueError, match='fixed'):
+            resolve(square_grid(2560), resolution=256, source_resolution=1280)
 
 
 class TestDeclaredGridRejections:

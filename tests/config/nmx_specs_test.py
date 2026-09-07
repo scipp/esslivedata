@@ -41,6 +41,9 @@ def test_panel_is_ingested_on_a_named_grid_from_its_own_id_base(
         'x': PANEL_IMAGE_RESOLUTION,
         'y': PANEL_IMAGE_RESOLUTION,
     }
+    # The readout is fixed, so the stride is stated rather than inferred, and
+    # agrees with the grid the panel declares.
+    assert downsampling.source_resolution == PANEL_RESOLUTION
 
 
 def test_ingest_yields_the_block_sum_of_the_full_resolution_image(
@@ -48,9 +51,8 @@ def test_ingest_yields_the_block_sum_of_the_full_resolution_image(
 ) -> None:
     """The reduced image is what folding the full-resolution one would give.
 
-    Exercises the real configuration rather than a synthetic grid: a panel
-    whose ids start well above zero, and a 1280 readout reached from a 320
-    target by doubling twice.
+    Exercises the real configuration rather than a synthetic grid, on the
+    panel whose ids start well above zero.
     """
     downsampling = instrument.get_downsampling('detector_panel_1')
     declared = sc.arange(
