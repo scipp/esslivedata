@@ -177,7 +177,8 @@ def test_multiblade_spectrum_sums_strips():
     assert spectrum.sizes['blade'] == MULTIBLADE_SIZES['blade']
     assert spectrum.sizes['wire'] == MULTIBLADE_SIZES['wire']
     # Summing strips redistributes but does not lose counts.
-    assert sc.isclose(spectrum.sum().data, result['cumulative'].sum().data).value
+    # 'cumulative' is published as float32; compare values, not scipp variables.
+    assert spectrum.sum().value == pytest.approx(result['cumulative'].sum().value)
 
 
 def test_he3_spectrum_keeps_every_pixel():
@@ -195,7 +196,8 @@ def test_he3_spectrum_keeps_every_pixel():
     assert spectrum.dims == ('tube', 'pixel', 'time_of_arrival')
     assert spectrum.sizes['tube'] == HE3_SIZES['dim_0']
     assert spectrum.sizes['pixel'] == HE3_SIZES['dim_1']
-    assert sc.isclose(spectrum.sum().data, result['cumulative'].sum().data).value
+    # 'cumulative' is published as float32; compare values, not scipp variables.
+    assert spectrum.sum().value == pytest.approx(result['cumulative'].sum().value)
 
 
 def test_he3_spectrum_does_not_alias_the_accumulator_buffer():
