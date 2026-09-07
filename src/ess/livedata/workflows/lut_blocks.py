@@ -30,6 +30,12 @@ uneven axis correctly. A consumer must therefore select its own block with
 :func:`select_block` and never hand a whole multi-block table to
 ``WavelengthInterpolator``.
 
+Selecting is not in the lookup path. The block is chosen by a provider fed by
+the context key, so ``StreamProcessor`` runs it once per arriving table -- once
+per chopper change -- and caches the result for every chunk after that. What
+reaches the interpolator is a single uniform block, exactly as a file-based
+table was.
+
 The wire says outright which rows form a block, in the :data:`_BLOCK_COORD`
 coord, rather than leaving the consumer to infer it from where the row spacing
 jumps. Inferring it would be a threshold on a float difference, tuned against
