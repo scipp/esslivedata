@@ -107,10 +107,14 @@ class DownsamplePixelIds(Accumulator[DetectorEvents, sc.DataArray]):
     Source resolution
     -----------------
     ``source_resolution`` is the side length of the grid the detector is
-    streaming. The detector is reconfigured to different readout resolutions
-    during operation and does not announce it on any stream we consume, so it
-    is inferred from the largest event id seen recently, rounded up to a power
-    of two:
+    streaming. Where the readout is fixed the instrument configuration states
+    it and none of what follows runs: the stride is constant for the life of
+    the process, and a declared grid disagreeing with it was rejected at
+    configuration time.
+
+    The rest applies to a readout that is reconfigured during operation and
+    announces it on no stream we consume, so that it has to be inferred from
+    the largest event id seen recently, rounded up to a power of two:
 
         source = 2 ** ceil(log2(sqrt(max_id + 1)))
 
@@ -160,7 +164,8 @@ class DownsamplePixelIds(Accumulator[DetectorEvents, sc.DataArray]):
     inner:
         Accumulator receiving the remapped events.
     downsampling:
-        Resolved settings from ``Instrument.get_downsampling``.
+        Resolved settings from ``Instrument.get_downsampling``. A fixed
+        ``source_resolution`` there disables the inference below.
     window:
         Seconds an event id counts as evidence of the source resolution.
     buckets:
@@ -186,7 +191,8 @@ class DownsamplePixelIds(Accumulator[DetectorEvents, sc.DataArray]):
         self._max_resolution = downsampling.max_resolution
         self._corrupt_at = downsampling.max_resolution**2
         self._first_id = downsampling.first_id
-        self._source_resolution: int | None = None
+        self._source_resolution = downsampling.source_resolution
+        self._infer = downsampling.source_resolution is None
         self._window = _EvidenceWindow(window=window, buckets=buckets)
         self._min_events_to_shrink = min_events_to_shrink
         self._clock = clock
@@ -198,7 +204,10 @@ class DownsamplePixelIds(Accumulator[DetectorEvents, sc.DataArray]):
 
     @property
     def source_resolution(self) -> int | None:
-        """Inferred source grid side length, or None before the first event."""
+        """Source grid side length, as configured or as currently inferred.
+
+        None only where it is inferred and no event has been seen yet.
+        """
         return self._source_resolution
 
     def _estimate(self, max_id: int) -> int:
@@ -241,6 +250,9 @@ class DownsamplePixelIds(Accumulator[DetectorEvents, sc.DataArray]):
     def _observe(self, pixel_id: np.ndarray) -> None:
         """Feed the batch's largest admissible id to the evidence window.
 
+        Reporting corruption is the whole job where the source resolution is
+        fixed; there is then no evidence to gather.
+
         Ids at or beyond ``max_resolution**2``, and ids below ``first_id``,
         cannot have come from this detector, so they are corruption rather
         than evidence and must not reach the estimate. Letting them through
@@ -253,7 +265,7 @@ class DownsamplePixelIds(Accumulator[DetectorEvents, sc.DataArray]):
             admissible = pixel_id < self._corrupt_at
             self._report_out_of_range(pixel_id.size - int(admissible.sum()))
             max_id = int(np.max(pixel_id, where=admissible, initial=-1))
-        if max_id < 0:
+        if max_id < 0 or not self._infer:
             return
         self._window.add(self._clock(), max_id, count=pixel_id.size)
         self._update_estimate()
