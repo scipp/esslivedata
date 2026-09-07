@@ -261,7 +261,7 @@ def detector_image(
     Returns
     -------
     :
-        2D detector image.
+        2D detector image, published as float32.
     """
     spectral_dim = histogram.dims[-1]
     if histogram_slice is not None:
@@ -273,7 +273,12 @@ def detector_image(
 
     if use_weighting:
         image = image / weights
-    return DetectorImage[AccumulationMode](image)
+    # da00 is uncompressed, so float32 halves the wire size of every image (and what
+    # the dashboard buffers per frame). Only the published image is cast: the
+    # accumulation above must stay float64 because float32 stops incrementing at
+    # 2**24, which a long-running cumulative image can reach. Casting the result
+    # instead rounds it by at most one part in 2**24 and nothing accumulates on top.
+    return DetectorImage[AccumulationMode](image.to(dtype='float32', copy=False))
 
 
 def counts_total(
