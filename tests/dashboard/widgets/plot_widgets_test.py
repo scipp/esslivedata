@@ -78,9 +78,16 @@ class TestPerPanelToolHooks:
             on_configure_layer=lambda _: None,
             toolbars_visible=True,
             on_toggle_toolbars_callback=lambda _: None,
+            on_popout_callback=lambda: None,
+            can_popout=True,
             css_classes=['lt-cell-r0c0'],
         )
-        for tool in ('lt-tool-settings', 'lt-tool-pencil', 'lt-tool-layer-details'):
+        for tool in (
+            'lt-tool-settings',
+            'lt-tool-pencil',
+            'lt-tool-layer-details',
+            'lt-tool-arrows-maximize',
+        ):
             matches = [
                 obj
                 for obj in titlebar.objects
