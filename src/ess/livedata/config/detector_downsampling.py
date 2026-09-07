@@ -34,9 +34,6 @@ def is_reachable_resolution(side: int, resolution: int) -> bool:
     source that is not one of them could never be inferred, however cleanly it
     tiles. Neither side has to be a power of two itself -- a 1000x1000 panel
     ingested at 250x250 is fine.
-
-    Applies only to detectors whose source resolution is inferred. Where it is
-    fixed there is nothing to reach, and plain divisibility is enough.
     """
     return (
         resolution > 0
@@ -51,13 +48,13 @@ class DetectorDownsampling:
 
     #: Side length of the target grid the preprocessor maps event ids onto.
     resolution: int
-    #: Largest grid the detector can physically read out, from the instrument
-    #: configuration. Ids implying more than this are corruption rather than
-    #: evidence. Equals :attr:`source_resolution` where that is fixed.
+    #: The detector's readout grid, from the instrument configuration. Ids
+    #: implying more than this are corruption rather than evidence.
     max_resolution: int
-    #: Side length of the grid the detector streams, where the readout is not
-    #: reconfigurable and it is therefore known. None where it is, in which
-    #: case the preprocessor infers it from the observed event ids.
+    #: Side length of the grid the detector streams, where the readout is
+    #: fixed and it is therefore known. None where the readout is
+    #: reconfigurable, in which case the preprocessor infers it from the
+    #: observed event ids, bounded by :attr:`max_resolution`.
     source_resolution: int | None
     #: Lowest event id the detector emits, taken from the declared grid.
     #: Detectors differ: TBL's Timepix3 counts from 0, its He3 banks from 1.
@@ -72,26 +69,24 @@ class DetectorDownsampling:
 def resolve_downsampling(
     name: str,
     resolution: int,
-    max_resolution: int,
-    source_resolution: int | None,
+    source_resolution: int,
+    reconfigurable: bool,
     declared: sc.Variable | None,
 ) -> DetectorDownsampling:
     """Resolve ingest settings for one detector against its declared grid.
 
-    Where ``source_resolution`` is None the *streamed* resolution is
-    deliberately not taken from ``declared``: that readout is
-    operator-reconfigurable and changes during a run, so the geometry file
-    records one past configuration rather than the current one. The
-    preprocessor infers it from the observed event ids instead (see
+    Where the readout is ``reconfigurable`` the *streamed* resolution is
+    deliberately not taken from ``declared``: it changes during a run, so the
+    geometry file records one past configuration rather than the current one.
+    The preprocessor infers it from the observed event ids instead (see
     :class:`~ess.livedata.preprocessors.downsample_pixel_ids.DownsamplePixelIds`),
-    bounded by ``max_resolution``, which is a property of the hardware and so
-    belongs in the instrument configuration rather than in a file that
-    describes a configuration.
+    bounded by ``source_resolution``, which is then the largest grid the
+    hardware can read out.
 
-    Where the readout is fixed, ``source_resolution`` states it and no
-    inference runs. ``declared`` then has to agree with it, which is a
-    stronger check than the inferring path can make: nothing corrects a wrong
-    fixed stride at runtime, so the two must be reconciled here.
+    Where the readout is fixed the stride is stated and no inference runs.
+    ``declared`` then has to agree with it exactly, which is a stronger check
+    than the inferring path can make: nothing corrects a wrong fixed stride at
+    runtime, so the two must be reconciled here.
 
     ``declared`` is consulted only for what a reconfiguration cannot change:
 
@@ -112,10 +107,11 @@ def resolve_downsampling(
         Detector name, for diagnostics.
     resolution:
         Side length of the target grid.
-    max_resolution:
-        Largest grid the detector can read out.
     source_resolution:
-        Side length the detector streams, where that is fixed, else None.
+        The detector's readout grid: the streamed side length, or, where the
+        readout is ``reconfigurable``, the largest it can be.
+    reconfigurable:
+        Whether the readout resolution changes during operation.
     declared:
         The detector's ``detector_number``, from the geometry file or computed
         by the instrument's ``setup_factories``, or None where neither applies.
@@ -136,11 +132,11 @@ def resolve_downsampling(
             assumed_first_id=0,
         )
         return DetectorDownsampling(
-            resolution,
-            max_resolution,
-            source_resolution,
-            0,
-            _target_grid(resolution, ('dim_0', 'dim_1')),
+            resolution=resolution,
+            max_resolution=source_resolution,
+            source_resolution=None if reconfigurable else source_resolution,
+            first_id=0,
+            grid=_target_grid(resolution, ('dim_0', 'dim_1')),
         )
     if declared.ndim != 2 or declared.shape[0] != declared.shape[1]:
         raise ValueError(
@@ -148,22 +144,21 @@ def resolve_downsampling(
             f"square grid, but its detector_number is {declared.sizes}."
         )
     side = declared.shape[0]
-    if source_resolution is None:
-        if not is_reachable_resolution(side, resolution):
-            raise ValueError(
-                f"Detector {name} has side {side}, which must be the downsampling "
-                f"resolution {resolution} times a power of two. The target grid has "
-                "to tile the source, and the source has to be one of the resolutions "
-                "the preprocessor can infer."
-            )
-        if side > max_resolution:
-            raise ValueError(
-                f"Detector {name} is declared with side {side} in the geometry file "
-                f"but configured with max_resolution={max_resolution}. The "
-                "configured maximum is meant to be what the hardware can read out, "
-                "so one of the two is wrong."
-            )
-    elif side != source_resolution:
+    if not is_reachable_resolution(side, resolution):
+        raise ValueError(
+            f"Detector {name} has side {side}, which must be the downsampling "
+            f"resolution {resolution} times a power of two. The target grid has "
+            "to tile the source, and the source has to be one of the resolutions "
+            "the preprocessor can infer."
+        )
+    if reconfigurable and side > source_resolution:
+        raise ValueError(
+            f"Detector {name} is declared with side {side} in the geometry file "
+            f"but configured to read out at most {source_resolution}. The "
+            "configured maximum is meant to be what the hardware can read out, "
+            "so one of the two is wrong."
+        )
+    if not reconfigurable and side != source_resolution:
         raise ValueError(
             f"Detector {name} is configured to stream a fixed "
             f"{source_resolution}x{source_resolution} grid but declares side "
@@ -172,11 +167,11 @@ def resolve_downsampling(
         )
     first_id = _check_contiguous_row_major(name, declared)
     return DetectorDownsampling(
-        resolution,
-        max_resolution,
-        source_resolution,
-        first_id,
-        _target_grid(resolution, declared.dims),
+        resolution=resolution,
+        max_resolution=source_resolution,
+        source_resolution=None if reconfigurable else source_resolution,
+        first_id=first_id,
+        grid=_target_grid(resolution, declared.dims),
     )
 
 

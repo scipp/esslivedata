@@ -73,7 +73,11 @@ def downsampling(
     if max_resolution is None:
         max_resolution = source_resolution or resolution * 1024
     return DetectorDownsampling(
-        resolution, max_resolution, source_resolution, first_id, grid
+        resolution=resolution,
+        max_resolution=max_resolution,
+        source_resolution=source_resolution,
+        first_id=first_id,
+        grid=grid,
     )
 
 

@@ -17,11 +17,11 @@ def resolve(
     declared: sc.Variable | None,
     *,
     resolution: int = 512,
-    max_resolution: int = 4096,
-    source_resolution: int | None = None,
+    source_resolution: int = 4096,
+    reconfigurable: bool = True,
 ):
     return resolve_downsampling(
-        'det', resolution, max_resolution, source_resolution, declared
+        'det', resolution, source_resolution, reconfigurable, declared
     )
 
 
@@ -64,7 +64,9 @@ class TestNonPowerOfTwoResolutions:
     """Only the ratio has to be a power of two, not the resolutions."""
 
     def test_accepts_a_panel_and_target_that_are_not_powers_of_two(self) -> None:
-        downsampling = resolve(square_grid(1000), resolution=250, max_resolution=4000)
+        downsampling = resolve(
+            square_grid(1000), resolution=250, source_resolution=4000
+        )
         assert downsampling.resolution == 250
         assert downsampling.grid.sizes == {'dim_0': 250, 'dim_1': 250}
 
@@ -72,18 +74,21 @@ class TestNonPowerOfTwoResolutions:
 class TestFixedSourceResolution:
     """Where the readout cannot be reconfigured, the stride is stated."""
 
-    def test_accepts_a_ratio_that_is_not_a_power_of_two(self) -> None:
-        # Only the inference needs to reach the source by doubling.
+    def test_is_taken_from_the_configuration(self) -> None:
         downsampling = resolve(
-            square_grid(1280), resolution=256, source_resolution=1280
+            square_grid(1024), source_resolution=1024, reconfigurable=False
         )
-        assert downsampling.source_resolution == 1280
+        assert downsampling.source_resolution == 1024
+
+    def test_is_none_where_the_readout_is_reconfigurable(self) -> None:
+        assert resolve(square_grid(1024)).source_resolution is None
 
     def test_rejects_a_declared_side_that_disagrees(self) -> None:
         # Nothing revises a fixed stride at runtime, so the disagreement has to
-        # be loud here rather than a quietly scrambled image later.
+        # be loud here rather than a quietly scrambled image later. A smaller
+        # side is merely a past readout where the resolution is inferred.
         with pytest.raises(ValueError, match='fixed'):
-            resolve(square_grid(2560), resolution=256, source_resolution=1280)
+            resolve(square_grid(1024), source_resolution=4096, reconfigurable=False)
 
 
 class TestDeclaredGridRejections:
@@ -104,13 +109,13 @@ class TestDeclaredGridRejections:
         # 1000 = 200 * 5 tiles cleanly, but 200 doubled never reaches 1000, so
         # the preprocessor could not infer this source however well it tiles.
         with pytest.raises(ValueError, match='power of two'):
-            resolve(square_grid(1000), resolution=200, max_resolution=1600)
+            resolve(square_grid(1000), resolution=200, source_resolution=1600)
 
     def test_rejects_a_side_above_the_configured_maximum(self) -> None:
-        # max_resolution is meant to be what the hardware can read out, so a
+        # source_resolution is meant to be what the hardware can read out, so a
         # file declaring more than that means one of the two is wrong.
-        with pytest.raises(ValueError, match='max_resolution'):
-            resolve(square_grid(4096), max_resolution=2048)
+        with pytest.raises(ValueError, match='at most'):
+            resolve(square_grid(4096), source_resolution=2048)
 
     def test_rejects_ids_that_are_not_row_major_contiguous(self) -> None:
         # The remap inverts 'id = x * side + y'. A file enumerating the grid in

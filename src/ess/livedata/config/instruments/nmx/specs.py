@@ -24,14 +24,12 @@ detector_names = ['detector_panel_0', 'detector_panel_1', 'detector_panel_2']
 #: Side length one panel is ingested at, a 2x2 binning of the readout. At full
 #: resolution a panel publishes 26 MB per update and costs hundreds of
 #: milliseconds to group, regardless of how many events arrived. Coarser
-#: targets are available (1280 is also 320 x 4 and 256 x 5) and cost
-#: proportionally less, but the readout is only 0.4 mm per pixel and this is
-#: the view the instrument judges its diffraction pattern from.
+#: targets cost proportionally less, but the readout is only 0.4 mm per pixel
+#: and this is the view the instrument judges its diffraction pattern from.
 PANEL_IMAGE_RESOLUTION = 640
 #: Side length of one panel's readout grid. Fixed, unlike the Timepix3 panels
 #: of TBL and ODIN, so the ingest is given the stride outright rather than
-#: inferring it from the event ids. That also makes the panel enumeration in
-#: ``factories.py`` a check on this number rather than merely a consumer of it.
+#: inferring it from the event ids.
 PANEL_RESOLUTION = 1280
 
 # Create instrument with detectors and monitors

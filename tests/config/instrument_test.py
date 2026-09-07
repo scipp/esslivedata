@@ -1024,7 +1024,7 @@ class TestDetectorDownsampling:
 
     def configure(self, instrument: Instrument, name: str = 'det') -> None:
         instrument.configure_detector_downsampling(
-            name, resolution=512, max_resolution=4096
+            name, resolution=512, source_resolution=4096, reconfigurable=True
         )
 
     def test_is_off_unless_configured(self, instrument: Instrument) -> None:
@@ -1063,7 +1063,7 @@ class TestDetectorDownsampling:
 
         assert instrument.get_downsampling('det').first_id == 1
 
-    def test_records_the_configured_maximum_resolution(
+    def test_records_the_configured_readout_resolution(
         self, instrument: Instrument
     ) -> None:
         instrument.configure_detector('det', detector_number=self.square_grid(4096))
@@ -1081,54 +1081,40 @@ class TestDetectorDownsampling:
     ) -> None:
         with pytest.raises(ValueError, match='must be positive'):
             instrument.configure_detector_downsampling(
-                'det', resolution=resolution, max_resolution=4096
+                'det', resolution=resolution, source_resolution=4096
             )
 
-    @pytest.mark.parametrize('max_resolution', [0, -256, 768, 256])
-    def test_rejects_a_maximum_the_resolution_cannot_reach_by_doubling(
-        self, instrument: Instrument, max_resolution: int
+    @pytest.mark.parametrize('source_resolution', [0, -256, 768, 256])
+    def test_rejects_a_source_the_resolution_cannot_reach_by_doubling(
+        self, instrument: Instrument, source_resolution: int
     ) -> None:
         # Below the target, or above it by a ratio that is not a power of two.
         with pytest.raises(ValueError, match='times a power of two'):
             instrument.configure_detector_downsampling(
-                'det', resolution=512, max_resolution=max_resolution
+                'det', resolution=512, source_resolution=source_resolution
             )
 
     def test_accepts_resolutions_that_are_not_powers_of_two(
         self, instrument: Instrument
     ) -> None:
         instrument.configure_detector_downsampling(
-            'det', resolution=250, max_resolution=4000
+            'det', resolution=250, source_resolution=4000
         )
 
         assert instrument.get_downsampling('det').resolution == 250
 
-    @pytest.mark.parametrize(
-        'bounds', [{}, {'max_resolution': 4096, 'source_resolution': 4096}]
-    )
-    def test_rejects_naming_neither_or_both_ways_to_get_the_source_resolution(
-        self, instrument: Instrument, bounds: dict[str, int]
-    ) -> None:
-        with pytest.raises(ValueError, match='exactly one'):
-            instrument.configure_detector_downsampling('det', resolution=512, **bounds)
-
-    def test_a_fixed_source_needs_only_to_tile(self, instrument: Instrument) -> None:
-        # Nothing is inferred, so nothing has to be reachable by doubling:
-        # 1280 = 256 * 5 is fine, where a bound of 1280 would be rejected.
+    def test_a_fixed_readout_states_the_stride(self, instrument: Instrument) -> None:
+        instrument.configure_detector('det', detector_number=self.square_grid(4096))
         instrument.configure_detector_downsampling(
-            'det', resolution=256, source_resolution=1280
+            'det', resolution=512, source_resolution=4096
         )
 
-        downsampling = instrument.get_downsampling('det')
-        assert downsampling.source_resolution == 1280
-        # Ids beyond the streamed grid are corruption, as they are for a bound.
-        assert downsampling.max_resolution == 1280
+        assert instrument.get_downsampling('det').source_resolution == 4096
 
-    @pytest.mark.parametrize('source_resolution', [1000, 513])
-    def test_rejects_a_fixed_source_the_target_does_not_tile(
-        self, instrument: Instrument, source_resolution: int
+    def test_a_reconfigurable_readout_leaves_the_stride_to_be_inferred(
+        self, instrument: Instrument
     ) -> None:
-        with pytest.raises(ValueError, match='must be a multiple'):
-            instrument.configure_detector_downsampling(
-                'det', resolution=512, source_resolution=source_resolution
-            )
+        instrument.configure_detector('det', detector_number=self.square_grid(4096))
+        self.configure(instrument)
+
+        assert instrument.get_downsampling('det').source_resolution is None

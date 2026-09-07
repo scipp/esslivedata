@@ -107,15 +107,14 @@ class DownsamplePixelIds(Accumulator[DetectorEvents, sc.DataArray]):
     Source resolution
     -----------------
     ``source_resolution`` is the side length of the grid the detector is
-    streaming. Where the readout is a fixed property of the detector, the
-    instrument configuration states it and everything below is skipped: the
-    stride is constant for the life of the process, and a grid that disagrees
-    with it was rejected at configuration time.
+    streaming. Where the readout is fixed the instrument configuration states
+    it and none of what follows runs: the stride is constant for the life of
+    the process, and a declared grid disagreeing with it was rejected at
+    configuration time.
 
-    The rest of this applies to a readout that is reconfigured to different
-    resolutions during operation and does not announce it on any stream we
-    consume, so that it has to be inferred from the largest event id seen
-    recently, rounded up to a power of two:
+    The rest applies to a readout that is reconfigured during operation and
+    announces it on no stream we consume, so that it has to be inferred from
+    the largest event id seen recently, rounded up to a power of two:
 
         source = 2 ** ceil(log2(sqrt(max_id + 1)))
 
@@ -205,7 +204,10 @@ class DownsamplePixelIds(Accumulator[DetectorEvents, sc.DataArray]):
 
     @property
     def source_resolution(self) -> int | None:
-        """Inferred source grid side length, or None before the first event."""
+        """Source grid side length, as configured or as currently inferred.
+
+        None only where it is inferred and no event has been seen yet.
+        """
         return self._source_resolution
 
     def _estimate(self, max_id: int) -> int:

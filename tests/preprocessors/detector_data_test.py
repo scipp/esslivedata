@@ -195,7 +195,7 @@ class TestDownsampledDetector:
         instrument = Instrument(name='test', detector_names=['det'])
         if downsample:
             instrument.configure_detector_downsampling(
-                'det', resolution=4, max_resolution=256
+                'det', resolution=4, source_resolution=256, reconfigurable=True
             )
         else:
             instrument.configure_detector(
@@ -236,7 +236,7 @@ class TestDownsampledDetector:
         # outermost accumulator, so every wrapper must delegate.
         instrument = Instrument(name='test', detector_names=['det'])
         instrument.configure_detector_downsampling(
-            'det', resolution=4, max_resolution=256
+            'det', resolution=4, source_resolution=256, reconfigurable=True
         )
         factory = DetectorPreprocessorFactory(
             instrument=instrument, group_by_pixel=group_by_pixel
