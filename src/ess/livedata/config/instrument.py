@@ -165,8 +165,10 @@ class Instrument:
     source_metadata: dict[str, SourceMetadata] = field(default_factory=dict)
     dim_titles: dict[str, str] = field(default_factory=dict)
     _detector_numbers: dict[str, sc.Variable] = field(default_factory=dict)
-    #: name -> (target resolution, physical maximum resolution)
-    _downsampled_detectors: dict[str, tuple[int, int]] = field(default_factory=dict)
+    #: name -> (target resolution, readout resolution, reconfigurable)
+    _downsampled_detectors: dict[str, tuple[int, int, bool]] = field(
+        default_factory=dict
+    )
     _downsampling_cache: dict[str, DetectorDownsampling] = field(default_factory=dict)
     _nexus_file: str | None = None
     _detector_group_names: dict[str, str] = field(default_factory=dict)
@@ -506,7 +508,12 @@ class Instrument:
         return self._detector_group_names.get(name, name)
 
     def configure_detector_downsampling(
-        self, name: str, *, resolution: int, max_resolution: int
+        self,
+        name: str,
+        *,
+        resolution: int,
+        source_resolution: int,
+        reconfigurable: bool = False,
     ) -> None:
         """
         Ingest a square detector at reduced resolution.
@@ -517,14 +524,14 @@ class Instrument:
         4096x4096 panel downsampled to 512x512 this replaces a 16.7-million-bin
         group-and-merge per update with a 262-thousand-bin grouping.
 
-        The resolution the detector is *streaming* is operator-reconfigurable
-        and is not announced on any stream we consume, so the preprocessor
-        infers it from the observed event ids and follows it when it changes;
-        see
+        Remapping needs the side length of the grid the detector is streaming.
+        A ``reconfigurable`` readout changes it during operation and announces
+        it on no stream we consume, so the preprocessor infers it from the
+        observed event ids and follows it when it changes; see
         :class:`~ess.livedata.preprocessors.downsample_pixel_ids.DownsamplePixelIds`.
         Counts taken at different source resolutions are not commensurable, so
         a change resets the cumulative accumulators, exactly as a detector move
-        does. What the geometry file is trusted for, and why, is
+        does. What the declared grid is trusted for, and why, is
         :func:`~ess.livedata.config.detector_downsampling.resolve_downsampling`.
 
         Only meaningful for logical views, which address pixels by index. A
@@ -537,13 +544,22 @@ class Instrument:
             Name of the detector (must be in ``self.detector_names``).
         resolution:
             Side length of the target grid.
-        max_resolution:
-            Largest grid the detector can physically read out. Bounds the
-            inferred source resolution, so that a corrupt id cannot raise it.
-            A hardware fact, which is why it is stated here rather than read
-            from the geometry file: the file records one past configuration of
-            a setting that changes during operation. Must be ``resolution``
-            times a power of two; see ``is_reachable_resolution``.
+        source_resolution:
+            The detector's readout grid, and where ``reconfigurable`` the
+            largest it can be, which also bounds the inference so that a
+            corrupt id cannot raise it. A hardware fact, which is why it is
+            stated here rather than read from the geometry file: that file
+            records one past configuration of a setting that may change during
+            operation. Must be ``resolution`` times a power of two, since the
+            inference reaches candidates by doubling; see
+            ``is_reachable_resolution``. Required of a fixed readout too,
+            which strictly needs only to tile, since no detector has yet
+            wanted the difference.
+        reconfigurable:
+            Whether the readout resolution changes during operation. Leave it
+            False wherever it does not: the inference exists to track a setting
+            that moves, and where nothing moves it can only cost a wrong stride
+            until enough ids have been seen.
         """
         if name not in self.detector_names:
             raise ValueError(
@@ -552,12 +568,16 @@ class Instrument:
             )
         if resolution <= 0:
             raise ValueError(f"resolution must be positive, got {resolution}")
-        if not is_reachable_resolution(max_resolution, resolution):
+        if not is_reachable_resolution(source_resolution, resolution):
             raise ValueError(
-                f"max_resolution {max_resolution} must be the resolution "
+                f"source_resolution {source_resolution} must be the resolution "
                 f"{resolution} times a power of two, for detector {name}."
             )
-        self._downsampled_detectors[name] = (resolution, max_resolution)
+        self._downsampled_detectors[name] = (
+            resolution,
+            source_resolution,
+            reconfigurable,
+        )
 
     def get_downsampling(self, name: str) -> DetectorDownsampling | None:
         """
@@ -573,9 +593,13 @@ class Instrument:
         if configured is None:
             return None
         if (cached := self._downsampling_cache.get(name)) is None:
-            resolution, max_resolution = configured
+            resolution, source_resolution, reconfigurable = configured
             cached = resolve_downsampling(
-                name, resolution, max_resolution, self._detector_numbers.get(name)
+                name,
+                resolution,
+                source_resolution,
+                reconfigurable,
+                self._detector_numbers.get(name),
             )
             self._downsampling_cache[name] = cached
         return cached

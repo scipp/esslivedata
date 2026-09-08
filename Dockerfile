@@ -1,10 +1,9 @@
 # ============================================================
-# Backend — processing services for a specific instrument
+# Backend — processing services for all supported instruments
 # ============================================================
 FROM python:3.13-slim AS backend
 
 ARG SETUPTOOLS_SCM_PRETEND_VERSION
-ARG INSTRUMENT
 
 RUN apt-get update && \
     apt-get install -y --no-install-recommends \
@@ -19,15 +18,17 @@ RUN groupadd --gid 1000 livedata && \
 WORKDIR /app
 COPY . .
 
-RUN pip install --no-cache-dir -e ".[${INSTRUMENT}]"
+RUN pip install --no-cache-dir -e ".[all-instruments]"
 
-ENV LIVEDATA_DATA_DIR=/app/data/geometry
-RUN python -m ess.livedata.scripts.download_geometry
+ENV LIVEDATA_DATA_DIR=/app/data/geometry \
+    SCIPP_DATA_DIR=/app/data/cache
+RUN python -m ess.livedata.scripts.download_geometry && \
+    mkdir -p "${SCIPP_DATA_DIR}" && \
+    chown livedata:livedata "${SCIPP_DATA_DIR}"
 
 USER livedata
 
 ENV LIVEDATA_ENV=docker \
-    LIVEDATA_INSTRUMENT=${INSTRUMENT} \
     PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1
 
@@ -40,12 +41,11 @@ HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
 
 
 # ============================================================
-# Dashboard — reduction dashboard for a specific instrument
+# Dashboard — reduction dashboard for all supported instruments
 # ============================================================
 FROM python:3.13-slim AS dashboard
 
 ARG SETUPTOOLS_SCM_PRETEND_VERSION
-ARG INSTRUMENT
 
 RUN apt-get update && \
     apt-get install -y --no-install-recommends \
@@ -60,14 +60,13 @@ RUN groupadd --gid 1000 livedata && \
 WORKDIR /app
 COPY . .
 
-RUN pip install --no-cache-dir -e ".[${INSTRUMENT},dashboard]"
+RUN pip install --no-cache-dir -e ".[dashboard]"
 
 USER livedata
 
 EXPOSE 5009
 
 ENV LIVEDATA_ENV=docker \
-    LIVEDATA_INSTRUMENT=${INSTRUMENT} \
     BOKEH_ALLOW_WS_ORIGIN=* \
     PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1

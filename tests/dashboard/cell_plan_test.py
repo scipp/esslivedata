@@ -113,6 +113,35 @@ class TestMaterialization:
         )
         assert cell_id not in plans
 
+    def test_hidden_cell_with_a_showing_popout_is_materialized(self):
+        """A pop-out floats above whatever tab is up, so its cell is rendered
+        wherever it sits and must track its inputs like a visible one."""
+        grid_id, layer_id, cell_id = _grid_id(), LayerId(uuid4()), CellId(uuid4())
+        snapshot = LayerSnapshot(state=LayerState.READY, version=1, plotter=_Plotter())
+        plans = desired_cells(
+            _topology(grid_id, {cell_id: _cell(layer_id)}),
+            {layer_id: snapshot}.get,
+            SessionView(active_grid_id=None, live_cell_ids=frozenset({cell_id})),
+            watched=lambda _: False,
+        )
+        assert cell_id in plans
+
+    def test_a_live_popout_does_not_materialize_its_neighbours(self):
+        """Liveness is per cell: the rest of the hidden grid still sleeps."""
+        grid_id, layer_id = _grid_id(), LayerId(uuid4())
+        popped_out, neighbour = CellId(uuid4()), CellId(uuid4())
+        snapshot = LayerSnapshot(state=LayerState.READY, version=1, plotter=_Plotter())
+        plans = desired_cells(
+            _topology(
+                grid_id,
+                {popped_out: _cell(layer_id), neighbour: _cell(LayerId(uuid4()))},
+            ),
+            {layer_id: snapshot}.get,
+            SessionView(active_grid_id=None, live_cell_ids=frozenset({popped_out})),
+            watched=lambda _: False,
+        )
+        assert set(plans) == {popped_out}
+
     def test_multi_layer_cell_materializes_if_any_layer_watched(self):
         grid_id = _grid_id()
         watched_layer, other_layer = LayerId(uuid4()), LayerId(uuid4())

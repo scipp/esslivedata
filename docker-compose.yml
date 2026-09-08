@@ -113,6 +113,7 @@ services:
       KAFKA_SASL_MECHANISM: ${KAFKA_SASL_MECHANISM:-SCRAM-SHA-256}
       KAFKA_SASL_USERNAME: ${KAFKA_SASL_USERNAME:-DUMMY}
       KAFKA_SASL_PASSWORD: ${KAFKA_SASL_PASSWORD:-DUMMY}
+      KAFKA_SSL_CA_LOCATION: ${KAFKA_SSL_CA_LOCATION:-}
     command: sh -c "python -m pip install -e . && python -m ess.livedata.services.fake_monitors --mode ev44 --instrument $LIVEDATA_INSTRUMENT"
 
   fake-detectors:
@@ -136,6 +137,7 @@ services:
       KAFKA_SASL_MECHANISM: ${KAFKA_SASL_MECHANISM:-SCRAM-SHA-256}
       KAFKA_SASL_USERNAME: ${KAFKA_SASL_USERNAME:-DUMMY}
       KAFKA_SASL_PASSWORD: ${KAFKA_SASL_PASSWORD:-DUMMY}
+      KAFKA_SSL_CA_LOCATION: ${KAFKA_SSL_CA_LOCATION:-}
     command: sh -c "python -m pip install -e . && python -m ess.livedata.services.fake_detectors --instrument $LIVEDATA_INSTRUMENT"
 
   monitor-data:
@@ -159,6 +161,7 @@ services:
       KAFKA_SASL_MECHANISM: ${KAFKA_SASL_MECHANISM:-SCRAM-SHA-256}
       KAFKA_SASL_USERNAME: ${KAFKA_SASL_USERNAME:-DUMMY}
       KAFKA_SASL_PASSWORD: ${KAFKA_SASL_PASSWORD:-DUMMY}
+      KAFKA_SSL_CA_LOCATION: ${KAFKA_SSL_CA_LOCATION:-}
     command: sh -c "python -m pip install -e . && python -m ess.livedata.services.monitor_data --instrument $LIVEDATA_INSTRUMENT"
 
   detector-data:
@@ -182,6 +185,7 @@ services:
       KAFKA_SASL_MECHANISM: ${KAFKA_SASL_MECHANISM:-SCRAM-SHA-256}
       KAFKA_SASL_USERNAME: ${KAFKA_SASL_USERNAME:-DUMMY}
       KAFKA_SASL_PASSWORD: ${KAFKA_SASL_PASSWORD:-DUMMY}
+      KAFKA_SSL_CA_LOCATION: ${KAFKA_SSL_CA_LOCATION:-}
     command: sh -c "python -m pip install -e . && python -m ess.livedata.services.detector_data --instrument $LIVEDATA_INSTRUMENT"
 
   reduction-dashboard:
@@ -208,4 +212,5 @@ services:
       KAFKA_SASL_MECHANISM: ${KAFKA_SASL_MECHANISM:-SCRAM-SHA-256}
       KAFKA_SASL_USERNAME: ${KAFKA_SASL_USERNAME:-DUMMY}
       KAFKA_SASL_PASSWORD: ${KAFKA_SASL_PASSWORD:-DUMMY}
+      KAFKA_SSL_CA_LOCATION: ${KAFKA_SSL_CA_LOCATION:-}
     command: sh -c "python -m pip install -e .[dashboard] && python -m ess.livedata.dashboard.reduction --instrument $LIVEDATA_INSTRUMENT"

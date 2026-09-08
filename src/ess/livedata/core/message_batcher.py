@@ -32,6 +32,30 @@ class MessageBatch:
     messages: list[Message[Any]]
 
 
+@dataclass(frozen=True, slots=True)
+class BatcherMetrics:
+    """Backlog observability for the periodic service metrics line.
+
+    A batcher that retains a backlog is the one place where lag between live
+    data and what the service delivers is visible: the Kafka consumer reports
+    no lag for data it has already handed over, and per-stream ingest lag is
+    measured before batching.  ``max_backlog_s`` is therefore a leading
+    indicator -- it rises during any stall, whether or not shedding follows.
+
+    All fields cover the interval since the last drain, like the per-interval
+    counters in the periodic ``consumer_metrics`` line.
+    """
+
+    max_backlog_s: float
+    """Deepest backlog observed, in data time, since the last drain."""
+
+    dropped_messages: int
+    """Messages shed to keep the backlog bounded, since the last drain."""
+
+    dropped_bytes: int
+    """Payload bytes shed to keep the backlog bounded, since the last drain."""
+
+
 # Largest jump between consecutive timestamps that still reads as continuous
 # traffic, in multiples of the batch length.  Data-derived timestamps are the
 # batchers' only clock, so window placement must not follow one outlier
@@ -113,6 +137,18 @@ class MessageBatcher(ABC):
     def batch_length_s(self) -> float:
         """Current effective batch length in seconds."""
         return 1.0
+
+    def drain_metrics(self) -> BatcherMetrics:
+        """Return backlog metrics for the interval since the last drain.
+
+        The default is an empty snapshot, accurate for batchers that hold no
+        more than the active window and so cannot fall behind live data.
+        ``SimpleMessageBatcher`` is the known exception: its future-message
+        backlog is unbounded, yet it reports zeros here -- it is a fallback
+        pending replacement by the rate-aware batcher and deliberately does
+        not implement the backlog bound.
+        """
+        return BatcherMetrics(max_backlog_s=0.0, dropped_messages=0, dropped_bytes=0)
 
 
 class NaiveMessageBatcher(MessageBatcher):
@@ -361,6 +397,9 @@ class AdaptiveMessageBatcher(MessageBatcher):
 
     def batch(self, messages: list[Message[Any]]) -> MessageBatch | None:
         return self._inner.batch(messages)
+
+    def drain_metrics(self) -> BatcherMetrics:
+        return self._inner.drain_metrics()
 
     def report_batch(
         self,

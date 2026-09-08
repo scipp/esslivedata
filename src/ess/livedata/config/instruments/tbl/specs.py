@@ -78,7 +78,8 @@ register_monitor_workflow_specs(
 instrument.configure_detector_downsampling(
     'timepix3_detector',
     resolution=TIMEPIX3_IMAGE_RESOLUTION,
-    max_resolution=TIMEPIX3_PANEL_RESOLUTION,
+    source_resolution=TIMEPIX3_PANEL_RESOLUTION,
+    reconfigurable=True,
 )
 
 instrument.add_logical_view(

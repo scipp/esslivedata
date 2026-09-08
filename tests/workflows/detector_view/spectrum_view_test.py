@@ -3,6 +3,7 @@
 """Integration tests for the unified spectrum-view output."""
 
 import pydantic
+import pytest
 import scipp as sc
 from ess.reduce.nexus.types import RawDetector, SampleRun
 
@@ -76,7 +77,8 @@ class TestSpectrumViewIntegration:
         assert spectrum.dims == ('x', 'time_of_arrival')
         cumulative = result['cumulative']
         # Cumulative is summed over time_of_arrival => total counts match total events.
-        assert sc.isclose(spectrum.sum().data, cumulative.sum().data).value
+        # It is published as float32, so compare values rather than scipp variables.
+        assert spectrum.sum().value == pytest.approx(cumulative.sum().value)
 
     def test_spectrum_view_rebin_factor_applied(self):
         spec = SpectrumViewSpec(

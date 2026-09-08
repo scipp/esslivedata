@@ -137,7 +137,9 @@ The naming stack, from the Kafka wire inwards (see ADR 0004 and
   (`kafka/message_adapter.py`); `KafkaAdapter` maps `(topic, source_name)` to
   `StreamId`.
 - **MessageBatch / MessageBatcher** — a time-windowed batch of messages and the
-  strategies producing them (`core/message_batcher.py`).
+  strategies producing them (`core/message_batcher.py`). Under overload the
+  rate-aware batcher sheds its stalest backlog to stay close to live data
+  (see the freshness policy in `core/rate_aware_batcher.py`).
 - **Accumulator** — protocol accumulating data over time
   (`add`/`get`/`clear`, `core/preprocessor.py`). *Batch* accumulators are consumed
   on `get()`; *context* accumulators (`is_context = True`) are idempotent and
