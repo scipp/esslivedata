@@ -2,6 +2,8 @@
 # Copyright (c) 2025 Scipp contributors (https://github.com/scipp)
 """Tests for instrument.add_logical_view()."""
 
+import pydantic
+import pytest
 import scipp as sc
 
 from ess.livedata.config import Instrument
@@ -275,3 +277,41 @@ class TestAddLogicalViewSpecOutputs:
         # Basic outputs should still be present
         assert 'cumulative' in output_fields
         assert 'current' in output_fields
+
+
+class TestLogicalViewCoordinateMode:
+    """Logical views are TOA-only.
+
+    They run on ``InstrumentDetectorSource``, which carries no geometry, so
+    there is no ``Ltotal`` to index a wavelength lookup table with. Offering
+    the mode would let a user start a job that fails in the factory.
+    """
+
+    @staticmethod
+    def _register(instrument: Instrument):
+        instrument.add_logical_view(
+            name='test_view',
+            title='Test View',
+            description='A test view.',
+            source_names=['detector1'],
+            transform=_identity_transform,
+        )
+        workflow_id = next(iter(instrument.workflow_factory.keys()))
+        return instrument.workflow_factory[workflow_id]
+
+    def test_params_default_to_toa(self):
+        instrument = Instrument(name='test', detector_names=['detector1'])
+        spec = self._register(instrument)
+        assert spec.params().coordinate_mode.mode == 'toa'
+
+    def test_params_reject_wavelength(self):
+        instrument = Instrument(name='test', detector_names=['detector1'])
+        spec = self._register(instrument)
+        with pytest.raises(pydantic.ValidationError):
+            spec.params(coordinate_mode={'mode': 'wavelength'})
+
+    def test_params_carry_no_wavelength_fields(self):
+        instrument = Instrument(name='test', detector_names=['detector1'])
+        spec = self._register(instrument)
+        assert 'wavelength_edges' not in spec.params.model_fields
+        assert 'wavelength_range' not in spec.params.model_fields

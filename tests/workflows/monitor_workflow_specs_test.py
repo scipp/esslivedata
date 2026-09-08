@@ -1,8 +1,12 @@
 # SPDX-License-Identifier: BSD-3-Clause
 # Copyright (c) 2025 Scipp contributors (https://github.com/scipp)
+import pydantic
+import pytest
+
 from ess.livedata.config.instrument import Instrument
 from ess.livedata.config.workflow_spec import AuxSources
 from ess.livedata.workflows.monitor_workflow_specs import (
+    TOAOnlyMonitorDataParams,
     register_monitor_workflow_specs,
 )
 from ess.livedata.workflows.workflow_factory import SpecHandle
@@ -32,3 +36,13 @@ class TestRegisterMonitorWorkflowSpecs:
         )
         spec = instrument.workflow_factory[handle.workflow_id]
         assert spec.aux_sources is aux
+
+
+class TestMonitorCoordinateModeRestriction:
+    def test_toa_only_params_reject_wavelength(self):
+        with pytest.raises(pydantic.ValidationError):
+            TOAOnlyMonitorDataParams(coordinate_mode={'mode': 'wavelength'})
+
+    def test_toa_only_params_carry_no_wavelength_fields(self):
+        assert 'wavelength_edges' not in TOAOnlyMonitorDataParams.model_fields
+        assert 'wavelength_range' not in TOAOnlyMonitorDataParams.model_fields

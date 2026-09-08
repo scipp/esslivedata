@@ -13,6 +13,7 @@ and should only be imported by backend services.
 
 from __future__ import annotations
 
+import abc
 from collections.abc import Callable
 from dataclasses import dataclass
 from typing import ClassVar, Literal
@@ -48,7 +49,41 @@ class CoordinateModeSettings(pydantic.BaseModel):
     )
 
 
-class DetectorViewParams(pydantic.BaseModel):
+class TOAOnlyCoordinateModeSettings(CoordinateModeSettings):
+    """Coordinate mode settings restricted to time-of-arrival.
+
+    For specs that cannot convert to wavelength: the instrument has no lookup
+    table, or the workflow is not wired to receive one.
+    """
+
+    mode: CoordinateMode = pydantic.Field(
+        default='toa',
+        description="Coordinate system for event data. Only TOA (time-of-arrival) "
+        "is available for this workflow.",
+        json_schema_extra={'labels': {'toa': 'Time of arrival (TOA)'}},
+    )
+
+    @pydantic.field_validator('mode')
+    @classmethod
+    def _validate_toa_only(cls, v: CoordinateMode) -> CoordinateMode:
+        if v != 'toa':
+            raise ValueError(
+                f"Only 'toa' mode is supported for this workflow, got '{v}'. "
+                "Wavelength mode needs a lookup table and detector geometry, "
+                "which this workflow has no way to obtain."
+            )
+        return v
+
+
+class DetectorViewParamsBase(pydantic.BaseModel, abc.ABC):
+    """Common interface for detector-view parameter models.
+
+    Subclasses expose the active coordinate mode together with the edges and
+    range filter for that mode, so a single factory
+    (:meth:`DetectorViewFactory.make_workflow`) serves every detector-view
+    spec regardless of which coordinate modes it offers.
+    """
+
     coordinate_mode: CoordinateModeSettings = pydantic.Field(
         title="Coordinate Mode",
         description="Select coordinate system for detector view.",
@@ -62,17 +97,33 @@ class DetectorViewParams(pydantic.BaseModel):
             enabled=False, method=models.WeightingMethod.PIXEL_NUMBER
         ),
     )
-    # TOA (time-of-arrival) settings
+
+    @abc.abstractmethod
+    def get_active_edges(self) -> sc.Variable:
+        """Return the edges for the active coordinate mode."""
+
+    @abc.abstractmethod
+    def get_active_range(self) -> tuple[sc.Variable, sc.Variable] | None:
+        """Return the range filter for the active coordinate mode, if enabled."""
+
+
+class TOAHistogramFields(pydantic.BaseModel):
+    """TOA range filter and histogram edges, shared by every detector-view model.
+
+    Fields only — which mode is *active* stays with the concrete params model,
+    so a both-modes model cannot silently inherit TOA as the answer.
+    """
+
     toa_range: parameter_models.TOARange = pydantic.Field(
         title="Time of Arrival Range",
-        description="Time of arrival range filter for TOA mode.",
+        description="Time of arrival range filter.",
         default=parameter_models.TOARange(),
     )
     toa_edges: parameter_models.TOAEdges = pydantic.Field(
         title="Time of Arrival Edges",
         description=(
             "Time of arrival (TOA) is the time elapsed since the most recent "
-            "source pulse. These edges define the histogram bins in TOA mode. "
+            "source pulse. These edges define the histogram bins. "
             "The default range spans one pulse period of the 14 Hz ESS source "
             f"(0 to {parameter_models.ESS_PULSE_PERIOD_MS} ms); events outside "
             "the range are excluded from the histogram."
@@ -84,6 +135,11 @@ class DetectorViewParams(pydantic.BaseModel):
             unit=parameter_models.TimeUnit.MS,
         ),
     )
+
+
+class DetectorViewParams(TOAHistogramFields, DetectorViewParamsBase):
+    """Detector-view parameters offering both coordinate modes."""
+
     # Wavelength settings
     wavelength_range: parameter_models.WavelengthRangeFilter = pydantic.Field(
         title="Wavelength Range",
@@ -120,6 +176,25 @@ class DetectorViewParams(pydantic.BaseModel):
                     if self.wavelength_range.enabled
                     else None
                 )
+
+
+class TOAOnlyDetectorViewParams(TOAHistogramFields, DetectorViewParamsBase):
+    """Detector-view parameters restricted to time-of-arrival."""
+
+    coordinate_mode: TOAOnlyCoordinateModeSettings = pydantic.Field(
+        title="Coordinate Mode",
+        description="Select coordinate system for detector view. Only TOA mode "
+        "is available for this workflow.",
+        default_factory=TOAOnlyCoordinateModeSettings,
+    )
+
+    def get_active_edges(self) -> sc.Variable:
+        """Return the TOA edges."""
+        return self.toa_edges.get_edges()
+
+    def get_active_range(self) -> tuple[sc.Variable, sc.Variable] | None:
+        """Return the TOA range if enabled."""
+        return self.toa_range.range if self.toa_range.enabled else None
 
 
 @dataclass(frozen=True, slots=True)
@@ -446,23 +521,32 @@ def make_detector_view_outputs(
 
 def make_detector_view_params(
     spectrum_view: SpectrumViewSpec | None = None,
-) -> type[DetectorViewParams]:
-    """Return a ``DetectorViewParams`` subclass, adding spectrum-specific fields.
+    *,
+    base: type[DetectorViewParamsBase] = DetectorViewParams,
+) -> type[DetectorViewParamsBase]:
+    """Return a detector-view params model, adding spectrum-specific fields.
 
-    When ``spectrum_view.params_model`` is set, the subclass adds a
+    When ``spectrum_view.params_model`` is set, the returned model adds a
     ``spectrum_params`` field of that model type so the runtime parameters can
     be exposed in the UI. Workflows without spectrum-view (or whose spectrum
-    transform needs no runtime parameters) keep the base ``DetectorViewParams``
-    unchanged.
+    transform needs no runtime parameters) get ``base`` unchanged.
+
+    Parameters
+    ----------
+    spectrum_view:
+        Optional spectrum-view configuration contributing a params field.
+    base:
+        Params model to extend, selecting which coordinate modes the spec
+        offers. Defaults to the both-modes :class:`DetectorViewParams`.
     """
     if spectrum_view is None or spectrum_view.params_model is None:
-        return DetectorViewParams
+        return base
 
     params_model = spectrum_view.params_model
     title = spectrum_view.output_title
     description = spectrum_view.params_description
 
-    class DetectorViewWithSpectrumParams(DetectorViewParams):
+    class DetectorViewWithSpectrumParams(base):  # type: ignore[valid-type,misc]
         spectrum_params: params_model = pydantic.Field(  # type: ignore[valid-type]
             title=title,
             description=description,

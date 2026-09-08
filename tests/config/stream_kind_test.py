@@ -19,6 +19,7 @@ from ess.livedata.core.message import StreamKind
         (StreamKind.LOG, 'motion'),
         (StreamKind.LIVEDATA_DATA, 'livedata_data'),
         (StreamKind.LIVEDATA_ROI, 'livedata_roi'),
+        (StreamKind.LIVEDATA_CONTEXT, 'livedata_context'),
         (StreamKind.LIVEDATA_COMMANDS, 'livedata_commands'),
         (StreamKind.LIVEDATA_STATUS, 'livedata_heartbeat'),
     ],

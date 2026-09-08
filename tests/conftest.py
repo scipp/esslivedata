@@ -10,6 +10,7 @@ def infra_kwargs() -> dict:
         "livedata_commands_topic": "cmd",
         "livedata_data_topic": "data",
         "livedata_responses_topic": "resp",
+        "livedata_context_topic": "context",
         "livedata_roi_topic": "roi",
         "livedata_status_topic": "status",
     }

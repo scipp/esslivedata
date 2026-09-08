@@ -87,6 +87,9 @@ def _make_livedata_topics(instrument: str) -> dict[str, str]:
         'livedata_commands_topic': stream_kind_to_topic(
             instrument=instrument, kind=StreamKind.LIVEDATA_COMMANDS
         ),
+        'livedata_context_topic': stream_kind_to_topic(
+            instrument=instrument, kind=StreamKind.LIVEDATA_CONTEXT
+        ),
         'livedata_data_topic': stream_kind_to_topic(
             instrument=instrument, kind=StreamKind.LIVEDATA_DATA
         ),

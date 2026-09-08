@@ -43,7 +43,9 @@ def setup_factories(instrument: Instrument) -> None:
         GeometricViewConfig,
         NeXusDetectorSource,
     )
-    from ess.livedata.workflows.detector_view_specs import DetectorViewParams
+    from ess.livedata.workflows.detector_view_specs import (
+        TOAOnlyDetectorViewParams,
+    )
     from ess.livedata.workflows.stream_processor_workflow import StreamProcessorWorkflow
 
     from . import specs
@@ -84,7 +86,7 @@ def setup_factories(instrument: Instrument) -> None:
 
     @specs.projection_handle.attach_factory()
     def _projection_factory(
-        source_name: str, params: DetectorViewParams
+        source_name: str, params: TOAOnlyDetectorViewParams
     ) -> StreamProcessorWorkflow:
         # Resolve the geometry file lazily so logical views and service startup
         # do not depend on it being registered yet.

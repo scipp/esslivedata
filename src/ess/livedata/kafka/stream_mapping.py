@@ -2,7 +2,7 @@
 # Copyright (c) 2025 Scipp contributors (https://github.com/scipp)
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, fields
 
 KafkaTopic = str
 
@@ -24,6 +24,7 @@ class LivedataTopics:
 
     instrument: str
     livedata_commands: str
+    livedata_context: str
     livedata_data: str
     livedata_responses: str
     livedata_roi: str
@@ -33,6 +34,17 @@ class LivedataTopics:
     def filewriter(self) -> KafkaTopic:
         """Returns the filewriter topic for run start/stop messages."""
         return f"{self.instrument}_filewriter"
+
+    @property
+    def all_topics(self) -> set[KafkaTopic]:
+        """Returns every infrastructure topic.
+
+        Derived from the fields so that adding a topic cannot leave topic
+        creation (see :func:`ess.livedata.scripts.dev.ensure_topics_exist`)
+        behind.
+        """
+        names = {field.name for field in fields(self)} - {'instrument'}
+        return {getattr(self, name) for name in names} | {self.filewriter}
 
 
 class StreamMapping:
@@ -53,6 +65,7 @@ class StreamMapping:
         area_detectors: StreamLUT | None = None,
         logs: StreamLUT | None = None,
         livedata_commands_topic: str,
+        livedata_context_topic: str,
         livedata_data_topic: str,
         livedata_responses_topic: str,
         livedata_roi_topic: str,
@@ -66,6 +79,7 @@ class StreamMapping:
         self._topics = LivedataTopics(
             instrument=instrument,
             livedata_commands=livedata_commands_topic,
+            livedata_context=livedata_context_topic,
             livedata_data=livedata_data_topic,
             livedata_responses=livedata_responses_topic,
             livedata_roi=livedata_roi_topic,

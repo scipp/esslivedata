@@ -3,6 +3,7 @@
 
 from .instrument import Instrument, SourceMetadata, instrument_registry
 from .stream import (
+    AxisRange,
     ContextBinding,
     Device,
     F144Stream,
@@ -12,6 +13,7 @@ from .stream import (
 )
 
 __all__ = [
+    'AxisRange',
     'ContextBinding',
     'Device',
     'F144Stream',

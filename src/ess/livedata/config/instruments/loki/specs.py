@@ -11,6 +11,7 @@ import scipp as sc
 
 from ess.livedata import parameter_models
 from ess.livedata.config import (
+    AxisRange,
     Instrument,
     SourceMetadata,
     filter_authorized_streams,
@@ -191,6 +192,15 @@ instrument = Instrument(
         'beam_monitor_m4',
     ],
     choppers=['bw_chopper1', 'bw_chopper2', 'fo_chopper1', 'fo_chopper2'],
+    # The rear bank rides the detector carriage, whose transform the geometry
+    # artifact stores as an empty NXlog. The carriage runs from its base
+    # position out to 15 m, moving away from the sample.
+    axis_ranges={
+        '/entry/instrument/detector_carriage/value': AxisRange(
+            lower=sc.scalar(0.0, unit='m'),
+            upper=sc.scalar(15.0, unit='m'),
+        )
+    },
     streams=streams,
     source_metadata={
         'loki_detector_0': SourceMetadata(title='Rear'),
@@ -283,8 +293,13 @@ i_of_q_handle = instrument.register_spec(
     description=(
         'SANS I(Q) reduction for LOKI. Converts detector event data into'
         ' scattered intensity as a function of momentum transfer Q.'
-        ' Direct-beam normalization (flat/efficiency correction) is not applied and '
-        'currently the transmission does not take into a account and empty run.'
+        ' Direct-beam normalization (flat/efficiency correction) is not applied,'
+        ' and the transmission calculation does not take an empty run into account.'
+        ' Beam Monitor 4 cannot be used as transmission monitor: the geometry'
+        ' artifact drives its position from a live motion stream but does not'
+        ' identify that stream, so the monitor cannot be placed and gets no'
+        ' wavelength lookup table. Selecting it is rejected when the job is'
+        ' started; use Beam Monitor 3.'
     ),
     source_names=detector_names,
     aux_sources=loki_aux_sources,

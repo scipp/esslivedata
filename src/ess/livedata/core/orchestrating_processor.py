@@ -14,6 +14,7 @@ from ess.livedata import __version__
 
 from ..config.device_contract import DeviceContract
 from ..core.command_dispatcher import CommandDispatcher
+from .context_outputs import ContextOutputExtractor
 from .job import (
     JobResult,
     JobState,
@@ -169,6 +170,9 @@ class OrchestratingProcessor[Tin, Tout]:
         self._device_extractor = DeviceExtractor(
             device_contract=DeviceContract.from_instrument(instrument),
         )
+        self._context_output_extractor = ContextOutputExtractor(
+            registry=instrument.workflow_factory,
+        )
         self._message_batcher = message_batcher or AdaptiveMessageBatcher()
         self._config_processor = CommandDispatcher(
             job_manager_adapter=self._job_manager_adapter
@@ -320,6 +324,7 @@ class OrchestratingProcessor[Tin, Tout]:
             [_job_result_to_message(result) for result in valid_results]
         )
         result_messages.extend(self._device_extractor.extract(valid_results))
+        result_messages.extend(self._context_output_extractor.extract(valid_results))
         self._sink.publish_messages(result_messages)
 
     def _report_status(self) -> None:

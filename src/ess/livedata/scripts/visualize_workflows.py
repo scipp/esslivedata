@@ -80,14 +80,16 @@ def main() -> None:
         job_id = JobId(source_name=source_name, job_number=uuid.uuid4())
         config = WorkflowConfig(identifier=wid, job_id=job_id, params={})
         aux_source_names = spec.aux_sources.render() if spec.aux_sources else None
-        context_keys = instrument.resolve_context_keys(wid, source_name)
+        context_keys = instrument.bound_context_keys(wid, source_name)
         try:
             workflow = factory.create(
                 source_name=source_name,
                 config=config,
+                params=factory.validate_params(config),
                 aux_source_names=aux_source_names,
                 context_keys=context_keys,
                 chain_patch_bindings=instrument.chain_patch_bindings,
+                offered_context_streams=instrument.offered_context_streams,
             )
         except Exception as e:
             logger.warning(
