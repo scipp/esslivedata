@@ -308,27 +308,39 @@ def _component_position(filename: str, nx_class: type) -> sc.Variable | None:
 
     Returns ``None`` when the file has no such component. A file may hold more
     than one group of a class: ESS files describe the accelerator in a second
-    ``NXsource`` (``probe='proton'``), and ODIN adds a lab ``xray_source``. Where
-    several are present the one with ``probe='neutron'`` is the beamline source;
-    a single group is taken as-is, since ``probe`` is not always written.
+    ``NXsource`` (``probe='proton'``), and ODIN adds a lab ``xray_source``.
+    ``probe`` tells them apart where it is written, which is not everywhere, so
+    a group is a candidate unless it says it is something other than a neutron
+    source, and where several candidates remain only an explicit
+    ``probe='neutron'`` picks one out. Being the file's only group is not
+    enough on its own: some instruments put the accelerator ``NXsource`` under
+    ``entry/instrument`` and the beamline source elsewhere, and taking it would
+    measure the cascade from the origin.
     """
     with snx.File(filename, definitions=snx.base_definitions()) as f:
         groups = f['entry/instrument'][nx_class]
         if not groups:
             return None
         loaded = {name: group[...] for name, group in groups.items()}
-        if len(loaded) > 1:
-            loaded = {
-                name: dg for name, dg in loaded.items() if dg.get('probe') == 'neutron'
+        candidates = {
+            name: dg
+            for name, dg in loaded.items()
+            if dg.get('probe', 'neutron') == 'neutron'
+        }
+        if len(candidates) > 1:
+            candidates = {
+                name: dg
+                for name, dg in candidates.items()
+                if dg.get('probe') == 'neutron'
             }
-            if len(loaded) != 1:
-                raise ValueError(
-                    f'{filename} has {len(groups)} {nx_class.__name__} groups '
-                    f'({", ".join(sorted(groups))}), and {len(loaded)} of them '
-                    "carry probe='neutron'. Exactly one is needed to identify "
-                    'the beamline source.'
-                )
-        (data_group,) = loaded.values()
+        if len(candidates) != 1:
+            raise ValueError(
+                f'Cannot identify the beamline {nx_class.__name__} in {filename}: '
+                f'of {len(loaded)} groups ({", ".join(sorted(loaded))}), '
+                f'{len(candidates)} could be it. Exactly one is needed; '
+                "probe='neutron' identifies the beamline source."
+            )
+        (data_group,) = candidates.values()
         positions = snx.compute_positions(data_group, store_position='position')
     return positions['position']
 

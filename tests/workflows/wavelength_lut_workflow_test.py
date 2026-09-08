@@ -457,3 +457,12 @@ class TestAmbiguousSource:
         _write_chopper_nexus(path, ['chopper1'], lab_source=True, source_probe=None)
         with pytest.raises(ValueError, match='xray_source'):
             _run_chopper_lut(path, ['chopper1'], {'chopper1': (-14.0, 0.0)})
+
+    def test_sole_non_neutron_source_raises(self, tmp_path: Path) -> None:
+        # Some files put only the accelerator NXsource (probe='proton') under
+        # entry/instrument, with the beamline source elsewhere or absent.
+        # Taking the only group would measure the cascade from the accelerator.
+        path = tmp_path / 'proton_source_choppers.nxs'
+        _write_chopper_nexus(path, ['chopper1'], source_probe='proton')
+        with pytest.raises(ValueError, match='Cannot identify the beamline'):
+            _run_chopper_lut(path, ['chopper1'], {'chopper1': (-14.0, 0.0)})
