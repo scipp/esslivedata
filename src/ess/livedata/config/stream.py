@@ -25,6 +25,8 @@ from collections.abc import Iterable
 from dataclasses import dataclass
 from typing import Any
 
+import scipp as sc
+
 
 @dataclass(frozen=True, slots=True, kw_only=True)
 class Stream:
@@ -145,6 +147,13 @@ class ContextBinding:
     """
 
     stream_name: str
+    """Internal stream name, and the wire name of the context stream.
+
+    A plain name, fixed at declaration time. Nothing a job selects may enter it:
+    a context stream carries no job identity (ADR 0006), and a name a job could
+    vary would put the Kafka subscription, which is derived statically per spec,
+    at risk of missing what some job binds.
+    """
     workflow_key: Any
     dependent_sources: frozenset[str]
     gating: bool = True
@@ -157,6 +166,32 @@ class ContextBinding:
     input, but the job runs without it and picks the value up whenever it
     arrives.
     """
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class AxisRange:
+    """The interval of values one moving axis can take.
+
+    Declared per NeXus transform path, because that is what the geometry
+    artifact keys a live (f144-driven) transform by, and which components ride
+    the axis is then derivable from their ``depends_on`` chains rather than
+    restated. A component later hung off the axis inherits the range instead of
+    silently being placed as if the axis did not exist.
+
+    The artifact stores a live transform as an *empty* NXlog, so it carries no
+    value at all for such an axis and the interval cannot be recovered from it.
+    It is therefore an instrument declaration.
+
+    Both bounds are axis values, in the axis's own units, so the transform
+    supplies the direction and sense of the motion. Consumers evaluate the
+    geometry at the bounds rather than assuming which way along the beam the
+    axis travels.
+    """
+
+    lower: sc.Variable
+    """Lowest value the axis takes."""
+    upper: sc.Variable
+    """Highest value the axis takes."""
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)

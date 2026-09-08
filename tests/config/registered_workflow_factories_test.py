@@ -12,6 +12,7 @@ For fast spec-only tests, see registered_workflow_specs_test.py.
 
 import uuid
 
+import pydantic
 import pytest
 
 from ess.livedata.config.instrument import instrument_registry
@@ -86,6 +87,29 @@ def test_workflow_factory_is_attached(instrument_name: str, workflow_id: Workflo
     )
 
 
+def _accepts_wavelength_mode(spec) -> bool:
+    """Whether the spec's params model lets a user select wavelength mode."""
+    field = spec.params.model_fields.get('coordinate_mode')
+    if field is None or field.annotation is None:
+        return False
+    try:
+        field.annotation(mode='wavelength')
+    except pydantic.ValidationError:
+        return False
+    return True
+
+
+def _collect_wavelength_capable_factories():
+    """Collect workflows whose params offer wavelength mode."""
+    workflows = []
+    for param in _collect_workflow_factories():
+        instrument_name, workflow_id = param.values
+        instrument = instrument_registry[instrument_name]
+        if _accepts_wavelength_mode(instrument.workflow_factory[workflow_id]):
+            workflows.append(param)
+    return workflows
+
+
 @pytest.mark.parametrize(
     ("instrument_name", "workflow_id"), _collect_workflow_factories()
 )
@@ -158,4 +182,51 @@ def test_workflow_roundtrip(instrument_name: str, workflow_id: WorkflowId):
     # Verify job was created successfully
     assert job is not None
     assert job.job_id == job_id
+    assert job.workflow_id == workflow_id
+
+
+@pytest.mark.parametrize(
+    ("instrument_name", "workflow_id"), _collect_wavelength_capable_factories()
+)
+def test_wavelength_mode_workflow_can_be_instantiated(
+    instrument_name: str, workflow_id: WorkflowId
+):
+    """A spec offering wavelength mode must be able to build one.
+
+    Wavelength conversion needs a lookup table and detector geometry, both
+    supplied by the instrument factory rather than by the spec. Nothing ties
+    the two together, so a spec can advertise the mode in the UI while its
+    factory raises at job creation. Offering an unusable mode is a bug: the
+    spec must be registered with a TOA-only params model instead.
+    """
+    instrument = instrument_registry[instrument_name]
+    spec = instrument.workflow_factory[workflow_id]
+
+    adapter = WorkflowConfigurationAdapter(
+        spec=spec,
+        config_state=None,
+        start_callback=lambda *args, **kwargs: True,
+    )
+    aux_dict = None
+    if adapter.aux_sources is not None:
+        aux_dict = adapter.aux_sources.get_defaults()
+    params_class = adapter.set_aux_sources(aux_dict)
+    assert params_class is not None
+    params_model = params_class(coordinate_mode={'mode': 'wavelength'})
+
+    source_name = spec.source_names[0] if spec.source_names else "test_source"
+    job_id = JobId(source_name=source_name, job_number=uuid.uuid4())
+    workflow_config = WorkflowConfig.from_params(
+        workflow_id=workflow_id,
+        job_id=job_id,
+        params=params_model.model_dump(),
+        aux_source_names=aux_dict,
+    )
+
+    service_name = instrument.workflow_factory.get_service(workflow_id)
+    job = JobFactory(instrument, service_name=service_name).create(
+        job_id=job_id, config=workflow_config
+    )
+
+    assert job is not None
     assert job.workflow_id == workflow_id

@@ -37,6 +37,7 @@ def test_routing_adapter_builder_all_livedata_routes(instrument: str) -> None:
     adapter = (
         RoutingAdapterBuilder(stream_mapping=stream_mapping)
         .with_livedata_commands_route()
+        .with_livedata_context_route()
         .with_livedata_data_route()
         .with_livedata_roi_route()
         .with_livedata_status_route()
@@ -45,6 +46,7 @@ def test_routing_adapter_builder_all_livedata_routes(instrument: str) -> None:
 
     # Check all livedata topics are routed
     assert stream_mapping.topics.livedata_commands in adapter._routes
+    assert stream_mapping.topics.livedata_context in adapter._routes
     assert stream_mapping.topics.livedata_data in adapter._routes
     assert stream_mapping.topics.livedata_roi in adapter._routes
     assert stream_mapping.topics.livedata_status in adapter._routes

@@ -137,7 +137,9 @@ The naming stack, from the Kafka wire inwards (see ADR 0004 and
   (`kafka/message_adapter.py`); `KafkaAdapter` maps `(topic, source_name)` to
   `StreamId`.
 - **MessageBatch / MessageBatcher** — a time-windowed batch of messages and the
-  strategies producing them (`core/message_batcher.py`).
+  strategies producing them (`core/message_batcher.py`). Under overload the
+  rate-aware batcher sheds its stalest backlog to stay close to live data
+  (see the freshness policy in `core/rate_aware_batcher.py`).
 - **Accumulator** — protocol accumulating data over time
   (`add`/`get`/`clear`, `core/preprocessor.py`). *Batch* accumulators are consumed
   on `get()`; *context* accumulators (`is_context = True`) are idempotent and
@@ -179,6 +181,16 @@ The naming stack, from the Kafka wire inwards (see ADR 0004 and
   streams have a value (ADR 0002).
 - **ContextBinding** — declaration mapping a context stream to a Sciline
   workflow key for given dependent sources (`config/stream.py`, ADR 0003).
+  Required where the stream filling a key varies per source, where the key
+  reaches the graph only because the binding puts it there (a chain patch), or
+  where a stream private to one spec should not be subscribed by every service.
+- **Offered context stream** — instrument-wide mapping from a Sciline workflow
+  key to the wire name carrying it, named by no spec, source or params
+  (`Instrument.offer_context_stream`, ADR 0010). The workflow build keeps the
+  offer when the key is reachable from a target key, and the job gates on it.
+  Bijective: one stream per key, one key per stream. Both mechanisms end as
+  `context_keys` entries on the job and in its gate; they differ only in what
+  decides which jobs get the entry.
 - **Device** — a synthesized in-process stream merging EPICS substreams
   (RBV/VAL/DMOV → value/target/idle) into one consistent record
   (`config/stream.py`, ADR 0001/0006).

@@ -31,7 +31,6 @@ from ess.livedata.core.timestamp import Timestamp
 from ess.livedata.workflows.wavelength_lut_workflow_specs import (
     CHOPPER_CASCADE_SOURCE,
     WAVELENGTH_BANDS_OUTPUT,
-    WAVELENGTH_LUT_OUTPUT,
     CascadeBands,
     WavelengthLutParams,
 )
@@ -47,9 +46,25 @@ def instrument(request):
     return inst
 
 
+def _any_component_table(result) -> sc.DataArray:
+    """Return one per-component lookup table from a job result.
+
+    Which components have a table depends on what the instrument's geometry
+    artifact can place, so the tests assert on the shape of a table rather than
+    on a particular component having one.
+    """
+    tables = {
+        name: value
+        for name, value in result.data.items()
+        if name != WAVELENGTH_BANDS_OUTPUT
+    }
+    assert tables, f'no per-component tables in result: {list(result.data)}'
+    return next(iter(tables.values()))
+
+
 def _create_lut_job(instrument, params=None) -> tuple:
     workflow_id = next(
-        w for w in instrument.workflow_factory if w.name == WAVELENGTH_LUT_OUTPUT
+        w for w in instrument.workflow_factory if w.name == 'wavelength_lut'
     )
     job_id = JobId(source_name=CHOPPER_CASCADE_SOURCE, job_number=uuid.uuid4())
     config = WorkflowConfig.from_params(
@@ -102,10 +117,16 @@ def test_chopper_lut_computes_from_context_and_trigger(instrument) -> None:
     assert not reply.has_error, reply.error_message
     assert result is not None
     assert result.error_message is None, result.error_message
-    lut = result.data[WAVELENGTH_LUT_OUTPUT]
+    lut = _any_component_table(result)
     assert lut.dims == ('distance', 'event_time_offset')
     assert lut.unit == sc.units.angstrom
-    assert np.isfinite(lut.values).any()
+    # Not asserting finite wavelengths here: every chopper is fed the same
+    # placeholder 14 Hz / zero delay, which blocks the beam a few metres past
+    # the first chopper, so a table covering a real component's distance is
+    # legitimately all-NaN. The cascade bands below carry the "wavelengths were
+    # actually computed" assertion, evaluated at the chopper distances
+    # themselves. Asserting finite values at detector distances would need a
+    # physically meaningful chopper configuration.
 
     bands = result.data[WAVELENGTH_BANDS_OUTPUT]
     assert bands.dims == ('distance', 'event_time_offset')

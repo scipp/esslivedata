@@ -73,22 +73,18 @@ def setup_factories(instrument: Instrument) -> None:
     instrument.configure_detector('unified_detector', detector_number=detector_number)
 
     # Bifrost device streams (merged RBV/VAL/DMOV) feeding typed Sciline keys
-    # on the cut-workflow graph. Direct-bind (no chain patch) — declared at
-    # instrument scope so every spec consuming ``unified_detector`` picks them
-    # up. Non-consumers opt out below, co-located with the bindings they negate:
-    # the detector view sums over banks and the ratemeter is counts-only.
-    instrument.add_context_binding(
+    # on the cut-workflow graph. Direct-bind (no chain patch): the keys are
+    # ordinary parameters of the cut workflow, so each job's gate follows from
+    # whether its graph reaches them — the Q-maps do, the detector view (sums
+    # over banks) and the ratemeter (counts-only) do not.
+    instrument.offer_context_stream(
         stream_name='detector_tank_angle_r0',
-        dependent_sources={'unified_detector'},
         workflow_key=InstrumentAngle[SampleRun],
     )
-    instrument.add_context_binding(
+    instrument.offer_context_stream(
         stream_name='rotation_stage',
-        dependent_sources={'unified_detector'},
         workflow_key=SampleAngle[SampleRun],
     )
-    specs.detector_ratemeter_handle.skip_instrument_contexts()
-    specs.unified_detector_view_handle.skip_instrument_contexts()
 
     # Create base reduction workflow
     (

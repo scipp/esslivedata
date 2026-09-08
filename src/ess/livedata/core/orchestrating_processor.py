@@ -14,6 +14,7 @@ from ess.livedata import __version__
 
 from ..config.device_contract import DeviceContract
 from ..core.command_dispatcher import CommandDispatcher
+from .context_outputs import ContextOutputExtractor
 from .job import (
     JobResult,
     JobState,
@@ -169,6 +170,9 @@ class OrchestratingProcessor[Tin, Tout]:
         self._device_extractor = DeviceExtractor(
             device_contract=DeviceContract.from_instrument(instrument),
         )
+        self._context_output_extractor = ContextOutputExtractor(
+            registry=instrument.workflow_factory,
+        )
         self._message_batcher = message_batcher or AdaptiveMessageBatcher()
         self._config_processor = CommandDispatcher(
             job_manager_adapter=self._job_manager_adapter
@@ -320,6 +324,7 @@ class OrchestratingProcessor[Tin, Tout]:
             [_job_result_to_message(result) for result in valid_results]
         )
         result_messages.extend(self._device_extractor.extract(valid_results))
+        result_messages.extend(self._context_output_extractor.extract(valid_results))
         self._sink.publish_messages(result_messages)
 
     def _report_status(self) -> None:
@@ -378,6 +383,7 @@ class OrchestratingProcessor[Tin, Tout]:
                 )
                 self._log_stream_lag(self._stream_stats_provider.drain_lag())
 
+            batcher_metrics = self._message_batcher.drain_metrics()
             logger.info(
                 'processor_metrics',
                 batches=self._batches_processed,
@@ -386,6 +392,13 @@ class OrchestratingProcessor[Tin, Tout]:
                 errors=self._errors_since_last_metrics,
                 interval_seconds=window_seconds,
                 stream_stats=self._pending_stream_stats,
+                # How far behind live data the batcher fell, and what it shed
+                # to stay bounded.  A rising backlog is the earliest warning
+                # that the service is not keeping up; drops mean data for the
+                # shed interval never reached any workflow.
+                max_backlog_s=round(batcher_metrics.max_backlog_s, 3),
+                dropped_messages=batcher_metrics.dropped_messages,
+                dropped_bytes=batcher_metrics.dropped_bytes,
             )
             self._batches_processed = 0
             self._empty_batches = 0

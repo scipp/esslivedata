@@ -31,6 +31,7 @@ def make_monitor_service_builder(
             pixellated_sources=instrument_obj.pixellated_monitor_sources
         )
         .with_livedata_commands_route()
+        .with_livedata_context_route()
         .with_run_control_route()
         .build()
     )

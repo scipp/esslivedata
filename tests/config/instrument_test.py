@@ -622,7 +622,7 @@ class TestContextBindings:
         # No exception.
         instrument.validate()
 
-    def test_resolve_context_keys_matches_instrument_binding_by_source(self):
+    def test_declared_context_keys_matches_instrument_binding_by_source(self):
         instrument = Instrument(
             name='test', detector_names=['det1', 'det2'], streams={'rot': _f144('rot')}
         )
@@ -637,12 +637,12 @@ class TestContextBindings:
             stream_name='rot', workflow_key=_Key, dependent_sources=['det1']
         )
 
-        assert instrument.resolve_context_keys(handle.workflow_id, 'det1') == {
+        assert instrument.bound_context_keys(handle.workflow_id, 'det1') == {
             'rot': _Key
         }
-        assert instrument.resolve_context_keys(handle.workflow_id, 'det2') == {}
+        assert instrument.bound_context_keys(handle.workflow_id, 'det2') == {}
 
-    def test_resolve_context_keys_honours_skip_instrument_contexts(self):
+    def test_declared_context_keys_honours_skip_instrument_contexts(self):
         instrument = Instrument(
             name='test', detector_names=['det1'], streams={'rot': _f144('rot')}
         )
@@ -658,9 +658,9 @@ class TestContextBindings:
         )
         handle.skip_instrument_contexts()
 
-        assert instrument.resolve_context_keys(handle.workflow_id, 'det1') == {}
+        assert instrument.bound_context_keys(handle.workflow_id, 'det1') == {}
 
-    def test_resolve_context_keys_includes_spec_scope_binding(self):
+    def test_declared_context_keys_includes_spec_scope_binding(self):
         instrument = Instrument(
             name='test', detector_names=['det1'], streams={'rot': _f144('rot')}
         )
@@ -674,18 +674,84 @@ class TestContextBindings:
         handle.skip_instrument_contexts()
         handle.add_context_binding(stream_name='rot', workflow_key=_Key)
 
-        assert instrument.resolve_context_keys(handle.workflow_id, 'det1') == {
+        assert instrument.bound_context_keys(handle.workflow_id, 'det1') == {
             'rot': _Key
         }
 
-    def test_resolve_context_keys_raises_for_unregistered_workflow(self):
+    def test_declared_context_keys_raises_for_unregistered_workflow(self):
         instrument = Instrument(name='test', detector_names=['det1'])
         workflow_id = WorkflowId(
             instrument='test', namespace='spec', name='ghost', version=1
         )
 
         with pytest.raises(KeyError, match=r'not.*registered'):
-            instrument.resolve_context_keys(workflow_id, 'det1')
+            instrument.bound_context_keys(workflow_id, 'det1')
+
+    def test_two_bindings_naming_one_stream_with_different_keys_raise(self):
+        # One stream feeds one key. Nothing a job selects reaches a stream name,
+        # so this is a declaration mistake and is caught at registration.
+        class _OtherKey: ...
+
+        instrument = Instrument(name='test', detector_names=['det1'])
+        handle = instrument.register_spec(
+            name='w',
+            version=1,
+            title='W',
+            source_names=['det1'],
+            outputs=SimpleTestOutputs,
+        )
+        handle.add_context_binding(stream_name='lut', workflow_key=_Key)
+        handle.add_context_binding(stream_name='lut', workflow_key=_OtherKey)
+
+        with pytest.raises(ValueError, match='conflicting workflow keys'):
+            instrument.validate()
+
+
+class TestOfferedContextStreams:
+    """Streams a workflow requests by asking for their key.
+
+    No spec, source or params are named: what consumes the stream is settled by
+    the graph a job builds, so the only thing that can go wrong here is the
+    offer disagreeing with itself.
+    """
+
+    def test_offered_stream_is_keyed_by_workflow_key(self):
+        instrument = Instrument(name='test')
+
+        instrument.offer_context_stream(workflow_key=_Key, stream_name='lut')
+
+        assert instrument.offered_context_streams == {_Key: 'lut'}
+
+    def test_reoffering_the_same_pair_is_idempotent(self):
+        """Instrument modules are imported once but ``load_factories`` may run
+        again in a long-lived process; a repeated offer is not a mistake.
+        """
+        instrument = Instrument(name='test')
+
+        instrument.offer_context_stream(workflow_key=_Key, stream_name='lut')
+        instrument.offer_context_stream(workflow_key=_Key, stream_name='lut')
+
+        assert instrument.offered_context_streams == {_Key: 'lut'}
+
+    def test_one_key_cannot_take_two_streams(self):
+        class _OtherKey: ...
+
+        instrument = Instrument(name='test')
+        instrument.offer_context_stream(workflow_key=_Key, stream_name='lut')
+
+        with pytest.raises(ValueError, match='already offered'):
+            instrument.offer_context_stream(workflow_key=_Key, stream_name='other_lut')
+
+    def test_one_stream_cannot_serve_two_keys(self):
+        # The reverse mapping is what routes an arriving value, so it has to be
+        # a function too.
+        class _OtherKey: ...
+
+        instrument = Instrument(name='test')
+        instrument.offer_context_stream(workflow_key=_Key, stream_name='lut')
+
+        with pytest.raises(ValueError, match='already offered'):
+            instrument.offer_context_stream(workflow_key=_OtherKey, stream_name='lut')
 
     @pytest.fixture
     def spec_on_det1(self) -> tuple[Instrument, SpecHandle]:
@@ -716,18 +782,18 @@ class TestContextBindings:
         assert rot.gating is True
         assert roi.gating is False
 
-    def test_resolve_gating_streams_excludes_non_gating_spec_binding(
+    def test_bound_gating_streams_excludes_non_gating_spec_binding(
         self, spec_on_det1: tuple[Instrument, SpecHandle]
     ):
         instrument, handle = spec_on_det1
         handle.add_context_binding(stream_name='rot', workflow_key=_Key)
         handle.add_context_binding(stream_name='roi', workflow_key=_Key, gating=False)
 
-        assert instrument.resolve_context_keys(handle.workflow_id, 'det1') == {
+        assert instrument.bound_context_keys(handle.workflow_id, 'det1') == {
             'rot': _Key,
             'roi': _Key,
         }
-        assert instrument.resolve_gating_streams(handle.workflow_id, 'det1') == {'rot'}
+        assert instrument.bound_gating_streams(handle.workflow_id, 'det1') == {'rot'}
 
     def test_instrument_binding_is_gating(
         self, spec_on_det1: tuple[Instrument, SpecHandle]
@@ -738,7 +804,7 @@ class TestContextBindings:
         )
 
         assert instrument.context_bindings[0].gating is True
-        assert instrument.resolve_gating_streams(handle.workflow_id, 'det1') == {'rot'}
+        assert instrument.bound_gating_streams(handle.workflow_id, 'det1') == {'rot'}
 
 
 class TestInstrumentRegisterSpec:
@@ -862,8 +928,11 @@ class TestInstrumentRegisterSpec:
             job_id=JobId(source_name="test_source", job_number=uuid.uuid4()),
             params={"value": 42},
         )
-        processor = instrument.workflow_factory.create(
-            source_name="any-source", config=config
+        workflow_factory = instrument.workflow_factory
+        processor = workflow_factory.create(
+            source_name="any-source",
+            config=config,
+            params=workflow_factory.validate_params(config),
         )
         # Verify processor has the Workflow protocol methods
         assert hasattr(processor, 'accumulate')

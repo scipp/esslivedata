@@ -50,7 +50,7 @@ cells:
         workflow_id: dream/wavelength_lut/1
         source_names:
         - chopper_cascade
-        view_name: wavelength_lut
+        view_name: detector_lut
     plot_name: image
     params:
       layout:

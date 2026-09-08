@@ -12,6 +12,14 @@ the (currently sole) consumer, not the owner.
 Which quantities are streamed and how each is treated is provisional — see
 :class:`~ess.livedata.kafka.chopper_synthesizer.ChopperSynthesizer` for the
 seam and the sites a change touches.
+
+The ``delay`` readback is the chopper's *total* delay: the control system sums
+the contributions itself, including a mechanical term the IOC converts from
+degrees to nanoseconds at write time using the current rotation speed. So a
+sibling ``mechanical_delay`` NXlog carrying ``units=degrees`` is correct, not a
+mislabelled duplicate — an angular offset is a property of the disc and is
+speed-invariant, unlike its nanosecond equivalent. We consume only the summed
+readback; adding any sibling delay term on top would double-count it.
 """
 
 from __future__ import annotations

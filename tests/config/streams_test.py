@@ -73,6 +73,7 @@ class TestStreamMappingLogTopics:
             livedata_commands_topic='test_commands',
             livedata_data_topic='test_data',
             livedata_responses_topic='test_responses',
+            livedata_context_topic='test_context',
             livedata_roi_topic='test_roi',
             livedata_status_topic='test_status',
         )
@@ -93,6 +94,7 @@ class TestStreamMappingLogTopics:
             livedata_commands_topic='test_commands',
             livedata_data_topic='test_data',
             livedata_responses_topic='test_responses',
+            livedata_context_topic='test_context',
             livedata_roi_topic='test_roi',
             livedata_status_topic='test_status',
         )

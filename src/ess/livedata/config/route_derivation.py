@@ -41,10 +41,10 @@ def gather_source_names(
         if spec.aux_sources:
             for aux_input in spec.aux_sources.inputs.values():
                 names.update(aux_input.choices)
-        # Spec-level ContextBinding entries are routed by stream name (the
-        # wire name equals the stream name).
-        for binding in reg.context_bindings:
-            names.add(binding.stream_name)
+        # Spec-level ContextBinding entries are routed by stream name, which is
+        # also the wire name. A binding's name is fixed at declaration time, so
+        # the subscription derived here covers every job the spec can run.
+        names.update(binding.stream_name for binding in reg.context_bindings)
     # Instrument-level ContextBinding entries: include when any spec hosted by
     # this service shares a source with the binding's ``dependent_sources``.
     for binding in instrument.context_bindings:
@@ -53,6 +53,14 @@ def gather_source_names(
             for reg in service_regs
         ):
             names.add(binding.stream_name)
+    if service_regs:
+        # Offered context streams name no spec or source: any hosted spec's
+        # graph may ask for one and only the built graph knows, which is not
+        # known here, so the subscription has to cover them all. A stream that
+        # only one spec can consume is therefore a binding, not an offer. Names
+        # published on the context topic drop out in resolve_stream_names —
+        # that route is added unconditionally rather than derived here.
+        names.update(instrument.offered_context_streams.values())
     devices = instrument.devices
     for name in list(names):
         device = devices.get(name)

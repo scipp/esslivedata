@@ -18,9 +18,13 @@ class DetectorCarriageLog(ValueLog):
     """
 
 
+#: I(Q) aux fields naming the monitors a job selects. Each needs a block in the
+#: streamed monitor table, which is what the factory checks before creating a job.
+_IQ_MONITOR_ROLES = ('incident_monitor', 'transmission_monitor')
+
+
 def setup_factories(instrument: Instrument) -> None:
     """Initialize LOKI-specific factories and workflows."""
-    import ess.loki.data
     import sciline
     import sciline.typing
     import scipp as sc
@@ -32,7 +36,6 @@ def setup_factories(instrument: Instrument) -> None:
         SampleRun,
         TransmissionRun,
     )
-    from ess.reduce.unwrap import LookupTableFilename
     from ess.sans import types as sans_types
     from ess.sans.types import (
         BeamCenter,
@@ -57,6 +60,10 @@ def setup_factories(instrument: Instrument) -> None:
         GeometricViewConfig,
         NeXusDetectorSource,
     )
+    from ess.livedata.workflows.lut_context import (
+        detector_lookup_table,
+        monitor_lookup_table,
+    )
     from ess.livedata.workflows.stream_processor_workflow import (
         StreamProcessorWorkflow,
     )
@@ -75,10 +82,6 @@ def setup_factories(instrument: Instrument) -> None:
 
     _nexus_geometry_filename = get_nexus_geometry_filename('loki')
 
-    def _resolve_lookup_table_filename() -> str:
-        """Resolve lookup table filename lazily to avoid eager downloads."""
-        return str(ess.loki.data.loki_lookup_table_no_choppers())
-
     def _make_base_workflow() -> LokiWorkflow:
         """Create the base LokiWorkflow for I(Q) reduction.
 
@@ -88,7 +91,6 @@ def setup_factories(instrument: Instrument) -> None:
         """
         wf = LokiWorkflow()
         wf[Filename[SampleRun]] = _nexus_geometry_filename
-        wf[LookupTableFilename] = _resolve_lookup_table_filename()
         wf[DirectBeam] = None
         wf[CorrectForGravity] = CorrectForGravity(False)
         wf[ReturnEvents] = ReturnEvents(False)
@@ -124,21 +126,7 @@ def setup_factories(instrument: Instrument) -> None:
         },
     )
 
-    from ess.livedata.workflows.detector_view_specs import DetectorViewParams
-
-    @specs.xy_projection_handle.attach_factory()
-    def _detector_view_workflow_factory(
-        source_name: str,
-        params: DetectorViewParams,
-    ) -> StreamProcessorWorkflow:
-        """Factory for LOKI detector view with TOF lookup table support."""
-        lookup_table_filename = None
-        if params.coordinate_mode.mode == 'wavelength':
-            lookup_table_filename = _resolve_lookup_table_filename()
-
-        return _xy_projection.make_workflow(
-            source_name, params, lookup_table_filename=lookup_table_filename
-        )
+    specs.xy_projection_handle.attach_factory()(_xy_projection.make_workflow)
 
     from ess.livedata.workflows.monitor_workflow import create_monitor_workflow
     from ess.livedata.workflows.monitor_workflow_specs import MonitorDataParams
@@ -147,20 +135,13 @@ def setup_factories(instrument: Instrument) -> None:
     def _monitor_workflow_factory(source_name: str, params: MonitorDataParams):
         """Factory for LOKI monitor workflow with lookup table support."""
         mode = params.coordinate_mode.mode
-
-        lookup_table_filename = None
-        geometry_filename = None
-
-        if mode == 'wavelength':
-            lookup_table_filename = _resolve_lookup_table_filename()
-            geometry_filename = _nexus_geometry_filename
+        geometry_filename = _nexus_geometry_filename if mode == 'wavelength' else None
 
         return create_monitor_workflow(
             source_name=source_name,
             edges=params.get_active_edges(),
             range_filter=params.get_active_range(),
             coordinate_mode=mode,
-            lookup_table_filename=lookup_table_filename,
             geometry_filename=geometry_filename,
         )
 
@@ -210,10 +191,26 @@ def setup_factories(instrument: Instrument) -> None:
         params: SansWorkflowParams,
         aux_source_names: dict[str, str],
     ) -> StreamProcessorWorkflow:
+        for aux_field in _IQ_MONITOR_ROLES:
+            monitor = aux_source_names[aux_field]
+            if monitor not in instrument.lut_components:
+                # The monitor table has no block for it, so the job would open
+                # its gate and then fail at every recompute; fail here instead.
+                raise ValueError(
+                    f"Monitor {monitor!r} selected as {aux_field} has no "
+                    "streamed lookup table: its flight-path range cannot be "
+                    "derived from the geometry artifact (undeclared motion "
+                    "axis), so it cannot be used in a wavelength reduction."
+                )
         wf = _make_base_workflow()
         wf[NeXusDetectorName] = source_name
         wf[NeXusMonitorName[Incident]] = aux_source_names['incident_monitor']
         wf[NeXusMonitorName[Transmission]] = aux_source_names['transmission_monitor']
+        wf.insert(detector_lookup_table)
+        # One generic provider serves both monitor roles: sciline instantiates
+        # it per role, and each instance selects its monitor's block of the
+        # shared table via that role's MonitorLtotal.
+        wf.insert(monitor_lookup_table)
         wf[sans_types.QBins] = params.q_edges.get_edges()
         wf[sans_types.WavelengthBins] = params.wavelength_edges.get_edges()
         wf[BeamCenter] = params.beam_center.get_vector()
