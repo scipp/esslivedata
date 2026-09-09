@@ -531,3 +531,116 @@ def test_disk_chopper_log_data_is_trimmed(tmp_path):
         assert phase['value'].attrs['units'] == 'deg'
         assert phase['average_value'][()] == pytest.approx(180.0)
         assert phase['average_value'].attrs['units'] == 'deg'
+
+
+def test_copies_absolute_depends_on_target_outside_copied_classes(tmp_path):
+    """A ``depends_on`` attribute may name its target absolutely, and that target
+    may sit outside the NX classes copied by class (here an NXpositioner, as in
+    ESTIA's detector arm). Such a path must be used as given, not re-anchored on
+    the group holding the attribute, or it resolves to nothing, is skipped, and
+    the detector loses its placement.
+    """
+    src = tmp_path / 'input.nxs'
+    with h5py.File(src, 'w') as f:
+        entry = f.create_group('entry')
+        entry.attrs['NX_class'] = 'NXentry'
+        inst = entry.create_group('instrument')
+        inst.attrs['NX_class'] = 'NXinstrument'
+
+        det = inst.create_group('detector_0')
+        det.attrs['NX_class'] = 'NXdetector'
+        det.create_dataset(
+            'depends_on', data='/entry/instrument/detector_0/transformations/arm'
+        )
+        det.create_dataset('detector_number', data=np.arange(5))
+        det.create_dataset('x_pixel_offset', data=np.zeros(5))
+        det.create_dataset('y_pixel_offset', data=np.zeros(5))
+
+        tr = det.create_group('transformations')
+        tr.attrs['NX_class'] = 'NXtransformations'
+        arm = tr.create_dataset('arm', data=4.0)
+        arm.attrs['transformation_type'] = 'translation'
+        arm.attrs['vector'] = [0.0, 0.0, 1.0]
+        arm.attrs['units'] = 'm'
+        arm.attrs['depends_on'] = '/entry/instrument/arm_rotation/value'
+
+        positioner = inst.create_group('arm_rotation')
+        positioner.attrs['NX_class'] = 'NXpositioner'
+        log = positioner.create_group('value')
+        log.attrs['NX_class'] = 'NXlog'
+        log.attrs['transformation_type'] = 'rotation'
+        log.attrs['vector'] = np.array([0.0, 1.0, 0.0])
+        log.attrs['depends_on'] = '.'
+        log.create_dataset('time', data=np.arange(3, dtype='int64'))
+        log.create_dataset('value', data=np.zeros(3)).attrs['units'] = 'deg'
+
+    output = tmp_path / 'output.nxs'
+    write_minimal_geometry(src, output)
+
+    with h5py.File(output, 'r') as f:
+        assert 'entry/instrument/arm_rotation/value' in f
+        assert (
+            f['entry/instrument/detector_0/transformations/arm'].attrs['depends_on']
+            == '/entry/instrument/arm_rotation/value'
+        )
+        # The mangled path the parent-anchoring bug produced must not appear.
+        assert 'entry/instrument/detector_0/transformations/entry' not in f
+
+
+def test_copies_probe_identifying_the_neutron_source(tmp_path):
+    """ESS files hold several NXsource groups -- the beamline source, the
+    accelerator, and on ODIN a lab xray_source. ``probe`` is what tells them
+    apart, so the artifact must keep it; without it consumers cannot pick the
+    neutron source and the ambiguity surfaces only at load time.
+    """
+    src = tmp_path / 'input.nxs'
+    with h5py.File(src, 'w') as f:
+        entry = f.create_group('entry')
+        entry.attrs['NX_class'] = 'NXentry'
+        inst = entry.create_group('instrument')
+        inst.attrs['NX_class'] = 'NXinstrument'
+
+        for name, probe in (('source', 'neutron'), ('xray_source', None)):
+            grp = inst.create_group(name)
+            grp.attrs['NX_class'] = 'NXsource'
+            grp.create_dataset('depends_on', data='.')
+            if probe is not None:
+                grp.create_dataset('probe', data=probe)
+
+    output = tmp_path / 'output.nxs'
+    write_minimal_geometry(src, output)
+
+    with h5py.File(output, 'r') as f:
+        assert f['entry/instrument/source/probe'][()].decode() == 'neutron'
+        assert 'probe' not in f['entry/instrument/xray_source']
+
+
+def test_skips_ess_writer_bookkeeping_groups(tmp_path):
+    """``.ESS_monitor`` holds a duplicate NXmonitor for every real monitor, plus
+    MISSING_* placeholders that are not components at all. Data reduction ignores
+    ``.ESS*`` groups by contract, so copying by class alone would ship every
+    artifact with two groups per monitor.
+    """
+    src = tmp_path / 'input.nxs'
+    with h5py.File(src, 'w') as f:
+        entry = f.create_group('entry')
+        entry.attrs['NX_class'] = 'NXentry'
+        inst = entry.create_group('instrument')
+        inst.attrs['NX_class'] = 'NXinstrument'
+
+        mon = inst.create_group('monitor_1')
+        mon.attrs['NX_class'] = 'NXmonitor'
+        mon.create_dataset('depends_on', data='.')
+
+        hidden = entry.create_group('.ESS_monitor')
+        for name in ('monitor_1', 'MISSING_JSON_topology_1'):
+            dup = hidden.create_group(name)
+            dup.attrs['NX_class'] = 'NXmonitor'
+            dup.create_dataset('depends_on', data='.')
+
+    output = tmp_path / 'output.nxs'
+    write_minimal_geometry(src, output)
+
+    with h5py.File(output, 'r') as f:
+        assert 'entry/instrument/monitor_1' in f
+        assert '.ESS_monitor' not in f['entry']

@@ -25,6 +25,20 @@ def _copy_depends_on(src: h5py.Group, dst: h5py.Group) -> None:
         src.copy('depends_on', dst)
 
 
+def _copy_source_fields(src: h5py.Group, dst: h5py.Group) -> None:
+    """Copy a source-like component's placement and the fields identifying it.
+
+    ESS files describe several sources: the beamline source, the accelerator
+    (``probe='proton'``), and on ODIN a lab ``xray_source``. ``probe`` is the
+    standard way to tell them apart, so an artifact that kept only ``depends_on``
+    would leave consumers unable to pick the neutron source out of the set.
+    """
+    _copy_depends_on(src, dst)
+    for key in ('probe', 'name'):
+        if key in src:
+            src.copy(key, dst)
+
+
 def _pixel_offsets_from_off(
     src_group: h5py.Group, active_face: str
 ) -> dict[str, tuple[np.ndarray, str]] | None:
@@ -166,26 +180,36 @@ def _copy_child(src: h5py.Group, key: str, dst: h5py.Group) -> None:
 
 
 def _read_depends_on(value: bytes | str) -> str | None:
+    """Return the ``depends_on`` value, or ``None`` for the ``'.'`` terminator."""
     if isinstance(value, bytes):
         value = value.decode()
-    return None if value == '.' else value.lstrip('/')
+    return None if value == '.' else value
+
+
+def _resolve_depends_on(target: str, source: str) -> str:
+    """Resolve a ``depends_on`` value found at *source* to a path within the file.
+
+    A relative *target* is taken relative to the group holding *source*; an
+    absolute one names its node outright and must not be re-anchored. The result
+    carries no leading ``'/'``, matching the paths ``h5py`` reports when visiting
+    and accepts when indexing.
+    """
+    if not target.startswith('/') and '/' in source:
+        target = f"{source.rsplit('/', 1)[0]}/{target}"
+    return target.lstrip('/')
 
 
 def _collect_depends_on_targets(f: h5py.File) -> set[str]:
-    """Collect all absolute paths referenced by ``depends_on`` in the file."""
+    """Collect all paths referenced by ``depends_on`` in the file."""
     targets: set[str] = set()
 
     def _visitor(name: str, obj: h5py.Group | h5py.Dataset) -> None:
         if isinstance(obj, h5py.Dataset) and name.endswith('depends_on'):
             if (path := _read_depends_on(obj[()])) is not None:
-                targets.add(path)
+                targets.add(_resolve_depends_on(path, name))
         if 'depends_on' in obj.attrs:
-            val = obj.attrs['depends_on']
-            if (path := _read_depends_on(val)) is not None:
-                if not path.startswith('/') and '/' in name:
-                    parent = name.rsplit('/', 1)[0]
-                    path = f'{parent}/{path}'
-                targets.add(path.lstrip('/'))
+            if (path := _read_depends_on(obj.attrs['depends_on'])) is not None:
+                targets.add(_resolve_depends_on(path, name))
 
     f.visititems(_visitor)
     return targets
@@ -216,7 +240,7 @@ def _get_or_create_dst(
     return dst
 
 
-def _resolve_depends_on_chains(fin: h5py.File, fout: h5py.File) -> None:
+def _resolve_depends_on_chains(fin: h5py.File, fout: h5py.File) -> set[str]:
     """Copy any ``depends_on`` targets that are missing from the output file.
 
     After copying geometry components, ``depends_on`` chains may reference
@@ -225,8 +249,13 @@ def _resolve_depends_on_chains(fin: h5py.File, fout: h5py.File) -> None:
     copied as length-0 placeholders so historical motor samples in the
     source do not bloat the geometry artifact; everything else is copied
     as-is.
+
+    Returns the targets that are absent from the input file. Their chains stay
+    broken in the output, so the caller must report them: a silently skipped
+    target yields an artifact that generates cleanly and fails to load.
     """
     resolved: set[str] = set()
+    missing: set[str] = set()
     while True:
         unresolved = _collect_depends_on_targets(fout) - resolved
         unresolved = {t for t in unresolved if t not in fout}
@@ -235,11 +264,13 @@ def _resolve_depends_on_chains(fin: h5py.File, fout: h5py.File) -> None:
         for path in unresolved:
             resolved.add(path)
             if path not in fin:
+                missing.add(path)
                 continue
             _ensure_parent_groups(fin, fout, path)
             parent_path = path.rsplit('/', 1)[0] if '/' in path else ''
             leaf = path.rsplit('/', 1)[-1]
             _copy_child(fin[parent_path or '/'], leaf, fout[parent_path or '/'])
+    return missing
 
 
 # NXmoderator alongside NXsource: BIFROST models the neutron source as an
@@ -268,6 +299,13 @@ def write_minimal_geometry(
         def visit_and_copy(name: str, obj: h5py.Group | h5py.Dataset) -> None:
             if not isinstance(obj, h5py.Group) or 'NX_class' not in obj.attrs:
                 return
+            # ``.ESS*`` groups are the file writer's own bookkeeping, and
+            # upstream's contract is that data reduction ignores them. They hold
+            # a duplicate NXmonitor per real monitor, so copying by class alone
+            # would ship every artifact with two groups per monitor -- and, on
+            # some instruments, a MISSING_* placeholder that is not a component.
+            if any(part.startswith('.ESS') for part in name.split('/')):
+                return
             nx_class = _nx_class(obj)
             if nx_class not in _HANDLED_NX_CLASSES:
                 return
@@ -281,7 +319,9 @@ def write_minimal_geometry(
                 )
             elif nx_class == 'NXmonitor':
                 _copy_monitor_fields(obj, dst)
-            elif nx_class in ('NXsource', 'NXmoderator', 'NXsample'):
+            elif nx_class in ('NXsource', 'NXmoderator'):
+                _copy_source_fields(obj, dst)
+            elif nx_class == 'NXsample':
                 _copy_depends_on(obj, dst)
             else:  # NXtransformations or NXdisk_chopper
                 for key in obj:
@@ -289,7 +329,16 @@ def write_minimal_geometry(
 
         _copy_attributes(fin, fout)
         fin.visititems(visit_and_copy)
-        _resolve_depends_on_chains(fin, fout)
+        if missing := _resolve_depends_on_chains(fin, fout):
+            print(
+                f'WARNING: {len(missing)} depends_on target(s) are absent from '
+                f'{input_filename} and were not copied. The chains through them '
+                'stay broken in the output; check the affected components load '
+                'before using the artifact:',
+                file=sys.stderr,
+            )
+            for path in sorted(missing):
+                print(f'  /{path}', file=sys.stderr)
 
 
 def main() -> int:

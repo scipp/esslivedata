@@ -91,6 +91,14 @@ def extract_stream_info(file_path: str | Path | h5py.File) -> list[StreamInfo]:
         if isinstance(node, h5py.Dataset):
             return
 
+        # ``.ESS*`` groups are the file writer's own bookkeeping: a duplicate
+        # monitor tree under ``.ESS_monitor``, provenance under
+        # ``.ESS_internal``. Upstream's contract is that data reduction ignores
+        # them. Collecting them here would mint stream names for a hidden group
+        # that duplicate the ones under ``entry/instrument``.
+        if any(part.startswith('.ESS') for part in name.split('/')):
+            return
+
         attrs = node.attrs
         if 'source' not in attrs or 'topic' not in attrs:
             return

@@ -55,6 +55,8 @@ def _write_chopper_nexus(
     *,
     source_z: float = -25.0,
     moderator_z: float | None = None,
+    source_probe: str | None = 'neutron',
+    lab_source: bool = False,
 ):
     """Build a minimal NeXus file with NXdisk_chopper groups + a neutron source.
 
@@ -68,6 +70,10 @@ def _write_chopper_nexus(
     ``moderator_z`` is given the file follows BIFROST's convention instead: the
     ``NXsource`` is parked at the origin (accelerator metadata, position
     irrelevant) and the real source is an ``NXmoderator`` at ``moderator_z``.
+
+    ``lab_source`` adds a second, non-neutron ``NXsource`` at the origin, as ODIN
+    does with its lab ``xray_source``. ``source_probe`` sets (or, when ``None``,
+    omits) the ``probe`` field that tells the two apart.
     """
     with snx.File(path, 'w') as root:
         entry = root.create_class('entry', snx.NXentry)
@@ -75,9 +81,14 @@ def _write_chopper_nexus(
 
         source = instrument.create_class('source', snx.NXsource)
         _write_translation(source, 0.0 if moderator_z is not None else source_z)
+        if source_probe is not None:
+            source.create_field('probe', sc.scalar(source_probe))
         if moderator_z is not None:
             moderator = instrument.create_class('moderator', snx.NXmoderator)
             _write_translation(moderator, moderator_z)
+        if lab_source:
+            xray = instrument.create_class('xray_source', snx.NXsource)
+            _write_translation(xray, 0.0)
 
         for i, name in enumerate(names):
             chop = instrument.create_class(name, snx.NXdisk_chopper)
@@ -451,3 +462,38 @@ class TestDa00RoundTrip:
             'time_resolution',
         ):
             assert_identical(restored.coords[name], lut.coords[name])
+
+
+class TestAmbiguousSource:
+    def test_lab_source_alongside_neutron_source_is_ignored(
+        self, tmp_path: Path
+    ) -> None:
+        # ODIN carries a lab xray_source in entry/instrument next to the neutron
+        # source. Both are NXsource, so picking "the" NXsource is ambiguous; the
+        # workflow selects on probe='neutron' and the table computes as usual.
+        path = tmp_path / 'lab_source_choppers.nxs'
+        _write_chopper_nexus(path, ['chopper1', 'chopper2'], lab_source=True)
+        table = _run_chopper_lut(
+            path,
+            ['chopper1', 'chopper2'],
+            {'chopper1': (-14.0, 0.0), 'chopper2': (-14.0, 0.0)},
+        )
+        assert table.dims == ('distance', 'event_time_offset')
+        assert np.isfinite(table.values).any()
+
+    def test_undistinguishable_sources_raise(self, tmp_path: Path) -> None:
+        # Without probe there is nothing to select on. Failing loudly beats
+        # silently measuring the cascade from whichever source came first.
+        path = tmp_path / 'ambiguous_choppers.nxs'
+        _write_chopper_nexus(path, ['chopper1'], lab_source=True, source_probe=None)
+        with pytest.raises(ValueError, match='xray_source'):
+            _run_chopper_lut(path, ['chopper1'], {'chopper1': (-14.0, 0.0)})
+
+    def test_sole_non_neutron_source_raises(self, tmp_path: Path) -> None:
+        # Some files put only the accelerator NXsource (probe='proton') under
+        # entry/instrument, with the beamline source elsewhere or absent.
+        # Taking the only group would measure the cascade from the accelerator.
+        path = tmp_path / 'proton_source_choppers.nxs'
+        _write_chopper_nexus(path, ['chopper1'], source_probe='proton')
+        with pytest.raises(ValueError, match='Cannot identify the beamline'):
+            _run_chopper_lut(path, ['chopper1'], {'chopper1': (-14.0, 0.0)})
