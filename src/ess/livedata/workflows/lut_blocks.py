@@ -103,6 +103,41 @@ def select_block(table: sc.DataArray, ltotal: sc.Variable) -> sc.DataArray:
     )
 
 
+def _reject_unusable_block(block: sc.DataArray, ltotal: sc.Variable) -> None:
+    """Refuse a block that assigns no wavelength anywhere.
+
+    An all-NaN block means the cascade transmits nothing at this flight path,
+    which a consumer cannot reduce with. Refusing puts the job into an error
+    state, and an errored job publishes no result at all
+    (``OrchestratingProcessor`` drops results carrying an ``error_message``).
+    That is the point: a consumer that instead kept publishing would republish
+    its unchanged accumulator with a fresh ``end_time`` on every batch, so the
+    dashboard's freshness pill would report data from before the choppers
+    changed as current. Publishing nothing lets the pill age by wall clock and
+    show the plot for what it is -- stale. The job recovers on its own once a
+    usable table arrives, since finalizing successfully clears the error.
+
+    Why the two causes are not distinguished here: a cascade that blocks the
+    beam and one whose choppers are not phase-locked to the source are the same
+    fact at a consumer -- no wavelength is definable at its flight path -- and
+    warrant the same response. Which of the two it is can be read off the
+    lookup-table workflow's own wavelength-bands output.
+    """
+    if np.isfinite(block.values).any():
+        return
+    distance = block.coords['distance']
+    midpoint = 0.5 * (
+        ltotal.nanmin().to(unit=distance.unit) + ltotal.nanmax().to(unit=distance.unit)
+    )
+    raise ValueError(
+        f"The streamed lookup table assigns no wavelength at {midpoint:c}: every "
+        "entry of the covering block is NaN. The chopper cascade transmits "
+        "nothing at this flight path, either because it blocks the beam or "
+        "because the choppers are not phase-locked to the source. The "
+        "wavelength-LUT workflow's bands output shows which."
+    )
+
+
 def block_ranges(table: sc.DataArray) -> Sequence[Range]:
     """The flight-path range of each block, for diagnostics and tests."""
     distance = table.coords['distance']
@@ -191,6 +226,7 @@ def unpack_block(table: sc.DataArray, ltotal: sc.Variable) -> dict[str, Any]:
             "indicates a table from an incompatible producer version."
         )
     block = select_block(table, ltotal)
+    _reject_unusable_block(block, ltotal)
     return {
         'array': block.drop_coords(list(expected)),
         'pulse_period': block.coords['pulse_period'],

@@ -102,6 +102,37 @@ def _create_job(
     )
 
 
+#: A DREAM phasing whose cascade transmits, in nanoseconds of chopper delay at
+#: 14 Hz. Zero delay throughout closes the beam a few millimetres past the
+#: pulse-shaping pair, giving an all-NaN table that a consumer now refuses, so
+#: the consumer half of this chain needs a cascade that actually lets neutrons
+#: through. Found by scanning each chopper's delay over one rotation in beam
+#: order and keeping what maximised transmission downstream; re-run that scan
+#: if regenerating the geometry artifact moves a chopper and these stop working.
+_TRANSMITTING_DELAYS_NS = {
+    'pulse_shaping_chopper2': 45_600_000.0,
+    'overlap_chopper': 17_200_000.0,
+}
+
+
+def _events_across_one_frame(count: int = 200) -> sc.DataArray:
+    """Binned events spanning a pulse, in the shape ``ToNXevent_data`` hands over.
+
+    Spread across the whole frame so some fall in whatever window the cascade
+    leaves open; events bunched at the start of the frame convert to NaN under
+    any realistic phasing and would say nothing about the table.
+    """
+    toa = sc.linspace('event', 0.0, 1e9 / 14.0, count, unit='ns')
+    events = sc.DataArray(
+        data=sc.ones(sizes={'event': count}, dtype='float64', unit='counts'),
+        coords={'event_time_offset': toa},
+    )
+    sizes = sc.array(dims=['event_time_zero'], values=[count], unit=None, dtype='int64')
+    return sc.DataArray(
+        sc.bins(begin=sc.cumsum(sizes, mode='exclusive'), dim='event', data=events)
+    )
+
+
 def _run_lut_job(instrument: Instrument):
     """Run the lookup-table job once and return its result."""
     job = _create_job(instrument, 'wavelength_lut', CHOPPER_CASCADE_SOURCE)
@@ -111,7 +142,8 @@ def _run_lut_job(instrument: Instrument):
             14.0, instrument.streams[speed_setpoint_stream(chopper)].units
         )
         aux[delay_setpoint_stream(chopper)] = _nxlog(
-            0.0, instrument.streams[delay_setpoint_stream(chopper)].units
+            _TRANSMITTING_DELAYS_NS.get(chopper, 0.0),
+            instrument.streams[delay_setpoint_stream(chopper)].units,
         )
     data = JobData(
         start_time=Timestamp.from_ns(0),
@@ -263,18 +295,10 @@ def test_wavelength_monitor_job_consumes_the_streamed_table(
 
     assert job.gating_streams == {MONITOR_STREAM}
 
-    # Binned events in the shape ToNXevent_data hands to the workflow.
-    toa = sc.array(dims=['event'], values=[1.0, 2.0, 3.0, 4.0], unit='ns')
-    weights = sc.ones(sizes={'event': 4}, dtype='float64', unit='counts')
-    events = sc.DataArray(data=weights, coords={'event_time_offset': toa})
-    sizes = sc.array(dims=['event_time_zero'], values=[4], unit=None, dtype='int64')
-    binned = sc.DataArray(
-        sc.bins(begin=sc.cumsum(sizes, mode='exclusive'), dim='event', data=events)
-    )
     data = JobData(
         start_time=Timestamp.from_ns(0),
         end_time=Timestamp.from_ns(1),
-        primary_data={MONITOR: binned},
+        primary_data={MONITOR: _events_across_one_frame()},
         aux_data={MONITOR_STREAM: ingested[MONITOR_STREAM]},
     )
 
@@ -283,6 +307,46 @@ def test_wavelength_monitor_job_consumes_the_streamed_table(
     assert not reply.has_error, reply.error_message
     assert result.error_message is None, result.error_message
     assert result.data['cumulative'].unit == 'counts'
+    # Events were actually converted, not dropped as NaN. Without this the test
+    # passes on a table that assigns no wavelength at all, which is what it did
+    # while the cascade was closed.
+    assert result.data['cumulative'].sum().value > 0
+
+
+def test_consumer_publishes_nothing_when_no_wavelength_is_definable(
+    dream: Instrument, ingested: dict[str, sc.DataArray]
+) -> None:
+    """A table the cascade transmits nothing through must stop the consumer.
+
+    Reducing with it would drop every event and leave the job republishing its
+    unchanged accumulator with a fresh timestamp, so a plot frozen since the
+    choppers went out of phase would still read as current. Erroring instead
+    publishes no result at all, which is what lets the freshness indicator age.
+    """
+    params_model = _params_model(dream, 'monitor_histogram')
+    job = _create_job(
+        dream,
+        'monitor_histogram',
+        MONITOR,
+        params_model(coordinate_mode=CoordinateModeSettings(mode='wavelength')),
+    )
+    blocked = ingested[MONITOR_STREAM].copy()
+    blocked.values[:] = float('nan')
+
+    data = JobData(
+        start_time=Timestamp.from_ns(0),
+        end_time=Timestamp.from_ns(1),
+        primary_data={MONITOR: _events_across_one_frame()},
+        aux_data={MONITOR_STREAM: blocked},
+    )
+
+    reply, result = job.process(data, finalize=True)
+
+    assert reply.has_error
+    assert 'no wavelength' in reply.error_message
+    # OrchestratingProcessor drops results carrying an error, so nothing of this
+    # job reaches the sink and no plot is refreshed.
+    assert result.error_message is not None
 
 
 @pytest.fixture(scope='module')
