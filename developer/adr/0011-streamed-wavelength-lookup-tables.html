@@ -1,0 +1,848 @@
+
+<!DOCTYPE html>
+
+
+<html lang="en" data-content_root="../../" >
+
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" /><meta name="viewport" content="width=device-width, initial-scale=1" />
+
+    <title>ADR 0011: Wavelength lookup tables laid out as blocks and selected by flight path &#8212; ESSlivedata</title>
+  
+  
+  
+  <script data-cfasync="false">
+    document.documentElement.dataset.mode = localStorage.getItem("mode") || "";
+    document.documentElement.dataset.theme = localStorage.getItem("theme") || "";
+  </script>
+  <!--
+    this give us a css class that will be invisible only if js is disabled
+  -->
+  <noscript>
+    <style>
+      .pst-js-only { display: none !important; }
+
+    </style>
+  </noscript>
+  
+  <!-- Loaded before other Sphinx assets -->
+  <link href="../../_static/styles/theme.css?digest=90905a2f556bf617f1a9" rel="stylesheet" />
+<link href="../../_static/styles/pydata-sphinx-theme.css?digest=90905a2f556bf617f1a9" rel="stylesheet" />
+
+    <link rel="stylesheet" type="text/css" href="../../_static/pygments.css?v=03e43079" />
+    <link rel="stylesheet" type="text/css" href="../../_static/copybutton.css?v=76b2166b" />
+    <link rel="stylesheet" type="text/css" href="../../_static/autodoc_pydantic.css" />
+    <link rel="stylesheet" type="text/css" href="../../_static/sphinx-design.min.css?v=95c83b7e" />
+  
+  <!-- So that users can add custom icons -->
+  <script defer src="../../_static/scripts/fontawesome.js?digest=90905a2f556bf617f1a9"></script>
+  <!-- Pre-loaded scripts that we'll load fully later -->
+  <link rel="preload" as="script" href="../../_static/scripts/bootstrap.js?digest=90905a2f556bf617f1a9" />
+<link rel="preload" as="script" href="../../_static/scripts/pydata-sphinx-theme.js?digest=90905a2f556bf617f1a9" />
+
+    <script src="../../_static/documentation_options.js?v=9ce135cc"></script>
+    <script src="../../_static/doctools.js?v=fd6eb6e6"></script>
+    <script src="../../_static/sphinx_highlight.js?v=6ffebe34"></script>
+    <script src="../../_static/clipboard.min.js?v=a7894cd8"></script>
+    <script src="../../_static/copybutton.js?v=f281be69"></script>
+    <script src="../../_static/design-tabs.js?v=f930bc37"></script>
+    <script crossorigin="anonymous" integrity="sha256-Ae2Vz/4ePdIu6ZyI/5ZGsYnb+m0JlOmKPjt6XZ9JJkA=" src="https://cdnjs.cloudflare.com/ajax/libs/require.js/2.3.4/require.min.js"></script>
+    <script>DOCUMENTATION_OPTIONS.pagename = 'developer/adr/0011-streamed-wavelength-lookup-tables';</script>
+    <script>DOCUMENTATION_OPTIONS.search_as_you_type = false;</script>
+    <script src="../../_static/anaconda-icon.js?v=461bdc62"></script>
+    <link rel="icon" href="../../_static/favicon.ico"/>
+    <link rel="index" title="Index" href="../../genindex.html" />
+    <link rel="search" title="Search" href="../../search.html" />
+    <link rel="next" title="Proposal: A declarative reconciler for plot-grid sessions" href="../proposals/declarative-session-reconciler.html" />
+    <link rel="prev" title="ADR 0010: Workflow outputs republished as context input streams" href="0010-workflow-outputs-as-context-input-streams.html" />
+  <meta name="viewport" content="width=device-width, initial-scale=1"/>
+  <meta name="docsearch:language" content="en"/>
+  <meta name="docsearch:version" content="26.9.1" />
+  
+    
+    <script src="../../_static/searchtools.js"></script>
+    <script src="../../_static/language_data.js"></script>
+    <script src="../../searchindex.js"></script>
+  
+  </head>
+  <body data-default-mode="">
+  
+  
+  <div id="pst-skip-link" class="skip-link d-print-none"><a href="#main-content">Skip to main content</a></div>
+
+  
+  <div id="pst-scroll-pixel-helper"></div>
+  
+  <button type="button" class="btn rounded-pill" id="pst-back-to-top">
+    <i class="fa-solid fa-arrow-up"></i>Back to top</button>
+  
+  
+  
+  
+  <dialog id="pst-search-dialog">
+    
+<form class="bd-search d-flex align-items-center"
+      action="../../search.html"
+      method="get">
+  <i class="fa-solid fa-magnifying-glass"></i>
+  <input type="search"
+         class="form-control"
+         name="q"
+         placeholder="Search the docs ..."
+         aria-label="Search the docs ..."
+         autocomplete="off"
+         autocorrect="off"
+         autocapitalize="off"
+         spellcheck="false"/>
+  <span class="search-button__kbd-shortcut"><kbd class="kbd-shortcut__modifier">Ctrl</kbd>+<kbd>K</kbd></span>
+</form>
+  </dialog>
+
+  <div class="pst-async-banner-revealer d-none">
+  <aside id="bd-header-version-warning" class="d-none d-print-none" aria-label="Version warning"></aside>
+</div>
+
+  
+    <header id="pst-header" class="bd-header navbar navbar-expand-lg bd-navbar d-print-none">
+<div class="bd-header__inner bd-page-width">
+  <button class="pst-navbar-icon sidebar-toggle primary-toggle" aria-label="Site navigation">
+    <span class="fa-solid fa-bars"></span>
+  </button>
+  
+  
+  <div class="col-lg-3 navbar-header-items__start">
+    
+      <div class="navbar-item">
+
+  
+    
+  
+
+<a class="navbar-brand logo" href="../../index.html">
+  
+  
+  
+  
+  
+    
+    
+      
+    
+    
+    <img src="../../_static/logo.svg" class="logo__image only-light" alt="ESSlivedata - Home"/>
+    <img src="../../_static/logo-dark.svg" class="logo__image only-dark pst-js-only" alt="ESSlivedata - Home"/>
+  
+  
+</a></div>
+    
+  </div>
+  
+  <div class="col-lg-9 navbar-header-items">
+    
+    <div class="me-auto navbar-header-items__center">
+      
+        <div class="navbar-item">
+<nav>
+  <ul class="bd-navbar-elements navbar-nav">
+    
+<li class="nav-item ">
+  <a class="nav-link nav-internal" href="../../user-guide/index.html">
+    User Guide
+  </a>
+</li>
+
+
+<li class="nav-item ">
+  <a class="nav-link nav-internal" href="../../api-reference/index.html">
+    API Reference
+  </a>
+</li>
+
+
+<li class="nav-item current active">
+  <a class="nav-link nav-internal" href="../index.html">
+    Development
+  </a>
+</li>
+
+
+<li class="nav-item ">
+  <a class="nav-link nav-internal" href="../../about/index.html">
+    About
+  </a>
+</li>
+
+            <li class="nav-item dropdown">
+                <button class="btn dropdown-toggle nav-item" type="button"
+                data-bs-toggle="dropdown" aria-expanded="false"
+                aria-controls="pst-nav-more-links">
+                    More
+                </button>
+                <ul id="pst-nav-more-links" class="dropdown-menu">
+                    
+<li class=" ">
+  <a class="nav-link dropdown-item nav-external" href="https://scipp.github.io/essreduce">
+    ESSreduce
+  </a>
+</li>
+
+
+<li class=" ">
+  <a class="nav-link dropdown-item nav-external" href="https://scipp.github.io/sciline">
+    Sciline
+  </a>
+</li>
+
+
+<li class=" ">
+  <a class="nav-link dropdown-item nav-external" href="https://scipp.github.io">
+    Scipp
+  </a>
+</li>
+
+                </ul>
+            </li>
+            
+  </ul>
+</nav></div>
+      
+    </div>
+    
+    
+    <div class="navbar-header-items__end">
+      
+        <div class="navbar-item navbar-persistent--container">
+          
+
+<button class="btn btn-sm pst-navbar-icon search-button search-button__button pst-js-only" title="Search" aria-label="Search" data-bs-placement="bottom" data-bs-toggle="tooltip">
+    <i class="fa-solid fa-magnifying-glass fa-lg"></i>
+</button>
+        </div>
+      
+      
+        <div class="navbar-item">
+
+<div class="theme-switch-container dropdown pst-js-only" data-bs-toggle="tooltip" data-bs-placement="bottom" title="Color mode">
+  <button class="btn btn-sm nav-link pst-navbar-icon theme-switch-button dropdown-toggle" aria-label="Color mode" data-bs-toggle="dropdown">
+    <i class="theme-switch fa-solid fa-sun fa-lg fa-fw" data-mode="light" title="Light"></i>
+    <i class="theme-switch fa-solid fa-moon fa-lg fa-fw" data-mode="dark" title="Dark"></i>
+    <i class="theme-switch fa-solid fa-circle-half-stroke fa-lg fa-fw" data-mode="auto" title="System Settings"></i>
+  </button>
+  <ul class="dropdown-menu dropdown-menu-end">
+    <li><button class="dropdown-item d-flex align-items-center theme-change-button" data-mode="auto"><i class="fa-solid fa-circle-half-stroke fa-lg fa-fw me-1"></i>System Settings</button></li>
+    <li><button class="dropdown-item d-flex align-items-center theme-change-button" data-mode="light"><i class="fa-solid fa-sun fa-lg fa-fw me-1"></i>Light</button></li>
+    <li><button class="dropdown-item d-flex align-items-center theme-change-button" data-mode="dark"><i class="fa-solid fa-moon fa-lg fa-fw me-1"></i>Dark</button></li>
+  </ul>
+</div></div>
+      
+        <div class="navbar-item"><ul class="navbar-icon-links"
+    aria-label="Icon Links">
+        <li class="nav-item">
+          
+          
+          
+          
+          
+          
+          
+          
+          <a href="https://github.com/scipp/esslivedata" title="GitHub" class="nav-link pst-navbar-icon" rel="noopener" target="_blank" data-bs-toggle="tooltip" data-bs-placement="bottom"><i class="fa-brands fa-github fa-lg" aria-hidden="true"></i><span class="visually-hidden">GitHub</span></a>
+        </li>
+        <li class="nav-item">
+          
+          
+          
+          
+          
+          
+          
+          
+          <a href="https://pypi.org/project/esslivedata/" title="PyPI" class="nav-link pst-navbar-icon" rel="noopener" target="_blank" data-bs-toggle="tooltip" data-bs-placement="bottom"><i class="fa-brands fa-python fa-lg" aria-hidden="true"></i><span class="visually-hidden">PyPI</span></a>
+        </li>
+        <li class="nav-item">
+          
+          
+          
+          
+          
+          
+          
+          
+          <a href="https://anaconda.org/conda-forge/esslivedata" title="Conda" class="nav-link pst-navbar-icon" rel="noopener" target="_blank" data-bs-toggle="tooltip" data-bs-placement="bottom"><i class="fa-custom fa-lg" data-prefix="fa-custom" data-icon="anaconda" aria-hidden="true"></i><span class="visually-hidden">Conda</span></a>
+        </li>
+</ul></div>
+      
+    </div>
+    
+  </div>
+  
+  
+    <div class="navbar-persistent--mobile">
+
+<button class="btn btn-sm pst-navbar-icon search-button search-button__button pst-js-only" title="Search" aria-label="Search" data-bs-placement="bottom" data-bs-toggle="tooltip">
+    <i class="fa-solid fa-magnifying-glass fa-lg"></i>
+</button>
+    </div>
+  
+
+  
+</div>
+
+    </header>
+  
+
+  <div class="bd-container">
+    <div class="bd-container__inner bd-page-width">
+      
+      
+      
+      <dialog id="pst-primary-sidebar-modal"></dialog>
+      <div id="pst-primary-sidebar" class="bd-sidebar-primary bd-sidebar">
+        
+
+  
+  <div class="sidebar-header-items sidebar-primary__section">
+    
+    
+      <div class="sidebar-header-items__center">
+        
+          
+          
+            <div class="navbar-item">
+<nav>
+  <ul class="bd-navbar-elements navbar-nav">
+    
+<li class="nav-item ">
+  <a class="nav-link nav-internal" href="../../user-guide/index.html">
+    User Guide
+  </a>
+</li>
+
+
+<li class="nav-item ">
+  <a class="nav-link nav-internal" href="../../api-reference/index.html">
+    API Reference
+  </a>
+</li>
+
+
+<li class="nav-item current active">
+  <a class="nav-link nav-internal" href="../index.html">
+    Development
+  </a>
+</li>
+
+
+<li class="nav-item ">
+  <a class="nav-link nav-internal" href="../../about/index.html">
+    About
+  </a>
+</li>
+
+
+<li class="nav-item ">
+  <a class="nav-link nav-external" href="https://scipp.github.io/essreduce">
+    ESSreduce
+  </a>
+</li>
+
+
+<li class="nav-item ">
+  <a class="nav-link nav-external" href="https://scipp.github.io/sciline">
+    Sciline
+  </a>
+</li>
+
+
+<li class="nav-item ">
+  <a class="nav-link nav-external" href="https://scipp.github.io">
+    Scipp
+  </a>
+</li>
+
+  </ul>
+</nav></div>
+          
+        
+      </div>
+    
+    
+    
+      <div class="sidebar-header-items__end">
+        
+          <div class="navbar-item">
+
+<div class="theme-switch-container dropdown pst-js-only" data-bs-toggle="tooltip" data-bs-placement="bottom" title="Color mode">
+  <button class="btn btn-sm nav-link pst-navbar-icon theme-switch-button dropdown-toggle" aria-label="Color mode" data-bs-toggle="dropdown">
+    <i class="theme-switch fa-solid fa-sun fa-lg fa-fw" data-mode="light" title="Light"></i>
+    <i class="theme-switch fa-solid fa-moon fa-lg fa-fw" data-mode="dark" title="Dark"></i>
+    <i class="theme-switch fa-solid fa-circle-half-stroke fa-lg fa-fw" data-mode="auto" title="System Settings"></i>
+  </button>
+  <ul class="dropdown-menu dropdown-menu-end">
+    <li><button class="dropdown-item d-flex align-items-center theme-change-button" data-mode="auto"><i class="fa-solid fa-circle-half-stroke fa-lg fa-fw me-1"></i>System Settings</button></li>
+    <li><button class="dropdown-item d-flex align-items-center theme-change-button" data-mode="light"><i class="fa-solid fa-sun fa-lg fa-fw me-1"></i>Light</button></li>
+    <li><button class="dropdown-item d-flex align-items-center theme-change-button" data-mode="dark"><i class="fa-solid fa-moon fa-lg fa-fw me-1"></i>Dark</button></li>
+  </ul>
+</div></div>
+        
+          <div class="navbar-item"><ul class="navbar-icon-links"
+    aria-label="Icon Links">
+        <li class="nav-item">
+          
+          
+          
+          
+          
+          
+          
+          
+          <a href="https://github.com/scipp/esslivedata" title="GitHub" class="nav-link pst-navbar-icon" rel="noopener" target="_blank" data-bs-toggle="tooltip" data-bs-placement="bottom"><i class="fa-brands fa-github fa-lg" aria-hidden="true"></i><span class="visually-hidden">GitHub</span></a>
+        </li>
+        <li class="nav-item">
+          
+          
+          
+          
+          
+          
+          
+          
+          <a href="https://pypi.org/project/esslivedata/" title="PyPI" class="nav-link pst-navbar-icon" rel="noopener" target="_blank" data-bs-toggle="tooltip" data-bs-placement="bottom"><i class="fa-brands fa-python fa-lg" aria-hidden="true"></i><span class="visually-hidden">PyPI</span></a>
+        </li>
+        <li class="nav-item">
+          
+          
+          
+          
+          
+          
+          
+          
+          <a href="https://anaconda.org/conda-forge/esslivedata" title="Conda" class="nav-link pst-navbar-icon" rel="noopener" target="_blank" data-bs-toggle="tooltip" data-bs-placement="bottom"><i class="fa-custom fa-lg" data-prefix="fa-custom" data-icon="anaconda" aria-hidden="true"></i><span class="visually-hidden">Conda</span></a>
+        </li>
+</ul></div>
+        
+      </div>
+    
+  </div>
+  
+    <div class="sidebar-primary-items__start sidebar-primary__section">
+        <div class="sidebar-primary-item">
+
+<nav class="bd-docs-nav bd-links"
+     aria-label="Section Navigation">
+  <p class="bd-links__title" role="heading" aria-level="1">Section Navigation</p>
+  <div class="bd-toc-item navbar-nav"><ul class="current nav bd-sidenav">
+<li class="toctree-l1"><a class="reference internal" href="../getting-started.html">Getting started</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../glossary.html">Glossary</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../coding-conventions.html">Coding conventions</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../dependency-management.html">Dependency management</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../design/backend-service-architecture.html">Backend Service Architecture</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../design/message-flow-and-transformation.html">Message Flow and Transformation</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../design/dashboard-architecture.html">Livedata Dashboard Architecture</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../design/orchestrator-flow.html">Orchestrator Flow: Plot Creation Lifecycle</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../design/rate-aware-batcher.html">Rate-Aware Message Batcher</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../design/stream-keying.html">Stream Keying</a></li>
+<li class="toctree-l1 current active has-children"><a class="reference internal" href="index.html">Architecture Decision Records</a><details open="open"><summary><span class="toctree-toggle" role="presentation"><i class="fa-solid fa-chevron-down"></i></span></summary><ul class="current">
+<li class="toctree-l2"><a class="reference internal" href="0001-in-process-device-stream-synthesis.html">ADR 0001: In-process synthesis of merged device streams</a></li>
+<li class="toctree-l2"><a class="reference internal" href="0002-context-stream-gating-at-jobmanager.html">ADR 0002: Gate workflow execution at the JobManager on context-stream readiness</a></li>
+<li class="toctree-l2"><a class="reference internal" href="0003-context-input-declaration-model.html">ADR 0003: Unified declaration model for workflow context bindings</a></li>
+<li class="toctree-l2"><a class="reference internal" href="0004-uniform-stream-name-keying.html">ADR 0004: Key workflow inputs uniformly by canonical stream name</a></li>
+<li class="toctree-l2"><a class="reference internal" href="0005-frame-gated-session-flush.html">ADR 0005: Frame-gated per-session plot flush</a></li>
+<li class="toctree-l2"><a class="reference internal" href="0006-nicos-derived-devices.html">ADR 0006: Expose designated workflow outputs to NICOS as derived devices</a></li>
+<li class="toctree-l2"><a class="reference internal" href="0007-single-writer-versioned-pull.html">ADR 0007: Single-writer state with versioned pull as the dashboard concurrency model</a></li>
+<li class="toctree-l2"><a class="reference internal" href="0008-job-adoption-from-heartbeat-observation.html">ADR 0008: Job adoption from heartbeat observation replaces persisted job identity</a></li>
+<li class="toctree-l2"><a class="reference internal" href="0009-build-time-stream-registry-codegen.html">ADR 0009: Generate the per-instrument stream registry at development time</a></li>
+<li class="toctree-l2"><a class="reference internal" href="0010-workflow-outputs-as-context-input-streams.html">ADR 0010: Workflow outputs republished as context input streams</a></li>
+<li class="toctree-l2 current active"><a class="current reference internal" href="#">ADR 0011: Wavelength lookup tables laid out as blocks and selected by flight path</a></li>
+</ul>
+</details></li>
+<li class="toctree-l1 has-children"><a class="reference internal" href="../proposals/declarative-session-reconciler.html">Proposal: A declarative reconciler for plot-grid sessions</a><details><summary><span class="toctree-toggle" role="presentation"><i class="fa-solid fa-chevron-down"></i></span></summary><ul>
+<li class="toctree-l2"><a class="reference internal" href="../proposals/declarative-session-reconciler-current-state.html">The session reconciler today — detailed analysis</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../proposals/declarative-session-reconciler-migration.html">Declarative session reconciler — migration plan</a></li>
+</ul>
+</details></li>
+</ul>
+</div>
+</nav></div>
+        <div class="sidebar-primary-item">
+<div
+    id="pst-page-navigation-heading-2"
+    class="page-toc tocsection onthispage">
+    <i class="fa-solid fa-list"></i> On this page
+  </div>
+  <nav id="pst-page-toc-nav" class="page-toc" aria-labelledby="pst-page-navigation-heading-2">
+    <ul class="pst-show_toc_level nav section-nav flex-column">
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#context">Context</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#decision">Decision</a><ul class="nav section-nav flex-column">
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#one-lut-job-two-tables-laid-out-as-blocks">One LUT job, two tables, laid out as blocks</a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#ranges-are-derived-generically-from-the-geometry-padded-for-motion">Ranges are derived generically from the geometry, padded for motion</a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#a-consumer-selects-its-block-by-flight-path">A consumer selects its block by flight path</a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#consumers-clear-when-the-tables-identity-changes-deferred">Consumers clear when the table’s identity changes (deferred)</a></li>
+</ul>
+</li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#alternatives-considered">Alternatives considered</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#consequences">Consequences</a></li>
+</ul>
+  </nav></div>
+    </div>
+  
+  
+  <div class="sidebar-primary-items__end sidebar-primary__section">
+      <div class="sidebar-primary-item">
+
+  <div class="tocsection sourcelink">
+    <a href="../../_sources/developer/adr/0011-streamed-wavelength-lookup-tables.md">
+      <i class="fa-solid fa-file-lines"></i> Show Source
+    </a>
+  </div>
+</div>
+  </div>
+
+
+      </div>
+      
+      <main id="main-content" class="bd-main" role="main">
+        
+        
+          <div class="bd-content">
+            <div class="bd-article-container">
+              
+              <div class="bd-header-article d-print-none">
+<div class="header-article-items header-article__inner">
+  
+    <div class="header-article-items__start">
+      
+        <div class="header-article-item">
+
+<nav aria-label="Breadcrumb" class="d-print-none">
+  <ul class="bd-breadcrumbs">
+    
+    <li class="breadcrumb-item breadcrumb-home">
+      <a href="../../index.html" class="nav-link" aria-label="Home">
+        <i class="fa-solid fa-home"></i>
+      </a>
+    </li>
+    
+    <li class="breadcrumb-item"><a href="../index.html" class="nav-link">Development</a></li>
+    
+    
+    <li class="breadcrumb-item"><a href="index.html" class="nav-link">Architecture Decision Records</a></li>
+    
+    <li class="breadcrumb-item active" aria-current="page"><span class="ellipsis">ADR 0011: Wavelength lookup tables laid out as blocks and selected by flight path</span></li>
+  </ul>
+</nav>
+</div>
+      
+    </div>
+  
+  
+</div>
+</div>
+              
+              
+              
+                
+<div id="searchbox"></div>
+                <article class="bd-article">
+                  
+  <section class="tex2jax_ignore mathjax_ignore" id="adr-0011-wavelength-lookup-tables-laid-out-as-blocks-and-selected-by-flight-path">
+<h1>ADR 0011: Wavelength lookup tables laid out as blocks and selected by flight path<a class="headerlink" href="#adr-0011-wavelength-lookup-tables-laid-out-as-blocks-and-selected-by-flight-path" title="Link to this heading">#</a></h1>
+<ul class="simple">
+<li><p>Status: proposed</p></li>
+<li><p>Deciders: Simon</p></li>
+<li><p>Date: 2026-08-11</p></li>
+</ul>
+<p>Split out of ADR 0010, which decides the generic mechanism this rides on: a workflow
+output republished as a context input stream, requested by key and gated from the built
+graph. This ADR decides what the lookup-table stream carries and how a job finds its rows.</p>
+<section id="context">
+<h2>Context<a class="headerlink" href="#context" title="Link to this heading">#</a></h2>
+<p>Every workflow converting time-of-arrival to wavelength loaded a table from a file fixed
+at import time. <code class="docutils literal notranslate"><span class="pre">LookupTableFilename</span></code> was assigned bare-generic per instrument, so one
+simulation-derived table served every component in a job. Three properties of those
+tables shape the decision.</p>
+<p><strong>Out-of-range lookups fail silently.</strong> A table is indexed by <code class="docutils literal notranslate"><span class="pre">distance</span></code>; a lookup outside
+its range yields <code class="docutils literal notranslate"><span class="pre">NaN</span></code>, those events fall outside every histogram bin, and the component
+renders empty with no error anywhere. The shipped tables already missed the monitors on
+DREAM, LOKI and BIFROST, which therefore produced nothing.</p>
+<p><strong>One table per job wastes almost all of its rows.</strong> Per-component <code class="docutils literal notranslate"><span class="pre">Ltotal</span></code> spreads are
+under a metre, often a scalar, while the shipped tables span tens of metres. The cost is
+not bandwidth but recompute: the polygon rasterization runs over every distance row on
+every chopper change.</p>
+<p><strong>The range was a user parameter</strong> whose default covered no instrument correctly, so an
+operator starting the LUT workflow with defaults could silently blank every detector.</p>
+</section>
+<section id="decision">
+<h2>Decision<a class="headerlink" href="#decision" title="Link to this heading">#</a></h2>
+<section id="one-lut-job-two-tables-laid-out-as-blocks">
+<h3>One LUT job, two tables, laid out as blocks<a class="headerlink" href="#one-lut-job-two-tables-laid-out-as-blocks" title="Link to this heading">#</a></h3>
+<p>The LUT workflow keeps its single <code class="docutils literal notranslate"><span class="pre">chopper_cascade</span></code> source and publishes two outputs, a
+detector table and a monitor table, as context streams. The range parameter is removed.</p>
+<p>Two, rather than one per component, because a table is a function of <code class="docutils literal notranslate"><span class="pre">distance</span></code> and
+<code class="docutils literal notranslate"><span class="pre">event_time_offset</span></code> alone. It carries no component identity: a per-component table is a
+<em>restriction</em> of the same function to that component’s rows, so components can share a
+table with nothing lost. But a single uniform grid spanning every component is mostly
+empty, and empty is not free: BIFROST’s monitors sit 155 m from its detectors, which at a
+fine resolution is a message an order of magnitude over a broker’s default limit. A table
+is therefore a <strong>concatenation of uniform blocks</strong>, one per group of components that sit
+close together. Detectors share one dense block, since they cluster around the sample.
+Each monitor gets its own block of a handful of rows. The wire states which rows form a
+block in a <code class="docutils literal notranslate"><span class="pre">block</span></code> coord, so no consumer has to infer boundaries from a jump in row
+spacing. The layout, its wire format and the reason a multi-block table must never reach
+essreduce’s interpolator are documented in <code class="docutils literal notranslate"><span class="pre">workflows/lut_blocks.py</span></code>.</p>
+<p>One job, not one per component. A job’s identity is <code class="docutils literal notranslate"><span class="pre">(workflow_id,</span> <span class="pre">source_name)</span></code> where
+<code class="docutils literal notranslate"><span class="pre">source_name</span></code> is the stream it consumes; the LUT job consumes the chopper cascade and
+nothing per-component. Per-component jobs would need synthetic trigger streams to give
+each a source name, recompute the same cascade once per component, and leave one chance
+per job to drift on the shared parameters. Consistency across components is the point.</p>
+<p>The tables are ordinary outputs that a user can plot. “Why is this component empty” is
+answered by its table, which was unreadable while the relevant rows were buried in tens
+of metres of empty distance. Two outputs, rather than one per component, is also what
+keeps the plot picker readable.</p>
+</section>
+<section id="ranges-are-derived-generically-from-the-geometry-padded-for-motion">
+<h3>Ranges are derived generically from the geometry, padded for motion<a class="headerlink" href="#ranges-are-derived-generically-from-the-geometry-padded-for-motion" title="Link to this heading">#</a></h3>
+<p>Each component’s flight-path range is computed from the registered geometry artifact,
+with the same essreduce providers the consumer runs at lookup time (<code class="docutils literal notranslate"><span class="pre">DetectorLtotal</span></code>,
+<code class="docutils literal notranslate"><span class="pre">MonitorLtotal</span></code>). Producer and consumer derive the ranges in different services without
+ever exchanging them; that agreement is what the end-to-end test pins. Padding is
+deliberately generous: over-padding costs recompute in the LUT job and nothing else,
+under-padding yields <code class="docutils literal notranslate"><span class="pre">NaN</span></code> silently, which is the failure this ADR exists to remove. The
+<code class="docutils literal notranslate"><span class="pre">Ltotal</span></code> definition does vary with geometry, but by metres against flight paths of tens
+to hundreds of metres, and padding absorbs it; a per-component rule would buy exactness
+the distance resolution does not reward.</p>
+<p>Motion is the one thing the artifact cannot supply: a live f144-driven transform is stored
+as an <em>empty</em> NXlog. Instruments therefore declare one <code class="docutils literal notranslate"><span class="pre">AxisRange</span></code> per moving axis, keyed
+by NeXus transform path, with both bounds as axis values in the axis’s own units, so the
+transform keeps supplying the direction of travel. Which components ride an axis stays
+derived from the <code class="docutils literal notranslate"><span class="pre">depends_on</span></code> chain. Translations are bracketed by evaluating the geometry
+at the corners of the box the bounds span; rotations are refused, since <code class="docutils literal notranslate"><span class="pre">Ltotal</span></code> is not
+monotonic in an angle, and the first instrument with a live rotation has to design for it
+deliberately (<code class="docutils literal notranslate"><span class="pre">workflows/lut_ranges.py</span></code>).</p>
+<p>A component nobody can place gets no block. A job on such a source gates like any other
+and then fails at its first recompute, reporting its flight path against the table’s
+coverage. Where the component is an aux selection, the factory rejects it at job creation
+instead. A group with no placeable component publishes no table, so its stream is never
+offered and a job asking for it fails at creation.</p>
+<p><strong>The range is static and covers the full envelope.</strong> The LUT workflow does not consume
+motion. A live range would gate the LUT job on motion, couple motion to LUT-driven
+clearing, and lag the value the consumer patches into its own geometry, so padding would
+still be needed. A guard test recomputes each range from the artifact and fails if a
+declared envelope no longer contains it, so regenerating an artifact cannot silently
+move a component out of its table.</p>
+</section>
+<section id="a-consumer-selects-its-block-by-flight-path">
+<h3>A consumer selects its block by flight path<a class="headerlink" href="#a-consumer-selects-its-block-by-flight-path" title="Link to this heading">#</a></h3>
+<p>The bound key is essreduce’s public <code class="docutils literal notranslate"><span class="pre">LookupTable[RunType,</span> <span class="pre">Component]</span></code>, so <code class="docutils literal notranslate"><span class="pre">Component</span></code>
+distinguishes a job’s detector and monitor tables with no new type parameter. A provider
+takes the job’s own <code class="docutils literal notranslate"><span class="pre">DetectorLtotal</span></code> or <code class="docutils literal notranslate"><span class="pre">MonitorLtotal</span></code>, already in its graph and
+computed from geometry rather than stream data, and takes the block containing its
+midpoint. Selecting by flight path rather than by name keeps component identity off the
+wire entirely: the job knows its <code class="docutils literal notranslate"><span class="pre">Ltotal</span></code>, the table carries its distances, and neither
+side names a bank or a monitor.</p>
+<p>The wire value is one <code class="docutils literal notranslate"><span class="pre">DataArray</span></code> carrying the table with its scalar fields as coords,
+taken from the built table rather than the job’s parameters, since the two can differ.
+The provider reassembles the dataclass from the block rather than routing through
+essreduce’s file loader, whose matching branch is a compatibility shim that cannot carry
+<code class="docutils literal notranslate"><span class="pre">choppers</span></code> (<code class="docutils literal notranslate"><span class="pre">workflows/lut_context.py</span></code>).</p>
+<p>A reduction needs one table per sciline <code class="docutils literal notranslate"><span class="pre">Component</span></code>: the detector plus the incident and
+transmission monitor roles. Which physical monitor fills a role is a per-job aux
+selection that an import-time declaration cannot name. Under a shared monitor table it
+does not have to: one provider generic in <code class="docutils literal notranslate"><span class="pre">MonitorType</span></code> serves every monitor role, and
+each instance picks its block via that role’s own <code class="docutils literal notranslate"><span class="pre">MonitorLtotal</span></code>. This is what made the
+aux-templated stream names of an earlier shape unnecessary.</p>
+</section>
+<section id="consumers-clear-when-the-tables-identity-changes-deferred">
+<h3>Consumers clear when the table’s identity changes (deferred)<a class="headerlink" href="#consumers-clear-when-the-tables-identity-changes-deferred" title="Link to this heading">#</a></h3>
+<p>A new table means the chopper phasing changed, so data accumulated on either side are not
+the same measurement. Consumers do not compare tables: the producer stamps an identity
+coord derived from the inputs that determine the table, each rounded to a declared
+precision, and a consumer clears when that scalar changes. Clearing on every received
+table is rejected because restarting the LUT job re-emits an unchanged table, and that
+restart is the recovery action. Not implemented yet; the design is tracked in issue 1248.</p>
+</section>
+</section>
+<section id="alternatives-considered">
+<h2>Alternatives considered<a class="headerlink" href="#alternatives-considered" title="Link to this heading">#</a></h2>
+<div class="pst-scrollable-table-container"><table class="table">
+<thead>
+<tr class="row-odd"><th class="head"><p>Option</p></th>
+<th class="head"><p>Notes</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p><strong>Two tables laid out as blocks, detectors dense and a block per monitor (chosen)</strong></p></td>
+<td><p>Removes the range parameter, keeps the rows a per-component table would have had, and reduces outputs, streams and sciline keys to one per group.</p></td>
+</tr>
+<tr class="row-odd"><td><p>One table per component, one job, many outputs</p></td>
+<td><p>The first shape, and it worked. Generates the outputs model per instrument, multiplies streams by the component count, and forces per-job table selection into <em>stream names</em>. Superseded.</p></td>
+</tr>
+<tr class="row-even"><td><p>One instrument-wide uniform grid</p></td>
+<td><p>Far less plumbing, but almost every row empty; the block layout exists to avoid it. Rejected.</p></td>
+</tr>
+<tr class="row-odd"><td><p>Merge monitors into the detectors’ block set</p></td>
+<td><p>One stream instead of two, but the detector block is the only large one – 427 kB on LOKI against 22 kB of monitor rows at the default resolution, and it is the part that grows as the resolution rises – and every monitor consumer (a monitor view, both monitor roles of a reduction) would receive it on every chopper change to read two or three rows. The two also want different plotters: one dense uniform block renders as an image, a few rows per monitor only as one curve per row, and a merged table is readable as neither. Rejected.</p></td>
+</tr>
+<tr class="row-even"><td><p>Cluster detectors by gap rather than one dense block</p></td>
+<td><p>Would suit an instrument with far-apart banks, but the layout would silently reshuffle when an artifact is regenerated, and no instrument needs it. Rejected for now.</p></td>
+</tr>
+<tr class="row-odd"><td><p>One row per monitor</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">WavelengthInterpolator</span></code> needs two nodes bracketing the flight path; a single node returns <code class="docutils literal notranslate"><span class="pre">NaN</span></code> for every lookup. Rejected.</p></td>
+</tr>
+<tr class="row-even"><td><p>One job per component</p></td>
+<td><p>Synthetic trigger streams, the cascade recomputed per component, shared parameters free to drift. Rejected.</p></td>
+</tr>
+<tr class="row-odd"><td><p><strong>Derive every range from the geometry artifact, padded (chosen)</strong></p></td>
+<td><p>One derivation, no per-component declarations, agreement with the consumer by construction.</p></td>
+</tr>
+<tr class="row-even"><td><p>Declare the <code class="docutils literal notranslate"><span class="pre">Ltotal</span></code> rule per component, or hand-declare every range</p></td>
+<td><p>Exact where padding is merely sufficient, and a dozen-plus declarations nobody re-checks when an artifact is regenerated. Rejected.</p></td>
+</tr>
+<tr class="row-odd"><td><p><strong>LUT workflow consumes component motion streams</strong></p></td>
+<td><p>Tables would always describe where the component is, and the travel envelope would disappear from the instrument declaration. Costs: motion joins the LUT job’s gate, so a dead motion PV stops all wavelength reduction; every sample during a move re-emits; and the LUT job’s value can lag the consumer’s, so padding stays. The strongest alternative; recorded to revisit.</p></td>
+</tr>
+<tr class="row-even"><td><p><strong>Both monitor roles read the shared table and select by <code class="docutils literal notranslate"><span class="pre">MonitorLtotal</span></code> (chosen)</strong></p></td>
+<td><p>One stream, one generic provider, no per-job identity on the wire.</p></td>
+</tr>
+<tr class="row-odd"><td><p>Aux-templated stream names (<code class="docutils literal notranslate"><span class="pre">wavelength_lut/{incident_monitor}</span></code>)</p></td>
+<td><p>Gate resolution rendered the template from the job’s selection and route derivation expanded it over the field’s choices. It worked and was the most intricate mechanism on the branch; sharing the monitor table removed the problem instead of solving it. Superseded.</p></td>
+</tr>
+<tr class="row-even"><td><p>Bind every candidate monitor to its own per-component key</p></td>
+<td><p>Leaves every unselected key a dead parameter and restates the candidate list in the factory. Superseded.</p></td>
+</tr>
+<tr class="row-odd"><td><p>Reset on any received table, with no identity</p></td>
+<td><p>Puts the decision at the producer, but a restart re-emits an unchanged table and would wipe every consumer. Rejected.</p></td>
+</tr>
+<tr class="row-even"><td><p>ADR 0006’s <code class="docutils literal notranslate"><span class="pre">start_time</span></code> generation marker as identity</p></td>
+<td><p>Changes on a restart with identical configuration. Rejected.</p></td>
+</tr>
+<tr class="row-odd"><td><p>Content comparison at the consumer</p></td>
+<td><p>One comparison per consumer instead of one stamp, with the noise tolerance far from the setpoints it filters. <code class="docutils literal notranslate"><span class="pre">sc.identical</span></code> is unusable outright: it returns <code class="docutils literal notranslate"><span class="pre">False</span></code> for bit-identical arrays containing <code class="docutils literal notranslate"><span class="pre">NaN</span></code>, which every table has. Rejected.</p></td>
+</tr>
+<tr class="row-even"><td><p>Identity hashed from the table’s bytes</p></td>
+<td><p>Not stable across a library or platform change, and says nothing about <em>why</em> the table changed. Rejected.</p></td>
+</tr>
+</tbody>
+</table>
+</div>
+</section>
+<section id="consequences">
+<h2>Consequences<a class="headerlink" href="#consequences" title="Link to this heading">#</a></h2>
+<ul class="simple">
+<li><p>The LUT workflow loses its range parameter and gains two outputs; the outputs class is
+static and shared by every instrument.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">Instrument</span></code> gains <code class="docutils literal notranslate"><span class="pre">axis_ranges</span></code> and, once the LUT factory is attached, the set of
+components it could place. That set decides which group tables are published, and
+therefore which context streams are offered at all.</p></li>
+<li><p>Handing a multi-block table to essreduce’s interpolator is silently wrong under numba
+and correct under the scipy fallback. <code class="docutils literal notranslate"><span class="pre">numba</span></code> is not a declared dependency, so the test
+suite exercises the tolerant path: the guard is the block selection itself plus a test
+that the selected block is uniform, not a test that would fail on the mistake.</p></li>
+<li><p>The aux-templated stream-name mechanism lost its only user and is removed; stream names
+are plain on both sides of the mirror.</p></li>
+<li><p>On a migrated instrument the file-based table is unreachable, so the streamed table
+cannot be A/B’d against it side by side; the published tables are the comparison
+surface instead.</p></li>
+<li><p>Motion and LUT clearing are orthogonal by construction: because the range is static, a
+carriage move does not change the table. Whether motion should clear accumulated data
+is a question about motion bindings, left to be decided on its own.</p></li>
+</ul>
+</section>
+</section>
+
+
+                </article>
+              
+              
+              
+              
+              
+                <footer class="prev-next-footer d-print-none">
+                  
+<div class="prev-next-area">
+    <a class="left-prev"
+       href="0010-workflow-outputs-as-context-input-streams.html"
+       title="previous page">
+      <i class="fa-solid fa-angle-left"></i>
+      <div class="prev-next-info">
+        <p class="prev-next-subtitle">previous</p>
+        <p class="prev-next-title">ADR 0010: Workflow outputs republished as context input streams</p>
+      </div>
+    </a>
+    <a class="right-next"
+       href="../proposals/declarative-session-reconciler.html"
+       title="next page">
+      <div class="prev-next-info">
+        <p class="prev-next-subtitle">next</p>
+        <p class="prev-next-title">Proposal: A declarative reconciler for plot-grid sessions</p>
+      </div>
+      <i class="fa-solid fa-angle-right"></i>
+    </a>
+</div>
+                </footer>
+              
+            </div>
+            
+            
+              
+            
+          </div>
+          <footer class="bd-footer-content">
+            
+          </footer>
+        
+      </main>
+    </div>
+  </div>
+  
+  <!-- Scripts loaded after <body> so the DOM is not blocked -->
+  <script defer src="../../_static/scripts/bootstrap.js?digest=90905a2f556bf617f1a9"></script>
+<script defer src="../../_static/scripts/pydata-sphinx-theme.js?digest=90905a2f556bf617f1a9"></script>
+
+  <footer class="bd-footer">
+<div class="bd-footer__inner bd-page-width">
+  
+    <div class="footer-items__start">
+      
+        <div class="footer-item">
+
+  <p class="copyright">
+    
+      © Copyright 2025 Scipp contributors.
+      <br/>
+    
+  </p>
+</div>
+      
+        <div class="footer-item">
+
+  <p class="sphinx-version">
+    Created using <a href="https://www.sphinx-doc.org/">Sphinx</a> 9.0.4.
+    <br/>
+  </p>
+</div>
+      
+    </div>
+  
+  
+  
+    <div class="footer-items__end">
+      
+        <div class="footer-item"><!-- This will display the version of the docs -->
+Current ESSlivedata version: 26.9.1 (<a href="https://github.com/scipp/esslivedata/releases">older versions</a>).</div>
+      
+        <div class="footer-item">
+<p class="theme-version">
+  <!-- # L10n: Setting the PST URL as an argument as this does not need to be localized -->
+  Built with the <a href="https://pydata-sphinx-theme.readthedocs.io/en/stable/index.html">PyData Sphinx Theme</a> 0.20.0.
+</p></div>
+      
+    </div>
+  
+</div>
+
+  </footer>
+  </body>
+</html>

@@ -1,0 +1,805 @@
+
+<!DOCTYPE html>
+
+
+<html lang="en" data-content_root="../../" >
+
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" /><meta name="viewport" content="width=device-width, initial-scale=1" />
+
+    <title>ADR 0010: Workflow outputs republished as context input streams &#8212; ESSlivedata</title>
+  
+  
+  
+  <script data-cfasync="false">
+    document.documentElement.dataset.mode = localStorage.getItem("mode") || "";
+    document.documentElement.dataset.theme = localStorage.getItem("theme") || "";
+  </script>
+  <!--
+    this give us a css class that will be invisible only if js is disabled
+  -->
+  <noscript>
+    <style>
+      .pst-js-only { display: none !important; }
+
+    </style>
+  </noscript>
+  
+  <!-- Loaded before other Sphinx assets -->
+  <link href="../../_static/styles/theme.css?digest=90905a2f556bf617f1a9" rel="stylesheet" />
+<link href="../../_static/styles/pydata-sphinx-theme.css?digest=90905a2f556bf617f1a9" rel="stylesheet" />
+
+    <link rel="stylesheet" type="text/css" href="../../_static/pygments.css?v=03e43079" />
+    <link rel="stylesheet" type="text/css" href="../../_static/copybutton.css?v=76b2166b" />
+    <link rel="stylesheet" type="text/css" href="../../_static/autodoc_pydantic.css" />
+    <link rel="stylesheet" type="text/css" href="../../_static/sphinx-design.min.css?v=95c83b7e" />
+  
+  <!-- So that users can add custom icons -->
+  <script defer src="../../_static/scripts/fontawesome.js?digest=90905a2f556bf617f1a9"></script>
+  <!-- Pre-loaded scripts that we'll load fully later -->
+  <link rel="preload" as="script" href="../../_static/scripts/bootstrap.js?digest=90905a2f556bf617f1a9" />
+<link rel="preload" as="script" href="../../_static/scripts/pydata-sphinx-theme.js?digest=90905a2f556bf617f1a9" />
+
+    <script src="../../_static/documentation_options.js?v=9ce135cc"></script>
+    <script src="../../_static/doctools.js?v=fd6eb6e6"></script>
+    <script src="../../_static/sphinx_highlight.js?v=6ffebe34"></script>
+    <script src="../../_static/clipboard.min.js?v=a7894cd8"></script>
+    <script src="../../_static/copybutton.js?v=f281be69"></script>
+    <script src="../../_static/design-tabs.js?v=f930bc37"></script>
+    <script crossorigin="anonymous" integrity="sha256-Ae2Vz/4ePdIu6ZyI/5ZGsYnb+m0JlOmKPjt6XZ9JJkA=" src="https://cdnjs.cloudflare.com/ajax/libs/require.js/2.3.4/require.min.js"></script>
+    <script>DOCUMENTATION_OPTIONS.pagename = 'developer/adr/0010-workflow-outputs-as-context-input-streams';</script>
+    <script>DOCUMENTATION_OPTIONS.search_as_you_type = false;</script>
+    <script src="../../_static/anaconda-icon.js?v=461bdc62"></script>
+    <link rel="icon" href="../../_static/favicon.ico"/>
+    <link rel="index" title="Index" href="../../genindex.html" />
+    <link rel="search" title="Search" href="../../search.html" />
+    <link rel="next" title="ADR 0011: Wavelength lookup tables laid out as blocks and selected by flight path" href="0011-streamed-wavelength-lookup-tables.html" />
+    <link rel="prev" title="ADR 0009: Generate the per-instrument stream registry at development time" href="0009-build-time-stream-registry-codegen.html" />
+  <meta name="viewport" content="width=device-width, initial-scale=1"/>
+  <meta name="docsearch:language" content="en"/>
+  <meta name="docsearch:version" content="26.9.1" />
+  
+    
+    <script src="../../_static/searchtools.js"></script>
+    <script src="../../_static/language_data.js"></script>
+    <script src="../../searchindex.js"></script>
+  
+  </head>
+  <body data-default-mode="">
+  
+  
+  <div id="pst-skip-link" class="skip-link d-print-none"><a href="#main-content">Skip to main content</a></div>
+
+  
+  <div id="pst-scroll-pixel-helper"></div>
+  
+  <button type="button" class="btn rounded-pill" id="pst-back-to-top">
+    <i class="fa-solid fa-arrow-up"></i>Back to top</button>
+  
+  
+  
+  
+  <dialog id="pst-search-dialog">
+    
+<form class="bd-search d-flex align-items-center"
+      action="../../search.html"
+      method="get">
+  <i class="fa-solid fa-magnifying-glass"></i>
+  <input type="search"
+         class="form-control"
+         name="q"
+         placeholder="Search the docs ..."
+         aria-label="Search the docs ..."
+         autocomplete="off"
+         autocorrect="off"
+         autocapitalize="off"
+         spellcheck="false"/>
+  <span class="search-button__kbd-shortcut"><kbd class="kbd-shortcut__modifier">Ctrl</kbd>+<kbd>K</kbd></span>
+</form>
+  </dialog>
+
+  <div class="pst-async-banner-revealer d-none">
+  <aside id="bd-header-version-warning" class="d-none d-print-none" aria-label="Version warning"></aside>
+</div>
+
+  
+    <header id="pst-header" class="bd-header navbar navbar-expand-lg bd-navbar d-print-none">
+<div class="bd-header__inner bd-page-width">
+  <button class="pst-navbar-icon sidebar-toggle primary-toggle" aria-label="Site navigation">
+    <span class="fa-solid fa-bars"></span>
+  </button>
+  
+  
+  <div class="col-lg-3 navbar-header-items__start">
+    
+      <div class="navbar-item">
+
+  
+    
+  
+
+<a class="navbar-brand logo" href="../../index.html">
+  
+  
+  
+  
+  
+    
+    
+      
+    
+    
+    <img src="../../_static/logo.svg" class="logo__image only-light" alt="ESSlivedata - Home"/>
+    <img src="../../_static/logo-dark.svg" class="logo__image only-dark pst-js-only" alt="ESSlivedata - Home"/>
+  
+  
+</a></div>
+    
+  </div>
+  
+  <div class="col-lg-9 navbar-header-items">
+    
+    <div class="me-auto navbar-header-items__center">
+      
+        <div class="navbar-item">
+<nav>
+  <ul class="bd-navbar-elements navbar-nav">
+    
+<li class="nav-item ">
+  <a class="nav-link nav-internal" href="../../user-guide/index.html">
+    User Guide
+  </a>
+</li>
+
+
+<li class="nav-item ">
+  <a class="nav-link nav-internal" href="../../api-reference/index.html">
+    API Reference
+  </a>
+</li>
+
+
+<li class="nav-item current active">
+  <a class="nav-link nav-internal" href="../index.html">
+    Development
+  </a>
+</li>
+
+
+<li class="nav-item ">
+  <a class="nav-link nav-internal" href="../../about/index.html">
+    About
+  </a>
+</li>
+
+            <li class="nav-item dropdown">
+                <button class="btn dropdown-toggle nav-item" type="button"
+                data-bs-toggle="dropdown" aria-expanded="false"
+                aria-controls="pst-nav-more-links">
+                    More
+                </button>
+                <ul id="pst-nav-more-links" class="dropdown-menu">
+                    
+<li class=" ">
+  <a class="nav-link dropdown-item nav-external" href="https://scipp.github.io/essreduce">
+    ESSreduce
+  </a>
+</li>
+
+
+<li class=" ">
+  <a class="nav-link dropdown-item nav-external" href="https://scipp.github.io/sciline">
+    Sciline
+  </a>
+</li>
+
+
+<li class=" ">
+  <a class="nav-link dropdown-item nav-external" href="https://scipp.github.io">
+    Scipp
+  </a>
+</li>
+
+                </ul>
+            </li>
+            
+  </ul>
+</nav></div>
+      
+    </div>
+    
+    
+    <div class="navbar-header-items__end">
+      
+        <div class="navbar-item navbar-persistent--container">
+          
+
+<button class="btn btn-sm pst-navbar-icon search-button search-button__button pst-js-only" title="Search" aria-label="Search" data-bs-placement="bottom" data-bs-toggle="tooltip">
+    <i class="fa-solid fa-magnifying-glass fa-lg"></i>
+</button>
+        </div>
+      
+      
+        <div class="navbar-item">
+
+<div class="theme-switch-container dropdown pst-js-only" data-bs-toggle="tooltip" data-bs-placement="bottom" title="Color mode">
+  <button class="btn btn-sm nav-link pst-navbar-icon theme-switch-button dropdown-toggle" aria-label="Color mode" data-bs-toggle="dropdown">
+    <i class="theme-switch fa-solid fa-sun fa-lg fa-fw" data-mode="light" title="Light"></i>
+    <i class="theme-switch fa-solid fa-moon fa-lg fa-fw" data-mode="dark" title="Dark"></i>
+    <i class="theme-switch fa-solid fa-circle-half-stroke fa-lg fa-fw" data-mode="auto" title="System Settings"></i>
+  </button>
+  <ul class="dropdown-menu dropdown-menu-end">
+    <li><button class="dropdown-item d-flex align-items-center theme-change-button" data-mode="auto"><i class="fa-solid fa-circle-half-stroke fa-lg fa-fw me-1"></i>System Settings</button></li>
+    <li><button class="dropdown-item d-flex align-items-center theme-change-button" data-mode="light"><i class="fa-solid fa-sun fa-lg fa-fw me-1"></i>Light</button></li>
+    <li><button class="dropdown-item d-flex align-items-center theme-change-button" data-mode="dark"><i class="fa-solid fa-moon fa-lg fa-fw me-1"></i>Dark</button></li>
+  </ul>
+</div></div>
+      
+        <div class="navbar-item"><ul class="navbar-icon-links"
+    aria-label="Icon Links">
+        <li class="nav-item">
+          
+          
+          
+          
+          
+          
+          
+          
+          <a href="https://github.com/scipp/esslivedata" title="GitHub" class="nav-link pst-navbar-icon" rel="noopener" target="_blank" data-bs-toggle="tooltip" data-bs-placement="bottom"><i class="fa-brands fa-github fa-lg" aria-hidden="true"></i><span class="visually-hidden">GitHub</span></a>
+        </li>
+        <li class="nav-item">
+          
+          
+          
+          
+          
+          
+          
+          
+          <a href="https://pypi.org/project/esslivedata/" title="PyPI" class="nav-link pst-navbar-icon" rel="noopener" target="_blank" data-bs-toggle="tooltip" data-bs-placement="bottom"><i class="fa-brands fa-python fa-lg" aria-hidden="true"></i><span class="visually-hidden">PyPI</span></a>
+        </li>
+        <li class="nav-item">
+          
+          
+          
+          
+          
+          
+          
+          
+          <a href="https://anaconda.org/conda-forge/esslivedata" title="Conda" class="nav-link pst-navbar-icon" rel="noopener" target="_blank" data-bs-toggle="tooltip" data-bs-placement="bottom"><i class="fa-custom fa-lg" data-prefix="fa-custom" data-icon="anaconda" aria-hidden="true"></i><span class="visually-hidden">Conda</span></a>
+        </li>
+</ul></div>
+      
+    </div>
+    
+  </div>
+  
+  
+    <div class="navbar-persistent--mobile">
+
+<button class="btn btn-sm pst-navbar-icon search-button search-button__button pst-js-only" title="Search" aria-label="Search" data-bs-placement="bottom" data-bs-toggle="tooltip">
+    <i class="fa-solid fa-magnifying-glass fa-lg"></i>
+</button>
+    </div>
+  
+
+  
+</div>
+
+    </header>
+  
+
+  <div class="bd-container">
+    <div class="bd-container__inner bd-page-width">
+      
+      
+      
+      <dialog id="pst-primary-sidebar-modal"></dialog>
+      <div id="pst-primary-sidebar" class="bd-sidebar-primary bd-sidebar">
+        
+
+  
+  <div class="sidebar-header-items sidebar-primary__section">
+    
+    
+      <div class="sidebar-header-items__center">
+        
+          
+          
+            <div class="navbar-item">
+<nav>
+  <ul class="bd-navbar-elements navbar-nav">
+    
+<li class="nav-item ">
+  <a class="nav-link nav-internal" href="../../user-guide/index.html">
+    User Guide
+  </a>
+</li>
+
+
+<li class="nav-item ">
+  <a class="nav-link nav-internal" href="../../api-reference/index.html">
+    API Reference
+  </a>
+</li>
+
+
+<li class="nav-item current active">
+  <a class="nav-link nav-internal" href="../index.html">
+    Development
+  </a>
+</li>
+
+
+<li class="nav-item ">
+  <a class="nav-link nav-internal" href="../../about/index.html">
+    About
+  </a>
+</li>
+
+
+<li class="nav-item ">
+  <a class="nav-link nav-external" href="https://scipp.github.io/essreduce">
+    ESSreduce
+  </a>
+</li>
+
+
+<li class="nav-item ">
+  <a class="nav-link nav-external" href="https://scipp.github.io/sciline">
+    Sciline
+  </a>
+</li>
+
+
+<li class="nav-item ">
+  <a class="nav-link nav-external" href="https://scipp.github.io">
+    Scipp
+  </a>
+</li>
+
+  </ul>
+</nav></div>
+          
+        
+      </div>
+    
+    
+    
+      <div class="sidebar-header-items__end">
+        
+          <div class="navbar-item">
+
+<div class="theme-switch-container dropdown pst-js-only" data-bs-toggle="tooltip" data-bs-placement="bottom" title="Color mode">
+  <button class="btn btn-sm nav-link pst-navbar-icon theme-switch-button dropdown-toggle" aria-label="Color mode" data-bs-toggle="dropdown">
+    <i class="theme-switch fa-solid fa-sun fa-lg fa-fw" data-mode="light" title="Light"></i>
+    <i class="theme-switch fa-solid fa-moon fa-lg fa-fw" data-mode="dark" title="Dark"></i>
+    <i class="theme-switch fa-solid fa-circle-half-stroke fa-lg fa-fw" data-mode="auto" title="System Settings"></i>
+  </button>
+  <ul class="dropdown-menu dropdown-menu-end">
+    <li><button class="dropdown-item d-flex align-items-center theme-change-button" data-mode="auto"><i class="fa-solid fa-circle-half-stroke fa-lg fa-fw me-1"></i>System Settings</button></li>
+    <li><button class="dropdown-item d-flex align-items-center theme-change-button" data-mode="light"><i class="fa-solid fa-sun fa-lg fa-fw me-1"></i>Light</button></li>
+    <li><button class="dropdown-item d-flex align-items-center theme-change-button" data-mode="dark"><i class="fa-solid fa-moon fa-lg fa-fw me-1"></i>Dark</button></li>
+  </ul>
+</div></div>
+        
+          <div class="navbar-item"><ul class="navbar-icon-links"
+    aria-label="Icon Links">
+        <li class="nav-item">
+          
+          
+          
+          
+          
+          
+          
+          
+          <a href="https://github.com/scipp/esslivedata" title="GitHub" class="nav-link pst-navbar-icon" rel="noopener" target="_blank" data-bs-toggle="tooltip" data-bs-placement="bottom"><i class="fa-brands fa-github fa-lg" aria-hidden="true"></i><span class="visually-hidden">GitHub</span></a>
+        </li>
+        <li class="nav-item">
+          
+          
+          
+          
+          
+          
+          
+          
+          <a href="https://pypi.org/project/esslivedata/" title="PyPI" class="nav-link pst-navbar-icon" rel="noopener" target="_blank" data-bs-toggle="tooltip" data-bs-placement="bottom"><i class="fa-brands fa-python fa-lg" aria-hidden="true"></i><span class="visually-hidden">PyPI</span></a>
+        </li>
+        <li class="nav-item">
+          
+          
+          
+          
+          
+          
+          
+          
+          <a href="https://anaconda.org/conda-forge/esslivedata" title="Conda" class="nav-link pst-navbar-icon" rel="noopener" target="_blank" data-bs-toggle="tooltip" data-bs-placement="bottom"><i class="fa-custom fa-lg" data-prefix="fa-custom" data-icon="anaconda" aria-hidden="true"></i><span class="visually-hidden">Conda</span></a>
+        </li>
+</ul></div>
+        
+      </div>
+    
+  </div>
+  
+    <div class="sidebar-primary-items__start sidebar-primary__section">
+        <div class="sidebar-primary-item">
+
+<nav class="bd-docs-nav bd-links"
+     aria-label="Section Navigation">
+  <p class="bd-links__title" role="heading" aria-level="1">Section Navigation</p>
+  <div class="bd-toc-item navbar-nav"><ul class="current nav bd-sidenav">
+<li class="toctree-l1"><a class="reference internal" href="../getting-started.html">Getting started</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../glossary.html">Glossary</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../coding-conventions.html">Coding conventions</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../dependency-management.html">Dependency management</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../design/backend-service-architecture.html">Backend Service Architecture</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../design/message-flow-and-transformation.html">Message Flow and Transformation</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../design/dashboard-architecture.html">Livedata Dashboard Architecture</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../design/orchestrator-flow.html">Orchestrator Flow: Plot Creation Lifecycle</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../design/rate-aware-batcher.html">Rate-Aware Message Batcher</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../design/stream-keying.html">Stream Keying</a></li>
+<li class="toctree-l1 current active has-children"><a class="reference internal" href="index.html">Architecture Decision Records</a><details open="open"><summary><span class="toctree-toggle" role="presentation"><i class="fa-solid fa-chevron-down"></i></span></summary><ul class="current">
+<li class="toctree-l2"><a class="reference internal" href="0001-in-process-device-stream-synthesis.html">ADR 0001: In-process synthesis of merged device streams</a></li>
+<li class="toctree-l2"><a class="reference internal" href="0002-context-stream-gating-at-jobmanager.html">ADR 0002: Gate workflow execution at the JobManager on context-stream readiness</a></li>
+<li class="toctree-l2"><a class="reference internal" href="0003-context-input-declaration-model.html">ADR 0003: Unified declaration model for workflow context bindings</a></li>
+<li class="toctree-l2"><a class="reference internal" href="0004-uniform-stream-name-keying.html">ADR 0004: Key workflow inputs uniformly by canonical stream name</a></li>
+<li class="toctree-l2"><a class="reference internal" href="0005-frame-gated-session-flush.html">ADR 0005: Frame-gated per-session plot flush</a></li>
+<li class="toctree-l2"><a class="reference internal" href="0006-nicos-derived-devices.html">ADR 0006: Expose designated workflow outputs to NICOS as derived devices</a></li>
+<li class="toctree-l2"><a class="reference internal" href="0007-single-writer-versioned-pull.html">ADR 0007: Single-writer state with versioned pull as the dashboard concurrency model</a></li>
+<li class="toctree-l2"><a class="reference internal" href="0008-job-adoption-from-heartbeat-observation.html">ADR 0008: Job adoption from heartbeat observation replaces persisted job identity</a></li>
+<li class="toctree-l2"><a class="reference internal" href="0009-build-time-stream-registry-codegen.html">ADR 0009: Generate the per-instrument stream registry at development time</a></li>
+<li class="toctree-l2 current active"><a class="current reference internal" href="#">ADR 0010: Workflow outputs republished as context input streams</a></li>
+<li class="toctree-l2"><a class="reference internal" href="0011-streamed-wavelength-lookup-tables.html">ADR 0011: Wavelength lookup tables laid out as blocks and selected by flight path</a></li>
+</ul>
+</details></li>
+<li class="toctree-l1 has-children"><a class="reference internal" href="../proposals/declarative-session-reconciler.html">Proposal: A declarative reconciler for plot-grid sessions</a><details><summary><span class="toctree-toggle" role="presentation"><i class="fa-solid fa-chevron-down"></i></span></summary><ul>
+<li class="toctree-l2"><a class="reference internal" href="../proposals/declarative-session-reconciler-current-state.html">The session reconciler today — detailed analysis</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../proposals/declarative-session-reconciler-migration.html">Declarative session reconciler — migration plan</a></li>
+</ul>
+</details></li>
+</ul>
+</div>
+</nav></div>
+        <div class="sidebar-primary-item">
+<div
+    id="pst-page-navigation-heading-2"
+    class="page-toc tocsection onthispage">
+    <i class="fa-solid fa-list"></i> On this page
+  </div>
+  <nav id="pst-page-toc-nav" class="page-toc" aria-labelledby="pst-page-navigation-heading-2">
+    <ul class="pst-show_toc_level nav section-nav flex-column">
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#context">Context</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#decision">Decision</a><ul class="nav section-nav flex-column">
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#a-generic-mirror-modelled-on-adr-0006">A generic mirror, modelled on ADR 0006</a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#consumers-request-a-stream-by-key-and-the-gate-is-read-off-the-built-graph">Consumers request a stream by key, and the gate is read off the built graph</a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#the-gate-is-per-job-and-depends-on-the-jobs-parameters">The gate is per job and depends on the job’s parameters</a></li>
+</ul>
+</li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#alternatives-considered">Alternatives considered</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#consequences">Consequences</a><ul class="nav section-nav flex-column">
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#standing-limitations">Standing limitations</a></li>
+</ul>
+</li>
+</ul>
+  </nav></div>
+    </div>
+  
+  
+  <div class="sidebar-primary-items__end sidebar-primary__section">
+      <div class="sidebar-primary-item">
+
+  <div class="tocsection sourcelink">
+    <a href="../../_sources/developer/adr/0010-workflow-outputs-as-context-input-streams.md">
+      <i class="fa-solid fa-file-lines"></i> Show Source
+    </a>
+  </div>
+</div>
+  </div>
+
+
+      </div>
+      
+      <main id="main-content" class="bd-main" role="main">
+        
+        
+          <div class="bd-content">
+            <div class="bd-article-container">
+              
+              <div class="bd-header-article d-print-none">
+<div class="header-article-items header-article__inner">
+  
+    <div class="header-article-items__start">
+      
+        <div class="header-article-item">
+
+<nav aria-label="Breadcrumb" class="d-print-none">
+  <ul class="bd-breadcrumbs">
+    
+    <li class="breadcrumb-item breadcrumb-home">
+      <a href="../../index.html" class="nav-link" aria-label="Home">
+        <i class="fa-solid fa-home"></i>
+      </a>
+    </li>
+    
+    <li class="breadcrumb-item"><a href="../index.html" class="nav-link">Development</a></li>
+    
+    
+    <li class="breadcrumb-item"><a href="index.html" class="nav-link">Architecture Decision Records</a></li>
+    
+    <li class="breadcrumb-item active" aria-current="page"><span class="ellipsis">ADR 0010: Workflow outputs republished as context input streams</span></li>
+  </ul>
+</nav>
+</div>
+      
+    </div>
+  
+  
+</div>
+</div>
+              
+              
+              
+                
+<div id="searchbox"></div>
+                <article class="bd-article">
+                  
+  <section class="tex2jax_ignore mathjax_ignore" id="adr-0010-workflow-outputs-republished-as-context-input-streams">
+<h1>ADR 0010: Workflow outputs republished as context input streams<a class="headerlink" href="#adr-0010-workflow-outputs-republished-as-context-input-streams" title="Link to this heading">#</a></h1>
+<ul class="simple">
+<li><p>Status: proposed</p></li>
+<li><p>Deciders: Simon</p></li>
+<li><p>Date: 2026-08-11</p></li>
+</ul>
+<section id="context">
+<h2>Context<a class="headerlink" href="#context" title="Link to this heading">#</a></h2>
+<p><code class="docutils literal notranslate"><span class="pre">wavelength_lut_workflow</span></code> computes a wavelength lookup table from the live chopper
+cascade and publishes it as an ordinary workflow result. Nothing consumes that result.
+Meanwhile every workflow converting time-of-arrival to wavelength loads a table from a
+file fixed at import time, describing a <em>nominal</em> chopper configuration: run in any other
+configuration and the reduction is silently wrong. The live table has to reach those
+workflows.</p>
+<p>The mechanisms this builds on exist: context bindings and JobManager gating (ADR 0002,
+ADR 0003), uniform stream-name keying (ADR 0004), and the NICOS derived-device mirror
+(ADR 0006), which republishes selected workflow outputs onto a dedicated topic under
+names that deliberately exclude job identity.</p>
+<p>What does not exist is <strong>a workflow output republished as an input stream for other
+workflows</strong>. The NICOS mirror is publish-only, and no backend service subscribes to
+<code class="docutils literal notranslate"><span class="pre">livedata_data</span></code>. This is the first cross-service feedback edge, and it recurs: a fitted
+beam centre or a live calibration has the same shape. This ADR decides the generic
+mechanism; ADR 0011 decides how the lookup table itself is laid out on it.</p>
+</section>
+<section id="decision">
+<h2>Decision<a class="headerlink" href="#decision" title="Link to this heading">#</a></h2>
+<section id="a-generic-mirror-modelled-on-adr-0006">
+<h3>A generic mirror, modelled on ADR 0006<a class="headerlink" href="#a-generic-mirror-modelled-on-adr-0006" title="Link to this heading">#</a></h3>
+<p>A <code class="docutils literal notranslate"><span class="pre">context_outputs</span></code> field on <code class="docutils literal notranslate"><span class="pre">WorkflowSpec</span></code> maps an output field name to a stream name.
+The name is plain and fixed at declaration time: a context stream carries no job identity
+(ADR 0006), so a spec declaring context outputs has exactly one source name and, unlike
+<code class="docutils literal notranslate"><span class="pre">device_outputs</span></code>, the name is never templated over the sources. Excluding job identity is
+also what lets a relaunched producer transparently resume feeding its consumers.</p>
+<p>A new <code class="docutils literal notranslate"><span class="pre">StreamKind</span></code> and a dedicated topic carry it, through the existing da00 serializer,
+with the wire <code class="docutils literal notranslate"><span class="pre">source_name</span></code> being the stream name. A dedicated topic rather than
+<code class="docutils literal notranslate"><span class="pre">livedata_data</span></code>, because a backend service must not subscribe to every detector image in
+the facility to receive one table.</p>
+<p>The <strong>ingest</strong> half has no ADR 0006 analogue: a da00 adapter with no stream lookup table,
+so the internal stream name is the da00 source name (the shape the ROI route already
+uses), plus a preprocessor case returning <code class="docutils literal notranslate"><span class="pre">LatestValueAccumulator</span></code>. That accumulator is
+already context, so the context cache and the JobManager gate are unchanged.</p>
+<p>Stream names are prefixed (<code class="docutils literal notranslate"><span class="pre">wavelength_lut/…</span></code>) and checked for collisions across the
+whole registry at startup, since they share a namespace with device and motion streams.
+The mechanism is named for the seam, not for its first user.</p>
+</section>
+<section id="consumers-request-a-stream-by-key-and-the-gate-is-read-off-the-built-graph">
+<h3>Consumers request a stream by key, and the gate is read off the built graph<a class="headerlink" href="#consumers-request-a-stream-by-key-and-the-gate-is-read-off-the-built-graph" title="Link to this heading">#</a></h3>
+<p>The instrument <em>offers</em> a context stream per workflow key (<code class="docutils literal notranslate"><span class="pre">Instrument.offer_context_stream</span></code>).
+An offer names no spec, source or params. A consuming factory inserts a provider whose
+argument is that key, and the workflow build takes the offer up when the key is an
+ancestor of a target key, which is exactly the condition under which the job could not
+compute without it. The gate is the set of streams the job requested.</p>
+<p>Deriving the gate rather than declaring it keeps insertion and gating from disagreeing.
+They are two statements of one fact, and as separate declarations they drift silently,
+in the direction that leaves a job <code class="docutils literal notranslate"><span class="pre">pending_context</span></code> forever. It also removes the need
+for a spec to name which of its sources or aux selections read the stream.</p>
+<p>Offers do not replace bindings. A <code class="docutils literal notranslate"><span class="pre">ContextBinding</span></code> is still required where the key reaches
+the graph only because the binding injects it (a chain patch), where the stream filling a
+key varies per source, or where a stream private to one spec should not be subscribed by
+every service. The <code class="docutils literal notranslate"><span class="pre">offer_context_stream</span></code> docstring records the line between the two.</p>
+</section>
+<section id="the-gate-is-per-job-and-depends-on-the-jobs-parameters">
+<h3>The gate is per job and depends on the job’s parameters<a class="headerlink" href="#the-gate-is-per-job-and-depends-on-the-jobs-parameters" title="Link to this heading">#</a></h3>
+<p>Coordinate mode is a parameter, so a spec offering both modes must not gate its
+time-of-arrival jobs on a table they never read. ADR 0003 accepted exactly this over-gate
+for motion and prescribed splitting the spec if it ever became real. Both premises have
+expired.</p>
+<p>The cost of over-gating is far higher here than for motion. Motion streams are pushed
+continuously by the control system; the table is published by an operator-started job
+that re-emits only on chopper change. Over-gating makes the fallback mode depend on the
+most fragile link in the chain.</p>
+<p>The prescribed remedy was tried and reverted. Splitting the spec doubles the workflow list
+and, because the dashboard keys its data plane by <code class="docutils literal notranslate"><span class="pre">(workflow_id,</span> <span class="pre">source_name,</span> <span class="pre">output_name)</span></code>, gives the two modes different output identities: a plot cannot follow a
+mode switch. Coordinate mode is a property of how you look at a detector, not of which
+detector you look at.</p>
+<p>So the gate is parameter-dependent, without anything saying so. The factory inserts the
+provider unconditionally; a time-of-arrival job’s params build a graph that never reaches
+it, so the job requests nothing. This is affordable because the gate is resolved once, at
+job creation, which already builds the workflow; Kafka subscriptions are derived
+statically per spec and are a superset of any per-job gate; and the context cache is
+keyed by stream name alone.</p>
+</section>
+</section>
+<section id="alternatives-considered">
+<h2>Alternatives considered<a class="headerlink" href="#alternatives-considered" title="Link to this heading">#</a></h2>
+<div class="pst-scrollable-table-container"><table class="table">
+<thead>
+<tr class="row-odd"><th class="head"><p>Option</p></th>
+<th class="head"><p>Notes</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p><strong>Generic mirror on a dedicated topic, offered streams, gate derived from the built graph (chosen)</strong></p></td>
+<td><p>One declaration per fact: the spec names its outputs, the instrument names the stream per key, the graph names what it consumes.</p></td>
+</tr>
+<tr class="row-odd"><td><p>Reuse <code class="docutils literal notranslate"><span class="pre">livedata_data</span></code> instead of a dedicated topic</p></td>
+<td><p>Every backend service would subscribe to every detector image in the facility. Rejected.</p></td>
+</tr>
+<tr class="row-even"><td><p>A per-spec <code class="docutils literal notranslate"><span class="pre">ContextBinding</span></code> carrying a predicate over the job’s params</p></td>
+<td><p>The first shape, and it worked. It restates in a declaration what the graph already knows, so the two can disagree silently, and a spec reading a stream on behalf of other sources (LOKI’s I(Q) reading the monitor table on detector sources) had to declare that mismatch. Superseded.</p></td>
+</tr>
+<tr class="row-odd"><td><p>Split the spec into time-of-arrival and wavelength variants</p></td>
+<td><p>ADR 0003’s prescribed remedy. Tried and reverted: two workflow-list entries, two jobs to run, and two output identities so no plot survives a mode switch.</p></td>
+</tr>
+<tr class="row-even"><td><p>Route the stream as ungated aux with the file as default (ROI precedent)</p></td>
+<td><p>Survives a cold start but makes reducing with a stale or nominal table a silent mode, which is what the feature exists to prevent. Rejected.</p></td>
+</tr>
+<tr class="row-odd"><td><p>Name the mechanism for the lookup table rather than for the seam</p></td>
+<td><p>Same code either way; the generic name is the honest one. Rejected.</p></td>
+</tr>
+</tbody>
+</table>
+</div>
+</section>
+<section id="consequences">
+<h2>Consequences<a class="headerlink" href="#consequences" title="Link to this heading">#</a></h2>
+<ul class="simple">
+<li><p><code class="docutils literal notranslate"><span class="pre">WorkflowSpec</span></code> gains <code class="docutils literal notranslate"><span class="pre">context_outputs</span></code>; a new <code class="docutils literal notranslate"><span class="pre">StreamKind</span></code>, topic, sink route, ingest
+route and preprocessor case carry it. The ingest half is the genuinely new mechanism.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">Instrument</span></code> gains offered context streams alongside <code class="docutils literal notranslate"><span class="pre">ContextBinding</span></code>. This supersedes
+ADR 0003’s param-dependent-context non-goal.</p></li>
+<li><p>Job creation becomes validate → build → read the gate off the workflow. Nothing
+consumed the gating set before the build, so the reordering costs nothing.</p></li>
+<li><p>Route derivation gathers the offered stream names and then drops them, since they
+appear in no stream lookup table. Harmless, because the context route is added
+unconditionally, and pinned by a test because it reads as a bug otherwise.</p></li>
+<li><p>Specs are unchanged: coordinate mode stays a parameter on one workflow, so output
+identity and any plot built on it survive a mode switch.</p></li>
+</ul>
+<section id="standing-limitations">
+<h3>Standing limitations<a class="headerlink" href="#standing-limitations" title="Link to this heading">#</a></h3>
+<p>A context output has no liveness and no replay. These follow from the decision and are
+not resolved by it; the lookup table is the first stream to feel them.</p>
+<ul class="simple">
+<li><p><strong>Nothing guarantees the producer job is running.</strong> Under gating it is a hard
+prerequisite for every consumer; if nobody starts it, or someone stops it, consumers
+block on missing context. Recovery is to restart the producer.</p></li>
+<li><p><strong>A backend restart loses the stream.</strong> Consumers pin to the high watermark, with no
+replay, compaction or seed (ADR 0002), and a producer that re-emits only on change
+stays silent during a steady run.</p></li>
+<li><p><strong>The gate protects startup, not steady state.</strong> Gate graduation is one-way and context
+is sticky, so stopping the producer does not re-block consumers; they keep reducing with
+the last value indefinitely, silently.</p></li>
+<li><p><strong>Two concurrent producer jobs would flap</strong>, both publishing the same stream names. The
+duplicate-name check is static across specs and cannot see two live jobs of one spec.</p></li>
+</ul>
+<p>The first three are one problem with one shape of answer, borrowed from how a device
+reports to NICOS: the producer heartbeats, recent re-emission is liveness, prolonged
+silence is an alarm on every dependent job, and the heartbeat doubles as recovery after
+a restart. That is affordable only once consumers clear on a change of <em>identity</em> rather
+than on every message (issue 1248). A compacted topic consumed from the earliest offset
+is the more principled recovery and remains the long-term answer, but needs a per-topic
+exception to the unconditional high-watermark pin and message keys the sink does not
+set. Alongside either: a dashboard guard before a running producer is reconfigured or
+stopped, since the blast radius is every consumer on the instrument.</p>
+</section>
+</section>
+</section>
+
+
+                </article>
+              
+              
+              
+              
+              
+                <footer class="prev-next-footer d-print-none">
+                  
+<div class="prev-next-area">
+    <a class="left-prev"
+       href="0009-build-time-stream-registry-codegen.html"
+       title="previous page">
+      <i class="fa-solid fa-angle-left"></i>
+      <div class="prev-next-info">
+        <p class="prev-next-subtitle">previous</p>
+        <p class="prev-next-title">ADR 0009: Generate the per-instrument stream registry at development time</p>
+      </div>
+    </a>
+    <a class="right-next"
+       href="0011-streamed-wavelength-lookup-tables.html"
+       title="next page">
+      <div class="prev-next-info">
+        <p class="prev-next-subtitle">next</p>
+        <p class="prev-next-title">ADR 0011: Wavelength lookup tables laid out as blocks and selected by flight path</p>
+      </div>
+      <i class="fa-solid fa-angle-right"></i>
+    </a>
+</div>
+                </footer>
+              
+            </div>
+            
+            
+              
+            
+          </div>
+          <footer class="bd-footer-content">
+            
+          </footer>
+        
+      </main>
+    </div>
+  </div>
+  
+  <!-- Scripts loaded after <body> so the DOM is not blocked -->
+  <script defer src="../../_static/scripts/bootstrap.js?digest=90905a2f556bf617f1a9"></script>
+<script defer src="../../_static/scripts/pydata-sphinx-theme.js?digest=90905a2f556bf617f1a9"></script>
+
+  <footer class="bd-footer">
+<div class="bd-footer__inner bd-page-width">
+  
+    <div class="footer-items__start">
+      
+        <div class="footer-item">
+
+  <p class="copyright">
+    
+      © Copyright 2025 Scipp contributors.
+      <br/>
+    
+  </p>
+</div>
+      
+        <div class="footer-item">
+
+  <p class="sphinx-version">
+    Created using <a href="https://www.sphinx-doc.org/">Sphinx</a> 9.0.4.
+    <br/>
+  </p>
+</div>
+      
+    </div>
+  
+  
+  
+    <div class="footer-items__end">
+      
+        <div class="footer-item"><!-- This will display the version of the docs -->
+Current ESSlivedata version: 26.9.1 (<a href="https://github.com/scipp/esslivedata/releases">older versions</a>).</div>
+      
+        <div class="footer-item">
+<p class="theme-version">
+  <!-- # L10n: Setting the PST URL as an argument as this does not need to be localized -->
+  Built with the <a href="https://pydata-sphinx-theme.readthedocs.io/en/stable/index.html">PyData Sphinx Theme</a> 0.20.0.
+</p></div>
+      
+    </div>
+  
+</div>
+
+  </footer>
+  </body>
+</html>
