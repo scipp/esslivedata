@@ -41,7 +41,7 @@ dependencies = [
   "numba",  # Compiled wavelength-LUT interpolation, see core/numba_threading.py
   "pydantic>=2",
   "scipp>=25.02.0",  # Improved performance of scipp.group
-  "scippneutron>=25.11.1",  # For DREAM unit conversion fixes
+  "scippneutron>=26.9.1",  # Chopper calls no longer mint a scipp dim label each time
   "pooch",
   "structlog>=24.0.0",
 ]

@@ -11,7 +11,7 @@ jinja2
 numba
 pydantic>=2
 scipp>=25.02.0
-scippneutron>=25.11.1
+scippneutron>=26.9.1
 pooch
 structlog>=24.0.0
 essdiffraction>=26.5.0
