@@ -15,7 +15,7 @@ from ess.livedata.config import (
     instrument_registry,
     name_streams,
 )
-from ess.livedata.config.device_contract import COUNTS_TOTAL_DEVICE
+from ess.livedata.config.device_contract import DETECTOR_VIEW_DEVICES
 from ess.livedata.config.workflow_spec import WorkflowOutputsBase
 from ess.livedata.workflows.detector_view_specs import SpectrumViewSpec
 from ess.livedata.workflows.monitor_workflow_specs import (
@@ -229,7 +229,7 @@ instrument.add_logical_view(
         output_dims=['blade', 'wire'],
         extra_description='Summed across strips, yielding per-blade, per-wire spectra.',
     ),
-    device_outputs=COUNTS_TOTAL_DEVICE,
+    device_outputs=DETECTOR_VIEW_DEVICES,
 )
 
 reflectometry_reduction_handle = instrument.register_spec(

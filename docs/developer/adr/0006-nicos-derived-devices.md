@@ -258,3 +258,23 @@ renaming it, so the device topic publishes `signal`, `start_time`, `end_time`,
 and now `time` as well. NICOS's contract is unchanged and it can adopt `time` on
 its own schedule; the decision above — `start_time` as the sole generation
 marker — is untouched.
+
+## Amendment 2026-09-10: histogram and image outputs are also derived devices
+
+The Decision section states devices are "scalar cumulative outputs... by
+authoring convention, not by an enforced gate." That convention is relaxed:
+the monitor histogram (`cumulative` on `monitor_histogram`) and detector view
+image (`cumulative` on a detector view) are now eligible too, alongside the
+existing scalar total (`counts_total_cumulative`). Nothing else in the design
+changes — `_add_time_coords` already stamps `start_time`/`time` onto every
+cumulative field regardless of its own shape, and `da00` serializes arbitrary
+dimensionality, so `DeviceExtractor` needed no change; only the per-instrument
+`device_outputs` declarations grow a second entry.
+
+`config/device_contract.py` now exports `MONITOR_DEVICES` and
+`DETECTOR_VIEW_DEVICES`, composing `COUNTS_TOTAL_DEVICE` with
+`{source_name}_histogram` and `{source_name}_image` respectively, replacing
+`COUNTS_TOTAL_DEVICE` at the same registration sites (the one view per bank
+already designated as that bank's device). This is a stopgap for a near-term
+NICOS need; it should not be read as reopening scope for further device types
+without revisiting the direction proposed in issue #1285.

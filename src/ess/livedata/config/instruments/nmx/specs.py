@@ -10,7 +10,7 @@ from ess.livedata.config import (
     instrument_registry,
     name_streams,
 )
-from ess.livedata.config.device_contract import COUNTS_TOTAL_DEVICE
+from ess.livedata.config.device_contract import DETECTOR_VIEW_DEVICES
 from ess.livedata.workflows.monitor_workflow_specs import (
     TOAOnlyMonitorDataParams,
     register_monitor_workflow_specs,
@@ -65,5 +65,5 @@ instrument.add_logical_view(
         ' as the events are ingested.'
     ),
     source_names=detector_names,
-    device_outputs=COUNTS_TOTAL_DEVICE,
+    device_outputs=DETECTOR_VIEW_DEVICES,
 )

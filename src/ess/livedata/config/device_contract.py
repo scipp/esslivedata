@@ -2,8 +2,9 @@
 # Copyright (c) 2025 Scipp contributors (https://github.com/scipp)
 """Per-instrument NICOS derived-device contract, derived from the registry.
 
-A NICOS *derived device* is a scalar, cumulative workflow output (e.g.
-``counts_total_cumulative``) exposed to NICOS as a device. The mapping
+A NICOS *derived device* is a cumulative workflow output (e.g.
+``counts_total_cumulative``, or a histogram/image ``cumulative`` field)
+exposed to NICOS as a device. The mapping
 
     (WorkflowId, source_name, output_name) -> device_name
 
@@ -71,6 +72,32 @@ covered by several views (a projection, a strip view, ...) that all produce
 ``counts_total_cumulative``; each instrument designates the one whose total is
 the bank's device. Designating a second one for the same source raises
 :class:`DeviceContractError` at construction.
+"""
+
+MONITOR_DEVICES = {
+    **COUNTS_TOTAL_DEVICE,
+    'cumulative': '{source_name}_histogram',
+}
+"""``device_outputs`` declaration for a beam monitor: total plus histogram.
+
+Extends :data:`COUNTS_TOTAL_DEVICE` with the monitor's accumulated histogram
+(``cumulative``) under ``{source_name}_histogram``. Unlike the total, this is
+not a scalar -- it carries the same ``start_time``/``time`` coordinate pair
+regardless of shape (stamped by the ``JobManager`` on every cumulative output),
+so the extraction and wire path need no change to carry it.
+"""
+
+DETECTOR_VIEW_DEVICES = {
+    **COUNTS_TOTAL_DEVICE,
+    'cumulative': '{source_name}_image',
+}
+"""``device_outputs`` declaration for a detector view: total plus image.
+
+Extends :data:`COUNTS_TOTAL_DEVICE` with the view's accumulated image
+(``cumulative``) under ``{source_name}_image``. Pass this instead of
+:data:`COUNTS_TOTAL_DEVICE` on the one view per detector bank designated as
+the bank's device (see :data:`COUNTS_TOTAL_DEVICE`); the same uniqueness rule
+applies to the rendered ``_image`` name.
 """
 
 

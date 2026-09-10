@@ -18,7 +18,7 @@ from ess.livedata.config import (
     instrument_registry,
     name_streams,
 )
-from ess.livedata.config.device_contract import COUNTS_TOTAL_DEVICE
+from ess.livedata.config.device_contract import DETECTOR_VIEW_DEVICES
 from ess.livedata.config.workflow_spec import (
     MONITORS,
     AuxInput,
@@ -270,8 +270,8 @@ xy_projection_handle = instrument.register_detector_view(
     title='Detector XY Projection',
     description='Projection of a detector bank onto an XY-plane.',
     source_names=detector_names,
-    # The projection, not the tube view, carries each bank's NICOS counts device.
-    device_outputs=COUNTS_TOTAL_DEVICE,
+    # The projection, not the tube view, carries each bank's NICOS devices.
+    device_outputs=DETECTOR_VIEW_DEVICES,
 )
 
 # Register tube view for all detector banks
