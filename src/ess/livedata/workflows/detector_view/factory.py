@@ -285,12 +285,17 @@ def bind_roi_requests(workflow_factory: WorkflowFactory) -> None:
     delivers them to ``set_context`` under the request key
     :func:`make_workflow` wired the ROI providers by.
 
-    The bindings do not gate (ADR 0002): the providers read a missing request
-    as "no ROI selected", so a job runs without one and picks up whatever
-    arrives. The stream is nonetheless latched like any other context input,
-    which together with the job-free name lets a selection be published
-    before its job exists -- ``JobManager.peek_pending_streams`` hands the
-    latched value to the job as it activates -- and survive a restart of it.
+    Each binding declares the empty request of its geometry as its default
+    (ADR 0002), because "nothing published" and "no ROI selected" are the same
+    state. The gate therefore opens on the first tick and the job runs, rather
+    than waiting for a selection that most jobs never receive. The stream is
+    latched like any other context input, which together with the job-free name
+    lets a selection be published before its job exists -- the latched value
+    beats the default when the gate opens -- and survive a restart of it.
+
+    The default is declared here and not in the base pipeline because
+    ``StreamProcessor`` overwrites every context key when it takes the pipeline
+    over; a value set on the pipeline for one would not survive.
 
     Two concurrent jobs of one view would therefore read one selection. The
     backend does not rule that out -- ``JobManager`` keys jobs by ``JobId``
@@ -313,5 +318,5 @@ def bind_roi_requests(workflow_factory: WorkflowFactory) -> None:
                     ),
                     workflow_key=_ROI_REQUEST_KEYS[geometry.geometry_type],
                     dependent_sources={source_name},
-                    gating=False,
+                    default=geometry.roi_class.to_concatenated_data_array({}),
                 )

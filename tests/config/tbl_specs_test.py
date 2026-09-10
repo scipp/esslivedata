@@ -20,6 +20,7 @@ from ess.livedata.config.instruments.tbl.views import (
     get_multiblade_spectrum,
     get_multiblade_view,
 )
+from ess.livedata.config.models import PolygonROI, RectangleROI
 from ess.livedata.config.workflow_spec import WorkflowId
 from ess.livedata.core.timestamp import Timestamp
 from ess.livedata.workflows.detector_view.data_source import DetectorNumberSource
@@ -42,6 +43,12 @@ HE3_SIZES = {'dim_0': 4, 'dim_1': 100}
 ROI_CONTEXT_KEYS = {
     'roi_rectangle': ROIRectangleRequest,
     'roi_polygon': ROIPolygonRequest,
+}
+
+# The values those bindings declare as their defaults.
+ROI_CONTEXT_DEFAULTS = {
+    'roi_rectangle': RectangleROI.to_concatenated_data_array({}),
+    'roi_polygon': PolygonROI.to_concatenated_data_array({}),
 }
 
 
@@ -104,9 +111,12 @@ def _run_view(
     workflow.build(context_keys=ROI_CONTEXT_KEYS if roi_support else None)
     workflow.accumulate(
         {
+            # Stands in for the context gate, which delivers the ROI bindings'
+            # declared defaults before a job first runs.
+            **(ROI_CONTEXT_DEFAULTS if roi_support else {}),
             'detector': RawDetector[SampleRun](
                 _make_events(detector_number, n_per_pixel)
-            )
+            ),
         },
         start_time=Timestamp.from_ns(1000),
         end_time=Timestamp.from_ns(2000),

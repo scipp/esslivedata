@@ -36,9 +36,13 @@ class FakeJobFactory(JobFactory):
         self,
         reset_on_run_transition: dict[WorkflowId, bool] | None = None,
         supports_reset: dict[WorkflowId, bool] | None = None,
+        context_defaults: dict[str, object] | None = None,
     ):
         self.created_jobs = []
         self.processors: dict[JobId, FakeProcessor] = {}
+        # Stands in for the ContextBinding.default records the real factory
+        # resolves per job; keyed by stream name, applied to every job created.
+        self._context_defaults = context_defaults or {}
         # Faithful analog of the real factory reading reset_on_run_transition and
         # supports_reset from the workflow spec: tests configure them per
         # workflow, defaulting to True.
@@ -70,6 +74,11 @@ class FakeJobFactory(JobFactory):
             source_names=[job_id.source_name],
             input_streams=set(aux.values()),
             gating_streams=set(aux.values()),
+            context_defaults={
+                name: value
+                for name, value in self._context_defaults.items()
+                if name in set(aux.values())
+            },
             reset_on_run_transition=self._reset_on_run_transition.get(
                 config.identifier, True
             ),
@@ -1812,9 +1821,13 @@ class TestJobFactoryContextBinding:
         assert job.missing_context({'temp'}) == set()
         assert 'temp' in job.input_stream_names
 
-    def test_non_gating_spec_binding_is_routed_but_does_not_gate(self) -> None:
-        """A ``gating=False`` binding is subscribed and delivered like any other
-        context input, but the job runs without it (ADR 0002)."""
+    def test_binding_with_a_default_gates_and_carries_its_default(self) -> None:
+        """A default satisfies the gate rather than removing it (ADR 0002).
+
+        The binding is subscribed and delivered like any other context input;
+        what the default changes is that the JobManager can open the gate
+        without the producer having published.
+        """
         instrument = _build_instrument_with_streams()
         handle = instrument.register_spec(
             name='w',
@@ -1826,7 +1839,7 @@ class TestJobFactoryContextBinding:
         )
         handle.add_context_binding(stream_name='temp', workflow_key=_CtxKeyA)
         handle.add_context_binding(
-            stream_name='roi_rectangle', workflow_key=_CtxKeyB, gating=False
+            stream_name='roi_rectangle', workflow_key=_CtxKeyB, default='empty'
         )
 
         captured: dict[str, FakeProcessor] = {}
@@ -1848,8 +1861,8 @@ class TestJobFactoryContextBinding:
             'roi_rectangle': _CtxKeyB,
         }
         assert {'temp', 'roi_rectangle'} <= job.input_stream_names
-        assert job.gating_streams == {'temp'}
-        assert job.missing_context(set()) == {'temp'}
+        assert job.gating_streams == {'temp', 'roi_rectangle'}
+        assert job.context_defaults == {'roi_rectangle': 'empty'}
 
     def test_skip_instrument_contexts_excludes_instrument_scope_bindings(self) -> None:
         """A spec with ``skip_instrument_contexts`` ignores instrument-scope inputs.
@@ -2007,20 +2020,27 @@ class TestJobFactoryDeclaredContextStreams:
         assert job.missing_context(set()) == {'lut', 'temp'}
         assert proc.context_keys == {'lut': _CtxKeyA, 'temp': _CtxKeyB}
 
-    def test_non_gating_binding_is_routed_but_left_out_of_the_gate(self) -> None:
-        """A requested stream gates; a non-gating binding alongside it does not."""
+    def test_requested_stream_has_no_default_and_gates_alongside_one_that_does(
+        self,
+    ) -> None:
+        """An offered stream the graph asks for must be waited for.
+
+        Only a binding can declare a default, so a requested stream always
+        gates for real, whatever its neighbours declare.
+        """
         instrument = _build_instrument_with_streams()
         instrument.offer_context_stream(workflow_key=_CtxKeyA, stream_name='lut')
         proc = FakeProcessor()
         proc.requests_context_streams = {_CtxKeyA}
         handle = self._register(instrument, proc)
         handle.add_context_binding(
-            stream_name='roi', workflow_key=_CtxKeyB, gating=False
+            stream_name='roi', workflow_key=_CtxKeyB, default='empty'
         )
 
         job = self._create(instrument, handle)
 
-        assert job.missing_context(set()) == {'lut'}
+        assert job.missing_context(set()) == {'lut', 'roi'}
+        assert job.context_defaults == {'roi': 'empty'}
         assert {'lut', 'roi'} <= job.input_stream_names
         assert proc.context_keys == {'lut': _CtxKeyA, 'roi': _CtxKeyB}
 
@@ -2303,6 +2323,93 @@ class TestPeekPendingStreams:
         assert len(manager.active_jobs) == 1
         # Active job's aux is intentionally absent from the needed-streams set
         assert "temperature" not in manager.peek_pending_streams(start_time=300)
+
+
+class TestContextStreamGateDefaults:
+    """A gating stream may declare a value to open its gate with (ADR 0002).
+
+    The default is for context whose absence is a representable state -- the
+    ROI request, where "nothing published" and "no ROI selected" are the same
+    thing. It satisfies the gate instead of removing it, so there is one path
+    by which a context value reaches ``set_context``, and a job cannot start
+    with a key unfed either way.
+    """
+
+    def _config(self, source: str, aux_stream: str) -> WorkflowConfig:
+        return _make_config(
+            source, name=f"wf_{source}", aux_source_names={"ctx": aux_stream}
+        )
+
+    def _primary(self, value: float, at: int) -> WorkflowData:
+        return WorkflowData(
+            start_time=Timestamp.from_ns(at),
+            end_time=Timestamp.from_ns(at + 100),
+            data={StreamId(name="src"): sc.scalar(value)},
+        )
+
+    def test_default_opens_the_gate_without_a_producer(self):
+        factory = FakeJobFactory(context_defaults={"ctx_stream": sc.scalar(-1.0)})
+        manager = JobManager(factory, context_reader=no_cached_context)
+        job_id = manager.schedule_job(self._config("src", "ctx_stream"))
+
+        manager.push_data(self._primary(1.0, at=100))
+
+        status = manager.get_job_status(job_id)
+        assert status.state == JobState.active
+        assert status.warning_message is None
+
+    def test_default_reaches_the_workflow_like_any_context_value(self):
+        factory = FakeJobFactory(context_defaults={"ctx_stream": sc.scalar(-1.0)})
+        manager = JobManager(factory, context_reader=no_cached_context)
+        job_id = manager.schedule_job(self._config("src", "ctx_stream"))
+
+        manager.push_data(self._primary(1.0, at=100))
+
+        (call,) = factory.processors[job_id].accumulate_calls
+        assert call["ctx_stream"] == sc.scalar(-1.0)
+
+    def test_a_published_value_wins_over_the_default(self):
+        factory = FakeJobFactory(context_defaults={"ctx_stream": sc.scalar(-1.0)})
+        cache = FakeContextCache()
+        cache.values["ctx_stream"] = sc.scalar(99.0)
+        manager = JobManager(factory, context_reader=cache)
+        job_id = manager.schedule_job(self._config("src", "ctx_stream"))
+
+        manager.push_data(self._primary(1.0, at=100))
+
+        (call,) = factory.processors[job_id].accumulate_calls
+        assert call["ctx_stream"] == sc.scalar(99.0)
+
+    def test_default_is_delivered_once_not_every_tick(self):
+        """Re-presenting it would re-fire ``set_context`` and force a recompute.
+
+        The gate delivers on activation only, which is what makes a declared
+        default as cheap as a cached one.
+        """
+        factory = FakeJobFactory(context_defaults={"ctx_stream": sc.scalar(-1.0)})
+        manager = JobManager(factory, context_reader=no_cached_context)
+        job_id = manager.schedule_job(self._config("src", "ctx_stream"))
+
+        manager.push_data(self._primary(1.0, at=100))
+        manager.push_data(self._primary(2.0, at=200))
+        manager.push_data(self._primary(3.0, at=300))
+
+        calls = factory.processors[job_id].accumulate_calls
+        assert len(calls) == 3
+        assert [("ctx_stream" in call) for call in calls] == [True, False, False]
+
+    def test_a_stream_without_a_default_still_gates(self):
+        """Defaults are per stream: declaring one must not open another's gate."""
+        factory = FakeJobFactory(context_defaults={"other": sc.scalar(-1.0)})
+        manager = JobManager(factory, context_reader=no_cached_context)
+        job_id = manager.schedule_job(self._config("src", "ctx_stream"))
+
+        manager.push_data(self._primary(1.0, at=100))
+
+        status = manager.get_job_status(job_id)
+        assert status.state == JobState.pending_context
+        assert "ctx_stream" in status.warning_message
+        assert factory.processors[job_id].accumulate_calls == []
 
 
 class TestContextStreamGate:

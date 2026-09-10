@@ -271,6 +271,7 @@ class Job:
         source_names: list[str],
         input_streams: set[str],
         gating_streams: set[str],
+        context_defaults: dict[str, Any] | None = None,
         reset_on_run_transition: bool = True,
         supports_reset: bool = True,
     ) -> None:
@@ -299,6 +300,13 @@ class Job:
             Subset of ``input_streams`` whose value must be available before the
             workflow runs. The :class:`JobManager` gates the job on these per
             ADR 0002.
+        context_defaults:
+            ``{stream name: value}`` for the gating streams whose absence is a
+            representable state, from
+            :attr:`~ess.livedata.config.stream.ContextBinding.default`. The
+            :class:`JobManager` satisfies the gate with these when the context
+            cache has nothing, so the job starts on the first tick instead of
+            waiting for a producer that may never publish.
         reset_on_run_transition:
             Whether this job should be reset when a run transition occurs.
         supports_reset:
@@ -315,6 +323,7 @@ class Job:
         self._supports_reset = supports_reset
         self._input_streams: set[str] = input_streams
         self._gating_streams: set[str] = gating_streams
+        self._context_defaults: dict[str, Any] = context_defaults or {}
 
     @property
     def job_id(self) -> JobId:
@@ -349,6 +358,15 @@ class Job:
         :doc:`/developer/adr/0002-context-stream-gating-at-jobmanager`.
         """
         return self._gating_streams
+
+    @property
+    def context_defaults(self) -> dict[str, Any]:
+        """Cold-start values for gating streams whose absence is representable.
+
+        See :attr:`~ess.livedata.config.stream.ContextBinding.default` and
+        :doc:`/developer/adr/0002-context-stream-gating-at-jobmanager`.
+        """
+        return self._context_defaults
 
     def missing_context(self, available: set[str]) -> set[str]:
         """

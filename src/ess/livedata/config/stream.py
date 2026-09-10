@@ -103,6 +103,20 @@ class Device(Stream):
         return tuple(s for s in (self.value, self.target, self.idle) if s is not None)
 
 
+class _NoDefault:
+    """Type of :data:`NO_DEFAULT`."""
+
+    def __repr__(self) -> str:
+        return 'NO_DEFAULT'
+
+
+NO_DEFAULT = _NoDefault()
+"""A :class:`ContextBinding` with no default: its job waits for the stream.
+
+Distinct from ``None``, which is a value a binding may legitimately declare.
+"""
+
+
 @dataclass(frozen=True, slots=True, kw_only=True)
 class ContextBinding:
     """Declaration of one context-stream input to a workflow.
@@ -135,8 +149,8 @@ class ContextBinding:
     motion) and spec scope
     (:meth:`ess.livedata.workflows.workflow_factory.SpecHandle.add_context_binding`,
     for context that is a property of one workflow). Both feed ``set_context``
-    and, unless :attr:`gating` is off, the gate; the wire name is always the
-    declared :attr:`stream_name` and there is no cold-start seed.
+    and the gate; the wire name is always the declared :attr:`stream_name`,
+    and :attr:`default` is the only cold-start seed.
 
     Bindings live in their own list rather than as a field on :class:`Stream`
     because :attr:`dependent_sources` and :attr:`workflow_key` are properties
@@ -156,15 +170,22 @@ class ContextBinding:
     """
     workflow_key: Any
     dependent_sources: frozenset[str]
-    gating: bool = True
-    """Whether a job waits for a first value before it runs (ADR 0002).
+    default: Any = NO_DEFAULT
+    """Value standing in for the stream until it first delivers (ADR 0002).
 
-    The gate exists for context whose absence is unrepresentable (motion,
-    geometry). A binding for context with a safe default -- the ROI request,
-    where the providers read "no request" as "no ROI selected" -- declares
-    ``gating=False``: the stream is routed and latched like any other context
-    input, but the job runs without it and picks the value up whenever it
-    arrives.
+    Every binding gates: the :class:`JobManager` holds the job until each of
+    its context streams has a value, because running without one would either
+    crash or attribute results to an uninitialised context. A default is what
+    a stream whose absence *is* representable declares instead of waiting --
+    the ROI request, where "nothing published" and "no ROI selected" are the
+    same state. The gate then opens on the first tick, and the default reaches
+    ``set_context`` by the same path a cached value would, so nothing
+    downstream can tell them apart.
+
+    The default cannot live in the base pipeline: ``StreamProcessor``
+    overwrites every context key when it takes the pipeline over. Leave it
+    :data:`NO_DEFAULT` for context that must genuinely be waited for (motion,
+    geometry).
     """
 
 

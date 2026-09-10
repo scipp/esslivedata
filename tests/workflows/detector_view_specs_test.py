@@ -9,6 +9,7 @@ import pytest
 from ess.livedata.config.instrument import Instrument, instrument_registry
 from ess.livedata.config.instruments import get_config
 from ess.livedata.config.roi_names import roi_stream_name
+from ess.livedata.config.stream import NO_DEFAULT
 from ess.livedata.config.workflow_spec import DETECTORS, WorkflowId
 from ess.livedata.parameter_models import (
     TimeUnit,
@@ -93,10 +94,16 @@ class TestBindROIRequests:
         }
 
     @pytest.mark.parametrize('source', ['detector1', 'detector2'])
-    def test_roi_streams_do_not_gate(
+    def test_roi_streams_gate_but_carry_an_empty_request_as_their_default(
         self, instrument: Instrument, workflow_id: WorkflowId, source: str
     ) -> None:
-        assert instrument.bound_gating_streams(workflow_id, source) == set()
+        """The gate opens on the first tick, without a producer (ADR 0002)."""
+        gating = instrument.bound_gating_streams(workflow_id, source)
+        defaults = instrument.bound_context_defaults(workflow_id, source)
+
+        assert gating == set(defaults)
+        assert gating
+        assert all(len(request) == 0 for request in defaults.values())
 
     def test_views_sharing_a_source_get_distinct_streams(self) -> None:
         views = [WorkflowId(instrument='d', name=n, version=1) for n in ('xy', 'cyl')]
@@ -150,7 +157,7 @@ class TestLoadFactoriesROIBindings:
         reg = dummy.workflow_factory.registration(workflow_id)
         bindings = {(b.stream_name, b.workflow_key) for b in reg.context_bindings}
         assert bindings == _expected_roi_bindings(reg)
-        assert not any(b.gating for b in reg.context_bindings)
+        assert all(b.default is not NO_DEFAULT for b in reg.context_bindings)
 
     def test_view_declaring_roi_free_outputs_has_no_bindings(
         self, dummy: Instrument
@@ -165,7 +172,7 @@ class TestLoadFactoriesROIBindings:
         reg = tbl.workflow_factory.registration(workflow_id)
         bindings = {(b.stream_name, b.workflow_key) for b in reg.context_bindings}
         assert bindings == _expected_roi_bindings(reg)
-        assert not any(b.gating for b in reg.context_bindings)
+        assert all(b.default is not NO_DEFAULT for b in reg.context_bindings)
 
     def test_logical_view_without_roi_support_has_no_bindings(
         self, tbl: Instrument

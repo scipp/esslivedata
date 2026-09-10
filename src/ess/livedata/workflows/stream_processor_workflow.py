@@ -63,9 +63,12 @@ class StreamProcessorWorkflow(Workflow):
             values are **stateful**: a value set in one ``accumulate()`` call
             persists into all subsequent calls until explicitly overwritten.
             If data for a context key is absent from a given batch, the key
-            retains its previous value. If ``set_context`` was never called
-            for a key and the underlying sciline pipeline has no default for
-            it, ``finalize()`` will raise an ``UnsatisfiedGraphError``.
+            retains its previous value. Every key must be set before the
+            targets are computed: ``StreamProcessor`` overwrites each context
+            key when it takes the pipeline over, so a value the base pipeline
+            supplies for one does not survive. The ``JobManager``'s context
+            gate is what guarantees this, delivering either a cached value or
+            the binding's declared default before the job runs (ADR 0002).
             A factory passes only its own internal context here (e.g. ROI);
             instrument- and spec-scope bindings resolved by the routing layer
             are merged in afterwards via :meth:`add_context_keys`, which is
@@ -249,10 +252,10 @@ class StreamProcessorWorkflow(Workflow):
         # Context data (e.g., positions from f144 streams) is injected via
         # set_context, which updates the sciline pipeline parameters. Only keys
         # present in this batch are updated; absent keys retain the value from
-        # the most recent set_context call, or the pipeline's init-time value.
-        # If a key has no init-time value and has never been set, finalize()
-        # will fail. The routing layer (JobFactory.create) delivers a stream
-        # only to the jobs whose bindings subscribe to it.
+        # the most recent set_context call. The context gate (ADR 0002) is what
+        # ensures every key has been set by the time the job first runs. The
+        # routing layer (JobFactory.create) delivers a stream only to the jobs
+        # whose bindings subscribe to it.
         #
         # ValueLog subclasses are typed wrappers around an NXlog DataArray;
         # the raw payload (a DataArray) is wrapped as key(values=raw) so

@@ -25,6 +25,7 @@ from .detector_downsampling import (
     resolve_downsampling,
 )
 from .stream import (
+    NO_DEFAULT,
     AxisRange,
     ChainPatchBinding,
     ContextBinding,
@@ -472,15 +473,36 @@ class Instrument:
     ) -> set[str]:
         """The context streams a ``(spec, source)`` job waits for (ADR 0002).
 
-        The stream names of the matching bindings declared with ``gating=True``,
-        see :attr:`ContextBinding.gating`. This is the binding-declared half of
-        the gate; the streams a job's built graph asks for out of those merely
-        *offered* are the other half, and are added by ``JobFactory`` (ADR 0010).
+        The stream names of every matching binding. This is the
+        binding-declared half of the gate; the streams a job's built graph asks
+        for out of those merely *offered* are the other half, and are added by
+        ``JobFactory`` (ADR 0010).
+
+        A binding with a :attr:`ContextBinding.default` gates too, and opens on
+        the first tick: :meth:`bound_context_defaults` supplies the value the
+        ``JobManager`` satisfies the gate with when the cache has none.
         """
         return {
             binding.stream_name
             for binding in self._matching_bindings(workflow_id, source_name)
-            if binding.gating
+        }
+
+    def bound_context_defaults(
+        self, workflow_id: WorkflowId, source_name: str
+    ) -> dict[str, Any]:
+        """Cold-start values for the bound context streams that declare one.
+
+        ``{stream_name: default}`` over the matching bindings whose
+        :attr:`ContextBinding.default` is set, i.e. those whose absence is a
+        representable state rather than something to wait for. The
+        ``JobManager`` opens the gate on these without the producer having
+        published (ADR 0002), delivering the default by the same path a cached
+        value takes.
+        """
+        return {
+            binding.stream_name: binding.default
+            for binding in self._matching_bindings(workflow_id, source_name)
+            if binding.default is not NO_DEFAULT
         }
 
     @property
