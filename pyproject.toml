@@ -41,7 +41,7 @@ dependencies = [
   "numba",  # Compiled wavelength-LUT interpolation, see core/numba_threading.py
   "pydantic>=2",
   "scipp>=25.02.0",  # Improved performance of scipp.group
-  "scippneutron>=25.11.1",  # For DREAM unit conversion fixes
+  "scippneutron>=26.9.1",  # Chopper calls no longer mint a scipp dim label each time
   "pooch",
   "structlog>=24.0.0",
 ]
@@ -89,7 +89,11 @@ all-instruments = [
     "esslivedata[beer,bifrost,dream,dummy,estia,loki,magic,nmx,odin,tbl]",
 ]
 dashboard = [
-  "bokeh",
+  # 3.9 is where a runtime change to ``min_border_*`` started triggering a
+  # relayout (bokeh#15011). The fixed-aspect letterbox has no other lever, so
+  # below that floor it computes the right padding and the plot never moves
+  # (see ``dashboard/frame_aspect.py``).
+  "bokeh>=3.9",
   "holoviews>=1.23.0",
   "panel>=1.9.3",
   "param",

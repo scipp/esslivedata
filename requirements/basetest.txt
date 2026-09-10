@@ -284,6 +284,7 @@ pyyaml==6.0.3
     #   bokeh
     #   dask
     #   orsopy
+    #   scippneutron
 requests==2.34.2
     # via
     #   panel
@@ -304,7 +305,7 @@ scipp==26.3.1
     #   scippneutron
     #   scippnexus
     #   tof
-scippneutron==26.7.0
+scippneutron==26.9.1
     # via
     #   -r basetest.in
     #   essreduce
