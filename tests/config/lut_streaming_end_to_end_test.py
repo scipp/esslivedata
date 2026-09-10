@@ -133,13 +133,19 @@ def _events_across_one_frame(count: int = 200) -> sc.DataArray:
     )
 
 
-def _run_lut_job(instrument: Instrument):
-    """Run the lookup-table job once and return its result."""
+def _run_lut_job(instrument: Instrument, speeds: dict[str, float] | None = None):
+    """Run the lookup-table job once and return its result.
+
+    ``speeds`` overrides individual chopper rotation-speed setpoints; the rest
+    run at the source frequency.
+    """
+    speeds = speeds or {}
     job = _create_job(instrument, 'wavelength_lut', CHOPPER_CASCADE_SOURCE)
     aux = {}
     for chopper in instrument.choppers:
         aux[speed_setpoint_stream(chopper)] = _nxlog(
-            14.0, instrument.streams[speed_setpoint_stream(chopper)].units
+            speeds.get(chopper, 14.0),
+            instrument.streams[speed_setpoint_stream(chopper)].units,
         )
         aux[delay_setpoint_stream(chopper)] = _nxlog(
             _TRANSMITTING_DELAYS_NS.get(chopper, 0.0),
@@ -157,15 +163,15 @@ def _run_lut_job(instrument: Instrument):
     return result
 
 
-@pytest.fixture(scope='module')
-def ingested(dream: Instrument) -> dict[str, sc.DataArray]:
-    """The group tables as they arrive at a consuming service."""
-    result = _run_lut_job(dream)
-    messages = ContextOutputExtractor(registry=dream.workflow_factory).extract([result])
-    serializer = make_default_sink_serializer(instrument='dream')
+def _ingest(instrument: Instrument, result) -> dict[str, sc.DataArray]:
+    """Put a lookup-table result on the wire and take it off again."""
+    messages = ContextOutputExtractor(registry=instrument.workflow_factory).extract(
+        [result]
+    )
+    serializer = make_default_sink_serializer(instrument=instrument.name)
     adapter = (
         RoutingAdapterBuilder(
-            stream_mapping=get_stream_mapping(instrument='dream', dev=True)
+            stream_mapping=get_stream_mapping(instrument=instrument.name, dev=True)
         )
         .with_livedata_context_route()
         .build()
@@ -179,6 +185,12 @@ def ingested(dream: Instrument) -> dict[str, sc.DataArray]:
         assert received.stream.kind == StreamKind.LIVEDATA_CONTEXT
         out[received.stream.name] = received.value
     return out
+
+
+@pytest.fixture(scope='module')
+def ingested(dream: Instrument) -> dict[str, sc.DataArray]:
+    """The group tables as they arrive at a consuming service."""
+    return _ingest(dream, _run_lut_job(dream))
 
 
 def test_publishes_one_table_per_group(ingested: dict[str, sc.DataArray]) -> None:
@@ -313,16 +325,21 @@ def test_wavelength_monitor_job_consumes_the_streamed_table(
     assert result.data['cumulative'].sum().value > 0
 
 
-def test_consumer_publishes_nothing_when_no_wavelength_is_definable(
-    dream: Instrument, ingested: dict[str, sc.DataArray]
-) -> None:
-    """A table the cascade transmits nothing through must stop the consumer.
+def test_chopper_out_of_phase_stops_the_consumer(dream: Instrument) -> None:
+    """DREAM's PROD failure, end to end (#1309).
 
-    Reducing with it would drop every event and leave the job republishing its
+    An overlap chopper at 5 Hz cannot be phase-locked to a 14 Hz source. The
+    lookup-table job publishes a table that lets nothing through rather than
+    raising, and the consumer refuses that table rather than reducing with it.
+    Both halves matter: raising would publish nothing and leave the consumer on
+    the table it was last given, and reducing would leave it republishing its
     unchanged accumulator with a fresh timestamp, so a plot frozen since the
-    choppers went out of phase would still read as current. Erroring instead
-    publishes no result at all, which is what lets the freshness indicator age.
+    choppers moved would still read as current. Publishing nothing is what lets
+    the freshness indicator age.
     """
+    result = _run_lut_job(dream, speeds={'overlap_chopper': 5.0})
+    ingested = _ingest(dream, result)
+
     params_model = _params_model(dream, 'monitor_histogram')
     job = _create_job(
         dream,
@@ -330,14 +347,12 @@ def test_consumer_publishes_nothing_when_no_wavelength_is_definable(
         MONITOR,
         params_model(coordinate_mode=CoordinateModeSettings(mode='wavelength')),
     )
-    blocked = ingested[MONITOR_STREAM].copy()
-    blocked.values[:] = float('nan')
 
     data = JobData(
         start_time=Timestamp.from_ns(0),
         end_time=Timestamp.from_ns(1),
         primary_data={MONITOR: _events_across_one_frame()},
-        aux_data={MONITOR_STREAM: blocked},
+        aux_data={MONITOR_STREAM: ingested[MONITOR_STREAM]},
     )
 
     reply, result = job.process(data, finalize=True)
