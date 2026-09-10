@@ -1706,11 +1706,10 @@ def _build_instrument_with_streams():
 class TestJobFactoryContextBinding:
     """JobFactory.create merges instrument- and spec-scope ContextBinding records.
 
-    Both scopes feed the factory's ``context_keys`` and, unless declared with
-    ``gating=False``, the job's ``gating_streams``. The wire name equals the
-    declared ``stream_name`` (no per-job suffixing) and there is no cold-start
-    seed — gated context streams have no safe default, so the gate stays closed
-    until the producer publishes.
+    Both scopes feed the factory's ``context_keys`` and the job's
+    ``gating_streams``. The wire name equals the declared ``stream_name`` (no
+    per-job suffixing), and a binding's ``default`` is the only cold-start
+    seed: without one the gate stays closed until the producer publishes.
     """
 
     def test_instrument_context_binding_populates_context_keys(self) -> None:

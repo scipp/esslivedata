@@ -145,9 +145,11 @@ class StreamProcessorWorkflow(Workflow):
         Empty before :meth:`build`. The routing layer reads this back off the
         workflow instead of predicting it: whether a job consumes the streamed
         lookup table follows from the graph its params produce, and only the
-        graph knows (see :meth:`build`). Factory-supplied context (ROI requests)
-        is deliberately not included -- those are auxiliary inputs a job may
-        never receive, so gating on them would deadlock.
+        graph knows (see :meth:`build`). Only *offered* streams appear here.
+        Factory-supplied context (ROI requests) reaches the gate as a
+        :class:`~ess.livedata.config.stream.ContextBinding` instead, carrying
+        the default that keeps a job whose producer may never publish from
+        deadlocking on it.
         """
         return frozenset(self._requested_context_streams)
 

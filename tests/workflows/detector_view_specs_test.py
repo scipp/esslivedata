@@ -69,7 +69,7 @@ ROI_KEYS = {'roi_rectangle': ROIRectangleRequest, 'roi_polygon': ROIPolygonReque
 
 
 class TestBindROIRequests:
-    """ROI request streams are spec-scope, non-gating context bindings."""
+    """ROI request streams are spec-scope context bindings with a default."""
 
     @pytest.fixture
     def instrument(self) -> Instrument:
