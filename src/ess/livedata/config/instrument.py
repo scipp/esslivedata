@@ -152,12 +152,13 @@ class Instrument:
     #: Context streams a workflow can request by asking for the key, filled in
     #: by :meth:`offer_context_stream`.
     _offered_context_streams: dict[Any, str] = field(default_factory=dict, init=False)
-    #: Stability tolerance for chopper delay readbacks. The readback stream's
-    #: unit is enforced to ``ns`` by ``declare_chopper_setpoint_streams``.
-    #: Shared by ``ChopperSynthesizer`` for noise rejection (rolling-window std
-    #: must be below this) and change detection (drift since the last lock).
-    #: Default 1 us is tight; loosen per-instrument once real readback noise is
-    #: measured.
+    #: Noise scale of the chopper delay readback. The readback stream's unit is
+    #: enforced to ``ns`` by ``declare_chopper_setpoint_streams``.
+    #: ``ChopperSynthesizer`` locks a plateau once the rolling-window standard
+    #: deviation drops below this, and counts a move as a new setpoint only
+    #: several times further out, so the smallest resolvable delay change is a
+    #: few microseconds at the default. Default 1 us is tight; loosen
+    #: per-instrument once real readback noise is measured.
     chopper_delay_atol_ns: float = 1000.0
     workflow_factory: WorkflowFactory = field(default_factory=WorkflowFactory)
     streams: dict[str, Stream] = field(default_factory=dict)
