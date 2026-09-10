@@ -161,10 +161,16 @@ class ContextBinding:
 
     The gate exists for context whose absence is unrepresentable (motion,
     geometry). A binding for context with a safe default -- the ROI request,
-    where the providers read "no request" as "no ROI selected" -- declares
+    where an empty request means "no ROI selected" -- declares
     ``gating=False``: the stream is routed and latched like any other context
     input, but the job runs without it and picks the value up whenever it
     arrives.
+
+    Declaring ``gating=False`` obliges the workflow to seed that default
+    through the ``context_defaults`` argument of
+    :class:`~ess.livedata.workflows.stream_processor_workflow.StreamProcessorWorkflow`.
+    The base pipeline cannot supply it: ``StreamProcessor`` overwrites every
+    context key when it takes the pipeline over.
     """
 
 

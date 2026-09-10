@@ -45,22 +45,26 @@ def extract_roi_spectra(
     histogram:
         3D histogram (y, x, spectral).
     rectangle_request:
-        Rectangle ROI request as concatenated DataArray, or None.
+        Rectangle ROI request as concatenated DataArray. Defaults to the empty
+        request, the "no ROI selected" value a job starts with.
     polygon_request:
-        Polygon ROI request as concatenated DataArray, or None.
+        Polygon ROI request as concatenated DataArray. Defaults to the empty
+        request, the "no ROI selected" value a job starts with.
 
     Returns
     -------
     :
         ROI spectra with dims (roi, spectral).
     """
-    rect_req = (
-        ROIRectangleRequest(rectangle_request)
-        if rectangle_request is not None
-        else None
+    rect_req = ROIRectangleRequest(
+        RectangleROI.to_concatenated_data_array({})
+        if rectangle_request is None
+        else rectangle_request
     )
-    poly_req = (
-        ROIPolygonRequest(polygon_request) if polygon_request is not None else None
+    poly_req = ROIPolygonRequest(
+        PolygonROI.to_concatenated_data_array({})
+        if polygon_request is None
+        else polygon_request
     )
 
     bounds = precompute_roi_rectangle_bounds(screen_metadata, rect_req)

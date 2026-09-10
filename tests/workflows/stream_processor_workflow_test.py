@@ -383,6 +383,75 @@ class TestDeferredContextInjection:
             )
 
 
+class TestContextDefaults:
+    """A context key can carry a value to use until its stream first delivers.
+
+    Non-gating context bindings (ADR 0002) let a job run before its context
+    stream has produced anything -- the ROI request is the case: a detector
+    view starts with no ROI selected and most jobs stay that way. The value
+    standing in for "nothing selected" is declared here rather than left to the
+    base pipeline, which ``StreamProcessor`` discards for every context key.
+    """
+
+    def _workflow(self, base_workflow, **kwargs):
+        workflow = StreamProcessorWorkflow(
+            base_workflow,
+            dynamic_keys={'streamed': Streamed},
+            context_keys={'context': Context},
+            target_keys={'output': Output},
+            accumulators=(ProcessedStreamed,),
+            **kwargs,
+        )
+        workflow.build()
+        return workflow
+
+    def _accumulate(self, workflow, data):
+        workflow.accumulate(
+            data,
+            start_time=Timestamp.from_ns(1000),
+            end_time=Timestamp.from_ns(2000),
+        )
+
+    def test_context_key_that_never_arrives_uses_its_default(
+        self, base_workflow_with_context
+    ):
+        workflow = self._workflow(
+            base_workflow_with_context, context_defaults={Context: Context(5)}
+        )
+
+        self._accumulate(workflow, {'streamed': Streamed(10)})
+
+        # 10 + (5 * 2), i.e. the default reached process_context.
+        assert workflow.finalize() == {'output': Output(20)}
+
+    def test_value_in_the_first_batch_wins_over_the_default(
+        self, base_workflow_with_context
+    ):
+        workflow = self._workflow(
+            base_workflow_with_context, context_defaults={Context: Context(5)}
+        )
+
+        self._accumulate(workflow, {'context': Context(7), 'streamed': Streamed(10)})
+
+        assert workflow.finalize() == {'output': Output(24)}
+
+    def test_default_does_not_come_back_once_a_value_has_arrived(
+        self, base_workflow_with_context
+    ):
+        workflow = self._workflow(
+            base_workflow_with_context, context_defaults={Context: Context(5)}
+        )
+
+        self._accumulate(workflow, {'streamed': Streamed(10)})
+        self._accumulate(workflow, {'context': Context(7)})
+        self._accumulate(workflow, {'streamed': Streamed(10)})
+
+        # Each chunk is processed against the context standing at the time, and
+        # both stay in the accumulator: 10 + (5 * 2) from the default, then
+        # 10 + (7 * 2) once the real value has arrived.
+        assert workflow.finalize() == {'output': Output(44)}
+
+
 # Types for window_outputs tests (need DataArray for assign_coords)
 InputData = NewType('InputData', sc.DataArray)
 CurrentOutput = NewType('CurrentOutput', sc.DataArray)

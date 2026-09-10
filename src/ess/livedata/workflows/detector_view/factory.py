@@ -233,6 +233,9 @@ class DetectorViewFactory:
                     'roi_polygon': ROIPolygonReadback,
                 }
             )
+            context_defaults = _empty_roi_requests()
+        else:
+            context_defaults = {}
 
         # Reset the cumulative histogram when the detector moves: summing across a
         # move mixes incompatible geometries (geometric views shift screen bins;
@@ -250,6 +253,7 @@ class DetectorViewFactory:
         return StreamProcessorWorkflow(
             workflow,
             dynamic_keys={source_name: NeXusData[NXdetector, SampleRun]},
+            context_defaults=context_defaults,
             target_keys=target_keys,
             window_outputs=(
                 DetectorViewOutputs if roi_support else DetectorViewOutputsBase
@@ -265,6 +269,25 @@ _ROI_REQUEST_KEYS = {
     'rectangle': ROIRectangleRequest,
     'polygon': ROIPolygonRequest,
 }
+
+
+def _empty_roi_requests() -> dict[type, sc.DataArray]:
+    """The "no ROI selected" value of every ROI request key.
+
+    Seeded into the context with the job's first batch, so that a job whose ROI
+    request stream has never delivered still computes: the bindings do not gate
+    (see :func:`bind_roi_requests`), so that is the state every detector-view
+    job starts in and most stay in. An empty request carries no coordinates to
+    take units from -- the readback providers get theirs from
+    ``ScreenMetadata`` -- so the geometry's own empty concatenation is the whole
+    value.
+    """
+    return {
+        _ROI_REQUEST_KEYS[geometry.geometry_type]: (
+            geometry.roi_class.to_concatenated_data_array({})
+        )
+        for geometry in get_roi_mapper().geometries
+    }
 
 
 def bind_roi_requests(workflow_factory: WorkflowFactory) -> None:

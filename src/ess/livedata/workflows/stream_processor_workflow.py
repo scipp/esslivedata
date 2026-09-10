@@ -38,6 +38,7 @@ class StreamProcessorWorkflow(Workflow):
         *,
         dynamic_keys: dict[str, sciline.typing.Key],
         context_keys: dict[str, sciline.typing.Key] | None = None,
+        context_defaults: Mapping[sciline.typing.Key, Any] | None = None,
         target_keys: dict[str, sciline.typing.Key],
         window_outputs: Iterable[str] = (),
         **kwargs: Any,
@@ -63,9 +64,10 @@ class StreamProcessorWorkflow(Workflow):
             values are **stateful**: a value set in one ``accumulate()`` call
             persists into all subsequent calls until explicitly overwritten.
             If data for a context key is absent from a given batch, the key
-            retains its previous value. If ``set_context`` was never called
-            for a key and the underlying sciline pipeline has no default for
-            it, ``finalize()`` will raise an ``UnsatisfiedGraphError``.
+            retains its previous value. Every key that may not arrive needs an
+            entry in ``context_defaults``: ``StreamProcessor`` overwrites each
+            context key when it takes the pipeline over, so a value the base
+            pipeline supplies for one does not survive.
             A factory passes only its own internal context here (e.g. ROI);
             instrument- and spec-scope bindings resolved by the routing layer
             are merged in afterwards via :meth:`add_context_keys`, which is
@@ -73,6 +75,22 @@ class StreamProcessorWorkflow(Workflow):
             until :meth:`build`. The keys must be finalized
             before the graph is built because ``StreamProcessor`` bakes them
             into the pruned/precomputed pipeline at construction.
+        context_defaults:
+            Values to seed the context with, keyed by sciline key rather than
+            stream name. A context binding that does not gate
+            (``gating=False``, see
+            :attr:`~ess.livedata.config.stream.ContextBinding.gating`) lets the
+            job run before its stream has ever delivered, so the key it fills
+            needs a value that means "nothing selected" from the first
+            ``finalize()`` on. Anything the first batch carries for the key
+            wins over the default, and later values overwrite it as usual.
+
+            Seeded with that first batch rather than at :meth:`build` time:
+            ``set_context`` recomputes everything downstream of the keys it
+            sets, which for a detector view reaches through the projection into
+            the *gating* context (a rotation log, say). At build time that has
+            not arrived yet -- the gate is what waits for it -- so seeding
+            eagerly would compute the very branch the gate exists to defer.
         target_keys:
             Mapping from output names to sciline keys for target outputs.
         window_outputs:
@@ -85,6 +103,9 @@ class StreamProcessorWorkflow(Workflow):
         self._base_workflow = base_workflow
         self._dynamic_keys = dict(dynamic_keys)
         self._context_keys = dict(context_keys) if context_keys else {}
+        self._pending_context_defaults = (
+            dict(context_defaults) if context_defaults else {}
+        )
         self._target_keys = target_keys
         self._window_outputs = set(window_outputs)
         self._kwargs = kwargs
@@ -249,10 +270,10 @@ class StreamProcessorWorkflow(Workflow):
         # Context data (e.g., positions from f144 streams) is injected via
         # set_context, which updates the sciline pipeline parameters. Only keys
         # present in this batch are updated; absent keys retain the value from
-        # the most recent set_context call, or the pipeline's init-time value.
-        # If a key has no init-time value and has never been set, finalize()
-        # will fail. The routing layer (JobFactory.create) delivers a stream
-        # only to the jobs whose bindings subscribe to it.
+        # the most recent set_context call, or their context_defaults seed. A
+        # key with neither is unusable, whatever the base pipeline said. The
+        # routing layer (JobFactory.create) delivers a stream only to the jobs
+        # whose bindings subscribe to it.
         #
         # ValueLog subclasses are typed wrappers around an NXlog DataArray;
         # the raw payload (a DataArray) is wrapped as key(values=raw) so
@@ -271,6 +292,11 @@ class StreamProcessorWorkflow(Workflow):
             for key, sciline_key in self._dynamic_keys.items()
             if key in data
         }
+        # Defaults go under the batch, so a key this batch carries never sees
+        # its default at all. They are dropped once seeded; from then on the
+        # StreamProcessor holds the value.
+        context = {**self._pending_context_defaults, **context}
+        self._pending_context_defaults = {}
         if context:
             self._processor.set_context(context)
         if dynamic:
