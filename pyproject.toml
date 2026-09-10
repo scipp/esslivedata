@@ -89,7 +89,11 @@ all-instruments = [
     "esslivedata[beer,bifrost,dream,dummy,estia,loki,magic,nmx,odin,tbl]",
 ]
 dashboard = [
-  "bokeh",
+  # 3.9 is where a runtime change to ``min_border_*`` started triggering a
+  # relayout (bokeh#15011). The fixed-aspect letterbox has no other lever, so
+  # below that floor it computes the right padding and the plot never moves
+  # (see ``dashboard/frame_aspect.py``).
+  "bokeh>=3.9",
   "holoviews>=1.23.0",
   "panel>=1.9.3",
   "param",
