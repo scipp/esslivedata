@@ -788,8 +788,11 @@ class Instrument:
             ``spectrum_view``.
         device_outputs:
             Outputs of this view exposed to NICOS as derived devices. Pass
-            :data:`~ess.livedata.config.device_contract.COUNTS_TOTAL_DEVICE` on
-            the one view per detector bank whose total is the bank's device.
+            :data:`~ess.livedata.config.device_contract.DETECTOR_VIEW_DEVICES`
+            (total plus image) on the one view per detector bank whose outputs
+            are the bank's devices; pass
+            :data:`~ess.livedata.config.device_contract.COUNTS_TOTAL_DEVICE`
+            alone for the total only.
 
         Returns
         -------

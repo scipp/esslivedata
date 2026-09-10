@@ -17,7 +17,7 @@ from ess.livedata.config import (
     instrument_registry,
     name_streams,
 )
-from ess.livedata.config.device_contract import COUNTS_TOTAL_DEVICE
+from ess.livedata.config.device_contract import DETECTOR_VIEW_DEVICES
 from ess.livedata.config.workflow_spec import (
     AuxInput,
     AuxSources,
@@ -198,9 +198,9 @@ projection_handle = instrument.register_detector_view(
     ),
     source_names=detector_names,
     params=DreamDetectorViewParams,
-    # The projection covers every bank, so it carries the NICOS counts devices;
-    # the wire and strip views cover subsets.
-    device_outputs=COUNTS_TOTAL_DEVICE,
+    # The projection covers every bank, so it carries the NICOS devices; the
+    # wire and strip views cover subsets.
+    device_outputs=DETECTOR_VIEW_DEVICES,
 )
 
 

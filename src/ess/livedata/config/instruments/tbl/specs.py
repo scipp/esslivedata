@@ -11,7 +11,7 @@ from ess.livedata.config import (
     instrument_registry,
     name_streams,
 )
-from ess.livedata.config.device_contract import COUNTS_TOTAL_DEVICE
+from ess.livedata.config.device_contract import DETECTOR_VIEW_DEVICES
 from ess.livedata.config.workflow_spec import DETECTORS
 from ess.livedata.workflows.detector_view_specs import (
     DetectorViewOutputsBase,
@@ -95,7 +95,7 @@ instrument.add_logical_view(
     source_names=['timepix3_detector'],
     transform=name_image_dims,
     roi_support=True,
-    device_outputs=COUNTS_TOTAL_DEVICE,
+    device_outputs=DETECTOR_VIEW_DEVICES,
 )
 
 instrument.add_logical_view(
@@ -112,7 +112,7 @@ instrument.add_logical_view(
         output_dims=['blade', 'wire'],
         extra_description='Summed across strips, yielding per-blade, per-wire spectra.',
     ),
-    device_outputs=COUNTS_TOTAL_DEVICE,
+    device_outputs=DETECTOR_VIEW_DEVICES,
 )
 
 instrument.add_logical_view(
@@ -127,7 +127,7 @@ instrument.add_logical_view(
         output_dims=['tube', 'pixel'],
         extra_description='Per-tube, per-pixel spectra, without spatial reduction.',
     ),
-    device_outputs=COUNTS_TOTAL_DEVICE,
+    device_outputs=DETECTOR_VIEW_DEVICES,
 )
 
 instrument.add_logical_view(
@@ -138,7 +138,7 @@ instrument.add_logical_view(
     transform=identity,
     reduction_dim='dim_0',
     roi_support=True,
-    device_outputs=COUNTS_TOTAL_DEVICE,
+    device_outputs=DETECTOR_VIEW_DEVICES,
 )
 
 orca_view_handle = instrument.register_spec(
@@ -151,5 +151,5 @@ orca_view_handle = instrument.register_spec(
     # AreaDetectorView renders images only; it neither reads ROI requests nor
     # publishes readbacks, so it must not declare the ROI outputs.
     outputs=DetectorViewOutputsBase,
-    device_outputs=COUNTS_TOTAL_DEVICE,
+    device_outputs=DETECTOR_VIEW_DEVICES,
 )

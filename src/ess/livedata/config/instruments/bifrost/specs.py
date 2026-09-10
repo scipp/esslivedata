@@ -23,7 +23,7 @@ from ess.livedata.config import (
     instrument_registry,
     name_streams,
 )
-from ess.livedata.config.device_contract import COUNTS_TOTAL_DEVICE
+from ess.livedata.config.device_contract import DETECTOR_VIEW_DEVICES
 from ess.livedata.config.workflow_spec import (
     CumulativeOutput,
     OutputView,
@@ -345,7 +345,7 @@ unified_detector_view_handle = instrument.add_logical_view(
         ),
         params_model=BifrostSpectrumParams,
     ),
-    device_outputs=COUNTS_TOTAL_DEVICE,
+    device_outputs=DETECTOR_VIEW_DEVICES,
 )
 
 detector_ratemeter_handle = instrument.register_spec(
