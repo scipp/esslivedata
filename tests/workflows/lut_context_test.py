@@ -51,6 +51,13 @@ def _block(*, start: float, rows: int, resolution: float = 0.1) -> LookupTableTy
     )
 
 
+def _nan_block(*, start: float, rows: int) -> LookupTableType:
+    """A block the cascade transmits nothing through."""
+    block = _block(start=start, rows=rows)
+    block.array.values[:] = float('nan')
+    return block
+
+
 @pytest.fixture
 def table() -> LookupTableType:
     return _block(start=10.0, rows=4)
@@ -153,6 +160,43 @@ class TestBlockSelection:
     ) -> None:
         with pytest.raises(ValueError, match='No block'):
             monitor_lookup_table(two_block_wire, _ltotal(40.0))
+
+
+class TestUnusableBlock:
+    """A block assigning no wavelength must stop the job, not be reduced with.
+
+    Reducing with an all-NaN table drops every event at histogramming, so the
+    job would go on publishing its unchanged accumulator stamped with a fresh
+    ``end_time`` -- the dashboard would present counts from before the choppers
+    changed as current data. Refusing here puts the job into an error state,
+    whose result is never published, so the freshness indicator ages and shows
+    the plot for what it is.
+    """
+
+    def test_all_nan_block_fails_loud(self) -> None:
+        wire = pack_blocks([_nan_block(start=10.0, rows=4)])
+
+        with pytest.raises(ValueError, match='no wavelength'):
+            detector_lookup_table(wire, _ltotal(10.15))
+
+    def test_one_finite_entry_is_enough(self) -> None:
+        # A cascade transmitting a sliver of one pulse is a table a job can
+        # reduce with; only "nothing anywhere" is unusable.
+        block = _nan_block(start=10.0, rows=4)
+        block.array.values[2, 1] = 3.0
+
+        restored = detector_lookup_table(pack_blocks([block]), _ltotal(10.15))
+
+        assert restored.array.sizes['distance'] == 4
+
+    def test_nan_in_a_block_this_job_does_not_select_is_ignored(self) -> None:
+        # Monitors share one table. A monitor the cascade blocks must not cost
+        # every other monitor its table.
+        wire = pack_blocks([_block(start=10.0, rows=4), _nan_block(start=70.0, rows=4)])
+
+        assert monitor_lookup_table(wire, _ltotal(10.15)).array.sizes['distance'] == 4
+        with pytest.raises(ValueError, match='no wavelength'):
+            monitor_lookup_table(wire, _ltotal(70.15))
 
 
 def test_stream_names_are_prefixed_and_per_group() -> None:
