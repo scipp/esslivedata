@@ -13,12 +13,15 @@ import pytest
 import scipp as sc
 import scippnexus as snx
 from scipp.testing import assert_allclose, assert_identical
+from scippneutron.chopper import DiskChopper
+from structlog.testing import capture_logs
 
 from ess.livedata.config.chopper import delay_setpoint_stream, speed_setpoint_stream
 from ess.livedata.kafka.scipp_da00_compat import da00_to_scipp, scipp_to_da00
 from ess.livedata.workflows.wavelength_lut_workflow import (
     create_wavelength_lut_workflow,
     make_chopper_setpoint_keys,
+    shut_choppers_out_of_phase,
 )
 from ess.livedata.workflows.wavelength_lut_workflow_specs import (
     CHOPPER_CASCADE_SOURCE,
@@ -304,6 +307,94 @@ def two_chopper_geometry(tmp_path: Path) -> Path:
     return path
 
 
+def _disk_chopper(frequency: float) -> DiskChopper:
+    return DiskChopper(
+        frequency=sc.scalar(frequency, unit='Hz'),
+        beam_position=sc.scalar(0.0, unit='deg'),
+        phase=sc.scalar(0.0, unit='deg'),
+        axle_position=sc.vector([0.0, 0.0, 10.0], unit='m'),
+        slit_begin=sc.array(dims=['slit'], values=[0.0], unit='deg'),
+        slit_end=sc.array(dims=['slit'], values=[27.6], unit='deg'),
+        slit_height=sc.array(dims=['slit'], values=[0.1], unit='m'),
+        radius=sc.scalar(0.35, unit='m'),
+    )
+
+
+class TestShutChoppersOutOfPhase:
+    """A chopper the source cannot be phase-locked to yields no table.
+
+    scippneutron refuses to compute opening times for one, which would take the
+    job down on every batch. It publishes nothing then, so every consumer keeps
+    reducing with the table it was last given -- from before the choppers moved.
+    Substituting a shut disc publishes a table that lets nothing through, which
+    consumers refuse and stop on.
+    """
+
+    PULSE_PERIOD = sc.scalar(1 / 14, unit='s')
+
+    @pytest.mark.parametrize('frequency', [14.0, -14.0, 7.0, 28.0, 14 / 3])
+    def test_phase_locked_chopper_is_untouched(self, frequency: float) -> None:
+        # A whole number of turns per pulse, or of pulses per turn. Sign is the
+        # direction of rotation and says nothing about phase.
+        choppers = sc.DataGroup({'ch': _disk_chopper(frequency)})
+
+        result = shut_choppers_out_of_phase(choppers, self.PULSE_PERIOD)
+
+        assert_identical(result['ch'].slit_begin, choppers['ch'].slit_begin)
+        assert_identical(result['ch'].frequency, choppers['ch'].frequency)
+
+    @pytest.mark.parametrize('frequency', [5.0, -5.0, 20.0])
+    def test_out_of_phase_chopper_loses_its_slits(self, frequency: float) -> None:
+        choppers = sc.DataGroup({'ch': _disk_chopper(frequency)})
+
+        result = shut_choppers_out_of_phase(choppers, self.PULSE_PERIOD)
+
+        assert result['ch'].slit_begin.sizes == {'slit': 0}
+        assert result['ch'].slit_end.sizes == {'slit': 0}
+        # Retimed to the source so essreduce's own phase check passes; with no
+        # slits the rate it turns at changes nothing.
+        assert result['ch'].frequency.value == pytest.approx(14.0)
+
+    def test_stopped_chopper_is_left_alone(self) -> None:
+        # essreduce reads a zero rotation speed as an inactive chopper, and
+        # whether a parked disc blocks the beam or sits open is not knowable
+        # from its speed (#1312).
+        choppers = sc.DataGroup({'ch': _disk_chopper(0.0)})
+
+        result = shut_choppers_out_of_phase(choppers, self.PULSE_PERIOD)
+
+        assert_identical(result['ch'].slit_begin, choppers['ch'].slit_begin)
+
+    def test_stopped_chopper_is_reported(self) -> None:
+        # Left alone but not passed over in silence: a disc at 0 Hz blanks the
+        # table downstream of itself just as a shut one does, so without this
+        # the consumers stop with nothing naming the cause.
+        choppers = sc.DataGroup({'parked': _disk_chopper(0.0)})
+
+        with capture_logs() as captured:
+            shut_choppers_out_of_phase(choppers, self.PULSE_PERIOD)
+
+        assert [entry for entry in captured if entry['event'] == 'choppers_stopped']
+
+    def test_a_turning_cascade_reports_nothing(self) -> None:
+        choppers = sc.DataGroup({'ch': _disk_chopper(14.0)})
+
+        with capture_logs() as captured:
+            shut_choppers_out_of_phase(choppers, self.PULSE_PERIOD)
+
+        assert captured == []
+
+    def test_only_the_offending_chopper_is_shut(self) -> None:
+        choppers = sc.DataGroup(
+            {'locked': _disk_chopper(-14.0), 'loose': _disk_chopper(-5.0)}
+        )
+
+        result = shut_choppers_out_of_phase(choppers, self.PULSE_PERIOD)
+
+        assert result['locked'].slit_begin.sizes == {'slit': 1}
+        assert result['loose'].slit_begin.sizes == {'slit': 0}
+
+
 class TestMultiChopperWorkflow:
     def test_all_choppers_locked_produces_table(
         self, two_chopper_geometry: Path
@@ -319,6 +410,30 @@ class TestMultiChopperWorkflow:
         assert table.dims == ('distance', 'event_time_offset')
         assert table.unit == sc.units.angstrom
         assert np.isfinite(table.values).any()
+
+    def test_out_of_phase_chopper_yields_a_table_that_lets_nothing_through(
+        self, two_chopper_geometry: Path
+    ) -> None:
+        # 5 Hz cannot be phase-locked to a 14 Hz source, so no table describes
+        # this cascade. Publishing one that transmits nothing is what lets a
+        # consumer notice and stop; raising would publish nothing at all and
+        # leave consumers on the table they were last given.
+        table = _run_chopper_lut(
+            two_chopper_geometry,
+            ['chopper1', 'chopper2'],
+            {'chopper1': (-14.0, 0.0), 'chopper2': (-5.0, 0.0)},
+        )
+
+        locked = _run_chopper_lut(
+            two_chopper_geometry,
+            ['chopper1', 'chopper2'],
+            {'chopper1': (-14.0, 0.0), 'chopper2': (-14.0, 0.0)},
+        )
+
+        # Rows upstream of the choppers carry the source band either way; it is
+        # the beam past the shut chopper that is gone, so compare the far end.
+        assert np.isfinite(locked['distance', -1].values).any()
+        assert not np.isfinite(table['distance', -1].values).any()
 
     def test_delay_setpoint_changes_geometry(self, two_chopper_geometry: Path) -> None:
         names = ['chopper1', 'chopper2']

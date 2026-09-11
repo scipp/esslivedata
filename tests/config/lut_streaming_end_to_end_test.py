@@ -19,6 +19,7 @@ import uuid
 
 import pytest
 import scipp as sc
+from structlog.testing import capture_logs
 
 from ess.livedata.config.chopper import delay_setpoint_stream, speed_setpoint_stream
 from ess.livedata.config.instrument import Instrument, instrument_registry
@@ -133,13 +134,19 @@ def _events_across_one_frame(count: int = 200) -> sc.DataArray:
     )
 
 
-def _run_lut_job(instrument: Instrument):
-    """Run the lookup-table job once and return its result."""
+def _run_lut_job(instrument: Instrument, speeds: dict[str, float] | None = None):
+    """Run the lookup-table job once and return its result.
+
+    ``speeds`` overrides individual chopper rotation-speed setpoints; the rest
+    run at the source frequency.
+    """
+    speeds = speeds or {}
     job = _create_job(instrument, 'wavelength_lut', CHOPPER_CASCADE_SOURCE)
     aux = {}
     for chopper in instrument.choppers:
         aux[speed_setpoint_stream(chopper)] = _nxlog(
-            14.0, instrument.streams[speed_setpoint_stream(chopper)].units
+            speeds.get(chopper, 14.0),
+            instrument.streams[speed_setpoint_stream(chopper)].units,
         )
         aux[delay_setpoint_stream(chopper)] = _nxlog(
             _TRANSMITTING_DELAYS_NS.get(chopper, 0.0),
@@ -157,15 +164,15 @@ def _run_lut_job(instrument: Instrument):
     return result
 
 
-@pytest.fixture(scope='module')
-def ingested(dream: Instrument) -> dict[str, sc.DataArray]:
-    """The group tables as they arrive at a consuming service."""
-    result = _run_lut_job(dream)
-    messages = ContextOutputExtractor(registry=dream.workflow_factory).extract([result])
-    serializer = make_default_sink_serializer(instrument='dream')
+def _ingest(instrument: Instrument, result) -> dict[str, sc.DataArray]:
+    """Put a lookup-table result on the wire and take it off again."""
+    messages = ContextOutputExtractor(registry=instrument.workflow_factory).extract(
+        [result]
+    )
+    serializer = make_default_sink_serializer(instrument=instrument.name)
     adapter = (
         RoutingAdapterBuilder(
-            stream_mapping=get_stream_mapping(instrument='dream', dev=True)
+            stream_mapping=get_stream_mapping(instrument=instrument.name, dev=True)
         )
         .with_livedata_context_route()
         .build()
@@ -179,6 +186,12 @@ def ingested(dream: Instrument) -> dict[str, sc.DataArray]:
         assert received.stream.kind == StreamKind.LIVEDATA_CONTEXT
         out[received.stream.name] = received.value
     return out
+
+
+@pytest.fixture(scope='module')
+def ingested(dream: Instrument) -> dict[str, sc.DataArray]:
+    """The group tables as they arrive at a consuming service."""
+    return _ingest(dream, _run_lut_job(dream))
 
 
 def test_publishes_one_table_per_group(ingested: dict[str, sc.DataArray]) -> None:
@@ -313,16 +326,26 @@ def test_wavelength_monitor_job_consumes_the_streamed_table(
     assert result.data['cumulative'].sum().value > 0
 
 
-def test_consumer_publishes_nothing_when_no_wavelength_is_definable(
-    dream: Instrument, ingested: dict[str, sc.DataArray]
-) -> None:
-    """A table the cascade transmits nothing through must stop the consumer.
+def test_chopper_out_of_phase_stops_the_consumer(dream: Instrument) -> None:
+    """The out-of-phase mechanism in isolation, end to end (#1309).
 
-    Reducing with it would drop every event and leave the job republishing its
+    Every other chopper runs at the source frequency, so the 5 Hz overlap
+    chopper is the only reason the table blocks; see
+    ``test_dream_prod_setpoints_stop_the_consumer`` for the configuration as
+    actually observed.
+
+    An overlap chopper at 5 Hz cannot be phase-locked to a 14 Hz source. The
+    lookup-table job publishes a table that lets nothing through rather than
+    raising, and the consumer refuses that table rather than reducing with it.
+    Both halves matter: raising would publish nothing and leave the consumer on
+    the table it was last given, and reducing would leave it republishing its
     unchanged accumulator with a fresh timestamp, so a plot frozen since the
-    choppers went out of phase would still read as current. Erroring instead
-    publishes no result at all, which is what lets the freshness indicator age.
+    choppers moved would still read as current. Publishing nothing is what lets
+    the freshness indicator age.
     """
+    result = _run_lut_job(dream, speeds={'overlap_chopper': 5.0})
+    ingested = _ingest(dream, result)
+
     params_model = _params_model(dream, 'monitor_histogram')
     job = _create_job(
         dream,
@@ -330,14 +353,12 @@ def test_consumer_publishes_nothing_when_no_wavelength_is_definable(
         MONITOR,
         params_model(coordinate_mode=CoordinateModeSettings(mode='wavelength')),
     )
-    blocked = ingested[MONITOR_STREAM].copy()
-    blocked.values[:] = float('nan')
 
     data = JobData(
         start_time=Timestamp.from_ns(0),
         end_time=Timestamp.from_ns(1),
         primary_data={MONITOR: _events_across_one_frame()},
-        aux_data={MONITOR_STREAM: blocked},
+        aux_data={MONITOR_STREAM: ingested[MONITOR_STREAM]},
     )
 
     reply, result = job.process(data, finalize=True)
@@ -346,6 +367,55 @@ def test_consumer_publishes_nothing_when_no_wavelength_is_definable(
     assert 'no wavelength' in reply.error_message
     # OrchestratingProcessor drops results carrying an error, so nothing of this
     # job reaches the sink and no plot is refreshed.
+    assert result.error_message is not None
+
+
+#: DREAM's rotation-speed setpoints as the timeseries service received them on
+#: 2026-09-10 (#1309), in Hz. Two faults at once: the overlap chopper is not
+#: phase-locked to the 14 Hz source, and the T0 chopper is parked.
+_DREAM_PROD_SPEEDS = {
+    'pulse_shaping_chopper1': 7.0,
+    'pulse_shaping_chopper2': 7.0,
+    'band_chopper': 14.0,
+    'overlap_chopper': 5.0,
+    'T0_chopper': 0.0,
+}
+
+
+def test_dream_prod_setpoints_stop_the_consumer(dream: Instrument) -> None:
+    """DREAM's PROD failure at the setpoints actually observed (#1309).
+
+    The parked T0 chopper blanks the table from its own distance downstream on
+    its own, independently of the overlap chopper, so repairing the phasing
+    alone would not make this configuration reduce. Both faults are named in
+    the log, which is the only thing that distinguishes them once the table is
+    all-NaN either way.
+    """
+    with capture_logs() as captured:
+        result = _run_lut_job(dream, speeds=_DREAM_PROD_SPEEDS)
+    events = {entry['event'] for entry in captured}
+    assert 'choppers_out_of_phase_with_source' in events
+    assert 'choppers_stopped' in events
+
+    ingested = _ingest(dream, result)
+    params_model = _params_model(dream, 'monitor_histogram')
+    job = _create_job(
+        dream,
+        'monitor_histogram',
+        MONITOR,
+        params_model(coordinate_mode=CoordinateModeSettings(mode='wavelength')),
+    )
+    data = JobData(
+        start_time=Timestamp.from_ns(0),
+        end_time=Timestamp.from_ns(1),
+        primary_data={MONITOR: _events_across_one_frame()},
+        aux_data={MONITOR_STREAM: ingested[MONITOR_STREAM]},
+    )
+
+    reply, result = job.process(data, finalize=True)
+
+    assert reply.has_error
+    assert 'no wavelength' in reply.error_message
     assert result.error_message is not None
 
 
