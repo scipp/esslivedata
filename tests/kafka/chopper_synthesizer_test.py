@@ -197,6 +197,45 @@ def test_single_chopper_setpoint_change_re_emits(single_chopper):
     assert len(cascades) == 1
 
 
+def test_single_chopper_constant_noisy_delay_locks_once(single_chopper):
+    # The plateau gate admits windows whose std is up to atol, so window means
+    # scatter by themselves. A change threshold of atol mistakes that scatter
+    # for a setpoint change: it yields 16 locks on this sequence, i.e. 16
+    # wavelength-LUT recomputes, for a delay that never moves.
+    atol = single_chopper['delay_atol']
+    rng = np.random.default_rng(0)
+    batch = [
+        _delay_msg('c1', float(v), time_ns=i)
+        for i, v in enumerate(rng.normal(90.0, atol, 500))
+    ]
+    src = ChopperSynthesizer(FakeSource([batch]), **single_chopper)
+
+    out = list(src.get_messages())
+
+    setpoints = [m for m in out if m.stream.name == delay_setpoint_stream('c1')]
+    assert len(setpoints) == 1
+
+
+@pytest.mark.parametrize(('shift_in_atol', 'expect_lock'), [(2.0, False), (4.0, True)])
+def test_single_chopper_re_locks_only_beyond_the_admitted_noise(
+    single_chopper, shift_in_atol, expect_lock
+):
+    # Both plateaus are perfectly clean; only their separation decides whether
+    # the move counts as a new setpoint.
+    shift = shift_in_atol * single_chopper['delay_atol']
+    first = [_delay_msg('c1', 90.0, time_ns=i) for i in range(5)]
+    second = [_delay_msg('c1', 90.0 + shift, time_ns=10 + i) for i in range(5)]
+    src = ChopperSynthesizer(FakeSource([first, second]), **single_chopper)
+
+    list(src.get_messages())  # first lock at 90
+    out = list(src.get_messages())
+
+    setpoints = [m for m in out if m.stream.name == delay_setpoint_stream('c1')]
+    assert [m.value.value for m in setpoints] == (
+        [pytest.approx(90.0 + shift)] if expect_lock else []
+    )
+
+
 def test_single_chopper_no_cascade_when_input_unchanged(single_chopper):
     # Once locked, a batch with an unrelated message must not re-emit cascade.
     delay_batch = [_delay_msg('c1', 90.0, time_ns=i) for i in range(5)]
