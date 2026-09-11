@@ -189,7 +189,7 @@ def shut_choppers_out_of_phase(
 
     Stopped choppers are left alone but reported: whether a parked disc blocks
     the beam or sits open is not knowable from its speed, so neither shutting
-    it nor trusting it is defensible (#1309). They are reported because the
+    it nor trusting it is defensible (#1312). They are reported because the
     cascade does not survive them either way -- a disc at 0 Hz opens over
     ``[-inf, inf]`` and closes over ``[-nan, inf]``, which blanks the table
     from that distance downstream exactly as a shut chopper would. Consumers

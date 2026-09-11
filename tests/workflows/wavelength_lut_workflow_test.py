@@ -358,7 +358,7 @@ class TestShutChoppersOutOfPhase:
     def test_stopped_chopper_is_left_alone(self) -> None:
         # essreduce reads a zero rotation speed as an inactive chopper, and
         # whether a parked disc blocks the beam or sits open is not knowable
-        # from its speed (#1309).
+        # from its speed (#1312).
         choppers = sc.DataGroup({'ch': _disk_chopper(0.0)})
 
         result = shut_choppers_out_of_phase(choppers, self.PULSE_PERIOD)
