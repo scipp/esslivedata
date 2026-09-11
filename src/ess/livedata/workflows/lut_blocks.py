@@ -81,6 +81,16 @@ def select_block(table: sc.DataArray, ltotal: sc.Variable) -> sc.DataArray:
     NaN (the range is padded, not guaranteed), whereas demanding full coverage
     would turn one stray pixel into a failed job.
 
+    Blocks are padded, so two components metres apart can both be covered by
+    the other's block. Where a chopper sits between them the two blocks
+    describe *different* cascades -- one side of it transmits and the other
+    does not -- so a usable block is preferred over the first covering one.
+    Without that, a component upstream of a shut chopper picks up its
+    downstream neighbour's all-NaN block and is refused for a flight path
+    where the beam is fine. Ambiguity only arises once a block is unusable:
+    while every covering block transmits, they agree on the cascade between
+    them and the first is as good as any.
+
     Raises
     ------
     ValueError:
@@ -91,11 +101,18 @@ def select_block(table: sc.DataArray, ltotal: sc.Variable) -> sc.DataArray:
     midpoint = 0.5 * (
         ltotal.nanmin().to(unit=distance.unit) + ltotal.nanmax().to(unit=distance.unit)
     )
+    covering = []
     for start, stop in _block_bounds(table):
         block = table['distance', start:stop]
         bounds = block.coords['distance']
         if bounds[0] <= midpoint <= bounds[-1]:
-            return block
+            if np.isfinite(block.values).any():
+                return block
+            covering.append(block)
+    if covering:
+        # All unusable: hand back the first so the caller reports the flight
+        # path as blocked rather than as absent from the table.
+        return covering[0]
     raise ValueError(
         f"No block of the streamed lookup table covers {midpoint:c}: the table "
         f"spans {_describe_blocks(table)}. The table was built from a different "
@@ -122,6 +139,16 @@ def _reject_unusable_block(block: sc.DataArray, ltotal: sc.Variable) -> None:
     fact at a consumer -- no wavelength is definable at its flight path -- and
     warrant the same response. Which of the two it is can be read off the
     lookup-table workflow's own wavelength-bands output.
+
+    Total blackout is the only thing this catches, and deliberately so: the
+    fraction of a block that is finite is set by how far the pulse has spread,
+    not by the cascade's health. A healthy DREAM monitor 6 m from the source
+    measures 2.7% finite against 93.5% for its detectors on the same cascade,
+    so no threshold separates a degraded table from a near-source one. A
+    cascade left transmitting a sliver therefore passes here and the consumer
+    goes on publishing near-empty results. Catching that needs a signal from
+    the conversion itself -- how many events acquired a wavelength -- rather
+    than a tighter test on the table.
     """
     if np.isfinite(block.values).any():
         return
