@@ -14,6 +14,7 @@ import scipp as sc
 import scippnexus as snx
 from scipp.testing import assert_allclose, assert_identical
 from scippneutron.chopper import DiskChopper
+from structlog.testing import capture_logs
 
 from ess.livedata.config.chopper import delay_setpoint_stream, speed_setpoint_stream
 from ess.livedata.kafka.scipp_da00_compat import da00_to_scipp, scipp_to_da00
@@ -363,6 +364,25 @@ class TestShutChoppersOutOfPhase:
         result = shut_choppers_out_of_phase(choppers, self.PULSE_PERIOD)
 
         assert_identical(result['ch'].slit_begin, choppers['ch'].slit_begin)
+
+    def test_stopped_chopper_is_reported(self) -> None:
+        # Left alone but not passed over in silence: a disc at 0 Hz blanks the
+        # table downstream of itself just as a shut one does, so without this
+        # the consumers stop with nothing naming the cause.
+        choppers = sc.DataGroup({'parked': _disk_chopper(0.0)})
+
+        with capture_logs() as captured:
+            shut_choppers_out_of_phase(choppers, self.PULSE_PERIOD)
+
+        assert [entry for entry in captured if entry['event'] == 'choppers_stopped']
+
+    def test_a_turning_cascade_reports_nothing(self) -> None:
+        choppers = sc.DataGroup({'ch': _disk_chopper(14.0)})
+
+        with capture_logs() as captured:
+            shut_choppers_out_of_phase(choppers, self.PULSE_PERIOD)
+
+        assert captured == []
 
     def test_only_the_offending_chopper_is_shut(self) -> None:
         choppers = sc.DataGroup(

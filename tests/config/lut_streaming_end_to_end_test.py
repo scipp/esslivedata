@@ -19,6 +19,7 @@ import uuid
 
 import pytest
 import scipp as sc
+from structlog.testing import capture_logs
 
 from ess.livedata.config.chopper import delay_setpoint_stream, speed_setpoint_stream
 from ess.livedata.config.instrument import Instrument, instrument_registry
@@ -326,7 +327,12 @@ def test_wavelength_monitor_job_consumes_the_streamed_table(
 
 
 def test_chopper_out_of_phase_stops_the_consumer(dream: Instrument) -> None:
-    """DREAM's PROD failure, end to end (#1309).
+    """The out-of-phase mechanism in isolation, end to end (#1309).
+
+    Every other chopper runs at the source frequency, so the 5 Hz overlap
+    chopper is the only reason the table blocks; see
+    ``test_dream_prod_setpoints_stop_the_consumer`` for the configuration as
+    actually observed.
 
     An overlap chopper at 5 Hz cannot be phase-locked to a 14 Hz source. The
     lookup-table job publishes a table that lets nothing through rather than
@@ -361,6 +367,55 @@ def test_chopper_out_of_phase_stops_the_consumer(dream: Instrument) -> None:
     assert 'no wavelength' in reply.error_message
     # OrchestratingProcessor drops results carrying an error, so nothing of this
     # job reaches the sink and no plot is refreshed.
+    assert result.error_message is not None
+
+
+#: DREAM's rotation-speed setpoints as the timeseries service received them on
+#: 2026-09-10 (#1309), in Hz. Two faults at once: the overlap chopper is not
+#: phase-locked to the 14 Hz source, and the T0 chopper is parked.
+_DREAM_PROD_SPEEDS = {
+    'pulse_shaping_chopper1': 7.0,
+    'pulse_shaping_chopper2': 7.0,
+    'band_chopper': 14.0,
+    'overlap_chopper': 5.0,
+    'T0_chopper': 0.0,
+}
+
+
+def test_dream_prod_setpoints_stop_the_consumer(dream: Instrument) -> None:
+    """DREAM's PROD failure at the setpoints actually observed (#1309).
+
+    The parked T0 chopper blanks the table from its own distance downstream on
+    its own, independently of the overlap chopper, so repairing the phasing
+    alone would not make this configuration reduce. Both faults are named in
+    the log, which is the only thing that distinguishes them once the table is
+    all-NaN either way.
+    """
+    with capture_logs() as captured:
+        result = _run_lut_job(dream, speeds=_DREAM_PROD_SPEEDS)
+    events = {entry['event'] for entry in captured}
+    assert 'choppers_out_of_phase_with_source' in events
+    assert 'choppers_stopped' in events
+
+    ingested = _ingest(dream, result)
+    params_model = _params_model(dream, 'monitor_histogram')
+    job = _create_job(
+        dream,
+        'monitor_histogram',
+        MONITOR,
+        params_model(coordinate_mode=CoordinateModeSettings(mode='wavelength')),
+    )
+    data = JobData(
+        start_time=Timestamp.from_ns(0),
+        end_time=Timestamp.from_ns(1),
+        primary_data={MONITOR: _events_across_one_frame()},
+        aux_data={MONITOR_STREAM: ingested[MONITOR_STREAM]},
+    )
+
+    reply, result = job.process(data, finalize=True)
+
+    assert reply.has_error
+    assert 'no wavelength' in reply.error_message
     assert result.error_message is not None
 
 

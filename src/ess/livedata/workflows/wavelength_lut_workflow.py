@@ -187,19 +187,33 @@ def shut_choppers_out_of_phase(
     choppers moved. Publishing a table that lets nothing through is what lets
     consumers notice (they refuse it, see ``lut_blocks.unpack_block``) and stop.
 
-    Stopped choppers are left alone: essreduce reads a zero rotation speed as
-    an inactive chopper, and whether a parked disc blocks the beam or sits open
-    is not knowable from its speed (#1309).
+    Stopped choppers are left alone but reported: whether a parked disc blocks
+    the beam or sits open is not knowable from its speed, so neither shutting
+    it nor trusting it is defensible (#1309). They are reported because the
+    cascade does not survive them either way -- a disc at 0 Hz opens over
+    ``[-inf, inf]`` and closes over ``[-nan, inf]``, which blanks the table
+    from that distance downstream exactly as a shut chopper would. Consumers
+    then refuse the table and stop, which is the right outcome reached without
+    anything saying why; the log line is what distinguishes a parked disc from
+    a chopper this function actually shut.
     """
     pulse_frequency = (1.0 / pulse_period.to(unit='s')).to(unit='Hz')
     out_of_phase = {}
+    stopped = {}
     for name, chopper in choppers.items():
         frequency = abs(chopper.frequency.to(unit='Hz'))
         if frequency.value == 0.0:
+            stopped[name] = frequency.value
             continue
         quotient = (frequency / pulse_frequency).value
         if not _is_whole(quotient) and not _is_whole(1.0 / quotient):
             out_of_phase[name] = frequency.value
+    if stopped:
+        logger.warning(
+            'choppers_stopped',
+            choppers=sorted(stopped),
+            pulse_frequency_hz=pulse_frequency.value,
+        )
     if not out_of_phase:
         return choppers
     logger.warning(
