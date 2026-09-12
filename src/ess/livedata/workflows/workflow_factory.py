@@ -9,7 +9,7 @@ from collections.abc import Callable, Iterable, Iterator, Mapping
 from dataclasses import dataclass
 from typing import Any, Protocol, runtime_checkable
 
-from ess.livedata.config.stream import ChainPatchBinding, ContextBinding
+from ess.livedata.config.stream import NO_DEFAULT, ChainPatchBinding, ContextBinding
 from ess.livedata.config.workflow_spec import (
     NoParams,
     WorkflowConfig,
@@ -114,7 +114,7 @@ class SpecHandle:
         stream_name: str,
         workflow_key: Any,
         dependent_sources: Iterable[str] | None = None,
-        gating: bool = True,
+        default: Any = NO_DEFAULT,
     ) -> None:
         """Append a spec-scope :class:`ContextBinding` to the registration.
 
@@ -128,11 +128,11 @@ class SpecHandle:
         sensor feeding one reduction. The stream value is delivered to
         ``workflow_key`` via ``set_context`` and the job gates on it (see
         ADR 0002); the wire name equals ``stream_name`` (no per-job
-        suffixing) and there is no cold-start seed, so the gate stays
-        closed until the producer publishes — the correct behaviour for a
-        context with no safe default. A context *with* a safe default
-        passes ``gating=False`` (see :attr:`ContextBinding.gating`): the
-        job then runs without it and picks the value up on arrival.
+        suffixing), so the gate stays closed until the producer publishes —
+        the correct behaviour for a context with no safe default. A context
+        *with* a safe default passes it as ``default`` (see
+        :attr:`ContextBinding.default`): the gate opens on the first tick
+        with that value, and the producer's own overwrites it on arrival.
 
         Chain-patch contexts (``workflow_key`` is a
         :class:`~ess.livedata.config.value_log.ValueLog` subclass) must be
@@ -153,7 +153,7 @@ class SpecHandle:
             stream_name=stream_name,
             workflow_key=workflow_key,
             dependent_sources=dependent_sources,
-            gating=gating,
+            default=default,
         )
 
     def skip_instrument_contexts(self) -> None:
@@ -316,7 +316,7 @@ class WorkflowFactory(Mapping[WorkflowId, WorkflowSpec]):
         stream_name: str,
         workflow_key: Any,
         dependent_sources: Iterable[str] | None,
-        gating: bool,
+        default: Any,
     ) -> None:
         # Chain-patch contexts (ValueLog-typed workflow_key) at spec scope
         # would be silent-wrong: Instrument.chain_patch_bindings reads
@@ -339,7 +339,7 @@ class WorkflowFactory(Mapping[WorkflowId, WorkflowSpec]):
             stream_name=stream_name,
             workflow_key=workflow_key,
             dependent_sources=sources,
-            gating=gating,
+            default=default,
         )
         self._registrations[workflow_id] = dataclasses.replace(
             reg, context_bindings=(*reg.context_bindings, new_input)

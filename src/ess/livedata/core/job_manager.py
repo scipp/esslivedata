@@ -25,7 +25,7 @@ from ess.livedata.config.workflow_spec import (
 from ess.livedata.workflows.workflow_factory import SupportsContext
 
 from .job import Job, JobData, JobReply, JobResult, JobState, JobStatus
-from .message import RunStart, RunStop, StreamId
+from .message import RunStart, RunStop, StreamId, StreamKind
 from .timestamp import Timestamp
 
 logger = structlog.get_logger(__name__)
@@ -210,6 +210,9 @@ class JobFactory:
             source_names=[job_id.source_name],
             input_streams=set(aux_streams.values()) | requested_streams,
             gating_streams=gating_streams,
+            context_defaults=self._instrument.bound_context_defaults(
+                workflow_id, job_id.source_name
+            ),
             reset_on_run_transition=workflow_spec.reset_on_run_transition,
             supports_reset=workflow_spec.supports_reset,
         )
@@ -622,15 +625,16 @@ class JobManager:
     def _open_context_gates(self, data: WorkflowData) -> None:
         """Refill cached context into ``data`` and graduate complete pending jobs.
 
-        The preprocessor's context cache (``context_reader``) is the single
-        source of truth for which context streams have a value: ``data`` is
-        enriched from it for every gating stream still absent from the batch,
-        and a job graduates to active (:meth:`_activate_pending_job`) exactly
-        when all its gating streams are present afterwards. Because gate
-        opening and value delivery read the same dict, the gate-opening batch
-        structurally carries every context value the job needs — a gate cannot
-        open without its values being deliverable to ``set_context``. A job
-        still missing context keeps an up-to-date pending-context warning.
+        The preprocessor's context cache (``context_reader``) says which
+        context streams have a value: ``data`` is enriched from it for every
+        gating stream still absent from the batch, then from
+        :attr:`Job.context_defaults` for what the cache could not supply, and a
+        job graduates to active (:meth:`_activate_pending_job`) exactly when
+        all its gating streams are present afterwards. Because gate opening and
+        value delivery read the same dict, the gate-opening batch structurally
+        carries every context value the job needs — a gate cannot open without
+        its values being deliverable to ``set_context``. A job still missing
+        context keeps an up-to-date pending-context warning.
 
         The cache holds every context value ever received, so availability is
         sticky across ticks (a motor position published once stays available)
@@ -654,6 +658,19 @@ class JobManager:
         if missing := needed - {s.name for s in data.data}:
             data.data.update(self._context_reader(missing))
         available = {s.name for s in data.data}
+        # A stream the cache cannot supply falls back to the binding's declared
+        # default, which is what lets a job whose producer may never publish
+        # start anyway. Injected into the batch rather than handed to the job
+        # directly, so it travels the path a cached value takes and is seen
+        # once, on activation. Only the name is read downstream
+        # (_filter_data_for_job), so the synthetic StreamId needs no more.
+        for record in pending:
+            for name, value in record.job.context_defaults.items():
+                if name not in available:
+                    data.data[StreamId(kind=StreamKind.LIVEDATA_CONTEXT, name=name)] = (
+                        value
+                    )
+                    available.add(name)
         for record in pending:
             if missing := record.job.missing_context(available):
                 record.warning_message = pending_context_warning(missing)

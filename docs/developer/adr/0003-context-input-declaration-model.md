@@ -289,3 +289,18 @@ is routed, latched and delivered like any other context input, but `JobFactory.c
 leaves it out of `Job.gating_streams`. This declares the "safe default" property on the
 input rather than encoding it in the choice of routing mechanism. The gate itself is
 unchanged.
+
+## Amendment 2026-09-10: `gating` is replaced by `default`
+
+`ContextBinding.gating` is gone; the field is now `default`, holding the value that
+stands in for the stream until it first delivers (`NO_DEFAULT` when there is none).
+Every binding gates, and a binding with a default has its gate opened by the
+`JobManager` on the first tick. `JobFactory.create` puts every matched binding in
+`Job.gating_streams` and the defaults in `Job.context_defaults`.
+
+The axis this declares is the same one `gating` declared — ADR 0002's *does this input
+tolerate absence?* — but stating the stand-in value rather than a boolean closes the
+question the boolean left unanswered: *what does the graph see in the meantime?* The
+old answer was whatever `StreamProcessor` happened to leave in the pipeline, which the
+ROI providers absorbed by treating `None` as an empty request, against their own type
+annotations. See the 2026-09-10 amendment of ADR 0002.

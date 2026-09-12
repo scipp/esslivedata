@@ -12,7 +12,7 @@ from ess.livedata.config.instrument import (
     InstrumentRegistry,
     SourceMetadata,
 )
-from ess.livedata.config.stream import ContextBinding, Device, F144Stream
+from ess.livedata.config.stream import NO_DEFAULT, ContextBinding, Device, F144Stream
 from ess.livedata.config.workflow_spec import (
     MONITORS,
     REDUCTION,
@@ -769,33 +769,59 @@ class TestOfferedContextStreams:
         )
         return instrument, handle
 
-    def test_spec_binding_gating_defaults_to_true(
+    def test_spec_binding_default_is_absent_unless_declared(
         self, spec_on_det1: tuple[Instrument, SpecHandle]
     ):
         instrument, handle = spec_on_det1
         handle.add_context_binding(stream_name='rot', workflow_key=_Key)
-        handle.add_context_binding(stream_name='roi', workflow_key=_Key, gating=False)
+        handle.add_context_binding(stream_name='roi', workflow_key=_Key, default=7)
 
         rot, roi = instrument.workflow_factory.registration(
             handle.workflow_id
         ).context_bindings
-        assert rot.gating is True
-        assert roi.gating is False
+        assert rot.default is NO_DEFAULT
+        assert roi.default == 7
 
-    def test_bound_gating_streams_excludes_non_gating_spec_binding(
+    def test_every_binding_gates_whether_or_not_it_has_a_default(
         self, spec_on_det1: tuple[Instrument, SpecHandle]
     ):
+        """A default satisfies the gate rather than removing it (ADR 0002)."""
         instrument, handle = spec_on_det1
         handle.add_context_binding(stream_name='rot', workflow_key=_Key)
-        handle.add_context_binding(stream_name='roi', workflow_key=_Key, gating=False)
+        handle.add_context_binding(stream_name='roi', workflow_key=_Key, default=7)
 
         assert instrument.bound_context_keys(handle.workflow_id, 'det1') == {
             'rot': _Key,
             'roi': _Key,
         }
-        assert instrument.bound_gating_streams(handle.workflow_id, 'det1') == {'rot'}
+        assert instrument.bound_gating_streams(handle.workflow_id, 'det1') == {
+            'rot',
+            'roi',
+        }
 
-    def test_instrument_binding_is_gating(
+    def test_bound_context_defaults_covers_only_bindings_declaring_one(
+        self, spec_on_det1: tuple[Instrument, SpecHandle]
+    ):
+        instrument, handle = spec_on_det1
+        handle.add_context_binding(stream_name='rot', workflow_key=_Key)
+        handle.add_context_binding(stream_name='roi', workflow_key=_Key, default=7)
+
+        assert instrument.bound_context_defaults(handle.workflow_id, 'det1') == {
+            'roi': 7
+        }
+
+    def test_a_default_of_none_is_a_declared_value_not_an_absent_one(
+        self, spec_on_det1: tuple[Instrument, SpecHandle]
+    ):
+        """``None`` is a value a binding may declare, so it must not read as absent."""
+        instrument, handle = spec_on_det1
+        handle.add_context_binding(stream_name='roi', workflow_key=_Key, default=None)
+
+        assert instrument.bound_context_defaults(handle.workflow_id, 'det1') == {
+            'roi': None
+        }
+
+    def test_instrument_binding_gates_and_declares_no_default(
         self, spec_on_det1: tuple[Instrument, SpecHandle]
     ):
         instrument, handle = spec_on_det1
@@ -803,8 +829,9 @@ class TestOfferedContextStreams:
             stream_name='rot', workflow_key=_Key, dependent_sources=['det1']
         )
 
-        assert instrument.context_bindings[0].gating is True
+        assert instrument.context_bindings[0].default is NO_DEFAULT
         assert instrument.bound_gating_streams(handle.workflow_id, 'det1') == {'rot'}
+        assert instrument.bound_context_defaults(handle.workflow_id, 'det1') == {}
 
 
 class TestInstrumentRegisterSpec:
