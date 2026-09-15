@@ -51,6 +51,13 @@ def _block(*, start: float, rows: int, resolution: float = 0.1) -> LookupTableTy
     )
 
 
+def _nan_block(*, start: float, rows: int) -> LookupTableType:
+    """A block the cascade transmits nothing through."""
+    block = _block(start=start, rows=rows)
+    block.array.values[:] = float('nan')
+    return block
+
+
 @pytest.fixture
 def table() -> LookupTableType:
     return _block(start=10.0, rows=4)
@@ -153,6 +160,17 @@ class TestBlockSelection:
     ) -> None:
         with pytest.raises(ValueError, match='No block'):
             monitor_lookup_table(two_block_wire, _ltotal(40.0))
+
+
+def test_all_nan_block_is_a_table_like_any_other() -> None:
+    # A cascade that transmits nothing at a flight path yields an all-NaN block.
+    # The job reduces with it and publishes empty results, just as it would for
+    # an opening too narrow to catch any neutrons.
+    wire = pack_blocks([_nan_block(start=10.0, rows=4)])
+
+    restored = detector_lookup_table(wire, _ltotal(10.15))
+
+    assert restored.array.sizes['distance'] == 4
 
 
 def test_stream_names_are_prefixed_and_per_group() -> None:

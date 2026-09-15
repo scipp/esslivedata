@@ -314,9 +314,10 @@ def make_monitor_lut(
     They are strung out along the beamline, so a block each keeps the table to
     a few rows per monitor instead of a uniform grid over the tens or hundreds
     of metres between them. Two monitors close enough for their padded ranges
-    to overlap yield overlapping blocks, which costs a few duplicated rows and
-    nothing else: a job takes the first block covering its flight path, and
-    both describe the same cascade.
+    to overlap yield overlapping blocks, which costs a few duplicated rows.
+    The blocks agree on the cascade between them unless a chopper sits in the
+    overlap, which is why ``select_block`` picks the covering block centred
+    closest to a job's flight path rather than the first one.
     """
     return MonitorLut(
         _build_table(
