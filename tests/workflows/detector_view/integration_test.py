@@ -8,7 +8,12 @@ import numpy as np
 import pytest
 from ess.reduce.nexus.types import RawDetector, SampleRun
 
-from ess.livedata.config.models import ROI, Interval, RectangleROI
+from ess.livedata.config.models import (
+    ROI,
+    Interval,
+    PolygonROI,
+    RectangleROI,
+)
 from ess.livedata.config.roi_names import roi_stream_name
 from ess.livedata.config.workflow_spec import JobId, WorkflowId
 from ess.livedata.core.job import Job, JobData
@@ -19,6 +24,7 @@ from ess.livedata.workflows.detector_view.types import (
 )
 
 from .utils import (
+    ROI_CONTEXT_DEFAULTS,
     ROI_CONTEXT_KEYS,
     make_fake_nexus_detector_data,
     make_test_factory,
@@ -52,6 +58,7 @@ class TestIntegrationWithStreamProcessor:
 
         workflow.accumulate(
             {
+                **ROI_CONTEXT_DEFAULTS,
                 'detector': RawDetector[SampleRun](events),
                 'roi_rectangle': rectangle_request,
             },
@@ -97,7 +104,10 @@ class TestIntegrationWithStreamProcessor:
         )
 
         workflow.accumulate(
-            {'detector': RawDetector[SampleRun](events)},
+            {
+                **ROI_CONTEXT_DEFAULTS,
+                'detector': RawDetector[SampleRun](events),
+            },
             start_time=Timestamp.from_ns(1000),
             end_time=Timestamp.from_ns(2000),
         )
@@ -134,7 +144,10 @@ class TestIntegrationWithStreamProcessor:
             y_size=4, x_size=4, n_events_per_pixel=10
         )
         workflow.accumulate(
-            {'detector': RawDetector[SampleRun](events1)},
+            {
+                **ROI_CONTEXT_DEFAULTS,
+                'detector': RawDetector[SampleRun](events1),
+            },
             start_time=Timestamp.from_ns(1000),
             end_time=Timestamp.from_ns(2000),
         )
@@ -191,7 +204,10 @@ class TestROISpectraIntegration:
 
         # First, accumulate events without ROI
         workflow.accumulate(
-            {'detector': RawDetector[SampleRun](events)},
+            {
+                **ROI_CONTEXT_DEFAULTS,
+                'detector': RawDetector[SampleRun](events),
+            },
             start_time=Timestamp.from_ns(1000),
             end_time=Timestamp.from_ns(2000),
         )
@@ -250,6 +266,7 @@ class TestROISpectraIntegration:
 
         workflow.accumulate(
             {
+                **ROI_CONTEXT_DEFAULTS,
                 'detector': RawDetector[SampleRun](events),
                 'roi_rectangle': rectangle_request_small,
             },
@@ -309,6 +326,7 @@ class TestROISpectraIntegration:
         # First accumulate with ROI
         workflow.accumulate(
             {
+                **ROI_CONTEXT_DEFAULTS,
                 'detector': RawDetector[SampleRun](events),
                 'roi_rectangle': rectangle_request,
             },
@@ -366,6 +384,7 @@ class TestROISpectraIntegration:
 
         workflow.accumulate(
             {
+                **ROI_CONTEXT_DEFAULTS,
                 'detector': RawDetector[SampleRun](events),
                 'roi_rectangle': rectangle_request,
             },
@@ -426,9 +445,15 @@ class TestROIDeliveryViaJob:
         )
         rectangle_request = ROI.to_concatenated_data_array({0: roi})
 
+        # Provide defaults for context keys (workflow requires all keys to have values)
+        roi_context_defaults = {
+            rectangle_stream: RectangleROI.to_concatenated_data_array({}),
+            polygon_stream: PolygonROI.to_concatenated_data_array({}),
+        }
+
         data = JobData(
             primary_data={'detector': RawDetector[SampleRun](events)},
-            aux_data={rectangle_stream: rectangle_request},
+            aux_data={**roi_context_defaults, rectangle_stream: rectangle_request},
             start_time=Timestamp.from_ns(1000),
             end_time=Timestamp.from_ns(2000),
         )
@@ -468,7 +493,10 @@ class TestUnitHandling:
         )
 
         workflow.accumulate(
-            {'detector': RawDetector[SampleRun](events)},
+            {
+                **ROI_CONTEXT_DEFAULTS,
+                'detector': RawDetector[SampleRun](events),
+            },
             start_time=Timestamp.from_ns(1000),
             end_time=Timestamp.from_ns(2000),
         )
@@ -502,6 +530,7 @@ class TestUnitHandling:
 
         workflow.accumulate(
             {
+                **ROI_CONTEXT_DEFAULTS,
                 'detector': RawDetector[SampleRun](events),
                 'roi_rectangle': rectangle_request,
             },

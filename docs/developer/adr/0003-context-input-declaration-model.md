@@ -1,6 +1,6 @@
 # ADR 0003: Unified declaration model for workflow context bindings
 
-- Status: accepted (amended 2026-08-31, 2026-09-02)
+- Status: accepted (amended 2026-08-31, 2026-09-02, 2026-09-10)
 - Deciders: Simon
 - Date: 2026-05-21
 
@@ -289,3 +289,10 @@ is routed, latched and delivered like any other context input, but `JobFactory.c
 leaves it out of `Job.gating_streams`. This declares the "safe default" property on the
 input rather than encoding it in the choice of routing mechanism. The gate itself is
 unchanged.
+
+## Amendment 2026-09-10: `gating` is replaced by `default`
+
+The `gating` field added in the 2026-08-31 amendment is replaced by `default`, which is
+`NO_DEFAULT` unless set. `JobFactory.create` puts every matched binding in
+`Job.gating_streams` and passes the declared defaults as `Job.context_defaults`. The
+rationale is in the 2026-09-10 amendment of ADR 0002.

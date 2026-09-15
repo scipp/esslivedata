@@ -366,7 +366,7 @@ class TestROIRequestBinding:
             stream_name=roi_stream_name(handle.workflow_id, "det_a", "roi_rectangle"),
             workflow_key=object(),
             dependent_sources={"det_a"},
-            gating=False,
+            default=None,
         )
         return instrument
 

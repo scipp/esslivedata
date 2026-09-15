@@ -5,6 +5,7 @@
 import numpy as np
 import scipp as sc
 
+from ess.livedata.config.models import PolygonROI, RectangleROI
 from ess.livedata.workflows.detector_view.data_source import DetectorNumberSource
 from ess.livedata.workflows.detector_view.factory import DetectorViewFactory
 from ess.livedata.workflows.detector_view.types import (
@@ -121,6 +122,15 @@ def make_fake_detector_number(y_size: int, x_size: int) -> sc.Variable:
 ROI_CONTEXT_KEYS = {
     'roi_rectangle': ROIRectangleRequest,
     'roi_polygon': ROIPolygonRequest,
+}
+
+# The values those bindings declare as their defaults. In production the
+# JobManager's context gate delivers these (or a latched selection) before the
+# job first runs; a test driving the workflow directly has to stand in for it,
+# so merge them into the first ``accumulate`` alongside any ROI under test.
+ROI_CONTEXT_DEFAULTS = {
+    'roi_rectangle': RectangleROI.to_concatenated_data_array({}),
+    'roi_polygon': PolygonROI.to_concatenated_data_array({}),
 }
 
 

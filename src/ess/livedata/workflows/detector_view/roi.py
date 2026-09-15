@@ -50,7 +50,7 @@ def precompute_roi_rectangle_bounds(
     :
         Dict mapping ROI index to bounds dict for slicing.
     """
-    if rectangle_request is None or len(rectangle_request) == 0:
+    if len(rectangle_request) == 0:
         return ROIRectangleBounds({})
 
     dims = list(screen_metadata.coords.keys())
@@ -91,7 +91,7 @@ def precompute_roi_polygon_masks(
     :
         Dict mapping ROI index to 2D mask Variable.
     """
-    if polygon_request is None or len(polygon_request) == 0:
+    if len(polygon_request) == 0:
         return ROIPolygonMasks({})
 
     screen_coords = screen_metadata.coords
@@ -313,7 +313,7 @@ def roi_rectangle_readback(
     :
         ROI readback with correct coordinate units.
     """
-    if request is not None and len(request) > 0:
+    if len(request) > 0:
         return ROIRectangleReadback(request)
 
     coord_units = _get_coord_units_from_screen_metadata(screen_metadata)
@@ -345,7 +345,7 @@ def roi_polygon_readback(
     :
         ROI readback with correct coordinate units.
     """
-    if request is not None and len(request) > 0:
+    if len(request) > 0:
         return ROIPolygonReadback(request)
 
     coord_units = _get_coord_units_from_screen_metadata(screen_metadata)

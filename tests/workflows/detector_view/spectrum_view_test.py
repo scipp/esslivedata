@@ -17,6 +17,7 @@ from ess.livedata.workflows.detector_view_specs import (
 )
 
 from .utils import (
+    ROI_CONTEXT_DEFAULTS,
     ROI_CONTEXT_KEYS,
     make_fake_detector_number,
     make_fake_nexus_detector_data,
@@ -66,7 +67,10 @@ class TestSpectrumViewIntegration:
 
         events = make_fake_nexus_detector_data(y_size=4, x_size=4, n_events_per_pixel=5)
         workflow.accumulate(
-            {'detector': RawDetector[SampleRun](events)},
+            {
+                **ROI_CONTEXT_DEFAULTS,
+                'detector': RawDetector[SampleRun](events),
+            },
             start_time=Timestamp.from_ns(1000),
             end_time=Timestamp.from_ns(2000),
         )
@@ -94,7 +98,10 @@ class TestSpectrumViewIntegration:
 
         events = make_fake_nexus_detector_data(y_size=4, x_size=4, n_events_per_pixel=5)
         workflow.accumulate(
-            {'detector': RawDetector[SampleRun](events)},
+            {
+                **ROI_CONTEXT_DEFAULTS,
+                'detector': RawDetector[SampleRun](events),
+            },
             start_time=Timestamp.from_ns(1000),
             end_time=Timestamp.from_ns(2000),
         )
@@ -123,7 +130,10 @@ class TestSpectrumViewIntegration:
 
         events = make_fake_nexus_detector_data(y_size=4, x_size=4, n_events_per_pixel=2)
         workflow.accumulate(
-            {'detector': RawDetector[SampleRun](events)},
+            {
+                **ROI_CONTEXT_DEFAULTS,
+                'detector': RawDetector[SampleRun](events),
+            },
             start_time=Timestamp.from_ns(1000),
             end_time=Timestamp.from_ns(2000),
         )

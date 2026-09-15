@@ -1,6 +1,6 @@
 # ADR 0002: Gate workflow execution at the JobManager on context-stream readiness
 
-- Status: accepted (amended 2026-09-02)
+- Status: accepted (amended 2026-09-02, 2026-09-10)
 - Deciders: Simon
 - Date: 2026-05-21
 
@@ -193,3 +193,24 @@ motion while staying out of `gating_streams`. The gating axis stated above — *
 input tolerate absence?* — is unchanged and is now a declared property of the binding
 rather than a consequence of which routing mechanism carries the stream. See the
 2026-09-02 amendment of ADR 0003.
+
+## Amendment 2026-09-10: context with a safe default declares the value
+
+`ContextBinding.gating` (2026-09-02 amendment) is replaced by `ContextBinding.default`,
+and every binding now gates. If a binding declares a default and the context cache has
+no value for its stream, `JobManager` inserts the default into the batch. The job then
+activates on the first tick, and the workflow receives the default through
+`set_context` like a published value. The question above, *does this input tolerate
+absence?*, is unchanged. A binding that tolerates absence now states what the workflow
+sees in the meantime, instead of opting out of the gate.
+
+With `gating=False` the job started with the context key unset, and the workflow saw
+whatever `StreamProcessor` had left in it (`None`). The ROI providers handled `None`
+even though their type annotations exclude it. Now that all context goes through the
+gate, no job starts with an unset context key.
+
+Rejected: putting the default into the preprocessor's context cache. The cache entry
+for a stream is created on its first message, so a stream that never publishes has no
+entry to fill. The preprocessor also cannot pick the default. It only knows the
+`StreamKind`, and `LIVEDATA_ROI` does not say whether the request is a rectangle or a
+polygon.
