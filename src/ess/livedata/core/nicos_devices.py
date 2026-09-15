@@ -11,8 +11,9 @@ NICOS sees a stable device identity across reconfigurations. Which outputs are
 eligible is decided by the workflow registry (``WorkflowSpec.device_outputs``);
 the extractor trusts the contract and emits whatever it designates.
 
-Devices are scalar *cumulative* outputs, which carry a 0-D ``start_time``
-coordinate (stamped by the JobManager at production time, ns since epoch). It is
+Devices are *cumulative* outputs -- a scalar total or a histogram/image -- which
+carry a 0-D ``start_time`` coordinate (stamped by the JobManager at production
+time, ns since epoch) regardless of the output's own shape. It is
 constant for the lifetime of a generation and changes on reset or reconfigure,
 so NICOS uses it as a change-detector to distinguish a post-reset zero from a
 genuine low reading.

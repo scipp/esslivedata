@@ -24,6 +24,26 @@ devices:
   workflow_id: loki/monitor_histogram/1
   source_name: beam_monitor_m4
   output_name: counts_total_cumulative
+- device_name: beam_monitor_m0_histogram
+  workflow_id: loki/monitor_histogram/1
+  source_name: beam_monitor_m0
+  output_name: cumulative
+- device_name: beam_monitor_m1_histogram
+  workflow_id: loki/monitor_histogram/1
+  source_name: beam_monitor_m1
+  output_name: cumulative
+- device_name: beam_monitor_m2_histogram
+  workflow_id: loki/monitor_histogram/1
+  source_name: beam_monitor_m2
+  output_name: cumulative
+- device_name: beam_monitor_m3_histogram
+  workflow_id: loki/monitor_histogram/1
+  source_name: beam_monitor_m3
+  output_name: cumulative
+- device_name: beam_monitor_m4_histogram
+  workflow_id: loki/monitor_histogram/1
+  source_name: beam_monitor_m4
+  output_name: cumulative
 - device_name: loki_detector_0_counts_total
   workflow_id: loki/detector_xy_projection/1
   source_name: loki_detector_0
@@ -60,3 +80,39 @@ devices:
   workflow_id: loki/detector_xy_projection/1
   source_name: loki_detector_8
   output_name: counts_total_cumulative
+- device_name: loki_detector_0_image
+  workflow_id: loki/detector_xy_projection/1
+  source_name: loki_detector_0
+  output_name: cumulative
+- device_name: loki_detector_1_image
+  workflow_id: loki/detector_xy_projection/1
+  source_name: loki_detector_1
+  output_name: cumulative
+- device_name: loki_detector_2_image
+  workflow_id: loki/detector_xy_projection/1
+  source_name: loki_detector_2
+  output_name: cumulative
+- device_name: loki_detector_3_image
+  workflow_id: loki/detector_xy_projection/1
+  source_name: loki_detector_3
+  output_name: cumulative
+- device_name: loki_detector_4_image
+  workflow_id: loki/detector_xy_projection/1
+  source_name: loki_detector_4
+  output_name: cumulative
+- device_name: loki_detector_5_image
+  workflow_id: loki/detector_xy_projection/1
+  source_name: loki_detector_5
+  output_name: cumulative
+- device_name: loki_detector_6_image
+  workflow_id: loki/detector_xy_projection/1
+  source_name: loki_detector_6
+  output_name: cumulative
+- device_name: loki_detector_7_image
+  workflow_id: loki/detector_xy_projection/1
+  source_name: loki_detector_7
+  output_name: cumulative
+- device_name: loki_detector_8_image
+  workflow_id: loki/detector_xy_projection/1
+  source_name: loki_detector_8
+  output_name: cumulative

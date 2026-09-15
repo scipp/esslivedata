@@ -24,7 +24,31 @@ devices:
   workflow_id: bifrost/monitor_histogram/1
   source_name: elastic_monitor
   output_name: counts_total_cumulative
+- device_name: psc_monitor_histogram
+  workflow_id: bifrost/monitor_histogram/1
+  source_name: psc_monitor
+  output_name: cumulative
+- device_name: overlap_monitor_histogram
+  workflow_id: bifrost/monitor_histogram/1
+  source_name: overlap_monitor
+  output_name: cumulative
+- device_name: bandwidth_monitor_histogram
+  workflow_id: bifrost/monitor_histogram/1
+  source_name: bandwidth_monitor
+  output_name: cumulative
+- device_name: normalization_monitor_histogram
+  workflow_id: bifrost/monitor_histogram/1
+  source_name: normalization_monitor
+  output_name: cumulative
+- device_name: elastic_monitor_histogram
+  workflow_id: bifrost/monitor_histogram/1
+  source_name: elastic_monitor
+  output_name: cumulative
 - device_name: unified_detector_counts_total
   workflow_id: bifrost/unified_detector_view/1
   source_name: unified_detector
   output_name: counts_total_cumulative
+- device_name: unified_detector_image
+  workflow_id: bifrost/unified_detector_view/1
+  source_name: unified_detector
+  output_name: cumulative

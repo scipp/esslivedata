@@ -9,8 +9,9 @@ already-adapted source (i.e. domain-level :class:`Message` objects) and:
 - Tracks per-chopper ``<chopper>/rotation_speed_setpoint`` (clean upstream
   f144) and ``<chopper>/delay`` (noisy readback) values.
 - Runs a rolling-window stability detector on each chopper's delay samples;
-  when stable and the value differs from the cached locked value, emits a
-  synthetic ``<chopper>/delay_setpoint`` f144 message.
+  when stable and the value differs from the cached locked value by more than
+  the noise the window admits, emits a synthetic ``<chopper>/delay_setpoint``
+  f144 message.
 - When every configured chopper has both a cached ``rotation_speed_setpoint``
   and a stable ``delay_setpoint``, emits a synthetic primary tick on the
   ``chopper_cascade`` logical stream — but only on cycles where one of those
@@ -101,19 +102,39 @@ def _make_delay_setpoint_message(
     )
 
 
+#: Multiple of ``atol`` by which a window mean must differ from the locked
+#: value to count as a genuine setpoint change.
+#:
+#: The plateau gate admits windows whose standard deviation is up to ``atol``,
+#: so on constant input successive window means scatter by about
+#: ``atol * sqrt(2 / window_size)`` all by themselves — and the locked value is
+#: itself one of those fluctuated means. A change threshold equal to ``atol``
+#: is only a ~2 sigma excursion for the default 5-sample window, so noise alone
+#: re-locks, emitting a spurious delay setpoint and a full wavelength-LUT
+#: recompute each time. Monte Carlo over windows of 3 to 20 samples at the
+#: worst-case noise the gate admits puts the onset of chatter between factors
+#: two and three; three is the smallest integer that is clean throughout.
+_CHANGE_FACTOR = 3.0
+
+
 class _StabilityDetector:
     """Rolling-window stability detector.
 
     Holds the most recent ``window_size`` samples. A "lock" is acquired when
     the window's standard deviation is below ``atol``; the locked value is the
-    window mean. The same ``atol`` decides whether a new mean has drifted far
-    enough from the previous lock to count as a new setpoint — so noise
-    rejection and change detection share one knob.
+    window mean. Re-locking additionally requires the mean to have moved by
+    more than ``_CHANGE_FACTOR * atol``, so that noise the plateau gate lets
+    through cannot masquerade as a setpoint change.
+
+    ``atol`` is thus the readback *noise* scale, not the smallest resolvable
+    change: genuine changes below ``_CHANGE_FACTOR * atol`` are ignored, and
+    the locked value trails the truth by at most that much.
     """
 
     def __init__(self, *, window_size: int, atol: float) -> None:
         self._buffer: deque[float] = deque(maxlen=window_size)
         self._atol = atol
+        self._change_threshold = _CHANGE_FACTOR * atol
         self._locked: float | None = None
 
     def add(self, sample: float) -> float | None:
@@ -125,7 +146,7 @@ class _StabilityDetector:
         if arr.std() >= self._atol:
             return None
         mean = float(arr.mean())
-        if self._locked is None or abs(mean - self._locked) > self._atol:
+        if self._locked is None or abs(mean - self._locked) > self._change_threshold:
             self._locked = mean
             return mean
         return None

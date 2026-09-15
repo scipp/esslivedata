@@ -66,12 +66,33 @@ def test_from_instrument_derives_monitor_devices(
     )
 
 
+def test_from_instrument_derives_monitor_histogram_device(
+    dummy_instrument: Instrument,
+) -> None:
+    # MONITOR_DEVICES also designates the histogram (cumulative) as a device.
+    contract = DeviceContract.from_instrument(dummy_instrument)
+    wid = WorkflowId.from_string(MONITOR_WORKFLOW)
+    assert contract.is_device(wid, 'monitor1', 'cumulative')
+    assert contract.device_name(wid, 'monitor1', 'cumulative') == 'monitor1_histogram'
+
+
+def test_from_instrument_derives_detector_image_device(
+    dummy_instrument: Instrument,
+) -> None:
+    # DETECTOR_VIEW_DEVICES designates the image (cumulative) as a device,
+    # alongside the total, on the bank's designated view.
+    contract = DeviceContract.from_instrument(dummy_instrument)
+    wid = WorkflowId.from_string('dummy/panel_0_xy/1')
+    assert contract.is_device(wid, 'panel_0', 'cumulative')
+    assert contract.device_name(wid, 'panel_0', 'cumulative') == 'panel_0_image'
+
+
 def test_is_device_negative(dummy_instrument: Instrument) -> None:
     contract = DeviceContract.from_instrument(dummy_instrument)
     wid = WorkflowId.from_string(MONITOR_WORKFLOW)
-    # 'cumulative' is a real output but not a declared device.
-    assert not contract.is_device(wid, 'monitor1', 'cumulative')
-    assert contract.device_name(wid, 'monitor1', 'cumulative') is None
+    # 'current' is a real output but not a declared device.
+    assert not contract.is_device(wid, 'monitor1', 'current')
+    assert contract.device_name(wid, 'monitor1', 'current') is None
     # Source the workflow does not run on.
     assert not contract.is_device(wid, 'no_such_monitor', 'counts_total_cumulative')
 

@@ -18,7 +18,7 @@ from ess.livedata.config import (
     instrument_registry,
     name_streams,
 )
-from ess.livedata.config.device_contract import COUNTS_TOTAL_DEVICE
+from ess.livedata.config.device_contract import DETECTOR_VIEW_DEVICES
 from ess.livedata.config.workflow_spec import (
     MONITORS,
     AuxInput,
@@ -194,11 +194,14 @@ instrument = Instrument(
     choppers=['bw_chopper1', 'bw_chopper2', 'fo_chopper1', 'fo_chopper2'],
     # The rear bank rides the detector carriage, whose transform the geometry
     # artifact stores as an empty NXlog. The carriage runs from its base
-    # position out to 15 m, moving away from the sample.
+    # position out to ~5 m, moving away from the sample. Carriage base position is 5 m
+    # after the sample. Axis range below is padded on both ends as final range will only
+    # be known after calibration. There should be no downside to the padding aside from
+    # a slightly larger wavelength LUT.
     axis_ranges={
         '/entry/instrument/detector_carriage/value': AxisRange(
-            lower=sc.scalar(0.0, unit='m'),
-            upper=sc.scalar(15.0, unit='m'),
+            lower=sc.scalar(-0.5, unit='m'),
+            upper=sc.scalar(5.5, unit='m'),
         )
     },
     streams=streams,
@@ -270,8 +273,8 @@ xy_projection_handle = instrument.register_detector_view(
     title='Detector XY Projection',
     description='Projection of a detector bank onto an XY-plane.',
     source_names=detector_names,
-    # The projection, not the tube view, carries each bank's NICOS counts device.
-    device_outputs=COUNTS_TOTAL_DEVICE,
+    # The projection, not the tube view, carries each bank's NICOS devices.
+    device_outputs=DETECTOR_VIEW_DEVICES,
 )
 
 # Register tube view for all detector banks

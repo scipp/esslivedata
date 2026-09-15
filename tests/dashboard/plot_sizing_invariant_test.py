@@ -181,3 +181,34 @@ def test_computed_frames_are_styled_before_they_reach_a_session(
     assert figures
     for fig in figures:
         assert fig.sizing_mode == 'stretch_both'
+
+
+@pytest.mark.parametrize(
+    ('plotter_cls', 'params_cls'),
+    [(plots.LinePlotter, PlotParams1d), (plots.ImagePlotter, PlotParams2d)],
+    ids=['line', 'image'],
+)
+@pytest.mark.parametrize('combine', [CombineMode.overlay, CombineMode.layout])
+def test_frame_without_data_is_sized_like_the_frames_that_follow(
+    plotter_cls, params_cls, combine
+):
+    """A cell built before its data arrives must still letterbox (#1297).
+
+    The aspect hook attaches its CustomJS to the figure the *first* frame
+    creates, and the browser only wires up the callbacks the figure carries
+    when it first arrives there. A first frame whose element type misses the
+    sizing opts -- the "No data" placeholder -- therefore leaves the plot
+    filling its cell at whatever shape the cell has, for good.
+    """
+    params = params_cls(
+        layout=LayoutParams(combine_mode=combine),
+        plot_aspect=PlotAspect(aspect_type=PlotAspectType.square),
+    )
+    plotter = plotter_cls.from_params(params)
+
+    plotter.compute({'primary': {}})
+
+    figures = _figures(plotter.get_cached_state())
+    assert len(figures) == 1
+    assert figures[0].sizing_mode == 'stretch_both'
+    assert figures[0].js_property_callbacks

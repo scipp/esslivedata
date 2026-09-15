@@ -11,7 +11,7 @@ from ess.livedata.config import (
     instrument_registry,
     name_streams,
 )
-from ess.livedata.config.device_contract import COUNTS_TOTAL_DEVICE
+from ess.livedata.config.device_contract import DETECTOR_VIEW_DEVICES
 from ess.livedata.workflows.monitor_workflow_specs import (
     TOAOnlyMonitorDataParams,
     register_monitor_workflow_specs,
@@ -82,7 +82,7 @@ register_monitor_workflow_specs(
 )
 
 # The whole-bank image, rather than the per-panel breakdown, carries each bank's
-# NICOS counts device.
+# NICOS devices.
 instrument.add_logical_view(
     name='bank_view',
     title='Detector Bank',
@@ -90,7 +90,7 @@ instrument.add_logical_view(
     source_names=detector_names,
     transform=get_bank_view,
     reduction_dim=['panel', 'y_bin', 'x_bin'],
-    device_outputs=COUNTS_TOTAL_DEVICE,
+    device_outputs=DETECTOR_VIEW_DEVICES,
 )
 
 instrument.add_logical_view(

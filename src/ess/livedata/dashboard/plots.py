@@ -833,9 +833,15 @@ class Plotter:
             plots.append(plot_element)
 
         if len(plots) == 0:
+            # Carries the sizing opts, aspect hook included: the hook attaches to
+            # the figure the first frame creates, and the browser wires up only
+            # the callbacks that figure arrives with. A cell built before its data
+            # arrives would otherwise never letterbox (#1297).
             plots = [
                 hv.Text(0.5, 0.5, 'No data').opts(
-                    text_align='center', text_baseline='middle', responsive=True
+                    text_align='center',
+                    text_baseline='middle',
+                    **self._sizing_opts,
                 )
             ]
 
@@ -848,12 +854,15 @@ class Plotter:
         session's DynamicMap holds one type per plotter, and a mismatched
         frame wedges it permanently (#1193). Plotters whose
         :meth:`_build_result` emits a different frame type override this to
-        match.
+        match. It also carries the sizing opts, for the reason the no-data
+        placeholder in :meth:`_build_result` does.
         """
         return self._combine(
             [
                 hv.Text(0.5, 0.5, message).opts(
-                    text_align='center', text_baseline='middle', responsive=True
+                    text_align='center',
+                    text_baseline='middle',
+                    **self._sizing_opts,
                 )
             ]
         )

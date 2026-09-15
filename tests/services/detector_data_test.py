@@ -410,11 +410,14 @@ def test_detector_counts_are_published_as_a_nicos_device(
     devices = [
         m for m in app.sink.messages if m.stream.kind == StreamKind.LIVEDATA_NICOS_DATA
     ]
-    assert [m.stream.name for m in devices] == ['panel_0_counts_total']
-    value = devices[0].value
-    assert value.value == 2000
-    assert 'start_time' in value.coords
-    assert 'end_time' in value.coords
+    assert [m.stream.name for m in devices] == [
+        'panel_0_counts_total',
+        'panel_0_image',
+    ]
+    counts_total = devices[0].value
+    assert counts_total.value == 2000
+    assert 'start_time' in counts_total.coords
+    assert 'end_time' in counts_total.coords
 
 
 def test_message_with_unknown_schema_is_ignored(

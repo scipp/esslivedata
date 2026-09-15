@@ -18,7 +18,7 @@ from ess.livedata.config import (
     instrument_registry,
     name_streams,
 )
-from ess.livedata.config.device_contract import COUNTS_TOTAL_DEVICE
+from ess.livedata.config.device_contract import DETECTOR_VIEW_DEVICES
 from ess.livedata.workflows.detector_view_specs import TOAOnlyDetectorViewParams
 from ess.livedata.workflows.monitor_workflow_specs import (
     TOAOnlyMonitorDataParams,
@@ -118,6 +118,6 @@ projection_handle = instrument.register_detector_view(
     description='Projection of the cylindrical detector banks onto their mantle.',
     source_names=detector_names,
     params=TOAOnlyDetectorViewParams,
-    # The projection, not the wire or strip view, carries the NICOS counts devices.
-    device_outputs=COUNTS_TOTAL_DEVICE,
+    # The projection, not the wire or strip view, carries the NICOS devices.
+    device_outputs=DETECTOR_VIEW_DEVICES,
 )

@@ -77,7 +77,11 @@ _HOLOVIEWS_MIN_BORDER = 10
 #
 # Sizing the frame directly (``frame_width``/``frame_height``) does not work:
 # Bokeh only honours those when they are set before the figure is first
-# rendered, and ignores later writes. ``min_border_*`` is honoured at any time.
+# rendered, and ignores later writes. ``min_border_*`` is honoured at any time,
+# but only from bokeh 3.9 (bokeh#15011): before it, a runtime write triggers no
+# relayout at all, so the rule pads once, the frame never moves, and no further
+# ``inner_*`` change ever re-enters the callback. Hence the floor in
+# ``pyproject.toml``.
 # It is a *minimum*, so it is expressed relative to the side's current size,
 # and restoring it to HoloViews' own value removes the letterbox.
 #
