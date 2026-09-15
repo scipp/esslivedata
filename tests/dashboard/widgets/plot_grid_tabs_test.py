@@ -2096,6 +2096,156 @@ class TestFlushGating:
         assert not any(p.has_pending_update() for p in presenters)
 
 
+_X = (0.0, 1.0, 2.0)
+
+
+class TestLayoutModeShapeChange:
+    """A layout-mode layer keeps rendering when its items change (#1301).
+
+    A DynamicMap returning ``hv.Layout`` accepts only frames with the item
+    count and item types of the frame it was first rendered with, so a source
+    whose data arrives after the cell was built must not freeze the cell.
+    """
+
+    @staticmethod
+    def _config(workflow_id: WorkflowId):
+        from ess.livedata.dashboard.data_roles import PRIMARY
+        from ess.livedata.dashboard.plot_orchestrator import (
+            DataSourceConfig,
+            PlotConfig,
+        )
+        from ess.livedata.dashboard.plot_params import CombineMode, LayoutParams
+        from ess.livedata.dashboard.plotter_registry import plotter_registry
+
+        params = plotter_registry.get_spec('lines').params(
+            layout=LayoutParams(combine_mode=CombineMode.layout)
+        )
+        return PlotConfig(
+            data_sources={
+                PRIMARY: DataSourceConfig(
+                    workflow_id=workflow_id,
+                    source_names=['a', 'b'],
+                    view_name=_WORKFLOW_VIEW,
+                )
+            },
+            plot_name='lines',
+            params=params,
+        )
+
+    @staticmethod
+    def _publish(
+        data_service: DataService,
+        workflow_id: WorkflowId,
+        source_name: str,
+        values: list[float],
+        *,
+        variances: list[float] | None = None,
+    ) -> None:
+        import scipp as sc
+
+        from ess.livedata.config.workflow_spec import DataKey
+
+        key = DataKey(
+            workflow_id=workflow_id, source_name=source_name, output_name=_WORKFLOW_VIEW
+        )
+        data_service[key] = sc.DataArray(
+            sc.array(dims=['x'], values=values, variances=variances),
+            coords={'x': sc.array(dims=['x'], values=list(_X))},
+        )
+
+    @pytest.fixture
+    def displayed_columns(
+        self,
+        plot_orchestrator,
+        plot_grid_tabs,
+        job_orchestrator,
+        data_service,
+        workflow_id,
+    ):
+        """Visible layout-mode cell rendered with source ``a`` only.
+
+        Returns a callable giving the values of every column the session
+        displays. A browser renders a cell widget once; a rebuilt widget is a
+        new rendering, so each widget's root is created on first sight only.
+        """
+        job_orchestrator.commit_workflow(workflow_id)
+        grid_id = plot_orchestrator.add_grid(title='G', nrows=2, ncols=2)
+        cell_id = plot_orchestrator.add_cell(grid_id, _GEO)
+        plot_orchestrator.add_layer(cell_id, self._config(workflow_id))
+        self._publish(data_service, workflow_id, 'a', [1.0, 2.0, 3.0])
+        plot_orchestrator.flush_frames()
+        _tick(plot_grid_tabs)
+        plot_grid_tabs.tabs.active = plot_grid_tabs._static_tabs_count
+        # Keyed by id, holding the widget so the id cannot be reused.
+        roots = {}
+
+        def displayed() -> set[tuple[float, ...]]:
+            from bokeh.models import ColumnDataSource
+
+            widget = plot_grid_tabs._cells[cell_id]
+            if id(widget) not in roots:
+                roots[id(widget)] = (widget, widget.view.get_root())
+            root = roots[id(widget)][1]
+            # Every rendered column, so the x coordinate is among them.
+            return {
+                tuple(float(v) for v in column)
+                for source in root.select({'type': ColumnDataSource})
+                for column in source.data.values()
+                if len(column)
+            }
+
+        assert displayed() == {_X, (1.0, 2.0, 3.0)}
+        return displayed
+
+    def test_source_arriving_later_is_displayed(
+        self,
+        displayed_columns,
+        plot_orchestrator,
+        plot_grid_tabs,
+        data_service,
+        workflow_id,
+    ):
+        self._publish(data_service, workflow_id, 'b', [7.0, 8.0, 9.0])
+        plot_orchestrator.flush_frames()
+        _tick(plot_grid_tabs)
+
+        assert displayed_columns() == {_X, (1.0, 2.0, 3.0), (7.0, 8.0, 9.0)}
+
+    def test_updates_keep_arriving_after_the_change(
+        self,
+        displayed_columns,
+        plot_orchestrator,
+        plot_grid_tabs,
+        data_service,
+        workflow_id,
+    ):
+        self._publish(data_service, workflow_id, 'b', [7.0, 8.0, 9.0])
+        plot_orchestrator.flush_frames()
+        _tick(plot_grid_tabs)
+        displayed_columns()  # the browser renders the rebuilt cell
+        self._publish(data_service, workflow_id, 'a', [4.0, 5.0, 6.0])
+        plot_orchestrator.flush_frames()
+        _tick(plot_grid_tabs)
+
+        assert displayed_columns() == {_X, (4.0, 5.0, 6.0), (7.0, 8.0, 9.0)}
+
+    def test_source_gaining_error_bars_is_displayed(
+        self,
+        displayed_columns,
+        plot_orchestrator,
+        plot_grid_tabs,
+        data_service,
+        workflow_id,
+    ):
+        self._publish(
+            data_service, workflow_id, 'a', [4.0, 5.0, 6.0], variances=[1.0] * 3
+        )
+        plot_orchestrator.flush_frames()
+        _tick(plot_grid_tabs)
+
+        assert (4.0, 5.0, 6.0) in displayed_columns()
+
+
 class TestOrphanSweep:
     """The poll's sweep of cells that vanished from topology."""
 

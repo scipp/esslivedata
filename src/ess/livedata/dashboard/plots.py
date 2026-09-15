@@ -483,6 +483,20 @@ def _is_element_opt(opt: hv.Options) -> bool:
     return isinstance(element, type) and issubclass(element, hv.Element)
 
 
+def layout_shape(frame: Any) -> tuple[type, ...] | None:
+    """Types of a layout frame's items in order, or None for any other frame.
+
+    A DynamicMap returning ``hv.Layout`` is split into one sub-map per item of
+    the first frame it renders. Every later frame must have the same number of
+    items of each type; HoloViews logs any other frame as an error instead of
+    raising, and the plot stops updating for good (#1301). Frames with a
+    different shape therefore need a new DynamicMap, not a pipe send.
+    """
+    if not isinstance(frame, hv.Layout):
+        return None
+    return tuple(type(item) for item in frame)
+
+
 class Plotter:
     """
     Base class for plots that support autoscaling.
@@ -937,6 +951,10 @@ class Plotter:
     def has_cached_state(self) -> bool:
         """Check if state has been computed."""
         return self._cached_state is not None
+
+    def layout_shape(self) -> tuple[type, ...] | None:
+        """:func:`layout_shape` of the cached state."""
+        return layout_shape(self.get_cached_state())
 
     def get_range_targets(self, data_key: DataKey) -> RangeTargets | None:
         """Per-axis ``(lo, hi)`` targets computed at the last ``compute()``.
