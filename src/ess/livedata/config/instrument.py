@@ -496,8 +496,8 @@ class Instrument:
         :attr:`ContextBinding.default` is set, i.e. those whose absence is a
         representable state rather than something to wait for. The
         ``JobManager`` opens the gate on these without the producer having
-        published (ADR 0002), delivering the default by the same path a cached
-        value takes.
+        published, delivering the default by the same path a cached value
+        takes.
         """
         return {
             binding.stream_name: binding.default

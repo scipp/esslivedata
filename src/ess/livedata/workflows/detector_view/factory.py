@@ -285,8 +285,8 @@ def bind_roi_requests(workflow_factory: WorkflowFactory) -> None:
     delivers them to ``set_context`` under the request key
     :func:`make_workflow` wired the ROI providers by.
 
-    Each binding declares the empty request of its geometry as its default
-    (ADR 0002), because "nothing published" and "no ROI selected" are the same
+    Each binding declares the empty request of its geometry as its default,
+    because "nothing published" and "no ROI selected" are the same
     state. The gate therefore opens on the first tick and the job runs, rather
     than waiting for a selection that most jobs never receive. The stream is
     latched like any other context input, which together with the job-free name

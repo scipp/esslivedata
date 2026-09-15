@@ -171,7 +171,7 @@ class ContextBinding:
     workflow_key: Any
     dependent_sources: frozenset[str]
     default: Any = NO_DEFAULT
-    """Value standing in for the stream until it first delivers (ADR 0002).
+    """Value standing in for the stream until it first delivers.
 
     Every binding gates: the :class:`JobManager` holds the job until each of
     its context streams has a value, because running without one would either

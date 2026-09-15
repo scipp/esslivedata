@@ -68,7 +68,7 @@ class StreamProcessorWorkflow(Workflow):
             key when it takes the pipeline over, so a value the base pipeline
             supplies for one does not survive. The ``JobManager``'s context
             gate is what guarantees this, delivering either a cached value or
-            the binding's declared default before the job runs (ADR 0002).
+            the binding's declared default before the job runs.
             A factory passes only its own internal context here (e.g. ROI);
             instrument- and spec-scope bindings resolved by the routing layer
             are merged in afterwards via :meth:`add_context_keys`, which is
@@ -254,8 +254,8 @@ class StreamProcessorWorkflow(Workflow):
         # Context data (e.g., positions from f144 streams) is injected via
         # set_context, which updates the sciline pipeline parameters. Only keys
         # present in this batch are updated; absent keys retain the value from
-        # the most recent set_context call. The context gate (ADR 0002) is what
-        # ensures every key has been set by the time the job first runs. The
+        # the most recent set_context call. The context gate is what ensures
+        # every key has been set by the time the job first runs. The
         # routing layer (JobFactory.create) delivers a stream only to the jobs
         # whose bindings subscribe to it.
         #

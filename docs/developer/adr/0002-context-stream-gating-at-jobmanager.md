@@ -1,6 +1,6 @@
 # ADR 0002: Gate workflow execution at the JobManager on context-stream readiness
 
-- Status: accepted (amended 2026-09-02)
+- Status: accepted (amended 2026-09-02, 2026-09-10)
 - Deciders: Simon
 - Date: 2026-05-21
 
@@ -194,32 +194,23 @@ input tolerate absence?* — is unchanged and is now a declared property of the 
 rather than a consequence of which routing mechanism carries the stream. See the
 2026-09-02 amendment of ADR 0003.
 
-## Amendment 2026-09-10: tolerating absence is a declared default, not an ungated binding
+## Amendment 2026-09-10: context with a safe default declares the value
 
-The `gating=False` flag is gone. Every `ContextBinding` gates; one whose absence is
-representable declares a `default` instead, and the `JobManager` opens its gate with
-that value when the context cache has none (`_open_context_gates`). The gating axis
-above — *does this input tolerate absence?* — is unchanged; what changes is that
-tolerating absence now means *naming the value that stands in for it* rather than
-opting out of the gate.
+`ContextBinding.gating` (2026-09-02 amendment) is replaced by `ContextBinding.default`,
+and every binding now gates. If a binding declares a default and the context cache has
+no value for its stream, `JobManager` inserts the default into the batch. The job then
+activates on the first tick, and the workflow receives the default through
+`set_context` like a published value. The question above, *does this input tolerate
+absence?*, is unchanged. A binding that tolerates absence now states what the workflow
+sees in the meantime, instead of opting out of the gate.
 
-This closes a hole the flag left open. `StreamProcessor` overwrites every context key
-when it takes the pipeline over, so an ungated binding's key reached `finalize` with
-whatever the streaming layer happened to leave there — historically `None`, which every
-ROI provider had to special-case against its own type annotation. With one gate and no
-exceptions, the invariant the gate already documented holds for all context: a job
-cannot start with a context key unfed, because gate opening and value delivery read the
-same batch.
+With `gating=False` the job started with the context key unset, and the workflow saw
+whatever `StreamProcessor` had left in it (`None`). The ROI providers handled `None`
+even though their type annotations exclude it. Now that all context goes through the
+gate, no job starts with an unset context key.
 
-The default is delivered exactly once, on activation, by the same path a cached value
-takes — active jobs are deliberately never refilled, since re-presenting context every
-tick would re-fire `set_context` and force an eager downstream recompute. A declared
-default therefore costs no more than a published one.
-
-Rejected: seeding the preprocessor's context cache instead, either directly or with a
-synthetic message. Context accumulators are created lazily, on a stream's first real
-message, so a stream that never publishes has no accumulator to seed and would need
-eager registration of every declared context stream — and the preprocessor would have
-to infer each default from the stream name, since it dispatches on `StreamKind` and
-`LIVEDATA_ROI` alone does not say rectangle or polygon. A synthetic message would also
-make a declaration indistinguishable from something a producer really sent.
+Rejected: putting the default into the preprocessor's context cache. The cache entry
+for a stream is created on its first message, so a stream that never publishes has no
+entry to fill. The preprocessor also cannot pick the default. It only knows the
+`StreamKind`, and `LIVEDATA_ROI` does not say whether the request is a rectangle or a
+polygon.

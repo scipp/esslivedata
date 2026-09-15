@@ -97,7 +97,7 @@ class TestBindROIRequests:
     def test_roi_streams_gate_but_carry_an_empty_request_as_their_default(
         self, instrument: Instrument, workflow_id: WorkflowId, source: str
     ) -> None:
-        """The gate opens on the first tick, without a producer (ADR 0002)."""
+        """The gate opens on the first tick, without a producer."""
         gating = instrument.bound_gating_streams(workflow_id, source)
         defaults = instrument.bound_context_defaults(workflow_id, source)
 

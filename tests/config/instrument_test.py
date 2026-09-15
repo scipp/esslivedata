@@ -785,7 +785,7 @@ class TestOfferedContextStreams:
     def test_every_binding_gates_whether_or_not_it_has_a_default(
         self, spec_on_det1: tuple[Instrument, SpecHandle]
     ):
-        """A default satisfies the gate rather than removing it (ADR 0002)."""
+        """A default satisfies the gate rather than removing it."""
         instrument, handle = spec_on_det1
         handle.add_context_binding(stream_name='rot', workflow_key=_Key)
         handle.add_context_binding(stream_name='roi', workflow_key=_Key, default=7)

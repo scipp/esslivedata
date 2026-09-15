@@ -363,8 +363,7 @@ class Job:
     def context_defaults(self) -> dict[str, Any]:
         """Cold-start values for gating streams whose absence is representable.
 
-        See :attr:`~ess.livedata.config.stream.ContextBinding.default` and
-        :doc:`/developer/adr/0002-context-stream-gating-at-jobmanager`.
+        See :attr:`~ess.livedata.config.stream.ContextBinding.default`.
         """
         return self._context_defaults
 

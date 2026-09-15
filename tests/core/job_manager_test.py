@@ -1821,7 +1821,7 @@ class TestJobFactoryContextBinding:
         assert 'temp' in job.input_stream_names
 
     def test_binding_with_a_default_gates_and_carries_its_default(self) -> None:
-        """A default satisfies the gate rather than removing it (ADR 0002).
+        """A default satisfies the gate rather than removing it.
 
         The binding is subscribed and delivered like any other context input;
         what the default changes is that the JobManager can open the gate
@@ -2325,7 +2325,7 @@ class TestPeekPendingStreams:
 
 
 class TestContextStreamGateDefaults:
-    """A gating stream may declare a value to open its gate with (ADR 0002).
+    """A gating stream may declare a value to open its gate with.
 
     The default is for context whose absence is a representable state -- the
     ROI request, where "nothing published" and "no ROI selected" are the same
