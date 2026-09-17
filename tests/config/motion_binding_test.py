@@ -39,11 +39,16 @@ def _chain_patch_inputs(instrument: Instrument) -> list[ContextBinding]:
 def _load_chain(artifact: str, source_name: str) -> TransformationChain | None:
     """Walk a source's depends_on chain via scippnexus.
 
-    Returns ``None`` for static components with no ``depends_on`` field.
+    Returns ``None`` for static components with no ``depends_on`` field and for
+    sources that are not NeXus groups at all — BIFROST's ``unified_detector`` is
+    a logical name covering 45 triplet groups.
     """
     parent_path = f'/entry/instrument/{source_name}'
     with snx.File(artifact, 'r') as f:
-        comp = f[parent_path]
+        try:
+            comp = f[parent_path]
+        except KeyError:
+            return None
         try:
             depends_on = comp['depends_on'][()]
         except KeyError:
