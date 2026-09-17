@@ -36,7 +36,7 @@ dependencies = [
   "cyclebane>=26.9.0",
   "dask>=2026.3.0",
   "ess-streaming-data-types",
-  "essreduce>=26.6.3",  # Thread-safe wavelength-LUT polygon intersection (no warning suppression race)
+  "essreduce>=26.9.0",  # StreamProcessor releases fed values after use, no graph rebuild per chunk
   "jinja2",
   "numba",  # Compiled wavelength-LUT interpolation, see core/numba_threading.py
   "pydantic>=2",
@@ -53,7 +53,7 @@ test = [
     "essdiffraction>=26.5.0",
     "essreflectometry>=26.6.0",
     "esssans",
-    "essspectroscopy>=26.6.0",
+    "essspectroscopy>=26.9.0",
     "holoviews>=1.23.0",
     "panel>=1.9.3",
     "param",
@@ -64,7 +64,7 @@ test = [
 ]
 beer = []
 bifrost = [
-    "essspectroscopy>=26.6.0",
+    "essspectroscopy>=26.9.0",
 ]
 dream = [
     "essdiffraction>=26.5.0",

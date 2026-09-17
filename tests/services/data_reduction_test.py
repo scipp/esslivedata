@@ -313,9 +313,8 @@ def test_bifrost_qmap_context_arriving_on_separate_ticks_is_not_lost(
     job is still gated on the second (``rotation_stage``). The JobManager marks
     it seen but the gated job is skipped, so its value never reaches
     ``set_context`` on that tick. Unless the orchestrator re-presents it from
-    the preprocessor's context cache when the gate finally opens, it stays at
-    the essreduce ``None`` seed and the workflow crashes
-    (``'NoneType' object has no attribute 'ndim'``) — producing no output.
+    the preprocessor's context cache when the gate finally opens, it is never
+    fed and the workflow raises at finalize — producing no output.
 
     The sibling test publishes both streams in one tick and so never exercises
     this path. See :doc:`/developer/adr/0002-context-stream-gating-at-jobmanager`.
