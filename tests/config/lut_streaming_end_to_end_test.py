@@ -399,10 +399,9 @@ def test_chopper_out_of_phase_empties_the_consumer(dream: Instrument) -> None:
 
     An overlap chopper at 5 Hz cannot be phase-locked to a 14 Hz source. The
     lookup-table job publishes a table that lets nothing through rather than
-    raising, so the consumer replaces the table it had instead of reducing with
-    one from before the choppers moved. It keeps publishing, with no counts: no
-    event has a wavelength we can assign, which is the same result as an
-    opening too narrow to catch any neutrons.
+    raising, so the consumer replaces the table it had and keeps publishing
+    with no counts: the same result as an opening too narrow to catch any
+    neutrons.
     """
     table = _ingest(dream, _run_lut_job(dream, speeds={'overlap_chopper': 5.0}))
 

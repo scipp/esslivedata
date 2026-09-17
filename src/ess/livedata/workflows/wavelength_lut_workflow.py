@@ -139,22 +139,13 @@ def _is_whole(value: float, *, rtol: float = 1e-8) -> bool:
 
 
 def _shut(chopper: DiskChopper, pulse_frequency: sc.Variable) -> DiskChopper:
-    """The same chopper, phase-locked and with no slits, so nothing passes.
+    """The same chopper, retimed to the source and with no slits, so nothing passes.
 
-    A chopper turning at a rate incommensurate with the source transmits a
-    different band on every pulse, so no single lookup table describes it.
-    scippneutron refuses to compute opening times for one at all, which would
-    take the whole cascade down with a traceback; substituting a disc that
-    never opens keeps the computation running and states the consequence --
-    nothing gets past this point -- in the tables, and in the bands diagnostic
-    as an all-NaN row at this chopper's distance, which is where the beam is
-    seen to stop unless something upstream had already closed it.
-
-    Blocking is the conservative reading, not a claim about the beam: neutrons
-    do get through such a chopper, but with no wavelength we can assign them.
-    The frequency is set to the source's own so the substitute survives
-    essreduce's phase check whatever pulse stride is in force; it has no slits,
-    so the frequency it turns at changes nothing.
+    Retiming does two things: the substitute passes essreduce's own phase check
+    whatever pulse stride is in force, and it drops out of essreduce's
+    pulse-stride guess, which the original frequency would inflate (5 Hz
+    against 14 Hz guesses a stride of 3). With no slits, the rate it turns at
+    changes nothing else.
     """
 
     def _no_slits(field: sc.Variable | None) -> sc.Variable | None:
@@ -180,31 +171,41 @@ def shut_choppers_out_of_phase(
     """Replace every chopper not phase-locked to the source with a shut one.
 
     A chopper is phase-locked when it turns a whole number of times per pulse
-    or the source pulses a whole number of times per rotation. Anything else
-    has no lookup table, and the alternative to substituting :func:`_shut` is
-    the job raising on every batch -- which publishes nothing, leaving every
-    consumer reducing with the table it was last given, from before the
-    choppers moved. Publishing a table that lets nothing through replaces that
-    table: consumers go on publishing, with no counts from past this chopper,
-    since no neutron there has a wavelength we can assign.
+    or the source pulses a whole number of times per rotation. This is the
+    per-chopper condition. The cascade condition -- every chopper completes a
+    whole number of turns per frame period, i.e. ``|f| * pulse_stride *
+    pulse_period`` is whole -- needs the stride, which essreduce derives from
+    the choppers this function returns. The per-chopper check therefore lets a
+    few cascades through that essreduce rejects (14/3 Hz alongside 14/4 Hz), and
+    what essreduce rejects follows its chopper-rotation count, which this check
+    must track. Moving the condition and the substitution upstream is proposed
+    in scipp/ess#751; this function then reduces to a parameter and logging.
 
-    Stopped choppers are left alone but reported: whether a parked disc blocks
-    the beam or sits open is not knowable from its speed, so neither shutting
-    it nor trusting it is defensible (#1312). They are reported because the
-    cascade does not survive them either way -- a disc at 0 Hz opens over
-    ``[-inf, inf]`` and closes over ``[-nan, inf]``, which blanks the table
-    from that distance downstream exactly as a shut chopper would. Consumers
-    then publish empty results without anything saying why; the log line is
-    what distinguishes a parked disc from a chopper this function actually
-    shut.
+    A chopper that fails the check transmits a different band on every pulse,
+    so no single table describes it, and scippneutron refuses to compute its
+    opening times. Letting that raise would publish nothing, leaving every
+    consumer reducing with the table it was last given, from before the
+    choppers moved. Substituting a disc that never opens publishes a table that
+    lets nothing through from that distance on: consumers replace their table
+    and go on publishing, with no counts for neutrons whose wavelength cannot
+    be assigned. Neutrons do pass such a chopper; blocking states what we know,
+    not what the beam does. The bands output shows the cut as an all-NaN row
+    at the chopper's distance.
+
+    Stopped choppers are left alone but reported. Whether a parked disc blocks
+    the beam or sits open is not knowable from its speed (#1312), and the
+    cascade does not survive it either way: a disc at 0 Hz opens over
+    ``[-inf, inf]`` and closes over ``[nan, inf]``, which blanks the table
+    downstream exactly as a shut chopper would. The log line is what
+    distinguishes a parked disc from a chopper this function shut.
     """
     pulse_frequency = (1.0 / pulse_period.to(unit='s')).to(unit='Hz')
     out_of_phase = {}
-    stopped = {}
+    stopped = []
     for name, chopper in choppers.items():
         frequency = abs(chopper.frequency.to(unit='Hz'))
         if frequency.value == 0.0:
-            stopped[name] = frequency.value
+            stopped.append(name)
             continue
         quotient = (frequency / pulse_frequency).value
         if not _is_whole(quotient) and not _is_whole(1.0 / quotient):
@@ -212,7 +213,7 @@ def shut_choppers_out_of_phase(
     if stopped:
         logger.warning(
             'choppers_stopped',
-            choppers=sorted(stopped),
+            choppers=stopped,
             pulse_frequency_hz=pulse_frequency.value,
         )
     if not out_of_phase:
