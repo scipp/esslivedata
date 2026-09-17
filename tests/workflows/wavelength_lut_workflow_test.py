@@ -321,14 +321,8 @@ def _disk_chopper(frequency: float) -> DiskChopper:
 
 
 class TestShutChoppersOutOfPhase:
-    """A chopper the source cannot be phase-locked to yields no table.
-
-    scippneutron refuses to compute opening times for one, which would take the
-    job down on every batch. It publishes nothing then, so every consumer keeps
-    reducing with the table it was last given -- from before the choppers moved.
-    Substituting a shut disc publishes a table that lets nothing through, which
-    replaces that table at every consumer.
-    """
+    """Substitution of choppers the source cannot be phase-locked to; the
+    function's docstring has the rationale."""
 
     PULSE_PERIOD = sc.scalar(1 / 14, unit='s')
 
@@ -414,10 +408,9 @@ class TestMultiChopperWorkflow:
     def test_out_of_phase_chopper_yields_a_table_that_lets_nothing_through(
         self, two_chopper_geometry: Path
     ) -> None:
-        # 5 Hz cannot be phase-locked to a 14 Hz source, so no table describes
-        # this cascade. Publishing one that transmits nothing is what lets a
-        # consumer notice and stop; raising would publish nothing at all and
-        # leave consumers on the table they were last given.
+        # 5 Hz cannot be phase-locked to a 14 Hz source; see
+        # shut_choppers_out_of_phase for why the table blocks instead of the
+        # job raising.
         table = _run_chopper_lut(
             two_chopper_geometry,
             ['chopper1', 'chopper2'],
