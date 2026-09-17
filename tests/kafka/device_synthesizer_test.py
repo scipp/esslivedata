@@ -10,6 +10,7 @@ import pytest
 
 from ess.livedata.config.stream import Device
 from ess.livedata.core.message import Message, MessageSource, StreamId, StreamKind
+from ess.livedata.core.timestamp import Timestamp
 from ess.livedata.kafka.device_synthesizer import DeviceSynthesizer
 from ess.livedata.preprocessors.accumulators import LogData
 
@@ -27,8 +28,13 @@ class FakeSource(MessageSource[Message]):
         return self._batches.pop(0)
 
 
-def _log(name: str, time: int, value: float) -> Message[LogData]:
+def _log(
+    name: str, time: int, value: float, envelope: int | None = None
+) -> Message[LogData]:
+    """Log message with payload time ``time`` and envelope ``envelope`` (ns),
+    the latter defaulting to the payload time."""
     return Message(
+        timestamp=Timestamp.from_ns(time if envelope is None else envelope),
         stream=StreamId(kind=StreamKind.LOG, name=name),
         value=LogData(time=time, value=value),
     )
@@ -138,6 +144,32 @@ def test_max_time_policy_across_substreams() -> None:
     assert len(out) == 1
     assert out[0].value.time == 5
     assert out[0].value.target == 2.5
+
+
+def test_envelope_is_max_of_substream_envelopes_independent_of_payload_time() -> None:
+    """A static substream repeats an old payload time on every heartbeat while
+    its envelope carries the emission time; the sample's envelope must follow
+    the emission times, or a stalled device drags the batch window into the
+    past (#1313)."""
+    src = FakeSource()
+    syn = DeviceSynthesizer(
+        src, devices={'m': _device(value='m_value', target='m_target')}
+    )
+    src.queue(
+        [
+            _log('m_value', time=5, value=1.0, envelope=1000),
+            _log('m_target', time=900, value=2.0, envelope=1500),
+        ]
+    )
+    (out,) = syn.get_messages()
+    assert out.timestamp == Timestamp.from_ns(1500)
+    assert out.value.time == 900
+
+    # Heartbeat of the static substream: same payload time, newer envelope.
+    src.queue([_log('m_value', time=5, value=1.0, envelope=2000)])
+    (out,) = syn.get_messages()
+    assert out.timestamp == Timestamp.from_ns(2000)
+    assert out.value.time == 900
 
 
 def test_partial_device_without_idle() -> None:

@@ -218,6 +218,28 @@ class TestKafkaToF144Adapter:
         assert result.stream.kind == StreamKind.LOG
         assert result.stream.name == "temperature1"
         assert result.value.value == 123.45
+        assert result.value.timestamp_unix_ns == 9876543210
+
+    def test_envelope_timestamp_is_kafka_time_not_payload_time(self) -> None:
+        """A static PV's heartbeat repeats the EPICS time of the last change, so
+        the payload time cannot serve as the transport clock (#1313)."""
+        message = FakeKafkaMessage(
+            value=make_serialized_f144(),
+            topic="sensors",
+            timestamp=1_700_000_000_000,
+            timestamp_type=1,
+        )
+        result = KafkaToF144Adapter().adapt(message)
+
+        assert result.timestamp == Timestamp.from_ms(1_700_000_000_000)
+        assert result.value.timestamp_unix_ns == 9876543210
+
+    def test_envelope_falls_back_to_payload_time_without_kafka_time(self) -> None:
+        message = FakeKafkaMessage(
+            value=make_serialized_f144(), topic="sensors", timestamp_type=0
+        )
+        result = KafkaToF144Adapter().adapt(message)
+
         assert result.timestamp == Timestamp.from_ns(9876543210)
 
     def test_adapter_with_stream_mapping(self) -> None:
