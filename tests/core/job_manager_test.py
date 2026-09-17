@@ -2560,9 +2560,9 @@ class TestContextStreamGate:
         ``stream_a`` arrives (and is cached) on a tick where ``stream_b`` is
         still missing; the batch where ``stream_b`` finally arrives does not
         re-present ``stream_a``. The gate refills it from the context cache so
-        the gate-opening batch carries every value at once — otherwise it
-        would land at ``set_context`` as the essreduce ``None`` seed and crash
-        at finalize.
+        the gate-opening batch carries every value at once — otherwise
+        ``stream_a`` would never reach ``set_context`` and the workflow would
+        raise at finalize for an unfed context key.
         """
         cache = FakeContextCache()
         manager = JobManager(fake_job_factory, context_reader=cache)

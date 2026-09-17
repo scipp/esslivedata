@@ -7,7 +7,7 @@ confluent_kafka
 cyclebane>=26.9.0
 dask>=2026.3.0
 ess-streaming-data-types
-essreduce>=26.6.3
+essreduce>=26.9.0
 jinja2
 numba
 pydantic>=2
