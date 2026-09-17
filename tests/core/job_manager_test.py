@@ -1124,36 +1124,6 @@ class TestJobManager:
         assert len(results) == 1
         assert results[0].error_message is None
 
-    def test_jobs_with_finalize_errors_will_compute_again_without_new_primary_data(
-        self, fake_job_factory
-    ):
-        manager = JobManager(fake_job_factory, context_reader=no_cached_context)
-        config = _make_config("test_source")
-
-        job_id = manager.schedule_job(config)
-
-        # Activate job and push data
-        data = WorkflowData(
-            start_time=Timestamp.from_ns(100),
-            end_time=Timestamp.from_ns(200),
-            data={StreamId(name="test_source"): sc.scalar(42.0)},
-        )
-        manager.push_data(data)
-
-        # Induce finalize failure
-        processor = fake_job_factory.processors[job_id]
-        processor.should_fail_finalize = True
-
-        results = manager.compute_results()
-        assert len(results) == 1
-        assert results[0].error_message is not None
-
-        # Fix the processor and call compute_results again without new data
-        processor.should_fail_finalize = False
-        results = manager.compute_results()
-        assert len(results) == 1
-        assert results[0].error_message is None
-
     def test_reset_after_finalize_error_does_not_force_finalize_cleared_accumulator(
         self, fake_job_factory
     ):
@@ -1437,28 +1407,72 @@ class TestPushFailureCascade:
         assert len(results) == 1
         assert results[0].error_message is None
 
-    def test_finalize_failure_retries_without_new_push(self, fake_job_factory):
-        """Successful push followed by finalize failure retries on next cycle."""
-        manager = JobManager(fake_job_factory, context_reader=no_cached_context)
-        job_id = manager.schedule_job(_make_config("test_source"))
 
-        processor = fake_job_factory.processors[job_id]
+class TestFinalizeRetry:
+    """A failed finalize is retried only once the job accepts new data.
 
-        data = WorkflowData(
-            start_time=Timestamp.from_ns(100),
-            end_time=Timestamp.from_ns(200),
-            data={StreamId(name="test_source"): sc.scalar(42.0)},
+    Finalize is deterministic in the accumulated state, so retrying without new
+    input fails identically. Retrying on every service batch instead ties the
+    retry rate to unrelated traffic (#1299).
+    """
+
+    @staticmethod
+    def _batch(start: int, **values: float) -> WorkflowData:
+        return WorkflowData(
+            start_time=Timestamp.from_ns(start),
+            end_time=Timestamp.from_ns(start + 100),
+            data={StreamId(name=name): sc.scalar(v) for name, v in values.items()},
         )
-        manager.push_data(data)
 
-        # Finalize fails (e.g., waiting for auxiliary data)
+    @pytest.fixture
+    def manager(self, fake_job_factory) -> JobManager:
+        return JobManager(fake_job_factory, context_reader=no_cached_context)
+
+    @pytest.fixture
+    def processor(self, manager, fake_job_factory) -> FakeProcessor:
+        """Processor of an active job whose finalize has just failed."""
+        job_id = manager.schedule_job(
+            _make_config("det", aux_source_names={"monitor": "mon"})
+        )
+        processor = fake_job_factory.processors[job_id]
         processor.should_fail_finalize = True
-        results = manager.compute_results()
+        _, results = manager.process_jobs(self._batch(100, det=1.0, mon=2.0))
         assert len(results) == 1
         assert results[0].error_message is not None
-
-        # Fix finalize and retry without pushing new data
         processor.should_fail_finalize = False
+        return processor
+
+    def test_not_retried_on_batch_without_data_for_job(self, manager, processor):
+        _, results = manager.process_jobs(self._batch(200, other=3.0))
+        assert results == []
+
+    def test_retried_when_job_receives_aux_data(self, manager, processor):
+        _, results = manager.process_jobs(self._batch(200, mon=3.0))
+        assert len(results) == 1
+        assert results[0].error_message is None
+
+    def test_retried_when_job_receives_primary_data(self, manager, processor):
+        _, results = manager.process_jobs(self._batch(200, det=3.0))
+        assert len(results) == 1
+        assert results[0].error_message is None
+
+    def test_not_retried_when_push_fails(self, manager, processor):
+        processor.should_fail_accumulate = True
+        _, results = manager.process_jobs(self._batch(200, mon=3.0))
+        assert results == []
+
+    def test_retry_of_aux_data_only_job_needs_accumulated_primary_data(
+        self, manager, processor
+    ):
+        manager.process_jobs(self._batch(200, det=3.0))
+        _, results = manager.process_jobs(self._batch(300, mon=4.0))
+        assert results == []
+
+    def test_compute_results_not_retried_without_new_push(self, manager, processor):
+        assert manager.compute_results() == []
+
+    def test_compute_results_retried_after_aux_push(self, manager, processor):
+        manager.push_data(self._batch(200, mon=3.0))
         results = manager.compute_results()
         assert len(results) == 1
         assert results[0].error_message is None

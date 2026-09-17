@@ -732,8 +732,7 @@ class TestJob:
         )
         job.add(data)
 
-        # Cause an error on a later batch, as the JobManager's retry path does:
-        # it finalizes a job whose latest push failed but which holds earlier data.
+        # Cause an error on a later batch: the job still holds the earlier data.
         fake_processor.should_fail_accumulate = True
         job.add(data)
 
