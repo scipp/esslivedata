@@ -32,13 +32,17 @@ from ess.livedata.dashboard.plot_orchestrator import (
 
 
 class _Plotter:
-    """Sentinel plotter: identity plus a settable cached-state flag."""
+    """Sentinel plotter: identity plus settable cached-state flag and shape."""
 
     def __init__(self, *, cached: bool = True) -> None:
         self.cached = cached
+        self.shape: tuple[type, ...] | None = None
 
     def has_cached_state(self) -> bool:
         return self.cached
+
+    def layout_shape(self) -> tuple[type, ...] | None:
+        return self.shape
 
 
 def _grid_id() -> GridId:
@@ -219,6 +223,19 @@ class TestBuildInputs:
         cell = _cell(layer_id)
         before = cell_build_inputs(cell, {layer_id: snapshot}.get)
         plotter.cached = True
+        after = cell_build_inputs(cell, {layer_id: snapshot}.get)
+        assert before != after
+
+    def test_layout_shape_change_changes_inputs_without_a_transition(self):
+        """A layout gaining an item has no version bump; the input must still
+        change so the widget gets a DynamicMap that accepts the new shape."""
+        layer_id = LayerId(uuid4())
+        plotter = _Plotter()
+        plotter.shape = (int,)
+        snapshot = LayerSnapshot(state=LayerState.READY, version=4, plotter=plotter)
+        cell = _cell(layer_id)
+        before = cell_build_inputs(cell, {layer_id: snapshot}.get)
+        plotter.shape = (int, int)
         after = cell_build_inputs(cell, {layer_id: snapshot}.get)
         assert before != after
 

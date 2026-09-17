@@ -301,6 +301,10 @@ class CorrelationHistogramPlotter:
         """Check if the renderer has computed state."""
         return self._renderer.has_cached_state()
 
+    def layout_shape(self) -> tuple[type, ...] | None:
+        """Delegate to the inner renderer, which holds the computed frame."""
+        return self._renderer.layout_shape()
+
     @property
     def is_overlayable(self) -> bool:
         """Delegate to the inner renderer, which knows its combine mode."""

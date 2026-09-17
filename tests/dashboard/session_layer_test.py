@@ -11,6 +11,7 @@ import pytest
 from ess.livedata.dashboard.plot_data_service import LayerId, PlotDataService
 from ess.livedata.dashboard.plots import PresenterBase
 from ess.livedata.dashboard.session_layer import SessionComponents, SessionLayer
+from tests.helpers.plot_fakes import FakePlotter as EchoPlotter
 
 
 class FakePlot:
@@ -37,6 +38,9 @@ class FakePlotter:
 
     def has_cached_state(self):
         return self._cached_state is not None
+
+    def layout_shape(self):
+        return None
 
     def create_presenter(self, *, owner=None):
         presenter = FakePresenter(self, scale=self.scale, owner=owner)
@@ -332,3 +336,41 @@ class TestSessionLayerWithStoppedState:
         assert result is True
         assert session_layer.components is not None
         assert isinstance(session_layer.dmap, hv.DynamicMap)
+
+
+class TestSessionComponentsLayoutShape:
+    """Components display only frames of the layout shape they were built with."""
+
+    @staticmethod
+    def _layout(n: int) -> hv.Layout:
+        return hv.Layout([hv.Curve([i, i + 1]) for i in range(n)])
+
+    @pytest.fixture
+    def plotter(self):
+        return EchoPlotter(cached_state=self._layout(1))
+
+    @pytest.fixture
+    def components(self, plotter, plot_data_service):
+        layer_id = LayerId(uuid4())
+        plot_data_service.job_started(layer_id, plotter)
+        plot_data_service.data_arrived(layer_id)
+        return SessionComponents.create(plot_data_service.get(layer_id))
+
+    def test_frame_of_same_shape_is_sent(self, plotter, components):
+        frame = self._layout(1)
+        plotter.compute(frame)
+
+        assert components.update_pipe() is True
+        assert components.pipe.data is frame
+
+    def test_frame_of_different_shape_is_not_sent(self, plotter, components):
+        original = components.pipe.data
+        plotter.compute(self._layout(2))
+
+        assert components.update_pipe() is False
+        assert components.pipe.data is original
+
+    def test_shape_change_invalidates_components(self, plotter, components):
+        plotter.compute(self._layout(2))
+
+        assert components.is_valid_for(plotter) is False

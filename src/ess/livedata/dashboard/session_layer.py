@@ -15,7 +15,7 @@ from dataclasses import dataclass
 import holoviews as hv
 
 from .plot_data_service import LayerId, LayerSnapshot
-from .plots import Plotter, PresenterBase
+from .plots import Plotter, PresenterBase, layout_shape
 
 
 @dataclass
@@ -34,15 +34,23 @@ class SessionComponents:
         Session-local HoloViews Pipe for data updates.
     dmap:
         The DynamicMap or Element created by the presenter.
+    layout_shape:
+        :func:`~.plots.layout_shape` of the frame ``dmap`` was created with,
+        the only shape of frame it can display.
     """
 
     presenter: PresenterBase
     pipe: hv.streams.Pipe
     dmap: hv.DynamicMap | hv.Element
+    layout_shape: tuple[type, ...] | None
 
     def update_pipe(self) -> bool:
         """
         Push pending update to pipe if available.
+
+        A frame of a different layout shape is not sent: it would stop ``dmap``
+        from updating for good. The cell rebuilds on the shape change instead,
+        creating new components (see :meth:`is_valid_for`).
 
         Returns
         -------
@@ -51,17 +59,25 @@ class SessionComponents:
         """
         if not self.presenter.has_pending_update():
             return False
-        self.pipe.send(self.presenter.consume_update())
+        frame = self.presenter.consume_update()
+        if layout_shape(frame) != self.layout_shape:
+            return False
+        self.pipe.send(frame)
         return True
 
     def is_valid_for(self, plotter: Plotter | None) -> bool:
         """
         Check if these components are still valid for the given plotter.
 
-        Returns False if the plotter has been replaced (e.g., workflow restart),
-        indicating the components should be recreated.
+        Returns False if the plotter has been replaced (e.g., workflow restart)
+        or its frame has a different layout shape, indicating the components
+        should be recreated.
         """
-        return plotter is not None and self.presenter.is_owned_by(plotter)
+        return (
+            plotter is not None
+            and self.presenter.is_owned_by(plotter)
+            and plotter.layout_shape() == self.layout_shape
+        )
 
     @classmethod
     def create(cls, state: LayerSnapshot) -> SessionComponents | None:
@@ -85,10 +101,16 @@ class SessionComponents:
         if plotter is None:
             raise ValueError("Plotter must not be None when plot is displayable")
         presenter = plotter.create_presenter()
-        pipe = hv.streams.Pipe(data=plotter.get_cached_state())
+        frame = plotter.get_cached_state()
+        pipe = hv.streams.Pipe(data=frame)
         dmap = presenter.present(pipe)
 
-        return cls(presenter=presenter, pipe=pipe, dmap=dmap)
+        return cls(
+            presenter=presenter,
+            pipe=pipe,
+            dmap=dmap,
+            layout_shape=layout_shape(frame),
+        )
 
 
 @dataclass

@@ -11,7 +11,7 @@ import holoviews as hv
 import pydantic
 
 from ess.livedata.dashboard.plot_params import LegendPosition
-from ess.livedata.dashboard.plots import PresenterBase, TimeBounds
+from ess.livedata.dashboard.plots import PresenterBase, TimeBounds, layout_shape
 from ess.livedata.dashboard.range_hook import Axis
 
 
@@ -93,6 +93,9 @@ class FakePlotter:
 
     def has_cached_state(self) -> bool:
         return self._cached_state is not None
+
+    def layout_shape(self) -> tuple[type, ...] | None:
+        return layout_shape(self._cached_state)
 
     def create_presenter(self, *, owner: Any = None) -> PresenterBase:
         presenter = self._presenter_cls(self, owner=owner)

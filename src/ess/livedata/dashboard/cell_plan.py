@@ -43,11 +43,17 @@ class LayerBuildInput:
     without a lifecycle transition when the layer is STOPPED (retained data).
     A widget built from "no computed plot" renders a placeholder, so the input
     must change when a real plot appears.
+
+    ``layout_shape`` is mutable behind a snapshot for the same reason: the item
+    types of a layout-mode plot change with the sources that have data, without
+    a lifecycle transition. A widget's DynamicMap accepts only frames of the
+    shape it was built with, so the input must change with the shape.
     """
 
     layer_id: LayerId
     snapshot: LayerSnapshot | None
     has_plot: bool
+    layout_shape: tuple[type, ...] | None
 
 
 @dataclass(frozen=True, slots=True)
@@ -82,7 +88,10 @@ def cell_build_inputs(
         has_plot = snapshot is not None and snapshot.has_displayable_plot()
         layers.append(
             LayerBuildInput(
-                layer_id=layer.layer_id, snapshot=snapshot, has_plot=has_plot
+                layer_id=layer.layer_id,
+                snapshot=snapshot,
+                has_plot=has_plot,
+                layout_shape=snapshot.plotter.layout_shape() if has_plot else None,
             )
         )
     return CellBuildInputs(
