@@ -614,6 +614,32 @@ class TestTemporalBuffer:
         assert result.sizes['time'] == 1
         assert result.coords['time'].values[0] == 1.0
 
+    def test_time_regression_resets_to_incoming_data(self):
+        """A frame stamped before the newest buffered one restarts the buffer.
+
+        A backend batch window re-placed in the past publishes results whose
+        time steps backwards (#1313). Keeping both would leave a non-monotonic
+        time coord that label-based slicing rejects, and trimming would never
+        remove the older entries since it measures age from the newest time.
+        """
+        buffer = TemporalBuffer()
+        buffer.set_required_timespan(100.0)
+
+        def frame(time_s: float) -> sc.DataArray:
+            return sc.DataArray(
+                sc.scalar(time_s, unit='counts'),
+                coords={'time': sc.scalar(time_s, unit='s')},
+            )
+
+        for t in (10.0, 11.0, 12.0):
+            buffer.add(frame(t))
+        buffer.add(frame(5.0))
+        buffer.add(frame(6.0))
+
+        result = buffer.get()
+        assert list(result.coords['time'].values) == [5.0, 6.0]
+        assert list(result.values) == [5.0, 6.0]
+
     def test_non_time_dim_size_change_resets_without_error(self):
         """A changed non-time shape (e.g. ROI count) resets instead of raising.
 

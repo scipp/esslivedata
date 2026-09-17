@@ -8,6 +8,9 @@ import math
 from abc import ABC, abstractmethod
 
 import scipp as sc
+import structlog
+
+logger = structlog.get_logger(__name__)
 
 
 def _variable_nbytes(var: sc.Variable) -> int:
@@ -354,6 +357,23 @@ class TemporalBuffer(BufferProtocol[sc.DataArray]):
 
         # First data or metadata mismatch - initialize/reset buffers
         if self._data_buffer is None or not self._metadata_matches(data):
+            self._initialize_buffers(data)
+            return
+
+        # The producer's timeline restarted behind the buffered data.  Keeping
+        # both would leave a non-monotonic time coord, which label-based
+        # slicing rejects, and the older entries would never age out since
+        # trimming measures age from the newest buffered time.
+        first = data.coords['time']
+        if 'time' in data.dims:
+            first = first[0]
+        last = self._coord_buffers['time'].get()[-1]
+        if (first < last).value:
+            logger.warning(
+                'temporal_buffer_time_regressed',
+                last_time=str(last.value),
+                incoming_time=str(first.value),
+            )
             self._initialize_buffers(data)
             return
 
