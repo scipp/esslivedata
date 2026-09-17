@@ -288,27 +288,13 @@ class OrchestratingProcessor[Tin, Tout]:
         job_replies, results = self._job_manager.process_jobs(workflow_data)
         self._message_preprocessor.release_buffers()
 
-        # Log any errors from data processing
-        for reply in job_replies:
-            if reply.has_error:
-                self._errors_since_last_metrics += 1
-                logger.error(
-                    'job_data_error',
-                    job_id=str(reply.job_id),
-                    error=reply.error_message,
-                )
-
-        # Filter valid results and log errors
+        # JobManager logs job failures, rate limited per job. The metric counts
+        # every failure, so the journal keeps the true rate.
+        self._errors_since_last_metrics += sum(r.has_error for r in job_replies)
         valid_results = []
         for result in results:
             if result.error_message is not None:
                 self._errors_since_last_metrics += 1
-                logger.error(
-                    'job_failed',
-                    job_id=str(result.job_id),
-                    workflow_id=str(result.workflow_id),
-                    error=result.error_message,
-                )
             else:
                 valid_results.append(result)
 

@@ -7,6 +7,7 @@ import uuid
 import pydantic
 import pytest
 import scipp as sc
+from structlog.testing import capture_logs
 
 from ess.livedata.config.workflow_spec import (
     JobId,
@@ -17,6 +18,7 @@ from ess.livedata.config.workflow_spec import (
 )
 from ess.livedata.core.job import Job, JobReply, JobResult, JobState
 from ess.livedata.core.job_manager import JobFactory, JobManager, WorkflowData
+from ess.livedata.core.log_throttle import DEFAULT_COOLDOWN_S
 from ess.livedata.core.message import RunStart, StreamId
 from ess.livedata.core.timestamp import Timestamp
 
@@ -1476,6 +1478,104 @@ class TestFinalizeRetry:
         results = manager.compute_results()
         assert len(results) == 1
         assert results[0].error_message is None
+
+
+class FakeClock:
+    def __init__(self) -> None:
+        self.now = 0.0
+
+    def __call__(self) -> float:
+        return self.now
+
+
+class TestJobFailureLogThrottle:
+    """A failure that recurs every batch is logged once per cooldown, per job.
+
+    The job's error state and the service error metric still see every failure;
+    only the traceback in the journal is rate limited.
+    """
+
+    @staticmethod
+    def _batch(start: int, source: str = "det") -> WorkflowData:
+        return WorkflowData(
+            start_time=Timestamp.from_ns(start),
+            end_time=Timestamp.from_ns(start + 100),
+            data={StreamId(name=source): sc.scalar(1.0)},
+        )
+
+    @pytest.fixture
+    def clock(self) -> FakeClock:
+        return FakeClock()
+
+    @pytest.fixture
+    def manager(self, fake_job_factory, clock) -> JobManager:
+        return JobManager(
+            fake_job_factory, context_reader=no_cached_context, clock=clock
+        )
+
+    def _failing_job(
+        self, manager: JobManager, factory: FakeJobFactory, source: str = "det"
+    ) -> FakeProcessor:
+        job_id = manager.schedule_job(_make_config(source))
+        return factory.processors[job_id]
+
+    def _process(self, manager: JobManager, n: int, source: str = "det") -> list:
+        with capture_logs() as logs:
+            for i in range(n):
+                manager.process_jobs(self._batch(100 * (i + 1), source))
+        return logs
+
+    def test_repeated_finalize_error_logged_once_within_cooldown(
+        self, manager, fake_job_factory
+    ):
+        self._failing_job(manager, fake_job_factory).should_fail_finalize = True
+        logs = self._process(manager, 5)
+        assert [e["event"] for e in logs if e["log_level"] == "error"] == ["job_error"]
+
+    def test_repeated_push_error_logged_once_within_cooldown(
+        self, manager, fake_job_factory
+    ):
+        self._failing_job(manager, fake_job_factory).should_fail_accumulate = True
+        logs = self._process(manager, 5)
+        assert [e["event"] for e in logs if e["event"] == "job_warning"] == [
+            "job_warning"
+        ]
+
+    def test_error_after_cooldown_reports_suppressed_count(
+        self, manager, fake_job_factory, clock
+    ):
+        self._failing_job(manager, fake_job_factory).should_fail_finalize = True
+        self._process(manager, 4)
+        clock.now += DEFAULT_COOLDOWN_S
+        logs = self._process(manager, 1)
+        (entry,) = [e for e in logs if e["event"] == "job_error"]
+        assert entry["suppressed_reports"] == 3
+
+    def test_throttle_is_per_job(self, manager, fake_job_factory):
+        self._failing_job(manager, fake_job_factory, "a").should_fail_finalize = True
+        self._failing_job(manager, fake_job_factory, "b").should_fail_finalize = True
+        with capture_logs() as logs:
+            for start in (100, 200, 300):
+                batch = self._batch(start, "a")
+                batch.data.update(self._batch(start, "b").data)
+                manager.process_jobs(batch)
+        assert sorted(e["job_id"][0] for e in logs if e["event"] == "job_error") == [
+            "a",
+            "b",
+        ]
+
+    def test_job_state_reflects_every_failure(self, manager, fake_job_factory):
+        processor = self._failing_job(manager, fake_job_factory)
+        processor.should_fail_finalize = True
+        self._process(manager, 3)
+        processor.should_fail_finalize = False
+        _, results = manager.process_jobs(self._batch(400))
+        assert results[0].error_message is None
+        processor.should_fail_finalize = True
+        _, results = manager.process_jobs(self._batch(500))
+        assert results[0].error_message is not None
+        job_id = next(iter(fake_job_factory.processors))
+        assert manager.get_job_status(job_id).state == JobState.error
 
 
 class TestJobFactoryRender:
