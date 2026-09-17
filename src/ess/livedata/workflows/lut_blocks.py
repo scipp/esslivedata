@@ -81,6 +81,17 @@ def select_block(table: sc.DataArray, ltotal: sc.Variable) -> sc.DataArray:
     NaN (the range is padded, not guaranteed), whereas demanding full coverage
     would turn one stray pixel into a failed job.
 
+    Blocks are padded, so two components metres apart can each fall inside the
+    other's block. Where a chopper sits between them the two blocks describe
+    *different* cascades, so the choice matters: of the covering blocks, the one
+    whose centre is closest to the midpoint is selected. Padding is symmetric,
+    so that is the block built for this component. The choice deliberately
+    ignores the table's values. A block that transmits nothing is as valid an
+    answer as one that does -- it means no neutron at this flight path has a
+    known wavelength -- and preferring whichever block has finite entries
+    would hand a component downstream of a shut chopper its upstream
+    neighbour's wavelengths.
+
     Raises
     ------
     ValueError:
@@ -91,16 +102,20 @@ def select_block(table: sc.DataArray, ltotal: sc.Variable) -> sc.DataArray:
     midpoint = 0.5 * (
         ltotal.nanmin().to(unit=distance.unit) + ltotal.nanmax().to(unit=distance.unit)
     )
+    covering = []
     for start, stop in _block_bounds(table):
-        block = table['distance', start:stop]
-        bounds = block.coords['distance']
+        bounds = distance[start:stop]
         if bounds[0] <= midpoint <= bounds[-1]:
-            return block
-    raise ValueError(
-        f"No block of the streamed lookup table covers {midpoint:c}: the table "
-        f"spans {_describe_blocks(table)}. The table was built from a different "
-        "geometry than the one this job reduces."
-    )
+            offset = abs(0.5 * (bounds[0] + bounds[-1]) - midpoint).value
+            covering.append((offset, start, stop))
+    if not covering:
+        raise ValueError(
+            f"No block of the streamed lookup table covers {midpoint:c}: the table "
+            f"spans {_describe_blocks(table)}. The table was built from a "
+            "different geometry than the one this job reduces."
+        )
+    _, start, stop = min(covering)
+    return table['distance', start:stop]
 
 
 def block_ranges(table: sc.DataArray) -> Sequence[Range]:

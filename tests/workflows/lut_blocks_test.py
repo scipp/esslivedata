@@ -9,6 +9,7 @@ of that contract against each other.
 
 from __future__ import annotations
 
+import numpy as np
 import pytest
 import scipp as sc
 
@@ -23,17 +24,34 @@ def _range(lower: float, upper: float) -> tuple[sc.Variable, sc.Variable]:
     return (sc.scalar(lower, unit='m'), sc.scalar(upper, unit='m'))
 
 
-def _table(*blocks: tuple[float, float], resolution: float = 0.1) -> sc.DataArray:
-    """A table built the way the producer builds one: block per range."""
+def _table(
+    *blocks: tuple[float, float],
+    resolution: float = 0.1,
+    blocked: frozenset[int] = frozenset(),
+) -> sc.DataArray:
+    """A table built the way the producer builds one: block per range.
+
+    ``blocked`` names the blocks the cascade transmits nothing through, which
+    the producer emits as all-NaN.
+    """
     rows = []
     ids = []
+    values = []
     for index, (lower, upper) in enumerate(blocks):
         count = round((upper - lower) / resolution) + 1
         rows.append(sc.linspace('distance', lower, upper, count, unit='m'))
         ids.append(sc.full(dims=['distance'], shape=[count], value=index))
+        values.append(
+            sc.full(
+                dims=['distance', 'event_time_offset'],
+                shape=[count, 2],
+                value=np.nan if index in blocked else 0.0,
+                unit='angstrom',
+            )
+        )
     distance = sc.concat(rows, 'distance')
     return sc.DataArray(
-        sc.zeros(sizes={**distance.sizes, 'event_time_offset': 2}, unit='angstrom'),
+        sc.concat(values, 'distance'),
         coords={
             'distance': distance,
             'block': sc.concat(ids, 'distance'),
@@ -90,6 +108,30 @@ class TestSelectBlock:
 
         with pytest.raises(ValueError, match='No block'):
             select_block(table, sc.scalar(10.0, unit='m'))
+
+    def test_overlapping_blocks_select_the_one_centred_closest(self) -> None:
+        # Two monitors whose padded blocks overlap, the downstream one emitted
+        # first. A flight path in the overlap belongs to the monitor whose
+        # block is centred on it.
+        table = _table((6.75, 7.15), (6.5, 6.9))
+
+        block = select_block(table, sc.scalar(6.8, unit='m'))
+
+        assert block.coords['distance'][0].value == pytest.approx(6.5)
+        assert block.coords['distance'][-1].value == pytest.approx(6.9)
+
+    def test_a_blocked_block_is_selected_over_a_transmitting_neighbour(
+        self,
+    ) -> None:
+        # A chopper sits between the two monitors and is shut: the downstream
+        # block is all-NaN. Its own monitor must get it -- no neutron there has
+        # a known wavelength -- not the upstream neighbour's wavelengths.
+        table = _table((6.75, 7.15), (6.5, 6.9), blocked=frozenset({0}))
+
+        block = select_block(table, sc.scalar(6.88, unit='m'))
+
+        assert block.coords['distance'][0].value == pytest.approx(6.75)
+        assert np.isnan(block.values).all()
 
     def test_abutting_blocks_stay_distinct(self) -> None:
         # Two monitors close enough that their rows run into each other. The
