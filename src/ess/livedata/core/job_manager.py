@@ -260,6 +260,15 @@ class _JobRecord:
     warning_message: str | None = None
     # Received primary data since the last successful compute_results.
     has_primary_data: bool = False
+    # The last finalize failed and the job has accepted no data since. Finalize
+    # is deterministic in the accumulated state, so retrying before new data
+    # arrives would fail identically.
+    finalize_failed: bool = False
+
+    @property
+    def finalize_due(self) -> bool:
+        """Accumulated primary data awaits a finalize that could succeed."""
+        return self.has_primary_data and not self.finalize_failed
 
     @property
     def state(self) -> JobState:
@@ -479,12 +488,13 @@ class JobManager:
             raise ValueError(f"Job {job_id} does not support reset.")
         record.job.reset()
 
-        # Drop retry state: a finalize error keeps has_primary_data set so the
-        # next batch retries finalization. After a reset the accumulator is
-        # cleared and _start_time is None, so a forced finalize would emit a
-        # spurious zero-valued result. The cleared accumulator has nothing to
-        # finalize until new primary data arrives.
+        # Drop retry state: a finalize error keeps has_primary_data set so that
+        # the next accepted data retries finalization. After a reset the
+        # accumulator is cleared and _start_time is None, so a forced finalize
+        # would emit a spurious zero-valued result. The cleared accumulator has
+        # nothing to finalize until new primary data arrives.
         record.has_primary_data = False
+        record.finalize_failed = False
 
         # Clear error/warning state when resetting. The phase is unchanged, so a
         # gated job stays gated: context is sticky and independent of run
@@ -569,12 +579,13 @@ class JobManager:
         return replies
 
     def compute_results(self) -> list[JobResult]:
-        """
-        Compute results from jobs that received primary data since last successful call.
+        """Compute results from jobs holding primary data not yet finalized.
+
+        A job whose last finalize failed is skipped until it accepts new data.
         """
         results = []
         for record in self._jobs.values():
-            if record.phase is not JobPhase.active or not record.has_primary_data:
+            if record.phase is not JobPhase.active or not record.finalize_due:
                 continue
             result = record.job.get()
             result = self._job_factory.enrich_result(result)
@@ -598,10 +609,11 @@ class JobManager:
         work_items: list[tuple[Job, JobData, bool]] = []
         for job in self.active_jobs:
             job_data = _filter_data_for_job(job, data)
-            has_data = not job_data.is_empty()
-            has_pending = self._jobs[job.job_id].has_primary_data
-            if has_data or has_pending:
-                work_items.append((job, job_data, has_pending))
+            record = self._jobs[job.job_id]
+            if not job_data.is_empty() or record.finalize_due:
+                # Finalizing on has_primary_data rather than finalize_due lets
+                # data accepted in this push retry a failed finalize.
+                work_items.append((job, job_data, record.has_primary_data))
 
         # Run push+finalize per job — parallelized when executor is available
         outcomes = self._map(_process_job, work_items)
@@ -681,8 +693,11 @@ class JobManager:
         record = self._jobs[job.job_id]
         # Track primary data updates only after successful add, so that a
         # failed push does not trigger a finalize attempt on empty accumulators.
-        if not reply.has_error and job_data.is_active():
-            record.has_primary_data = True
+        # Any accepted data, primary or aux, may fix a failed finalize.
+        if not reply.has_error and not job_data.is_empty():
+            record.finalize_failed = False
+            if job_data.is_active():
+                record.has_primary_data = True
 
         # Track warnings from job operations, or clear them on success
         if reply.has_error and reply.error_message is not None:
@@ -703,8 +718,9 @@ class JobManager:
         # Track errors from job finalization, or clear them on success
         if result.error_message is not None:
             # Finalizing failed, put job into error state, cannot compute results.
-            # Keep has_primary_data set to retry next time, which can be important
-            # if a job has not yet initialized itself with the first auxiliary data.
+            # Keep has_primary_data set so that the next accepted data retries,
+            # e.g. an aux stream delivering the value the workflow was missing.
+            record.finalize_failed = True
             record.error_message = result.error_message
             logger.error(
                 "job_error",
@@ -720,6 +736,7 @@ class JobManager:
                 record.warning_message = result.warning_message
             # Clear the primary-data flag only on a successful compute.
             record.has_primary_data = False
+            record.finalize_failed = False
 
     def shutdown(self) -> None:
         """Shut down the thread pool executor, if one was created."""
