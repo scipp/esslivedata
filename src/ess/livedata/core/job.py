@@ -438,14 +438,14 @@ class Job:
             The data to accumulate. If empty, accumulation is skipped.
         finalize:
             If True, finalize even if this push did not deliver primary data
-            (e.g., to retry after a previous finalization failure).
+            (e.g., to retry after a previous finalization failure). A failed
+            push never finalizes.
         """
         if data.is_empty():
             reply = JobReply(job_id=self._job_id)
         else:
             reply = self.add(data)
-            if not reply.has_error and data.is_active():
-                finalize = True
+        finalize = not reply.has_error and (finalize or data.is_active())
         result = self.get() if finalize else None
         return reply, result
 
