@@ -212,7 +212,8 @@ class CellDeps:
     ``session_layers`` is the session's shared layer render-state registry
     (owned by the poll loop, read here when composing plots); the callbacks
     route modal interactions back to the owning ``PlotGridTabs`` (which holds
-    the shared modal and pop-out containers).
+    the shared modal and pop-out containers). ``on_popout`` is None where
+    floating windows have no room, and cells then offer no pop-out.
 
     ``compact_figures`` asks for figures that give the plot area as much of
     the screen as possible, for the phone layout: the toolbar inside the plot
@@ -230,7 +231,7 @@ class CellDeps:
     session_layers: dict[LayerId, SessionLayer]
     on_edit_title: Callable[[CellId, str, bool], None]
     on_reconfigure_layer: Callable[[LayerId], None]
-    on_popout: Callable[[CellId], None]
+    on_popout: Callable[[CellId], None] | None
     compact_figures: bool = False
     portrait: Callable[[], bool] = lambda: False
 
@@ -648,7 +649,11 @@ class CellWidget:
             on_configure_layer=self._deps.on_reconfigure_layer,
             toolbars_visible=self._toolbars_shown,
             on_toggle_toolbars_callback=on_toggle_toolbars,
-            on_popout_callback=lambda: self._deps.on_popout(self._cell_id),
+            on_popout_callback=(
+                None
+                if (on_popout := self._deps.on_popout) is None
+                else lambda: on_popout(self._cell_id)
+            ),
             can_popout=self.has_plot,
             freshness_pane=self._freshness_pane,
             # Per-cell automation hook: a rebuilt cell's DOM position is not

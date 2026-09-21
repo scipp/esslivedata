@@ -281,15 +281,18 @@ class PlotPopoutManager:
         # is invisible and only installs document-level handlers, so it costs
         # nothing until a window exists.
         #
-        # Clipped as well as zero-height: jsPanel moves a window's content out
-        # to ``document.body``, but the Bokeh box Panel wrapped it in stays
-        # here at the window's full size, empty. Overflowing a zero-height
-        # container, it lands below the fold and gives the page a scrollbar
-        # onto a window-sized band of whitespace.
+        # Clipped, and zero in both directions: jsPanel moves a window's
+        # content out to ``document.body``, but the Bokeh box Panel wrapped it
+        # in stays here at the window's full size, empty. Overflowing a
+        # zero-height container, it lands below the fold and gives the page a
+        # scrollbar onto a window-sized band of whitespace. A container that
+        # stretched to its width would pass that width on to the page, which
+        # then scrolls sideways wherever the window is wider than the screen.
         self._container = pn.Column(
             PopoutWindowFitter(),
+            width=0,
             height=0,
-            sizing_mode='stretch_width',
+            sizing_mode='fixed',
             styles={'overflow': 'hidden'},
         )
         self._open: dict[CellId, pn.layout.FloatPanel] = {}

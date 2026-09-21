@@ -2625,3 +2625,19 @@ class TestPhoneLayout:
 
         assert phone_tabs._cells[cell_id] is not before
         assert self._shows(phone_tabs, cell_id)
+
+    def test_open_plot_offers_no_popout(self, plot_orchestrator, phone_tabs):
+        grid_id = plot_orchestrator.add_grid(title='G', nrows=2, ncols=2)
+        cell_id = _add_static_cell(plot_orchestrator, grid_id, _GEO)
+        self._show_plots_tab(phone_tabs)
+        _tick(phone_tabs)
+        phone_tabs._grid_widgets[grid_id].tap(cell_id)
+        _tick(phone_tabs)
+
+        classes = {
+            css_class
+            for obj in phone_tabs._cells[cell_id].view.select(pn.widgets.Button)
+            for css_class in obj.css_classes
+        }
+        assert 'lt-tool-pencil' in classes
+        assert 'lt-tool-arrows-maximize' not in classes

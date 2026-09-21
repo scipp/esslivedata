@@ -344,7 +344,9 @@ class PlotGridTabs:
             session_layers=self._session_layers,
             on_edit_title=self._show_cell_properties_modal,
             on_reconfigure_layer=self._on_reconfigure_layer,
-            on_popout=self._show_popout,
+            # A floating window has no room on a phone, where the open plot
+            # fills the screen anyway.
+            on_popout=None if phone else self._show_popout,
             compact_figures=phone,
             portrait=lambda: self._orientation.portrait,
         )

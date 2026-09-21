@@ -265,6 +265,9 @@ wrapped it in stays behind in the component tree at the window's full size, empt
 The zero-height container rooting the windows therefore has to *clip* as well
 (`styles={'overflow': 'hidden'}`), or that box lands below the fold and hands the
 template's `main.main-content` a scrollbar onto a window-sized band of whitespace.
+It must be zero-*width* too (fixed, not `stretch_width`): otherwise it passes the
+box's width on to the page, which then scrolls sideways wherever the window is
+wider than the screen -- on a phone, or a desktop window narrower than 860 px.
 Assert this on scrollable overflow (`overflowY` `auto`/`scroll`), never on
 `getBoundingClientRect`: clipping does not shrink the box's layout rect, so a rect
 check reports the bug as present either way.
