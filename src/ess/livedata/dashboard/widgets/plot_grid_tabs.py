@@ -47,6 +47,7 @@ from __future__ import annotations
 
 import time
 from collections.abc import Callable, Mapping, Sequence
+from functools import partial
 from typing import NamedTuple
 
 import panel as pn
@@ -270,9 +271,11 @@ class PlotGridTabs:
         # Track grid widgets (insertion order determines tab position). In the
         # phone layout a grid is a section of the plot list instead.
         self._grid_widgets: dict[GridId, PlotGrid | PlotListSection] = {}
-        # Phone layout only: the list of all grids' cells, and the list cells
-        # shown by the last completed pass.
+        # Phone layout only: the list of all grids' cells, the one cell
+        # expanded in it (with its grid), and the list cells shown by the last
+        # completed pass.
         self._plot_list = pn.Column(sizing_mode='stretch_both', scroll=True)
+        self._expanded: tuple[GridId, CellId] | None = None
         self._last_list_shown: frozenset[CellId] = frozenset()
 
         # Per-session layer state: version tracking and optional render
@@ -445,7 +448,7 @@ class PlotGridTabs:
             section = PlotListSection(
                 grid_config.title,
                 title_of=self._cell_title,
-                on_toggle=lambda: self._session_updater.request_tick(full=True),
+                on_tap=partial(self._on_list_tap, grid_id),
             )
             section.sync(grid_config)
             self._grid_widgets[grid_id] = section
@@ -490,24 +493,40 @@ class PlotGridTabs:
             get_source_title=self._orchestrator.get_source_title,
         )
 
+    def _on_list_tap(self, grid_id: GridId, cell_id: CellId) -> None:
+        """Expand the tapped plot in the phone list, closing the one open before.
+
+        Tapping the expanded plot collapses it.
+        """
+        tapped = (grid_id, cell_id)
+        self._expanded = None if tapped == self._expanded else tapped
+        expanded_cell = None if self._expanded is None else cell_id
+        with pn.io.hold():
+            for section in self._grid_widgets.values():
+                section.show_expanded(expanded_cell)
+        # Changes what is visible without moving shared state, like a tab
+        # switch.
+        self._session_updater.request_tick(full=True)
+
     def _list_shown_cells(self) -> frozenset[CellId]:
-        """Cells expanded in the phone layout's plot list, while it is visible.
+        """The cell expanded in the phone layout's plot list, while it is visible.
 
         Like a grid tab, the list shows nothing while a modal covers it or
         another tab is up, and a section of a disabled grid is not listed.
         """
         if (
-            not self._phone
+            self._expanded is None
             or self._current_modal is not None
             or self._tabs.active != self._plots_tab_index
         ):
             return frozenset()
-        shown: set[CellId] = set()
-        for grid_id, section in self._grid_widgets.items():
-            grid_config = self._orchestrator.peek_grid(grid_id)
-            if grid_config is not None and grid_config.enabled:
-                shown |= section.expanded_cells
-        return frozenset(shown)
+        grid_id, cell_id = self._expanded
+        grid_config = self._orchestrator.peek_grid(grid_id)
+        if grid_config is None or not grid_config.enabled:
+            return frozenset()
+        if cell_id not in grid_config.cells:
+            return frozenset()
+        return frozenset({cell_id})
 
     def _rendered_cells(self) -> frozenset[CellId]:
         """Cells this session renders outside the visible grid tab.

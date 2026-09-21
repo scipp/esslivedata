@@ -4,10 +4,13 @@
 
 A phone screen is too small for a grid of plots, so the phone layout
 (``?layout=phone``) shows no grid tabs. Instead a single "Plots" tab lists
-every cell of every enabled grid, one section per grid, and the user expands
-the plots they want to see. Only expanded plots are rendered, and only while
-the list is visible; a collapsed plot costs what a cell in a hidden grid tab
-costs, that is nothing unless another session is viewing it.
+every cell of every enabled grid, one section per grid. At most one plot is
+expanded at a time -- opening one closes the other -- since keeping several
+plots updating is too heavy for a phone and drains its battery. The expanded
+plot is rendered only while the list is visible; a collapsed plot costs what a
+cell in a hidden grid tab costs, that is nothing unless another session is
+viewing it. Which plot is expanded is decided by the owner of all sections,
+since opening a plot closes one that may sit in another grid's section.
 
 A :class:`PlotListSection` stands in for a :class:`~.plot_grid.PlotGrid`: the
 tab widget places built cell widgets with ``insert_widget_at`` and takes them
@@ -77,9 +80,10 @@ class _Row:
         self.view = view
         self._refresh()
 
-    def toggle(self) -> None:
-        self.expanded = not self.expanded
-        self._refresh()
+    def set_expanded(self, expanded: bool) -> None:
+        if expanded != self.expanded:
+            self.expanded = expanded
+            self._refresh()
 
     def _refresh(self) -> None:
         marker = '▾' if self.expanded else '▸'
@@ -103,9 +107,9 @@ class PlotListSection:
         The grid's title, shown as the section heading.
     title_of:
         Returns the title to show for a cell.
-    on_toggle:
-        Called after the user expanded or collapsed a row, so the owner can
-        render or release the plot.
+    on_tap:
+        Called with the cell whose row the user tapped. The owner decides what
+        is expanded and applies it with :meth:`show_expanded`.
     """
 
     def __init__(
@@ -113,10 +117,10 @@ class PlotListSection:
         title: str,
         *,
         title_of: Callable[[PlotCell], str],
-        on_toggle: Callable[[], None],
+        on_tap: Callable[[CellId], None],
     ) -> None:
         self._title_of = title_of
-        self._on_toggle = on_toggle
+        self._on_tap = on_tap
         self._rows: dict[CellId, _Row] = {}
         self._geometry: dict[CellId, CellGeometry] = {}
         self._composition: tuple | None = None
@@ -137,7 +141,8 @@ class PlotListSection:
     def sync(self, grid_config: PlotGridConfig) -> None:
         """Match the rows to the grid's cells, in reading order.
 
-        Rows of surviving cells are kept, with their expanded state and view.
+        Rows of surviving cells are kept, with their expanded state and view;
+        new rows start collapsed.
         """
         cells = sorted(
             grid_config.cells.items(),
@@ -152,7 +157,7 @@ class PlotListSection:
         for cell_id, _, title in composition:
             row = self._rows.get(cell_id)
             if row is None:
-                row = _Row(title, on_click=partial(self.toggle, cell_id))
+                row = _Row(title, on_click=partial(self.tap, cell_id))
             else:
                 row.set_title(title)
             rows[cell_id] = row
@@ -161,15 +166,14 @@ class PlotListSection:
         self._column.objects = [row.panel for row in rows.values()]
         self._composition = composition
 
-    def toggle(self, cell_id: CellId) -> None:
-        """Expand or collapse a cell's plot, as tapping its row does."""
-        self._rows[cell_id].toggle()
-        self._on_toggle()
+    def tap(self, cell_id: CellId) -> None:
+        """Report a tap on a cell's row to the owner."""
+        self._on_tap(cell_id)
 
-    @property
-    def expanded_cells(self) -> frozenset[CellId]:
-        """Cells whose plot the user has expanded."""
-        return frozenset(cid for cid, row in self._rows.items() if row.expanded)
+    def show_expanded(self, cell_id: CellId | None) -> None:
+        """Expand the row of ``cell_id`` if this section has it; collapse others."""
+        for row_cell_id, row in self._rows.items():
+            row.set_expanded(row_cell_id == cell_id)
 
     def _row_at(self, geometry: CellGeometry) -> _Row | None:
         for cell_id, cell_geometry in self._geometry.items():

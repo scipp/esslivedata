@@ -2487,11 +2487,31 @@ class TestPhoneLayout:
         self._show_plots_tab(phone_tabs)
         _tick(phone_tabs)
 
-        phone_tabs._grid_widgets[grid_id].toggle(cell_id)
+        phone_tabs._grid_widgets[grid_id].tap(cell_id)
         _tick(phone_tabs)
 
         assert self._shows(phone_tabs, grid_id, cell_id)
         assert layer_id in plot_data_service.viewed_layers()
+
+    def test_expanding_a_plot_collapses_the_open_one(
+        self, plot_orchestrator, plot_data_service, phone_tabs
+    ):
+        first_grid = plot_orchestrator.add_grid(title='A', nrows=2, ncols=2)
+        second_grid = plot_orchestrator.add_grid(title='B', nrows=2, ncols=2)
+        first = _add_static_cell(plot_orchestrator, first_grid, _GEO)
+        second = _add_static_cell(plot_orchestrator, second_grid, _GEO)
+        first_layer = plot_orchestrator.get_cell(first).layers[0].layer_id
+        self._show_plots_tab(phone_tabs)
+        _tick(phone_tabs)
+        phone_tabs._grid_widgets[first_grid].tap(first)
+        _tick(phone_tabs)
+
+        phone_tabs._grid_widgets[second_grid].tap(second)
+        _tick(phone_tabs)
+
+        assert not self._shows(phone_tabs, first_grid, first)
+        assert self._shows(phone_tabs, second_grid, second)
+        assert first_layer not in plot_data_service.viewed_layers()
 
     def test_expanded_plot_sleeps_while_another_tab_is_shown(
         self, plot_orchestrator, plot_data_service, phone_tabs
@@ -2501,7 +2521,7 @@ class TestPhoneLayout:
         layer_id = plot_orchestrator.get_cell(cell_id).layers[0].layer_id
         self._show_plots_tab(phone_tabs)
         _tick(phone_tabs)
-        phone_tabs._grid_widgets[grid_id].toggle(cell_id)
+        phone_tabs._grid_widgets[grid_id].tap(cell_id)
         _tick(phone_tabs)
 
         phone_tabs.tabs.active = 0
@@ -2518,10 +2538,10 @@ class TestPhoneLayout:
         self._show_plots_tab(phone_tabs)
         section = phone_tabs._grid_widgets[grid_id]
         _tick(phone_tabs)
-        section.toggle(cell_id)
+        section.tap(cell_id)
         _tick(phone_tabs)
 
-        section.toggle(cell_id)
+        section.tap(cell_id)
         _tick(phone_tabs)
 
         assert not self._shows(phone_tabs, grid_id, cell_id)
@@ -2533,14 +2553,14 @@ class TestPhoneLayout:
         self._show_plots_tab(phone_tabs)
         _tick(phone_tabs)
         section = phone_tabs._grid_widgets[grid_id]
-        section.toggle(cell_id)
+        section.tap(cell_id)
         _tick(phone_tabs)
 
         plot_orchestrator.remove_cell(cell_id)
         _tick(phone_tabs)
 
         assert cell_id not in phone_tabs._cells
-        assert section.expanded_cells == frozenset()
+        assert phone_tabs._list_shown_cells() == frozenset()
 
     def test_disabled_grid_is_not_listed_or_rendered(
         self, plot_orchestrator, plot_data_service, phone_tabs
@@ -2551,7 +2571,7 @@ class TestPhoneLayout:
         self._show_plots_tab(phone_tabs)
         _tick(phone_tabs)
         section = phone_tabs._grid_widgets[grid_id]
-        section.toggle(cell_id)
+        section.tap(cell_id)
         _tick(phone_tabs)
 
         plot_orchestrator.set_grid_enabled(grid_id, enabled=False)
