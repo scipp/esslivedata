@@ -78,5 +78,25 @@ class ModalSizing:
     """Shared sizing constants for modal dialogs with sticky header/footer."""
 
     WIDTH = 800
-    MAX_HEIGHT = 800
     SCROLL_BODY_MAX_HEIGHT = 650
+    # Keeps a footer's buttons in view when the whole dialog has to scroll,
+    # which it does on screens shorter than the dialog (see ``design.py``).
+    STICKY_FOOTER_STYLES = {  # noqa: RUF012
+        'position': 'sticky',
+        'bottom': '0',
+        'z-index': '1',
+        'background-color': 'white',
+    }
+
+
+class PhoneLayout:
+    """Spacing of the phone layout (``?layout=phone``), in pixels.
+
+    The open plot's height is derived from these, so a change here keeps the
+    plot fitting the screen.
+    """
+
+    # Band in the header's color above the content (``dashboard.py``).
+    TOP_BAND = 8
+    # Padding around the tab content (``plot_grid_tabs.py``).
+    TAB_CONTENT_PADDING = 4

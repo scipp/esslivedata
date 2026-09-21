@@ -413,6 +413,15 @@ class WorkflowStatusWidget:
                 'background': Colors.BG_LIGHT,
                 'padding': '6px 12px',  # Fit 28px buttons in 40px header
             },
+            # On a phone the row wraps rather than clipping its action buttons.
+            # Panel fixes the height as a flex basis too, and the items would
+            # otherwise shrink to nothing before the row wraps.
+            stylesheets=[
+                '@media (max-width: 600px) {'
+                ' :host { height: auto !important; flex: 0 0 auto !important;'
+                ' flex-wrap: wrap; }'
+                ' div { flex-shrink: 0 !important; } }'
+            ],
             sizing_mode='stretch_width',
             align='center',
         )
@@ -1368,6 +1377,7 @@ class WorkflowStatusListWidget:
             collapse_all_btn,
             sizing_mode='stretch_width',
             margin=(0, 0, 8, 0),
+            styles={'flex-wrap': 'wrap'},
         )
 
     def _on_gate_toggle(self, event) -> None:

@@ -26,6 +26,7 @@ from ..plot_orchestrator import (
     reject_overlapping_cells,
 )
 from .buttons import ButtonStyles, create_download_button, create_tool_button
+from .grid_preview import PreviewCell, create_grid_preview
 from .plot_widgets import get_workflow_display_info
 from .styles import Colors, HoverColors, StatusColors
 
@@ -36,17 +37,7 @@ _NO_TEMPLATE = "-- No template --"
 _MODE_TEMPLATE = "Template"
 _MODE_UPLOAD = "Upload"
 
-# Colors for template preview cells (cycle through these)
 _HORIZONTAL_MARGIN = 0
-
-_CELL_COLORS = [
-    '#e3f2fd',  # light blue
-    '#f3e5f5',  # light purple
-    '#e8f5e9',  # light green
-    '#fff3e0',  # light orange
-    '#fce4ec',  # light pink
-    '#e0f7fa',  # light cyan
-]
 
 
 class GridRow:
@@ -522,126 +513,24 @@ class PlotGridManager:
         ncols: int,
         cells: Sequence[PlotCell],
     ) -> pn.Column:
-        """
-        Create a visual preview of the grid layout.
-
-        Shows a mini grid with colored boxes representing each cell,
-        labeled with the workflow name if cells are provided.
-
-        Parameters
-        ----------
-        nrows
-            Number of rows in the grid.
-        ncols
-            Number of columns in the grid.
-        cells
-            Cells to show in the preview (from template or uploaded config).
-
-        Returns
-        -------
-        :
-            Panel Column containing the preview.
-        """
-
-        # Fixed preview size - cells scale to fit
-        preview_width = 400
-        preview_height = 240
-
-        # Create grid spec with fixed size
-        grid = pn.GridSpec(
-            width=preview_width,
-            height=preview_height,
-            sizing_mode='fixed',
-        )
-
-        # Calculate which cells are covered by template cells
-        covered_cells: set[tuple[int, int]] = set()
+        """Preview the grid layout, labelling each cell with its workflow."""
+        preview_cells = []
         for cell in cells:
-            geometry = cell.geometry
-            row_start = geometry.row
-            row_end = row_start + geometry.row_span
-            col_start = geometry.col
-            col_end = col_start + geometry.col_span
-            # Only count cells that fit in current grid size
-            if row_end <= nrows and col_end <= ncols:
-                for r in range(row_start, row_end):
-                    for c in range(col_start, col_end):
-                        covered_cells.add((r, c))
-
-        # Add empty cells as background (light gray border) only for uncovered cells
-        for row in range(nrows):
-            for col in range(ncols):
-                if (row, col) not in covered_cells:
-                    grid[row, col] = pn.pane.HTML(
-                        '',
-                        styles={
-                            'background-color': '#f5f5f5',
-                            'border': '1px dashed #ccc',
-                            'box-sizing': 'border-box',
-                        },
-                        sizing_mode='stretch_both',
-                        margin=1,
-                    )
-
-        # Add template cells
-        for i, cell in enumerate(cells):
-            # Check if cell fits in current grid size
-            geometry = cell.geometry
-            row_start = geometry.row
-            row_end = row_start + geometry.row_span
-            col_start = geometry.col
-            col_end = col_start + geometry.col_span
-
-            if row_end > nrows or col_end > ncols:
-                continue  # Cell doesn't fit, skip it
-
-            # Look up workflow title from the first layer's config
-            first_layer = cell.layers[0]
-            config = first_layer.config
+            config = cell.layers[0].config
             workflow_title, output_title = get_workflow_display_info(
                 self._workflow_registry, config.workflow_id, config.view_name
             )
-
             # Truncate long titles for the compact preview
             if len(workflow_title) > 20:
                 workflow_title = workflow_title[:17] + '...'
             layer_count = len(cell.layers)
-
-            color = _CELL_COLORS[i % len(_CELL_COLORS)]
-
             layer_info = f' (+{layer_count - 1})' if layer_count > 1 else ''
-            label_html = (
-                f'<div style="font-size: 10px; font-weight: 500;">'
-                f'{workflow_title}{layer_info}</div>'
-                f'<div style="font-size: 9px; color: #666;">{output_title}</div>'
+            preview_cells.append(
+                PreviewCell(
+                    cell.geometry, f'{workflow_title}{layer_info}', output_title
+                )
             )
-            grid[row_start:row_end, col_start:col_end] = pn.pane.HTML(
-                label_html,
-                styles={
-                    'background-color': color,
-                    'border': '2px solid #1976d2',
-                    'border-radius': '4px',
-                    'display': 'flex',
-                    'flex-direction': 'column',
-                    'align-items': 'center',
-                    'justify-content': 'center',
-                    'text-align': 'center',
-                    'box-sizing': 'border-box',
-                },
-                sizing_mode='stretch_both',
-                margin=1,
-            )
-
-        return pn.Column(
-            grid,
-            width=preview_width + 24,
-            styles={
-                'background-color': '#fafafa',
-                'border': '1px solid #e0e0e0',
-                'border-radius': '4px',
-                'padding': '10px',
-            },
-        )
+        return create_grid_preview(nrows, ncols, preview_cells, width=400, height=240)
 
     def _on_grid_size_changed(self, event) -> None:
         """Handle rows/cols input change."""

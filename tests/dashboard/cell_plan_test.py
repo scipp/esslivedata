@@ -12,6 +12,7 @@ from __future__ import annotations
 from uuid import uuid4
 
 from ess.livedata.dashboard.cell_plan import (
+    CellBuildInputs,
     SessionView,
     cell_build_inputs,
     desired_cells,
@@ -158,6 +159,47 @@ class TestMaterialization:
             watched=lambda lid: lid == watched_layer,
         )
         assert cell_id in plans
+
+
+class TestOrientation:
+    """Phone layout: figures are laid out for the screen orientation."""
+
+    def test_shown_cell_is_built_for_the_orientation(self):
+        grid_id, layer_id, cell_id = _grid_id(), LayerId(uuid4()), CellId(uuid4())
+        snapshot = LayerSnapshot(state=LayerState.READY, version=1, plotter=_Plotter())
+        topology = _topology(grid_id, {cell_id: _cell(layer_id)})
+
+        def plan(portrait: bool) -> CellBuildInputs:
+            view = SessionView(
+                active_grid_id=None,
+                live_cell_ids=frozenset({cell_id}),
+                portrait=portrait,
+            )
+            plans = desired_cells(
+                topology, {layer_id: snapshot}.get, view, watched=lambda _: False
+            )
+            return plans[cell_id].inputs
+
+        assert plan(True).portrait is True
+        assert plan(True) != plan(False)
+
+    def test_prewarmed_cell_follows_the_orientation(self):
+        """Opening a pre-warmed cell then needs no second build."""
+        grid_id, layer_id, cell_id = _grid_id(), LayerId(uuid4()), CellId(uuid4())
+        snapshot = LayerSnapshot(state=LayerState.READY, version=1, plotter=_Plotter())
+        topology = _topology(grid_id, {cell_id: _cell(layer_id)})
+
+        def plan(portrait: bool) -> CellBuildInputs:
+            plans = desired_cells(
+                topology,
+                {layer_id: snapshot}.get,
+                SessionView(active_grid_id=None, portrait=portrait),
+                watched=lambda _: True,
+            )
+            return plans[cell_id].inputs
+
+        assert plan(True).portrait is True
+        assert plan(True) != plan(False)
 
 
 class TestTopologyFiltering:

@@ -545,6 +545,7 @@ class ConfigurationModal:
             self._start_button,
             margin=(10, 0),
             sizing_mode='stretch_width',
+            styles=ModalSizing.STICKY_FOOTER_STYLES,
         )
         title, body = self._panel.split_for_sticky_header()
         scroll_body = pn.Column(
