@@ -122,9 +122,10 @@ class SessionView:
 
     ``live_cell_ids`` are cells this session renders outside the visible grid:
     those behind a showing pop-out window (``widgets/plot_popout.py``), which
-    floats above whatever tab is up. A minimized window renders nothing and
-    contributes no cell, so parking a pop-out costs exactly what a hidden tab
-    does.
+    floats above whatever tab is up, and in the phone layout those expanded in
+    the visible plot list (``widgets/plot_list.py``). A minimized window or a
+    collapsed row renders nothing and contributes no cell, so either costs
+    exactly what a hidden tab does.
     """
 
     active_grid_id: GridId | None

@@ -210,7 +210,7 @@ class ReductionApp(DashboardBase):
         )
 
     def create_main_content(
-        self, session_updater: SessionUpdater
+        self, session_updater: SessionUpdater, *, phone: bool
     ) -> pn.viewable.Viewable:
         """Create the main content area with plot grid tabs."""
         workflow_status_widget = WorkflowStatusListWidget(
@@ -237,6 +237,7 @@ class ReductionApp(DashboardBase):
             plot_data_service=self._services.plot_data_service,
             session_updater=session_updater,
             theme=self._theme,
+            phone=phone,
         )
 
         # PlotGridTabs registers its own two-tier teardown on the session

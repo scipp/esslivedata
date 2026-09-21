@@ -79,7 +79,9 @@ from .modal_escape_closer import ModalEscapeCloser
 from .plot_config_modal import PlotConfigModal
 from .plot_grid import PlotGrid
 from .plot_grid_manager import PlotGridManager
+from .plot_list import PlotListSection
 from .plot_popout import PlotPopoutManager
+from .plot_widgets import derive_cell_title
 
 logger = structlog.get_logger(__name__)
 
@@ -105,6 +107,24 @@ class _PassStamps(NamedTuple):
     layer_version: int
     active_grid_id: GridId | None
     generations: Mapping[GridId | None, int]
+
+
+# Phone layout: the static tabs show only their icon, and there are no grid
+# tabs (see ``plot_list``), so the strip is a narrow rail of icon buttons. The
+# label text is hidden with a zero font size, so the icon is sized in pixels
+# rather than in ``em``. Sized for a fingertip.
+_ICON_ONLY_TAB_CSS = """
+    .bk-header .bk-tab {
+        font-size: 0 !important;
+        min-width: 0 !important;
+        padding: 12px 10px !important;
+    }
+    .bk-header .bk-tab::before {
+        width: 24px !important;
+        height: 24px !important;
+        margin-right: 0 !important;
+    }
+"""
 
 
 def _tab_stylesheet(icons: Sequence[str], theme: Theme) -> str:
@@ -222,6 +242,10 @@ class PlotGridTabs:
     theme
         Shell appearance, determining where the tab strip sits and how it is
         colored.
+    phone
+        Use the phone layout: icon-only tabs, and a single "Plots" tab listing
+        the cells of all grids in place of one tab per grid (see
+        ``plot_list``).
     """
 
     def __init__(
@@ -235,14 +259,21 @@ class PlotGridTabs:
         plot_data_service: PlotDataService,
         session_updater: SessionUpdater,
         theme: Theme = DEFAULT_THEME,
+        phone: bool = False,
     ) -> None:
         self._orchestrator = plot_orchestrator
+        self._phone = phone
         self._workflow_registry = dict(workflow_registry)
         self._plotting_controller = plotting_controller
         self._plot_data_service = plot_data_service
 
-        # Track grid widgets (insertion order determines tab position)
-        self._grid_widgets: dict[GridId, PlotGrid] = {}
+        # Track grid widgets (insertion order determines tab position). In the
+        # phone layout a grid is a section of the plot list instead.
+        self._grid_widgets: dict[GridId, PlotGrid | PlotListSection] = {}
+        # Phone layout only: the list of all grids' cells, and the list cells
+        # shown by the last completed pass.
+        self._plot_list = pn.Column(sizing_mode='stretch_both', scroll=True)
+        self._last_list_shown: frozenset[CellId] = frozenset()
 
         # Per-session layer state: version tracking and optional render
         # components. Owned by the poll loop; read by CellWidgets when composing
@@ -327,6 +358,8 @@ class PlotGridTabs:
                 ('System Status', 'activity', system_status_widget.panel())
             )
         static_tabs.append(('Manage Plots', 'layout-grid', self._grid_manager.panel))
+        if phone:
+            static_tabs.append(('Plots', 'chart-line', self._plot_list))
 
         # Main tabs widget.
         # IMPORTANT: dynamic=True is critical for performance. Without it, Panel
@@ -340,7 +373,10 @@ class PlotGridTabs:
             sizing_mode='stretch_both',
             dynamic=True,
             tabs_location=theme.tabs_location,
-            stylesheets=[_tab_stylesheet([icon for _, icon, _ in static_tabs], theme)],
+            stylesheets=[
+                _tab_stylesheet([icon for _, icon, _ in static_tabs], theme),
+                *([_ICON_ONLY_TAB_CSS] if phone else []),
+            ],
         )
 
         # Modal container for plot configuration
@@ -371,6 +407,7 @@ class PlotGridTabs:
 
         # Store static tabs count for use as offset in grid tab index calculations
         self._static_tabs_count = len(self._tabs)
+        self._plots_tab_index = self._static_tabs_count - 1 if phone else None
 
         # Build grid tabs from current topology and record the version so the
         # first poll does not rebuild everything again (cells are populated on
@@ -404,6 +441,16 @@ class PlotGridTabs:
 
     def _add_grid_tab(self, grid_id: GridId, grid_config: PlotGridConfig) -> None:
         """Add a new grid tab after the Manage tab."""
+        if self._phone:
+            section = PlotListSection(
+                grid_config.title,
+                title_of=self._cell_title,
+                on_toggle=lambda: self._session_updater.request_tick(full=True),
+            )
+            section.sync(grid_config)
+            self._grid_widgets[grid_id] = section
+            self._plot_list.append(section.panel)
+            return
 
         # Create grid-specific callback using closure to capture grid_id
         def grid_callback(geometry: CellGeometry) -> None:
@@ -432,6 +479,43 @@ class PlotGridTabs:
         # (wrapping the entire Tabs widget). Cells are populated by the poll's
         # cell reconcile, not here.
         self._tabs.append((grid_config.title, plot_grid.panel))
+
+    def _cell_title(self, cell: PlotCell) -> str:
+        """The title a cell's widget shows: user-defined, else derived."""
+        if cell.user_title is not None:
+            return cell.user_title
+        return derive_cell_title(
+            cell,
+            self._workflow_registry,
+            get_source_title=self._orchestrator.get_source_title,
+        )
+
+    def _list_shown_cells(self) -> frozenset[CellId]:
+        """Cells expanded in the phone layout's plot list, while it is visible.
+
+        Like a grid tab, the list shows nothing while a modal covers it or
+        another tab is up, and a section of a disabled grid is not listed.
+        """
+        if (
+            not self._phone
+            or self._current_modal is not None
+            or self._tabs.active != self._plots_tab_index
+        ):
+            return frozenset()
+        shown: set[CellId] = set()
+        for grid_id, section in self._grid_widgets.items():
+            grid_config = self._orchestrator.peek_grid(grid_id)
+            if grid_config is not None and grid_config.enabled:
+                shown |= section.expanded_cells
+        return frozenset(shown)
+
+    def _rendered_cells(self) -> frozenset[CellId]:
+        """Cells this session renders outside the visible grid tab.
+
+        Those behind a showing pop-out window, and in the phone layout those
+        expanded in the plot list.
+        """
+        return self._popouts.live_cells() | self._list_shown_cells()
 
     def _tabbed_grid_ids(self) -> list[GridId]:
         """GridIds that currently have a tab, in tab order.
@@ -551,6 +635,9 @@ class PlotGridTabs:
         old_widgets = self._grid_widgets
         self._grid_widgets = {}
 
+        if self._phone:
+            self._plot_list.clear()
+
         with pn.io.hold():
             # Remove all existing grid tabs
             while len(self._tabs) > self._static_tabs_count:
@@ -568,7 +655,11 @@ class PlotGridTabs:
                     # Reuse existing widget, update tab title
                     plot_grid = old_widgets[grid_id]
                     self._grid_widgets[grid_id] = plot_grid
-                    self._tabs.append((grid_config.title, plot_grid.panel))
+                    if isinstance(plot_grid, PlotListSection):
+                        plot_grid.set_title(grid_config.title)
+                        self._plot_list.append(plot_grid.panel)
+                    else:
+                        self._tabs.append((grid_config.title, plot_grid.panel))
                 else:
                     # Grid was re-enabled or is new — create fresh tab
                     self._add_grid_tab(grid_id, grid_config)
@@ -923,7 +1014,7 @@ class PlotGridTabs:
         """
         live_grids = {active_grid_id} | {
             widget.grid_id
-            for cell_id in self._popouts.live_cells()
+            for cell_id in self._rendered_cells()
             if (widget := self._cells.get(cell_id)) is not None
         }
         return {
@@ -954,7 +1045,8 @@ class PlotGridTabs:
             >= _FRESHNESS_STALL_INTERVAL_S
             and any(
                 widget.grid_id == self._last_active_grid_id
-                for widget in self._cells.values()
+                or cell_id in self._last_list_shown
+                for cell_id, widget in self._cells.items()
             )
         )
 
@@ -1042,6 +1134,13 @@ class PlotGridTabs:
             if grid_config is not None:
                 grids[grid_id] = grid_config
 
+        # A list section must know the grid's cells before any is built into
+        # it: building is what expanding a row asks for.
+        for grid_id, grid_config in grids.items():
+            section = self._grid_widgets[grid_id]
+            if isinstance(section, PlotListSection):
+                section.sync(grid_config)
+
         # A disabled grid's layers lose their viewers below, so a pop-out over
         # one of its cells would float on frozen with no cue. Close it first,
         # before the live set is read; the cell widget itself is kept for a
@@ -1060,7 +1159,8 @@ class PlotGridTabs:
         # ingestion thread builds its layer, before the grid's frame commits,
         # so a shared flag would let a frame for a pop-out's grid push the
         # visible grid's half-built burst, or the reverse.
-        live_cells = self._popouts.live_cells()
+        live_cells = self._rendered_cells()
+        list_shown = self._list_shown_cells()
         generations = self._live_generations(active_grid_id)
         stale_grids = {
             grid_id
@@ -1069,6 +1169,10 @@ class PlotGridTabs:
         }
         if active_grid_id != self._last_active_grid_id:
             stale_grids.add(active_grid_id)
+        # A plot expanded in the list is newly shown, like a revealed tab.
+        for cell_id in list_shown - self._last_list_shown:
+            if (widget := self._cells.get(cell_id)) is not None:
+                stale_grids.add(widget.grid_id)
 
         # 1 · Tokens. The 0→1 transition computes the layer synchronously so
         # the plans below see fresh snapshots and cached state on this same
@@ -1188,11 +1292,11 @@ class PlotGridTabs:
         # (merged) and the per-layer time-range panes. Bounds are read from the
         # plan snapshots, i.e. after activation: the 0→1 transition is what
         # computes a revealed layer's first frame, and with it the bounds.
-        # Only the visible grid's cells show those panes -- a pop-out renders
-        # the plot alone.
+        # Only the visible grid's cells and the plots expanded in the phone
+        # list show those panes -- a pop-out renders the plot alone.
         active_cell_bounds: dict[CellId, dict[LayerId, TimeBounds | None]] = {}
         for cell_id, plan in plans.items():
-            if plan.grid_id != active_grid_id:
+            if plan.grid_id != active_grid_id and cell_id not in list_shown:
                 continue
             per_layer: dict[LayerId, TimeBounds | None] = {}
             for layer_input in plan.inputs.layers:
@@ -1220,7 +1324,11 @@ class PlotGridTabs:
         # visible grid whose own stream stalled.
         now_mono = time.monotonic()
         stalled = now_mono - self._last_freshness_update
-        active_flushed = active_grid_id in stale_grids
+        active_flushed = any(
+            plan.grid_id in stale_grids
+            for cell_id, plan in plans.items()
+            if cell_id in active_cell_bounds
+        )
         freshness_due = (
             active_flushed or rebuilt or stalled >= _FRESHNESS_STALL_INTERVAL_S
         )
@@ -1246,6 +1354,7 @@ class PlotGridTabs:
         # exception escaping the pass skips this, leaving the gate armed.)
         self._last_generations = generations
         self._last_active_grid_id = active_grid_id
+        self._last_list_shown = list_shown
         self._last_layer_version = layer_version
 
     def sever(self) -> None:

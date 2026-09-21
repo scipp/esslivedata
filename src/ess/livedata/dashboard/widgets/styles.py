@@ -80,3 +80,11 @@ class ModalSizing:
     WIDTH = 800
     MAX_HEIGHT = 800
     SCROLL_BODY_MAX_HEIGHT = 650
+    # Keeps a footer's buttons in view when the whole dialog has to scroll,
+    # which it does on screens shorter than the dialog (see ``design.py``).
+    STICKY_FOOTER_STYLES = {  # noqa: RUF012
+        'position': 'sticky',
+        'bottom': '0',
+        'z-index': '1',
+        'background-color': 'white',
+    }
