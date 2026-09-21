@@ -113,8 +113,13 @@ class _PassStamps(NamedTuple):
 # Phone layout: the static tabs show only their icon, and there are no grid
 # tabs (see ``plot_overview``), so the strip is a narrow rail of icon buttons. The
 # label text is hidden with a zero font size, so the icon is sized in pixels
-# rather than in ``em``. Sized for a fingertip.
-_ICON_ONLY_TAB_CSS = """
+# rather than in ``em``. Sized for a fingertip. The padding around the tab
+# content is reduced too, since a phone has no width to spare; the selector is
+# the one the theme pads the content with (``theme.py``).
+_PHONE_TAB_CSS = """
+    :host(.bk-left) > :not(.bk-header):not(style):not(link) {
+        padding: 4px !important;
+    }
     .bk-header .bk-tab {
         font-size: 0 !important;
         min-width: 0 !important;
@@ -388,7 +393,7 @@ class PlotGridTabs:
             tabs_location=theme.tabs_location,
             stylesheets=[
                 _tab_stylesheet([icon for _, icon, _ in static_tabs], theme),
-                *([_ICON_ONLY_TAB_CSS] if phone else []),
+                *([_PHONE_TAB_CSS] if phone else []),
             ],
         )
 

@@ -242,6 +242,10 @@ class CellDeps:
 _COMPACT_AXIS_LABEL_STANDOFF = 2
 _COMPACT_MAJOR_LABEL_STANDOFF = 3
 _COMPACT_AXIS_LABEL_FONT_SIZE = '1.1em'
+# Border above and right of the frame (HoloViews uses 10). Only these two:
+# the frame-aspect letterbox pads the left and bottom borders, and reads
+# HoloViews' value there as "not letterboxed" (``frame_aspect.py``).
+_COMPACT_OUTER_BORDER = 4
 
 
 def _compact_figure_hook(plot, element) -> None:
@@ -256,7 +260,7 @@ def _compact_figure_hook(plot, element) -> None:
 
     The axes are tightened: less space around the axis names, and a smaller
     font for them. The tick labels keep their size, since they carry the
-    values.
+    values. The empty border above and right of the frame is narrowed.
 
     Runs on every update, after HoloViews has applied its own axis styling,
     which is what makes these settings stick. Idempotent.
@@ -264,6 +268,8 @@ def _compact_figure_hook(plot, element) -> None:
     figure = plot.state
     figure.toolbar_inner = True
     figure.toolbar.autohide = True
+    figure.min_border_top = _COMPACT_OUTER_BORDER
+    figure.min_border_right = _COMPACT_OUTER_BORDER
     for axis in [*figure.left, *figure.below]:
         if hasattr(axis, 'axis_label_standoff'):
             axis.axis_label_standoff = _COMPACT_AXIS_LABEL_STANDOFF
@@ -827,8 +833,12 @@ class CellWidget:
         #   features (autoscaling, dynamic updates)
         # - Allows proper multi-layer composition via hv.Overlay
         # - Each grid cell's plot remains independent
+        # A compact figure also drops the pane's default margin around it.
         plot_pane_wrapper = pn.pane.HoloViews(
-            self._plot, sizing_mode='stretch_both', linked_axes=False
+            self._plot,
+            sizing_mode='stretch_both',
+            linked_axes=False,
+            **({'margin': 0} if self._deps.compact_figures else {}),
         )
         # Kept so dispose() can unsubscribe the rendered plots from the layer
         # pipes; see dispose().
