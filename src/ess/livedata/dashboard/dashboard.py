@@ -25,6 +25,7 @@ from .session_registry import SessionId
 from .session_updater import SessionUpdater
 from .theme import DEFAULT_THEME, THEMES
 from .transport import NullTransport, Transport
+from .widgets.styles import PhoneLayout
 
 # Bokeh's own reaper, distinct from the registry's: seconds an unused Bokeh
 # session (one with no connections left) is kept before its document is dropped.
@@ -36,6 +37,40 @@ pn.config.throttled = True
 _TEMPLATES_DIR = Path(__file__).parent / 'templates'
 _LOGIN_TEMPLATE = str(_TEMPLATES_DIR / 'login.html')
 _LOGOUT_TEMPLATE = str(_TEMPLATES_DIR / 'logout.html')
+
+
+def _phone_template_css(header_background: str) -> str:
+    """Page rules for the phone layout (``?layout=phone``).
+
+    The header is hidden to give its height to the plots; with it go the
+    sidebar menu and the logout link. A lost connection is still shown: Panel's
+    disconnect notification (``pn.config.disconnect_notification``) does not
+    live in the header. Material pushes the page below the fixed header with
+    ``.mdc-top-app-bar--fixed-adjust``, which is undone here too.
+
+    ``dvh`` rather than ``vh``: on a phone ``100vh`` includes the height hidden
+    behind the browser's toolbars, which pushes the bottom of the page off
+    screen. Material's main-area padding (``.main-content`` in
+    ``panel/template/material/material.css``) is given back to the plots, which
+    need every pixel of a phone's width. A thin band in the header's color is
+    left at the top so the tabs do not touch the screen edge; it is a border
+    because the tab content is transparent, so a background would show
+    through it.
+    """
+    return f"""
+    #header {{
+        display: none !important;
+    }}
+    .mdc-top-app-bar--fixed-adjust {{
+        padding-top: 0 !important;
+    }}
+    .main-content {{
+        box-sizing: border-box;
+        padding: 0 !important;
+        border-top: {PhoneLayout.TOP_BAND}px solid {header_background};
+        height: 100dvh !important;
+    }}
+"""
 
 
 class DashboardBase(ServiceBase, ABC):
@@ -141,7 +176,7 @@ class DashboardBase(ServiceBase, ABC):
 
     @abstractmethod
     def create_main_content(
-        self, session_updater: SessionUpdater
+        self, session_updater: SessionUpdater, *, phone: bool
     ) -> pn.viewable.Viewable:
         """
         Override this method to create the main dashboard content.
@@ -152,6 +187,8 @@ class DashboardBase(ServiceBase, ABC):
             The session updater for this browser session. Widgets that need
             to register handlers for periodic updates should receive this
             in their constructor.
+        phone:
+            Whether this session asked for the phone layout (``?layout=phone``).
         """
 
     def get_dashboard_title(self) -> str:
@@ -289,8 +326,12 @@ class DashboardBase(ServiceBase, ABC):
         # Create session updater first so widgets can register handlers
         session_updater = self._create_session_updater()
 
+        # Chosen once per session from the URL: the server cannot see the
+        # screen size, and a session never switches between layouts.
+        phone = pn.state.session_args.get('layout') == [b'phone']
+
         sidebar_content = self.create_sidebar_content(session_updater)
-        main_content = self.create_main_content(session_updater)
+        main_content = self.create_main_content(session_updater, phone=phone)
 
         # Append heartbeat widget to sidebar (invisible but required for
         # browser heartbeat JavaScript to run). Placing it in the sidebar
@@ -317,10 +358,18 @@ class DashboardBase(ServiceBase, ABC):
             main=main_content,
             header_background=self._theme.header_background,
             header=header,
+            # Without this a phone lays the page out at a desktop width and
+            # scales it down, which makes every button too small to tap. Only
+            # the phone layout is built to fit a phone-width page.
+            meta_viewport='width=device-width, initial-scale=1' if phone else '',
         )
         # Inject CSS for offline mode (replaces Material Icons font with Unicode)
         # and whatever the theme needs from the page around the tabs.
         template.config.raw_css.extend([*self.get_raw_css(), self._theme.template_css])
+        if phone:
+            template.config.raw_css.append(
+                _phone_template_css(self._theme.header_background)
+            )
         self._start_periodic_callback(session_updater)
         return template
 

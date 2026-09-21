@@ -2425,3 +2425,250 @@ class TestLateVersionRecording:
 
         _tick(deferred_tick_tabs)
         assert not deferred_tick_tabs._has_pending_work()
+
+
+class TestPhoneLayout:
+    """The phone layout previews all grids in one tab and opens one plot.
+
+    Only the open plot is built and computed, and only while the tab is on
+    screen, as for the cells of a visible grid tab.
+    """
+
+    @pytest.fixture
+    def phone_tabs(
+        self,
+        plot_orchestrator,
+        workflow_registry,
+        plotting_controller,
+        workflow_status_widget,
+        plot_data_service,
+        session_updater,
+    ) -> PlotGridTabs:
+        return PlotGridTabs(
+            plot_orchestrator=plot_orchestrator,
+            workflow_registry=workflow_registry,
+            plotting_controller=plotting_controller,
+            workflow_status_widget=workflow_status_widget,
+            plot_data_service=plot_data_service,
+            session_updater=session_updater,
+            phone=True,
+        )
+
+    @staticmethod
+    def _show_plots_tab(tabs: PlotGridTabs) -> None:
+        tabs.tabs.active = tabs.tabs._names.index('Plots')
+
+    @staticmethod
+    def _shows(tabs: PlotGridTabs, cell_id: CellId) -> bool:
+        view = tabs._cells[cell_id].view
+        return any(obj is view for obj in tabs._plot_overview.panel.select())
+
+    def test_grids_get_no_tabs(self, plot_orchestrator, phone_tabs):
+        plot_orchestrator.add_grid(title='G', nrows=2, ncols=2)
+        _tick(phone_tabs)
+
+        assert phone_tabs.tabs._names == ['Workflows', 'Manage Plots', 'Plots']
+
+    def test_unopened_cell_is_not_built(self, plot_orchestrator, phone_tabs):
+        grid_id = plot_orchestrator.add_grid(title='G', nrows=2, ncols=2)
+        cell_id = _add_static_cell(plot_orchestrator, grid_id, _GEO)
+        self._show_plots_tab(phone_tabs)
+        _tick(phone_tabs)
+
+        assert cell_id not in phone_tabs._cells
+
+    def test_opening_builds_and_shows_the_plot(
+        self, plot_orchestrator, plot_data_service, phone_tabs
+    ):
+        grid_id = plot_orchestrator.add_grid(title='G', nrows=2, ncols=2)
+        cell_id = _add_static_cell(plot_orchestrator, grid_id, _GEO)
+        layer_id = plot_orchestrator.get_cell(cell_id).layers[0].layer_id
+        self._show_plots_tab(phone_tabs)
+        _tick(phone_tabs)
+
+        phone_tabs._grid_widgets[grid_id].tap(cell_id)
+        _tick(phone_tabs)
+
+        assert self._shows(phone_tabs, cell_id)
+        assert layer_id in plot_data_service.viewed_layers()
+
+    def test_opening_a_plot_closes_the_open_one(
+        self, plot_orchestrator, plot_data_service, phone_tabs
+    ):
+        first_grid = plot_orchestrator.add_grid(title='A', nrows=2, ncols=2)
+        second_grid = plot_orchestrator.add_grid(title='B', nrows=2, ncols=2)
+        first = _add_static_cell(plot_orchestrator, first_grid, _GEO)
+        second = _add_static_cell(plot_orchestrator, second_grid, _GEO)
+        first_layer = plot_orchestrator.get_cell(first).layers[0].layer_id
+        self._show_plots_tab(phone_tabs)
+        _tick(phone_tabs)
+        phone_tabs._grid_widgets[first_grid].tap(first)
+        _tick(phone_tabs)
+        phone_tabs._plot_overview.close()
+
+        phone_tabs._grid_widgets[second_grid].tap(second)
+        _tick(phone_tabs)
+
+        assert not self._shows(phone_tabs, first)
+        assert self._shows(phone_tabs, second)
+        assert first_layer not in plot_data_service.viewed_layers()
+
+    def test_open_plot_sleeps_while_another_tab_is_shown(
+        self, plot_orchestrator, plot_data_service, phone_tabs
+    ):
+        grid_id = plot_orchestrator.add_grid(title='G', nrows=2, ncols=2)
+        cell_id = _add_static_cell(plot_orchestrator, grid_id, _GEO)
+        layer_id = plot_orchestrator.get_cell(cell_id).layers[0].layer_id
+        self._show_plots_tab(phone_tabs)
+        _tick(phone_tabs)
+        phone_tabs._grid_widgets[grid_id].tap(cell_id)
+        _tick(phone_tabs)
+
+        phone_tabs.tabs.active = 0
+        _tick(phone_tabs)
+
+        assert layer_id not in plot_data_service.viewed_layers()
+
+    def test_closing_releases_the_plot(
+        self, plot_orchestrator, plot_data_service, phone_tabs
+    ):
+        grid_id = plot_orchestrator.add_grid(title='G', nrows=2, ncols=2)
+        cell_id = _add_static_cell(plot_orchestrator, grid_id, _GEO)
+        layer_id = plot_orchestrator.get_cell(cell_id).layers[0].layer_id
+        self._show_plots_tab(phone_tabs)
+        section = phone_tabs._grid_widgets[grid_id]
+        _tick(phone_tabs)
+        section.tap(cell_id)
+        _tick(phone_tabs)
+
+        phone_tabs._plot_overview.close()
+        _tick(phone_tabs)
+
+        assert not self._shows(phone_tabs, cell_id)
+        assert layer_id not in plot_data_service.viewed_layers()
+
+    def test_removed_cell_leaves_the_list(self, plot_orchestrator, phone_tabs):
+        grid_id = plot_orchestrator.add_grid(title='G', nrows=2, ncols=2)
+        cell_id = _add_static_cell(plot_orchestrator, grid_id, _GEO)
+        self._show_plots_tab(phone_tabs)
+        _tick(phone_tabs)
+        section = phone_tabs._grid_widgets[grid_id]
+        section.tap(cell_id)
+        _tick(phone_tabs)
+
+        plot_orchestrator.remove_cell(cell_id)
+        _tick(phone_tabs)
+
+        assert cell_id not in phone_tabs._cells
+        assert phone_tabs._overview_shown_cells() == frozenset()
+
+    def test_disabled_grid_is_not_listed_or_rendered(
+        self, plot_orchestrator, plot_data_service, phone_tabs
+    ):
+        grid_id = plot_orchestrator.add_grid(title='G', nrows=2, ncols=2)
+        cell_id = _add_static_cell(plot_orchestrator, grid_id, _GEO)
+        layer_id = plot_orchestrator.get_cell(cell_id).layers[0].layer_id
+        self._show_plots_tab(phone_tabs)
+        _tick(phone_tabs)
+        section = phone_tabs._grid_widgets[grid_id]
+        section.tap(cell_id)
+        _tick(phone_tabs)
+
+        plot_orchestrator.set_grid_enabled(grid_id, enabled=False)
+        _tick(phone_tabs)
+
+        assert section.panel not in phone_tabs._plot_overview.panel.objects
+        assert layer_id not in plot_data_service.viewed_layers()
+
+    def test_next_and_previous_step_through_plots_across_grids(
+        self, plot_orchestrator, phone_tabs
+    ):
+        first_grid = plot_orchestrator.add_grid(title='A', nrows=1, ncols=2)
+        second_grid = plot_orchestrator.add_grid(title='B', nrows=1, ncols=1)
+        right = _add_static_cell(
+            plot_orchestrator,
+            first_grid,
+            CellGeometry(row=0, col=1, row_span=1, col_span=1),
+        )
+        left = _add_static_cell(plot_orchestrator, first_grid, _GEO)
+        other = _add_static_cell(plot_orchestrator, second_grid, _GEO)
+        self._show_plots_tab(phone_tabs)
+        _tick(phone_tabs)
+        overview = phone_tabs._plot_overview
+        phone_tabs._grid_widgets[first_grid].tap(left)
+
+        opened = []
+        for _ in range(3):
+            overview.step(1)
+            opened.append(overview.open_cell)
+        overview.step(-1)
+
+        # Reading order within a grid, then on into the next grid; the last
+        # plot has no next.
+        assert opened == [
+            (first_grid, right),
+            (second_grid, other),
+            (second_grid, other),
+        ]
+        assert overview.open_cell == (first_grid, right)
+
+    def test_rotation_rebuilds_the_open_plot(self, plot_orchestrator, phone_tabs):
+        grid_id = plot_orchestrator.add_grid(title='G', nrows=2, ncols=2)
+        cell_id = _add_static_cell(plot_orchestrator, grid_id, _GEO)
+        self._show_plots_tab(phone_tabs)
+        _tick(phone_tabs)
+        phone_tabs._grid_widgets[grid_id].tap(cell_id)
+        _tick(phone_tabs)
+        before = phone_tabs._cells[cell_id]
+
+        phone_tabs._orientation.portrait = not phone_tabs._orientation.portrait
+
+        assert phone_tabs._cells[cell_id] is not before
+        assert self._shows(phone_tabs, cell_id)
+
+    def test_rotation_leaves_closed_plots_until_reopened(
+        self, plot_orchestrator, phone_tabs
+    ):
+        grid_id = plot_orchestrator.add_grid(title='G', nrows=2, ncols=2)
+        closed = _add_static_cell(plot_orchestrator, grid_id, _GEO)
+        opened = _add_static_cell(
+            plot_orchestrator,
+            grid_id,
+            CellGeometry(row=1, col=0, row_span=1, col_span=1),
+        )
+        self._show_plots_tab(phone_tabs)
+        _tick(phone_tabs)
+        section = phone_tabs._grid_widgets[grid_id]
+        section.tap(closed)
+        _tick(phone_tabs)
+        section.tap(opened)
+        _tick(phone_tabs)
+        closed_before = phone_tabs._cells[closed]
+
+        phone_tabs._orientation.portrait = not phone_tabs._orientation.portrait
+
+        assert phone_tabs._cells[closed] is closed_before
+        section.tap(closed)
+        _tick(phone_tabs)
+        assert phone_tabs._cells[closed] is not closed_before
+        assert self._shows(phone_tabs, closed)
+
+    def test_desktop_session_has_no_phone_widgets(self, plot_grid_tabs):
+        assert plot_grid_tabs._plot_overview is None
+        assert plot_grid_tabs._orientation is None
+
+    def test_open_plot_offers_no_popout(self, plot_orchestrator, phone_tabs):
+        grid_id = plot_orchestrator.add_grid(title='G', nrows=2, ncols=2)
+        cell_id = _add_static_cell(plot_orchestrator, grid_id, _GEO)
+        self._show_plots_tab(phone_tabs)
+        _tick(phone_tabs)
+        phone_tabs._grid_widgets[grid_id].tap(cell_id)
+        _tick(phone_tabs)
+
+        classes = {
+            css_class
+            for obj in phone_tabs._cells[cell_id].view.select(pn.widgets.Button)
+            for css_class in obj.css_classes
+        }
+        assert 'lt-tool-pencil' in classes
+        assert 'lt-tool-arrows-maximize' not in classes

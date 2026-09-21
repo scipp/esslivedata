@@ -302,7 +302,13 @@ class Wizard:
             nav_buttons.append(self._next_button)
 
         # Create navigation button row (fixed at bottom)
-        nav_row = pn.Row(*nav_buttons, sizing_mode='stretch_width', margin=(10, 0))
+        nav_row = pn.Row(
+            *nav_buttons,
+            sizing_mode='stretch_width',
+            margin=(10, 0),
+            # Wraps rather than pushing the action button off a narrow screen.
+            styles={**ModalSizing.STICKY_FOOTER_STYLES, 'flex-wrap': 'wrap'},
+        )
 
         # Sticky header + scrollable body + sticky nav row
         sticky_header = self._current_step.render_header(self._current_step_index + 1)

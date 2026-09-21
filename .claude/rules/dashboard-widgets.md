@@ -73,7 +73,11 @@ Pop-out windows (`plot_popout.py`) ride entirely on these three seams: a cell
 behind a showing window enters `SessionView.live_cell_ids` (policy), takes a
 viewer token like a visible cell (tokens), and adds its grid to the per-grid
 frame generations the stamps carry (`_live_generations`). Nothing else in the
-pass knows pop-outs exist.
+pass knows pop-outs exist. The phone layout's Plots tab (`plot_overview.py`) uses
+the same seams -- its one open plot joins the live set while the tab is on
+screen (`_rendered_cells`) -- and adds two steps to the pass, because the open
+plot, unlike a pop-out, shows the cell's titlebar: a newly opened plot is flushed
+like a revealed tab, and its freshness pill is aged.
 
 ### A cell's views are torn down together
 
@@ -261,6 +265,9 @@ wrapped it in stays behind in the component tree at the window's full size, empt
 The zero-height container rooting the windows therefore has to *clip* as well
 (`styles={'overflow': 'hidden'}`), or that box lands below the fold and hands the
 template's `main.main-content` a scrollbar onto a window-sized band of whitespace.
+It must be zero-*width* too (fixed, not `stretch_width`): otherwise it passes the
+box's width on to the page, which then scrolls sideways wherever the window is
+wider than the screen -- on a phone, or a desktop window narrower than 860 px.
 Assert this on scrollable overflow (`overflowY` `auto`/`scroll`), never on
 `getBoundingClientRect`: clipping does not shrink the box's layout rect, so a rect
 check reports the bug as present either way.

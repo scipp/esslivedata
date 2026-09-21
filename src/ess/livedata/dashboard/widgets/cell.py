@@ -212,7 +212,17 @@ class CellDeps:
     ``session_layers`` is the session's shared layer render-state registry
     (owned by the poll loop, read here when composing plots); the callbacks
     route modal interactions back to the owning ``PlotGridTabs`` (which holds
-    the shared modal and pop-out containers).
+    the shared modal and pop-out containers). ``on_popout`` is None where
+    floating windows have no room, and cells then offer no pop-out.
+
+    ``compact_figures`` asks for figures that give the plot area as much of
+    the screen as possible, for the phone layout: the toolbar inside the plot
+    and tighter axes (:func:`_compact_figure_hook`), and color bars on the side
+    the screen has room for -- below the plot in portrait, else beside it
+    (:func:`_place_colorbar`). The orientation is a build input
+    (``CellBuildInputs.portrait``), so a rotation rebuilds the cell. The
+    toolbar of a layout-mode plot, shared by its sub-figures, stays where it
+    is.
     """
 
     orchestrator: PlotOrchestrator
@@ -221,7 +231,69 @@ class CellDeps:
     session_layers: dict[LayerId, SessionLayer]
     on_edit_title: Callable[[CellId, str, bool], None]
     on_reconfigure_layer: Callable[[LayerId], None]
-    on_popout: Callable[[CellId], None]
+    on_popout: Callable[[CellId], None] | None
+    compact_figures: bool = False
+
+
+# Axis spacing of compact figures, in pixels: the gap between an axis name
+# and its tick labels (HoloViews uses 10) and between tick labels and tick marks
+# (Bokeh uses 5). With the axis name's font size, these decide how much of a
+# phone-width figure its axes take.
+_COMPACT_AXIS_LABEL_STANDOFF = 2
+_COMPACT_MAJOR_LABEL_STANDOFF = 3
+_COMPACT_AXIS_LABEL_FONT_SIZE = '1.1em'
+# Border above and right of the frame (HoloViews uses 10). Only these two:
+# the frame-aspect letterbox pads the left and bottom borders, and reads
+# HoloViews' value there as "not letterboxed" (``frame_aspect.py``).
+_COMPACT_OUTER_BORDER = 4
+
+
+def _compact_figure_hook(plot, element) -> None:
+    """Give the plot area as much of a small figure as possible.
+
+    The toolbar is drawn inside the frame rather than beside it. Beside the
+    frame, it takes a strip of the plot's width or height. Inside it takes
+    none, and all its tools -- including the autoscale toggles and reset --
+    stay available, at the cost of covering an edge of the plot. Auto-hiding
+    hides it while a mouse pointer is outside the plot; a finger never leaves
+    the plot in that sense, so on a touch screen it stays shown.
+
+    The axes are tightened: less space around the axis names, and a smaller
+    font for them. The tick labels keep their size, since they carry the
+    values. The empty border above and right of the frame is narrowed.
+
+    Runs on every update, after HoloViews has applied its own axis styling,
+    which is what makes these settings stick. Idempotent.
+    """
+    figure = plot.state
+    figure.toolbar_inner = True
+    figure.toolbar.autohide = True
+    figure.min_border_top = _COMPACT_OUTER_BORDER
+    figure.min_border_right = _COMPACT_OUTER_BORDER
+    for axis in [*figure.left, *figure.below]:
+        if hasattr(axis, 'axis_label_standoff'):
+            axis.axis_label_standoff = _COMPACT_AXIS_LABEL_STANDOFF
+            axis.major_label_standoff = _COMPACT_MAJOR_LABEL_STANDOFF
+            axis.axis_label_text_font_size = _COMPACT_AXIS_LABEL_FONT_SIZE
+
+
+def _place_colorbar(
+    plot: hv.DynamicMap | hv.Element, *, below: bool
+) -> hv.DynamicMap | hv.Element:
+    """Draw color bars below the plot, or beside it.
+
+    In portrait, width is what the plot lacks, so the color bar goes below; in
+    landscape, height is, so it goes beside. Both positions are set explicitly:
+    a rebuild composes over the session's same DynamicMaps, which keep options
+    applied by an earlier build. Only these element types draw a color bar;
+    the option reaches them inside overlays and layouts alike. The option specs
+    are built here, not at import: they need the plotting backend loaded.
+    """
+    position = 'bottom' if below else 'right'
+    return plot.opts(
+        hv.opts.Image(colorbar_position=position),
+        hv.opts.QuadMesh(colorbar_position=position),
+    )
 
 
 class CellWidget:
@@ -576,7 +648,11 @@ class CellWidget:
             on_configure_layer=self._deps.on_reconfigure_layer,
             toolbars_visible=self._toolbars_shown,
             on_toggle_toolbars_callback=on_toggle_toolbars,
-            on_popout_callback=lambda: self._deps.on_popout(self._cell_id),
+            on_popout_callback=(
+                None
+                if (on_popout := self._deps.on_popout) is None
+                else lambda: on_popout(self._cell_id)
+            ),
             can_popout=self.has_plot,
             freshness_pane=self._freshness_pane,
             # Per-cell automation hook: a rebuilt cell's DOM position is not
@@ -761,8 +837,12 @@ class CellWidget:
         #   features (autoscaling, dynamic updates)
         # - Allows proper multi-layer composition via hv.Overlay
         # - Each grid cell's plot remains independent
+        # A compact figure also drops the pane's default margin around it.
         plot_pane_wrapper = pn.pane.HoloViews(
-            self._plot, sizing_mode='stretch_both', linked_axes=False
+            self._plot,
+            sizing_mode='stretch_both',
+            linked_axes=False,
+            **({'margin': 0} if self._deps.compact_figures else {}),
         )
         # Kept so dispose() can unsubscribe the rendered plots from the layer
         # pipes; see dispose().
@@ -839,10 +919,14 @@ class CellWidget:
         # frame-aspect hook is not among these — it is declared per element type
         # by the plotter (see Plotter._sizing_opts), so it reaches every
         # sub-figure of a Layout regardless.
+        if self._deps.compact_figures:
+            result = _place_colorbar(result, below=bool(self.build_inputs.portrait))
         if non_overlayable:
             return result
 
         hooks: list = [make_hover_suspend_hook()]
+        if self._deps.compact_figures:
+            hooks.append(_compact_figure_hook)
         filename = build_save_filename_from_cell(
             self._cell,
             self._deps.workflow_registry,
