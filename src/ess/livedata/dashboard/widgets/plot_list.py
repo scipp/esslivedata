@@ -6,7 +6,8 @@ A phone screen is too small for a grid of plots, so the phone layout
 (``?layout=phone``) shows no grid tabs. Instead a single "Plots" tab shows a
 preview of every enabled grid -- its cells as labelled boxes, without data --
 and tapping a cell opens that plot in place of the previews, with a button
-back to them. At most one plot is open, since keeping several plots updating
+back to them and buttons stepping to the previous and next plot, in reading
+order across grids. At most one plot is open, since keeping several plots updating
 is too heavy for a phone and drains its battery. The open plot is rendered
 only while the tab is visible; every other cell costs what a cell in a hidden
 grid tab costs, that is nothing unless another session is viewing it.
@@ -44,6 +45,15 @@ _PREVIEW_ROW_HEIGHT = 64
 # The open plot fills the screen below the back button and the page's top band.
 _OPEN_PLOT_HEIGHT = 'calc(100dvh - 80px)'
 
+# Size of the previous/next buttons: a comfortable fingertip target.
+_STEP_BUTTON_SIZE = 44
+
+# Scrolling the previews comes to rest with a grid's heading at the top when it
+# ends near one. ``proximity`` rather than ``mandatory``: a preview taller than
+# the screen would otherwise have parts that scrolling cannot reach.
+_SNAP_CONTAINER_CSS = ':host { scroll-snap-type: y proximity; }'
+_SNAP_TARGET_CSS = ':host { scroll-snap-align: start; }'
+
 _BACK_BUTTON_CSS = """
     .bk-btn {
         justify-content: flex-start;
@@ -79,6 +89,7 @@ class PlotListSection:
         self._views: dict[CellGeometry, pn.viewable.Viewable] = {}
         self._geometry: dict[CellId, CellGeometry] = {}
         self._titles: dict[CellId, str] = {}
+        self._order: list[CellId] = []
         self._composition: tuple | None = None
         self._heading = pn.pane.HTML(
             sizing_mode='stretch_width',
@@ -87,7 +98,10 @@ class PlotListSection:
         )
         self._preview = pn.Column(sizing_mode='stretch_width', margin=0)
         self._panel = pn.Column(
-            self._heading, self._preview, sizing_mode='stretch_width'
+            self._heading,
+            self._preview,
+            sizing_mode='stretch_width',
+            stylesheets=[_SNAP_TARGET_CSS],
         )
         self.set_title(title)
 
@@ -111,6 +125,9 @@ class PlotListSection:
             return
         self._owner.drop_if_open(self._grid_id, {cell_id for cell_id, _, _ in cells})
         self._geometry = {cell_id: geometry for cell_id, geometry, _ in cells}
+        self._order = sorted(
+            self._geometry, key=lambda c: (self._geometry[c].row, self._geometry[c].col)
+        )
         self._titles = {cell_id: title for cell_id, _, title in cells}
         self._preview.objects = [
             create_grid_preview(
@@ -129,6 +146,11 @@ class PlotListSection:
     def tap(self, cell_id: CellId) -> None:
         """Open a cell's plot, as tapping its box does."""
         self._owner.open(self._grid_id, cell_id)
+
+    @property
+    def cell_ids(self) -> list[CellId]:
+        """The grid's cells in reading order."""
+        return self._order
 
     def cell_title(self, cell_id: CellId) -> str:
         return self._titles.get(cell_id, '')
@@ -175,13 +197,19 @@ class PlotList:
         self._listed: list[GridId] = []
         self._open: tuple[GridId, CellId] | None = None
         self._back = pn.widgets.Button(
-            icon=get_icon('chevron-left'),
+            icon=get_icon('layout-grid'),
             color='light',
             sizing_mode='stretch_width',
             stylesheets=[_BACK_BUTTON_CSS],
             margin=(2, 0),
+            css_classes=['lt-plot-back'],
         )
         self._back.on_click(lambda _: self.close())
+        self._prev = self._step_button('chevron-left', -1, 'lt-plot-prev')
+        self._next = self._step_button('chevron-right', 1, 'lt-plot-next')
+        self._nav = pn.Row(
+            self._back, self._prev, self._next, sizing_mode='stretch_width'
+        )
         # A stretching child makes Panel give this column ``flex: 1 0 0``, and
         # a zero flex basis overrides any height, so both are pinned here.
         self._plot = pn.Column(
@@ -191,7 +219,24 @@ class PlotList:
             ],
             margin=0,
         )
-        self._panel = pn.Column(sizing_mode='stretch_both', scroll=True)
+        self._panel = pn.Column(
+            sizing_mode='stretch_both',
+            scroll=True,
+            stylesheets=[_SNAP_CONTAINER_CSS],
+        )
+
+    def _step_button(self, icon: str, step: int, css_class: str) -> pn.widgets.Button:
+        button = pn.widgets.Button(
+            icon=get_icon(icon),
+            icon_size='1.6em',
+            color='light',
+            width=_STEP_BUTTON_SIZE,
+            height=_STEP_BUTTON_SIZE,
+            margin=(2, 0, 2, 4),
+            css_classes=[css_class],
+        )
+        button.on_click(lambda _: self.step(step))
+        return button
 
     def section(self, grid_id: GridId, title: str) -> PlotListSection:
         """Create the section previewing a grid."""
@@ -238,6 +283,23 @@ class PlotList:
         self._render()
         self._on_open_changed()
 
+    def _sequence(self) -> list[tuple[GridId, CellId]]:
+        """All listed plots, in reading order, grid after grid."""
+        return [
+            (grid_id, cell_id)
+            for grid_id in self._listed
+            for cell_id in self._sections[grid_id].cell_ids
+        ]
+
+    def step(self, step: int) -> None:
+        """Open the plot ``step`` places after the open one; none past the ends."""
+        sequence = self._sequence()
+        if self._open not in sequence:
+            return
+        index = sequence.index(self._open) + step
+        if 0 <= index < len(sequence):
+            self.open(*sequence[index])
+
     def refresh_open_plot(self) -> None:
         """Show the open cell's current widget, which a pass may have rebuilt."""
         if self._open is None:
@@ -261,8 +323,12 @@ class PlotList:
             grid_id, cell_id = self._open
             section = self._sections[grid_id]
             self._back.label = f'{section.title}: {section.cell_title(cell_id)}'
+            sequence = self._sequence()
+            here = sequence.index(self._open) if self._open in sequence else None
+            self._prev.disabled = here is None or here == 0
+            self._next.disabled = here is None or here == len(sequence) - 1
             self.refresh_open_plot()
-            self._panel.objects = [self._back, self._plot]
+            self._panel.objects = [self._nav, self._plot]
 
     @property
     def panel(self) -> pn.viewable.Viewable:

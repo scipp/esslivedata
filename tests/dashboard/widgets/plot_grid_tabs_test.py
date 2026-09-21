@@ -2579,3 +2579,35 @@ class TestPhoneLayout:
 
         assert section.panel not in phone_tabs._plot_list.panel.objects
         assert layer_id not in plot_data_service.viewed_layers()
+
+    def test_next_and_previous_step_through_plots_across_grids(
+        self, plot_orchestrator, phone_tabs
+    ):
+        first_grid = plot_orchestrator.add_grid(title='A', nrows=1, ncols=2)
+        second_grid = plot_orchestrator.add_grid(title='B', nrows=1, ncols=1)
+        right = _add_static_cell(
+            plot_orchestrator,
+            first_grid,
+            CellGeometry(row=0, col=1, row_span=1, col_span=1),
+        )
+        left = _add_static_cell(plot_orchestrator, first_grid, _GEO)
+        other = _add_static_cell(plot_orchestrator, second_grid, _GEO)
+        self._show_plots_tab(phone_tabs)
+        _tick(phone_tabs)
+        plot_list = phone_tabs._plot_list
+        phone_tabs._grid_widgets[first_grid].tap(left)
+
+        opened = []
+        for _ in range(3):
+            plot_list.step(1)
+            opened.append(plot_list.open_cell)
+        plot_list.step(-1)
+
+        # Reading order within a grid, then on into the next grid; the last
+        # plot has no next.
+        assert opened == [
+            (first_grid, right),
+            (second_grid, other),
+            (second_grid, other),
+        ]
+        assert plot_list.open_cell == (first_grid, right)
