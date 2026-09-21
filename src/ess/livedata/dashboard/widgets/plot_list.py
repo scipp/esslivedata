@@ -41,8 +41,8 @@ from .styles import Colors
 # of a phone-width grid.
 _PREVIEW_ROW_HEIGHT = 64
 
-# The open plot fills the screen below the back button.
-_OPEN_PLOT_HEIGHT = 'calc(100dvh - 72px)'
+# The open plot fills the screen below the back button and the page's top band.
+_OPEN_PLOT_HEIGHT = 'calc(100dvh - 80px)'
 
 _BACK_BUTTON_CSS = """
     .bk-btn {

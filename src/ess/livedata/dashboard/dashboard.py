@@ -37,6 +37,10 @@ _TEMPLATES_DIR = Path(__file__).parent / 'templates'
 _LOGIN_TEMPLATE = str(_TEMPLATES_DIR / 'login.html')
 _LOGOUT_TEMPLATE = str(_TEMPLATES_DIR / 'logout.html')
 
+# Height of the band in the header's color above the phone layout's content.
+_PHONE_TOP_BAND = '8px'
+
+
 # Page rules for the phone layout (``?layout=phone``). The header is hidden to
 # give its height to the plots; with it go the sidebar menu and the logout
 # link. Losing the connection is still shown: Panel's disconnect notification
@@ -47,18 +51,23 @@ _LOGOUT_TEMPLATE = str(_TEMPLATES_DIR / 'logout.html')
 # browser's toolbars, which pushes the bottom of the page off screen. Material's
 # main-area padding (``.main-content`` in
 # ``panel/template/material/material.css``) is given back to the plots, which
-# need every pixel of a phone's width.
-_PHONE_TEMPLATE_CSS = """
-    #header {
+# need every pixel of a phone's width. A thin band in the header's color (a
+# border: the tab content is transparent, so a background would show through
+# it) is left at the top so the tabs do not touch the screen edge.
+def _phone_template_css(header_background: str) -> str:
+    return f"""
+    #header {{
         display: none !important;
-    }
-    .mdc-top-app-bar--fixed-adjust {
+    }}
+    .mdc-top-app-bar--fixed-adjust {{
         padding-top: 0 !important;
-    }
-    .main-content {
+    }}
+    .main-content {{
+        box-sizing: border-box;
         padding: 0 !important;
+        border-top: {_PHONE_TOP_BAND} solid {header_background};
         height: 100dvh !important;
-    }
+    }}
 """
 
 
@@ -356,7 +365,9 @@ class DashboardBase(ServiceBase, ABC):
         # and whatever the theme needs from the page around the tabs.
         template.config.raw_css.extend([*self.get_raw_css(), self._theme.template_css])
         if phone:
-            template.config.raw_css.append(_PHONE_TEMPLATE_CSS)
+            template.config.raw_css.append(
+                _phone_template_css(self._theme.header_background)
+            )
         self._start_periodic_callback(session_updater)
         return template
 
