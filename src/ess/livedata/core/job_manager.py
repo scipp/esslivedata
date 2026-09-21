@@ -3,10 +3,11 @@
 from __future__ import annotations
 
 import bisect
+import time
 import uuid
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from enum import StrEnum
 from typing import Annotated, Any, Literal
 
@@ -25,6 +26,7 @@ from ess.livedata.config.workflow_spec import (
 from ess.livedata.workflows.workflow_factory import SupportsContext
 
 from .job import Job, JobData, JobReply, JobResult, JobState, JobStatus
+from .log_throttle import LogThrottle
 from .message import RunStart, RunStop, StreamId, StreamKind
 from .timestamp import Timestamp
 
@@ -264,6 +266,11 @@ class _JobRecord:
     # is deterministic in the accumulated state, so retrying before new data
     # arrives would fail identically.
     finalize_failed: bool = False
+    # A failing push or finalize recurs on every batch carrying data for the
+    # job. Time-based rather than reset on success, so a job failing on every
+    # other batch is limited too.
+    push_log_throttle: LogThrottle = field(default_factory=LogThrottle)
+    finalize_log_throttle: LogThrottle = field(default_factory=LogThrottle)
 
     @property
     def finalize_due(self) -> bool:
@@ -305,6 +312,7 @@ class JobManager:
         *,
         context_reader: Callable[[set[str]], dict[StreamId, Any]],
         job_threads: int = 1,
+        clock: Callable[[], float] = time.monotonic,
     ) -> None:
         """
         Parameters
@@ -320,10 +328,13 @@ class JobManager:
             cannot open without its values being deliverable.
         job_threads:
             Number of worker threads for job processing (1 = sequential).
+        clock:
+            Monotonic seconds, for rate limiting job failure logs.
         """
         self._last_update: int = 0
         self._job_factory = job_factory
         self._context_reader = context_reader
+        self._clock = clock
         # Single source of truth for every job and all its per-job state.
         self._jobs: dict[JobId, _JobRecord] = {}
         # Pending reset times, kept sorted via bisect.insort
@@ -704,11 +715,15 @@ class JobManager:
             # Pushing new data puts the job into "warning" state: Processing the latest
             # data failed, but the job may still be able to finalize previous data.
             record.warning_message = reply.error_message
-            logger.warning(
-                "job_warning",
-                job_id=str(job.job_id),
-                error_message=reply.error_message,
-            )
+            suppressed = record.push_log_throttle.take(self._clock())
+            if suppressed is not None:
+                logger.warning(
+                    "job_warning",
+                    job_id=str(job.job_id),
+                    workflow_id=str(job.workflow_id),
+                    error_message=reply.error_message,
+                    suppressed_reports=suppressed,
+                )
         else:
             # Clear warning state on successful data processing.
             record.warning_message = None
@@ -722,11 +737,15 @@ class JobManager:
             # e.g. an aux stream delivering the value the workflow was missing.
             record.finalize_failed = True
             record.error_message = result.error_message
-            logger.error(
-                "job_error",
-                job_id=str(job.job_id),
-                error_message=result.error_message,
-            )
+            suppressed = record.finalize_log_throttle.take(self._clock())
+            if suppressed is not None:
+                logger.error(
+                    "job_error",
+                    job_id=str(job.job_id),
+                    workflow_id=str(job.workflow_id),
+                    error_message=result.error_message,
+                    suppressed_reports=suppressed,
+                )
         else:
             # Clear error state on successful finalization.
             record.error_message = None
