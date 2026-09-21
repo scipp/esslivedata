@@ -51,7 +51,7 @@ From coarse to fine: **grid → cell → layer → plotter → presenter → fig
   (`topology_version`); excludes data flow (frames, plotter contents) and
   anything per-session (widgets, tokens, tab focus).
 - **Grid** — a titled `nrows × ncols` arrangement of cells (`PlotGridConfig`);
-  shown as one dashboard tab. Grids are managed by **PlotOrchestrator**
+  shown as one dashboard tab (in the phone layout, as a grid preview). Grids are managed by **PlotOrchestrator**
   (`dashboard/plot_orchestrator.py`), which owns topology, persistence, and a
   version-bump polling contract (ADR 0007).
 - **Cell** — one position in a grid (`PlotCell`: geometry + layers). Multiple
@@ -82,6 +82,13 @@ From coarse to fine: **grid → cell → layer → plotter → presenter → fig
   per-session pollers (`dashboard/plot_data_service.py`).
 - **Grid template / GridSpec** — declarative grid layout shipped with an
   instrument (`config/grid_template.py`).
+- **Grid preview** — a miniature of a grid: its cells as labelled boxes,
+  without data (`dashboard/widgets/grid_preview.py`). Shown by the grid
+  manager, and by the phone layout as the way to open a cell.
+- **Phone layout** — a per-session layout for phones, requested with the URL
+  parameter `?layout=phone`: icon-only tabs, no header, and one "Plots" tab
+  with a grid preview per grid in place of the grid tabs. At most one cell is
+  open at a time (`dashboard/widgets/plot_overview.py`).
 
 ### Sessions and updates
 

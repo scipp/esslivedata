@@ -41,20 +41,24 @@ _LOGOUT_TEMPLATE = str(_TEMPLATES_DIR / 'logout.html')
 _PHONE_TOP_BAND = '8px'
 
 
-# Page rules for the phone layout (``?layout=phone``). The header is hidden to
-# give its height to the plots; with it go the sidebar menu and the logout
-# link. Losing the connection is still shown: Panel's disconnect notification
-# (``pn.config.disconnect_notification``) does not live in the header.
-# Material pushes the page below the fixed header with
-# ``.mdc-top-app-bar--fixed-adjust``, which is undone here too. ``dvh`` rather
-# than ``vh``: on a phone ``100vh`` includes the height hidden behind the
-# browser's toolbars, which pushes the bottom of the page off screen. Material's
-# main-area padding (``.main-content`` in
-# ``panel/template/material/material.css``) is given back to the plots, which
-# need every pixel of a phone's width. A thin band in the header's color (a
-# border: the tab content is transparent, so a background would show through
-# it) is left at the top so the tabs do not touch the screen edge.
 def _phone_template_css(header_background: str) -> str:
+    """Page rules for the phone layout (``?layout=phone``).
+
+    The header is hidden to give its height to the plots; with it go the
+    sidebar menu and the logout link. A lost connection is still shown: Panel's
+    disconnect notification (``pn.config.disconnect_notification``) does not
+    live in the header. Material pushes the page below the fixed header with
+    ``.mdc-top-app-bar--fixed-adjust``, which is undone here too.
+
+    ``dvh`` rather than ``vh``: on a phone ``100vh`` includes the height hidden
+    behind the browser's toolbars, which pushes the bottom of the page off
+    screen. Material's main-area padding (``.main-content`` in
+    ``panel/template/material/material.css``) is given back to the plots, which
+    need every pixel of a phone's width. A thin band in the header's color is
+    left at the top so the tabs do not touch the screen edge; it is a border
+    because the tab content is transparent, so a background would show
+    through it.
+    """
     return f"""
     #header {{
         display: none !important;

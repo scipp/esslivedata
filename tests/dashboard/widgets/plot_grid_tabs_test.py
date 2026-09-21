@@ -2461,7 +2461,7 @@ class TestPhoneLayout:
     @staticmethod
     def _shows(tabs: PlotGridTabs, cell_id: CellId) -> bool:
         view = tabs._cells[cell_id].view
-        return any(obj is view for obj in tabs._plot_list.panel.select())
+        return any(obj is view for obj in tabs._plot_overview.panel.select())
 
     def test_grids_get_no_tabs(self, plot_orchestrator, phone_tabs):
         plot_orchestrator.add_grid(title='G', nrows=2, ncols=2)
@@ -2469,7 +2469,7 @@ class TestPhoneLayout:
 
         assert phone_tabs.tabs._names == ['Workflows', 'Manage Plots', 'Plots']
 
-    def test_collapsed_plot_is_not_built(self, plot_orchestrator, phone_tabs):
+    def test_unopened_cell_is_not_built(self, plot_orchestrator, phone_tabs):
         grid_id = plot_orchestrator.add_grid(title='G', nrows=2, ncols=2)
         cell_id = _add_static_cell(plot_orchestrator, grid_id, _GEO)
         self._show_plots_tab(phone_tabs)
@@ -2504,7 +2504,7 @@ class TestPhoneLayout:
         _tick(phone_tabs)
         phone_tabs._grid_widgets[first_grid].tap(first)
         _tick(phone_tabs)
-        phone_tabs._plot_list.close()
+        phone_tabs._plot_overview.close()
 
         phone_tabs._grid_widgets[second_grid].tap(second)
         _tick(phone_tabs)
@@ -2541,7 +2541,7 @@ class TestPhoneLayout:
         section.tap(cell_id)
         _tick(phone_tabs)
 
-        phone_tabs._plot_list.close()
+        phone_tabs._plot_overview.close()
         _tick(phone_tabs)
 
         assert not self._shows(phone_tabs, cell_id)
@@ -2560,7 +2560,7 @@ class TestPhoneLayout:
         _tick(phone_tabs)
 
         assert cell_id not in phone_tabs._cells
-        assert phone_tabs._list_shown_cells() == frozenset()
+        assert phone_tabs._overview_shown_cells() == frozenset()
 
     def test_disabled_grid_is_not_listed_or_rendered(
         self, plot_orchestrator, plot_data_service, phone_tabs
@@ -2577,7 +2577,7 @@ class TestPhoneLayout:
         plot_orchestrator.set_grid_enabled(grid_id, enabled=False)
         _tick(phone_tabs)
 
-        assert section.panel not in phone_tabs._plot_list.panel.objects
+        assert section.panel not in phone_tabs._plot_overview.panel.objects
         assert layer_id not in plot_data_service.viewed_layers()
 
     def test_next_and_previous_step_through_plots_across_grids(
@@ -2594,14 +2594,14 @@ class TestPhoneLayout:
         other = _add_static_cell(plot_orchestrator, second_grid, _GEO)
         self._show_plots_tab(phone_tabs)
         _tick(phone_tabs)
-        plot_list = phone_tabs._plot_list
+        overview = phone_tabs._plot_overview
         phone_tabs._grid_widgets[first_grid].tap(left)
 
         opened = []
         for _ in range(3):
-            plot_list.step(1)
-            opened.append(plot_list.open_cell)
-        plot_list.step(-1)
+            overview.step(1)
+            opened.append(overview.open_cell)
+        overview.step(-1)
 
         # Reading order within a grid, then on into the next grid; the last
         # plot has no next.
@@ -2610,4 +2610,4 @@ class TestPhoneLayout:
             (second_grid, other),
             (second_grid, other),
         ]
-        assert plot_list.open_cell == (first_grid, right)
+        assert overview.open_cell == (first_grid, right)

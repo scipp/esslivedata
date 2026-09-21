@@ -12,12 +12,12 @@ is too heavy for a phone and drains its battery. The open plot is rendered
 only while the tab is visible; every other cell costs what a cell in a hidden
 grid tab costs, that is nothing unless another session is viewing it.
 
-A :class:`PlotListSection` stands in for a :class:`~.plot_grid.PlotGrid`: the
+A :class:`PlotOverviewSection` stands in for a :class:`~.plot_grid.PlotGrid`: the
 tab widget places built cell widgets with ``insert_widget_at`` and takes them
 out with ``remove_widget_at``, as it does for a grid. Unlike a grid, a section
 must show cells that have no built widget yet, since building is what opening
 asks for. Its preview therefore comes from topology (:meth:`sync`). The widget
-of the open cell is shown by the :class:`PlotList` that owns the sections.
+of the open cell is shown by the :class:`PlotOverview` that owns the sections.
 """
 
 from __future__ import annotations
@@ -68,20 +68,20 @@ _BACK_BUTTON_CSS = """
 """
 
 
-class PlotListSection:
+class PlotOverviewSection:
     """One grid's preview in the Plots tab.
 
     Parameters
     ----------
     owner:
-        The list this section belongs to, which shows the open plot.
+        The overview this section belongs to, which shows the open plot.
     grid_id:
         The grid this section previews.
     title:
         The grid's title, shown as the section heading.
     """
 
-    def __init__(self, owner: PlotList, grid_id: GridId, title: str) -> None:
+    def __init__(self, owner: PlotOverview, grid_id: GridId, title: str) -> None:
         self._owner = owner
         self._grid_id = grid_id
         self._title = title
@@ -173,7 +173,7 @@ class PlotListSection:
         return self._panel
 
 
-class PlotList:
+class PlotOverview:
     """The Plots tab: grid previews, or the one open plot.
 
     Parameters
@@ -193,7 +193,7 @@ class PlotList:
     ) -> None:
         self.title_of = title_of
         self._on_open_changed = on_open_changed
-        self._sections: dict[GridId, PlotListSection] = {}
+        self._sections: dict[GridId, PlotOverviewSection] = {}
         self._listed: list[GridId] = []
         self._open: tuple[GridId, CellId] | None = None
         self._back = pn.widgets.Button(
@@ -238,9 +238,9 @@ class PlotList:
         button.on_click(lambda _: self.step(step))
         return button
 
-    def section(self, grid_id: GridId, title: str) -> PlotListSection:
+    def section(self, grid_id: GridId, title: str) -> PlotOverviewSection:
         """Create the section previewing a grid."""
-        section = PlotListSection(self, grid_id, title)
+        section = PlotOverviewSection(self, grid_id, title)
         self._sections[grid_id] = section
         return section
 
