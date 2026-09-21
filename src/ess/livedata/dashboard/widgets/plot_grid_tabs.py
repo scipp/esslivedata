@@ -47,7 +47,6 @@ from __future__ import annotations
 
 import time
 from collections.abc import Callable, Mapping, Sequence
-from functools import partial
 from typing import NamedTuple
 
 import panel as pn
@@ -80,7 +79,7 @@ from .modal_escape_closer import ModalEscapeCloser
 from .plot_config_modal import PlotConfigModal
 from .plot_grid import PlotGrid
 from .plot_grid_manager import PlotGridManager
-from .plot_list import PlotListSection
+from .plot_list import PlotList, PlotListSection
 from .plot_popout import PlotPopoutManager
 from .plot_widgets import derive_cell_title
 
@@ -271,11 +270,13 @@ class PlotGridTabs:
         # Track grid widgets (insertion order determines tab position). In the
         # phone layout a grid is a section of the plot list instead.
         self._grid_widgets: dict[GridId, PlotGrid | PlotListSection] = {}
-        # Phone layout only: the list of all grids' cells, the one cell
-        # expanded in it (with its grid), and the list cells shown by the last
-        # completed pass.
-        self._plot_list = pn.Column(sizing_mode='stretch_both', scroll=True)
-        self._expanded: tuple[GridId, CellId] | None = None
+        # Phone layout only: the Plots tab, and the cells it showed at the
+        # last completed pass. Opening or closing a plot changes what is
+        # visible without moving shared state, like a tab switch.
+        self._plot_list = PlotList(
+            title_of=self._cell_title,
+            on_open_changed=lambda: self._session_updater.request_tick(full=True),
+        )
         self._last_list_shown: frozenset[CellId] = frozenset()
 
         # Per-session layer state: version tracking and optional render
@@ -362,7 +363,7 @@ class PlotGridTabs:
             )
         static_tabs.append(('Manage Plots', 'layout-grid', self._grid_manager.panel))
         if phone:
-            static_tabs.append(('Plots', 'chart-line', self._plot_list))
+            static_tabs.append(('Plots', 'chart-line', self._plot_list.panel))
 
         # Main tabs widget.
         # IMPORTANT: dynamic=True is critical for performance. Without it, Panel
@@ -445,14 +446,9 @@ class PlotGridTabs:
     def _add_grid_tab(self, grid_id: GridId, grid_config: PlotGridConfig) -> None:
         """Add a new grid tab after the Manage tab."""
         if self._phone:
-            section = PlotListSection(
-                grid_config.title,
-                title_of=self._cell_title,
-                on_tap=partial(self._on_list_tap, grid_id),
-            )
+            section = self._plot_list.section(grid_id, grid_config.title)
             section.sync(grid_config)
             self._grid_widgets[grid_id] = section
-            self._plot_list.append(section.panel)
             return
 
         # Create grid-specific callback using closure to capture grid_id
@@ -493,34 +489,21 @@ class PlotGridTabs:
             get_source_title=self._orchestrator.get_source_title,
         )
 
-    def _on_list_tap(self, grid_id: GridId, cell_id: CellId) -> None:
-        """Expand the tapped plot in the phone list, closing the one open before.
-
-        Tapping the expanded plot collapses it.
-        """
-        tapped = (grid_id, cell_id)
-        self._expanded = None if tapped == self._expanded else tapped
-        expanded_cell = None if self._expanded is None else cell_id
-        with pn.io.hold():
-            for section in self._grid_widgets.values():
-                section.show_expanded(expanded_cell)
-        # Changes what is visible without moving shared state, like a tab
-        # switch.
-        self._session_updater.request_tick(full=True)
-
     def _list_shown_cells(self) -> frozenset[CellId]:
-        """The cell expanded in the phone layout's plot list, while it is visible.
+        """The plot open in the phone layout's Plots tab, while it is visible.
 
-        Like a grid tab, the list shows nothing while a modal covers it or
-        another tab is up, and a section of a disabled grid is not listed.
+        Like a grid tab, the Plots tab shows nothing while a modal covers it or
+        another tab is up. A plot of a disabled grid or of a removed cell is
+        not shown, even before the Plots tab has caught up with topology.
         """
+        open_cell = self._plot_list.open_cell
         if (
-            self._expanded is None
+            open_cell is None
             or self._current_modal is not None
             or self._tabs.active != self._plots_tab_index
         ):
             return frozenset()
-        grid_id, cell_id = self._expanded
+        grid_id, cell_id = open_cell
         grid_config = self._orchestrator.peek_grid(grid_id)
         if grid_config is None or not grid_config.enabled:
             return frozenset()
@@ -654,9 +637,6 @@ class PlotGridTabs:
         old_widgets = self._grid_widgets
         self._grid_widgets = {}
 
-        if self._phone:
-            self._plot_list.clear()
-
         with pn.io.hold():
             # Remove all existing grid tabs
             while len(self._tabs) > self._static_tabs_count:
@@ -676,12 +656,16 @@ class PlotGridTabs:
                     self._grid_widgets[grid_id] = plot_grid
                     if isinstance(plot_grid, PlotListSection):
                         plot_grid.set_title(grid_config.title)
-                        self._plot_list.append(plot_grid.panel)
                     else:
                         self._tabs.append((grid_config.title, plot_grid.panel))
                 else:
                     # Grid was re-enabled or is new — create fresh tab
                     self._add_grid_tab(grid_id, grid_config)
+
+            if self._phone:
+                self._plot_list.set_listed(
+                    [gid for gid, config in all_grids.items() if config.enabled]
+                )
 
     def _add_plot(
         self, grid_id: GridId, geometry: CellGeometry, plot_config: PlotConfig

@@ -2428,10 +2428,10 @@ class TestLateVersionRecording:
 
 
 class TestPhoneLayout:
-    """The phone layout lists the cells of all grids in one tab.
+    """The phone layout previews all grids in one tab and opens one plot.
 
-    Only the plots expanded in that list are built and computed, and only while
-    the list is on screen, as for the cells of a visible grid tab.
+    Only the open plot is built and computed, and only while the tab is on
+    screen, as for the cells of a visible grid tab.
     """
 
     @pytest.fixture
@@ -2459,10 +2459,9 @@ class TestPhoneLayout:
         tabs.tabs.active = tabs.tabs._names.index('Plots')
 
     @staticmethod
-    def _shows(tabs: PlotGridTabs, grid_id: GridId, cell_id: CellId) -> bool:
+    def _shows(tabs: PlotGridTabs, cell_id: CellId) -> bool:
         view = tabs._cells[cell_id].view
-        section = tabs._grid_widgets[grid_id]
-        return any(obj is view for obj in section.panel.select())
+        return any(obj is view for obj in tabs._plot_list.panel.select())
 
     def test_grids_get_no_tabs(self, plot_orchestrator, phone_tabs):
         plot_orchestrator.add_grid(title='G', nrows=2, ncols=2)
@@ -2478,7 +2477,7 @@ class TestPhoneLayout:
 
         assert cell_id not in phone_tabs._cells
 
-    def test_expanding_builds_and_shows_the_plot(
+    def test_opening_builds_and_shows_the_plot(
         self, plot_orchestrator, plot_data_service, phone_tabs
     ):
         grid_id = plot_orchestrator.add_grid(title='G', nrows=2, ncols=2)
@@ -2490,10 +2489,10 @@ class TestPhoneLayout:
         phone_tabs._grid_widgets[grid_id].tap(cell_id)
         _tick(phone_tabs)
 
-        assert self._shows(phone_tabs, grid_id, cell_id)
+        assert self._shows(phone_tabs, cell_id)
         assert layer_id in plot_data_service.viewed_layers()
 
-    def test_expanding_a_plot_collapses_the_open_one(
+    def test_opening_a_plot_closes_the_open_one(
         self, plot_orchestrator, plot_data_service, phone_tabs
     ):
         first_grid = plot_orchestrator.add_grid(title='A', nrows=2, ncols=2)
@@ -2505,15 +2504,16 @@ class TestPhoneLayout:
         _tick(phone_tabs)
         phone_tabs._grid_widgets[first_grid].tap(first)
         _tick(phone_tabs)
+        phone_tabs._plot_list.close()
 
         phone_tabs._grid_widgets[second_grid].tap(second)
         _tick(phone_tabs)
 
-        assert not self._shows(phone_tabs, first_grid, first)
-        assert self._shows(phone_tabs, second_grid, second)
+        assert not self._shows(phone_tabs, first)
+        assert self._shows(phone_tabs, second)
         assert first_layer not in plot_data_service.viewed_layers()
 
-    def test_expanded_plot_sleeps_while_another_tab_is_shown(
+    def test_open_plot_sleeps_while_another_tab_is_shown(
         self, plot_orchestrator, plot_data_service, phone_tabs
     ):
         grid_id = plot_orchestrator.add_grid(title='G', nrows=2, ncols=2)
@@ -2529,7 +2529,7 @@ class TestPhoneLayout:
 
         assert layer_id not in plot_data_service.viewed_layers()
 
-    def test_collapsing_releases_the_plot(
+    def test_closing_releases_the_plot(
         self, plot_orchestrator, plot_data_service, phone_tabs
     ):
         grid_id = plot_orchestrator.add_grid(title='G', nrows=2, ncols=2)
@@ -2541,10 +2541,10 @@ class TestPhoneLayout:
         section.tap(cell_id)
         _tick(phone_tabs)
 
-        section.tap(cell_id)
+        phone_tabs._plot_list.close()
         _tick(phone_tabs)
 
-        assert not self._shows(phone_tabs, grid_id, cell_id)
+        assert not self._shows(phone_tabs, cell_id)
         assert layer_id not in plot_data_service.viewed_layers()
 
     def test_removed_cell_leaves_the_list(self, plot_orchestrator, phone_tabs):
@@ -2577,5 +2577,5 @@ class TestPhoneLayout:
         plot_orchestrator.set_grid_enabled(grid_id, enabled=False)
         _tick(phone_tabs)
 
-        assert section.panel not in phone_tabs._plot_list.objects
+        assert section.panel not in phone_tabs._plot_list.panel.objects
         assert layer_id not in plot_data_service.viewed_layers()

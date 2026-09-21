@@ -111,6 +111,7 @@ _ICONS: dict[str, str] = {
     'chevron-down': _svg('<path d="M6 9l6 6l6 -6"/>'),
     # Chevron right (collapse)
     'chevron-right': _svg('<path d="M9 6l6 6l-6 6"/>'),
+    'chevron-left': _svg('<path d="M15 6l-6 6l6 6"/>'),
     # Pencil (edit/rename)
     'pencil': _svg(
         '<path d="M4 20h4l10.5 -10.5a2.828 2.828 0 1 0 -4 -4l-10.5 10.5v4"/>'
@@ -261,7 +262,7 @@ def get_icon(name: str) -> str:
         Icon name. Available icons:
         activity, arrows-minimize, autoscale-c, autoscale-c-on, autoscale-x,
         autoscale-x-on, autoscale-y, autoscale-y-on, backspace, chart-line, check,
-        chevron-down, chevron-right, chevron-up, download, eye, eye-off,
+        chevron-down, chevron-left, chevron-right, chevron-up, download, eye, eye-off,
         layout-grid, pencil, player-pause, player-play, player-stop, plus,
         refresh, settings, stack, stack-2, trash, workflow, x.
 

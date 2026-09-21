@@ -73,11 +73,11 @@ Pop-out windows (`plot_popout.py`) ride entirely on these three seams: a cell
 behind a showing window enters `SessionView.live_cell_ids` (policy), takes a
 viewer token like a visible cell (tokens), and adds its grid to the per-grid
 frame generations the stamps carry (`_live_generations`). Nothing else in the
-pass knows pop-outs exist. The phone layout's plot list (`plot_list.py`) uses
-the same seams -- its one expanded row joins the live set while the list is on
-screen (`_rendered_cells`) -- and adds two steps to the pass, because a row,
-unlike a pop-out, shows the cell's titlebar: a newly expanded row is flushed like
-a revealed tab, and the expanded row gets its freshness pill aged.
+pass knows pop-outs exist. The phone layout's Plots tab (`plot_list.py`) uses
+the same seams -- its one open plot joins the live set while the tab is on
+screen (`_rendered_cells`) -- and adds two steps to the pass, because the open
+plot, unlike a pop-out, shows the cell's titlebar: a newly opened plot is flushed
+like a revealed tab, and its freshness pill is aged.
 
 ### A cell's views are torn down together
 
