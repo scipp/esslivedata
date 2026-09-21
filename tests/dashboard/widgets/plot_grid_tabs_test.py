@@ -2611,3 +2611,17 @@ class TestPhoneLayout:
             (second_grid, other),
         ]
         assert overview.open_cell == (first_grid, right)
+
+    def test_rotation_rebuilds_the_open_plot(self, plot_orchestrator, phone_tabs):
+        grid_id = plot_orchestrator.add_grid(title='G', nrows=2, ncols=2)
+        cell_id = _add_static_cell(plot_orchestrator, grid_id, _GEO)
+        self._show_plots_tab(phone_tabs)
+        _tick(phone_tabs)
+        phone_tabs._grid_widgets[grid_id].tap(cell_id)
+        _tick(phone_tabs)
+        before = phone_tabs._cells[cell_id]
+
+        phone_tabs._orientation.portrait = not phone_tabs._orientation.portrait
+
+        assert phone_tabs._cells[cell_id] is not before
+        assert self._shows(phone_tabs, cell_id)

@@ -76,6 +76,7 @@ from .cell import CellDeps, CellWidget
 from .cell_properties_modal import CellPropertiesModal
 from .icons import get_icon_data_uri
 from .modal_escape_closer import ModalEscapeCloser
+from .orientation_reporter import OrientationReporter
 from .plot_config_modal import PlotConfigModal
 from .plot_grid import PlotGrid
 from .plot_grid_manager import PlotGridManager
@@ -322,6 +323,12 @@ class PlotGridTabs:
         # the stall-aging path between data frames.
         self._last_freshness_update: float = 0.0
 
+        # Phone layout only: the window's orientation decides which side of a
+        # plot gets its color bar, so a rotation rebuilds the built cells.
+        self._orientation = OrientationReporter()
+        if phone:
+            self._orientation.param.watch(self._on_orientation_changed, 'portrait')
+
         # Shared dependencies handed to every CellWidget. Built once; the
         # callbacks route modal interactions back here (modal container lives
         # at this level). Created after the dependencies above are set.
@@ -333,6 +340,8 @@ class PlotGridTabs:
             on_edit_title=self._show_cell_properties_modal,
             on_reconfigure_layer=self._on_reconfigure_layer,
             on_popout=self._show_popout,
+            compact_figures=phone,
+            portrait=lambda: self._orientation.portrait,
         )
 
         # Floating pop-out windows, one per cell at most. Kept out of
@@ -403,6 +412,7 @@ class PlotGridTabs:
             self._modal_container,
             self._popouts.container,
             ModalEscapeCloser(),
+            *([self._orientation] if phone else []),
             sizing_mode='stretch_both',
         )
 
@@ -965,6 +975,22 @@ class PlotGridTabs:
             self._poll_for_plot_updates(reconcile_topology=False)
         except Exception:
             logger.exception("Failed to pre-build revealed grid %s", grid_id)
+
+    def _on_orientation_changed(self, event) -> None:
+        """Rebuild the built cells for the window's new orientation.
+
+        In the phone layout that is the open cell, plus any that another session
+        keeps computing, so a rotation costs about what opening a plot does.
+        Cells built later pick up the new orientation on their own.
+        """
+        with batched_update():
+            for cell_id, cell_widget in list(self._cells.items()):
+                grid_config = self._orchestrator.peek_grid(cell_widget.grid_id)
+                if grid_config is not None and cell_id in grid_config.cells:
+                    self._insert_cell(
+                        cell_id, grid_config.cells[cell_id], cell_widget.grid_id
+                    )
+        self._session_updater.request_tick(full=True)
 
     def _on_active_tab_changed(self, event) -> None:
         # Full tick: a tab switch changes what is visible without changing any

@@ -213,6 +213,15 @@ class CellDeps:
     (owned by the poll loop, read here when composing plots); the callbacks
     route modal interactions back to the owning ``PlotGridTabs`` (which holds
     the shared modal and pop-out containers).
+
+    ``compact_figures`` asks for figures that give the plot area as much of
+    the screen as possible, for the phone layout: the toolbar inside the plot
+    (:func:`_inner_toolbar_hook`), and color bars on the side the screen has
+    room for -- below the plot while ``portrait`` returns true, else beside it
+    (:func:`_place_colorbar`). A cell is composed for the
+    orientation at build time; the owner rebuilds cells when it changes. The
+    toolbar of a layout-mode plot, shared by its sub-figures, stays where it
+    is.
     """
 
     orchestrator: PlotOrchestrator
@@ -222,6 +231,42 @@ class CellDeps:
     on_edit_title: Callable[[CellId, str, bool], None]
     on_reconfigure_layer: Callable[[LayerId], None]
     on_popout: Callable[[CellId], None]
+    compact_figures: bool = False
+    portrait: Callable[[], bool] = lambda: False
+
+
+def _inner_toolbar_hook(plot, element) -> None:
+    """Draw the toolbar inside the frame rather than beside it.
+
+    Beside the frame, the toolbar takes a strip of the plot's width or height.
+    Inside it takes none, and all its tools -- including the autoscale toggles
+    and reset -- stay available, at the cost of covering an edge of the plot.
+    Auto-hiding hides it while a mouse pointer is outside the plot; a finger
+    never leaves the plot in that sense, so on a touch screen it stays shown.
+    Idempotent, since HoloViews runs hooks on every update.
+    """
+    figure = plot.state
+    figure.toolbar_inner = True
+    figure.toolbar.autohide = True
+
+
+def _place_colorbar(
+    plot: hv.DynamicMap | hv.Element, *, below: bool
+) -> hv.DynamicMap | hv.Element:
+    """Draw color bars below the plot, or beside it.
+
+    In portrait, width is what the plot lacks, so the color bar goes below; in
+    landscape, height is, so it goes beside. Both positions are set explicitly:
+    a rebuild composes over the session's same DynamicMaps, which keep options
+    applied by an earlier build. Only these element types draw a color bar;
+    the option reaches them inside overlays and layouts alike. The option specs
+    are built here, not at import: they need the plotting backend loaded.
+    """
+    position = 'bottom' if below else 'right'
+    return plot.opts(
+        hv.opts.Image(colorbar_position=position),
+        hv.opts.QuadMesh(colorbar_position=position),
+    )
 
 
 class CellWidget:
@@ -839,10 +884,14 @@ class CellWidget:
         # frame-aspect hook is not among these — it is declared per element type
         # by the plotter (see Plotter._sizing_opts), so it reaches every
         # sub-figure of a Layout regardless.
+        if self._deps.compact_figures:
+            result = _place_colorbar(result, below=self._deps.portrait())
         if non_overlayable:
             return result
 
         hooks: list = [make_hover_suspend_hook()]
+        if self._deps.compact_figures:
+            hooks.append(_inner_toolbar_hook)
         filename = build_save_filename_from_cell(
             self._cell,
             self._deps.workflow_registry,

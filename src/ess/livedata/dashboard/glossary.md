@@ -88,7 +88,9 @@ From coarse to fine: **grid → cell → layer → plotter → presenter → fig
 - **Phone layout** — a per-session layout for phones, requested with the URL
   parameter `?layout=phone`: icon-only tabs, no header, and one "Plots" tab
   with a grid preview per grid in place of the grid tabs. At most one cell is
-  open at a time (`dashboard/widgets/plot_overview.py`).
+  open at a time (`dashboard/widgets/plot_overview.py`). Its figures are
+  compact: toolbar inside the plot, color bar on the side the window's
+  orientation has room for (`CellDeps.compact_figures`).
 
 ### Sessions and updates
 
