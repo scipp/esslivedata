@@ -24,6 +24,7 @@ from collections.abc import Sequence
 import pytest
 
 from ess.livedata.core.message import StreamKind
+from ess.livedata.core.rate_aware_batcher import RateAwareMessageBatcher
 from ess.livedata.core.timestamp import Timestamp
 from ess.livedata.kafka.message_adapter import (
     AdaptingMessageSource,
@@ -42,6 +43,7 @@ from tests.helpers import hostile_wire
 TOPIC = 'dummy_beam_monitor'
 SOURCE = 'monitor1'
 GOOD_TIME_NS = hostile_wire.REALISTIC_EPOCH_NS
+SECOND_NS = 1_000_000_000
 
 
 class ListSource:
@@ -122,11 +124,6 @@ def _far_future_cases() -> list[tuple[str, KafkaAdapter, bytes]]:
             hostile_wire.ev44_events(SOURCE, reference_time_ns=far),
         ),
         (
-            'f144',
-            KafkaToF144Adapter(),
-            hostile_wire.f144_log(SOURCE, timestamp_ns=far),
-        ),
-        (
             'da00_reference_time',
             KafkaToDa00Adapter(stream_kind=StreamKind.MONITOR_COUNTS),
             hostile_wire.da00_array(
@@ -182,3 +179,45 @@ def test_da00_non_int64_reference_time_falls_back_to_timestamp_ns() -> None:
     adapter = KafkaToDa00Adapter(stream_kind=StreamKind.MONITOR_COUNTS)
     adapted = adapter.adapt(_kafka_message(payload))
     assert adapted.timestamp == Timestamp.from_ns(GOOD_TIME_NS)
+
+
+def test_static_pv_heartbeats_do_not_drag_batch_window_into_the_past() -> None:
+    """An f144 heartbeat repeats the EPICS time of the PV's last change, so
+    while the detector is silent the only traffic carries payload times weeks
+    old. With that as the envelope, the batcher's stall backstop re-placed
+    the window there and results went back in time (#1313). The envelope is
+    the Kafka time, so heartbeats read as the fresh traffic they are.
+    """
+    clock = {'now': 0.0}
+    batcher = RateAwareMessageBatcher(batch_length_s=1.0, clock=lambda: clock['now'])
+    detector = KafkaToEv44Adapter(stream_kind=StreamKind.DETECTOR_EVENTS)
+    log = KafkaToF144Adapter()
+    start_ns = GOOD_TIME_NS
+    stale_ns = start_ns - 48 * 24 * 3600 * SECOND_NS
+    pulse_ns = SECOND_NS // 14
+    end_times: list[int] = []
+
+    def run(seconds: int, detector_on: bool) -> None:
+        """Poll at 10 Hz; detector pulses at 14 Hz, heartbeat every 10 s."""
+        for _ in range(seconds * 10):
+            clock['now'] += 0.1
+            data_ns = start_ns + int(clock['now'] * SECOND_NS)
+            kafka_ms = data_ns // 1_000_000
+            messages = []
+            if detector_on:
+                pulse = hostile_wire.ev44_events(
+                    SOURCE, reference_time_ns=data_ns - data_ns % pulse_ns
+                )
+                messages.append(detector.adapt(_kafka_message(pulse, kafka_ms)))
+            if round(clock['now'] * 10) % 100 == 0:
+                heartbeat = hostile_wire.f144_log('carriage', timestamp_ns=stale_ns)
+                messages.append(log.adapt(_kafka_message(heartbeat, kafka_ms)))
+            if (batch := batcher.batch(messages)) is not None:
+                end_times.append(batch.end_time.to_ns())
+
+    run(20, detector_on=True)
+    run(60, detector_on=False)
+    run(20, detector_on=True)
+
+    assert end_times == sorted(end_times)
+    assert end_times[-1] > start_ns + 90 * SECOND_NS

@@ -9,11 +9,18 @@ stream per device, carrying ``value`` plus optional ``target`` / ``idle``
 fields. Substream messages belonging to a configured device are suppressed
 from forwarding; other messages pass through unchanged.
 
-State per device: last-seen ``(time, value)`` for each of its configured
-substreams. Emission policy: union-anchored — on every input event for a
-configured substream, emit a sample. Bootstrap: suppress emit until every
-configured substream of that device has been observed at least once.
-Emit timestamp policy: ``max(rbv_time, val_time, dmov_time)``.
+State per device: last-seen value, payload time and envelope time for each
+of its configured substreams. Emission policy: union-anchored — on every
+input event for a configured substream, emit a sample. Bootstrap: suppress
+emit until every configured substream of that device has been observed at
+least once.
+
+Emit timestamp policy: the sample's payload time is the max of the
+substreams' payload times, and its envelope timestamp the max of their
+envelope timestamps. The two are kept apart because they differ in kind:
+the payload time is the device's claim of when the value became valid, the
+envelope is the transport clock (see :class:`KafkaToF144Adapter`), and a
+static PV's heartbeat carries a payload time weeks behind its envelope.
 """
 
 from __future__ import annotations
@@ -36,10 +43,11 @@ _Role = Literal['value', 'target', 'idle']
 
 @dataclass
 class _Substream[V: (float, bool)]:
-    """Last-seen value and timestamp for one device substream."""
+    """Last-seen value, payload time and envelope time for one device substream."""
 
     value: V
     time: Timestamp
+    envelope: Timestamp
 
 
 @dataclass(slots=True)
@@ -53,26 +61,32 @@ class _DeviceState:
     target: _Substream[float] | None = None
     idle: _Substream[bool] | None = None
 
-    def push(self, role: _Role, log: LogData) -> Message[LogData] | None:
+    def push(self, role: _Role, msg: Message[LogData]) -> Message[LogData] | None:
         """Record a substream event and emit a sample if all substreams seen."""
+        log = msg.value
         time = Timestamp.from_ns(int(log.time))
         if role == 'value':
-            self.value = _Substream(value=float(log.value), time=time)
+            self.value = _Substream(
+                value=float(log.value), time=time, envelope=msg.timestamp
+            )
         elif role == 'target':
-            self.target = _Substream(value=float(log.value), time=time)
+            self.target = _Substream(
+                value=float(log.value), time=time, envelope=msg.timestamp
+            )
         else:  # idle / DMOV
-            self.idle = _Substream(value=bool(log.value), time=time)
+            self.idle = _Substream(
+                value=bool(log.value), time=time, envelope=msg.timestamp
+            )
         if self.value is None:
             return None
         if self.has_target and self.target is None:
             return None
         if self.has_idle and self.idle is None:
             return None
-        sample_time = max(
-            s.time for s in (self.value, self.target, self.idle) if s is not None
-        )
+        seen = [s for s in (self.value, self.target, self.idle) if s is not None]
+        sample_time = max(s.time for s in seen)
         return Message(
-            timestamp=sample_time,
+            timestamp=max(s.envelope for s in seen),
             stream=StreamId(kind=StreamKind.DEVICE, name=self.device_name),
             value=LogData(
                 time=sample_time.to_ns(),
@@ -147,6 +161,6 @@ class DeviceSynthesizer(MessageSource[Message]):
                     value_type=type(msg.value).__name__,
                 )
                 continue
-            if (sample := state.push(role, msg.value)) is not None:
+            if (sample := state.push(role, msg)) is not None:
                 out.append(sample)
         return out

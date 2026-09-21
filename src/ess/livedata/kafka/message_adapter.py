@@ -249,10 +249,28 @@ class KafkaToDa00Adapter(KafkaAdapter[list[dataarray_da00.Variable]]):
 
 
 class KafkaToF144Adapter(KafkaAdapter[logdata_f144.ExtractedLogData]):
-    # No producer lag recorded: the forwarder resends each value on a periodic
-    # heartbeat with the original EPICS source timestamp but a fresh Kafka
-    # CreateTime, so kafka_create - payload measures time-since-last-change, not
-    # producer staleness, and would spuriously flag healthy static PVs as stale.
+    """Adapter for f144 log data.
+
+    The envelope timestamp is the Kafka message time, not the payload's EPICS
+    timestamp.  The forwarder resends each value on a periodic heartbeat with
+    the EPICS timestamp of the last *change*, so for a static PV the payload
+    time is arbitrarily old and says nothing about when the message was
+    emitted.  The envelope is livedata's transport clock (batch window
+    placement, scheduling), which needs the emission time: a stale envelope
+    drags the batch window weeks into the past whenever the log stream is the
+    only traffic (#1313).  The payload keeps the EPICS timestamp, which is
+    what science consumers (``ToNXlog``) use.
+
+    The Kafka time is the producer's create time or the broker's append time,
+    depending on topic configuration; either is wire metadata rather than the
+    consumer's wall clock, so it stays consistent with the event streams'
+    reference times during a backlog replay.  When Kafka reports no timestamp
+    the payload time is the only clock available.
+
+    No producer lag is recorded: Kafka time minus payload time measures
+    time-since-last-change, not producer staleness, and would spuriously
+    flag healthy static PVs as stale.
+    """
 
     def __init__(
         self,
@@ -271,7 +289,11 @@ class KafkaToF144Adapter(KafkaAdapter[logdata_f144.ExtractedLogData]):
         key = self.get_stream_id(
             topic=message.topic(), source_name=log_data.source_name
         )
-        timestamp = Timestamp.from_ns(log_data.timestamp_unix_ns)
+        kind, kafka_ms = message.timestamp()
+        if kind == 0:  # confluent_kafka.TIMESTAMP_NOT_AVAILABLE
+            timestamp = Timestamp.from_ns(log_data.timestamp_unix_ns)
+        else:
+            timestamp = Timestamp.from_ms(kafka_ms)
         return Message(timestamp=timestamp, stream=key, value=log_data)
 
 
