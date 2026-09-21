@@ -216,9 +216,9 @@ class CellDeps:
 
     ``compact_figures`` asks for figures that give the plot area as much of
     the screen as possible, for the phone layout: the toolbar inside the plot
-    (:func:`_inner_toolbar_hook`), and color bars on the side the screen has
-    room for -- below the plot while ``portrait`` returns true, else beside it
-    (:func:`_place_colorbar`). A cell is composed for the
+    and tighter axes (:func:`_compact_figure_hook`), and color bars on the side
+    the screen has room for -- below the plot while ``portrait`` returns true,
+    else beside it (:func:`_place_colorbar`). A cell is composed for the
     orientation at build time; the owner rebuilds cells when it changes. The
     toolbar of a layout-mode plot, shared by its sub-figures, stays where it
     is.
@@ -235,19 +235,40 @@ class CellDeps:
     portrait: Callable[[], bool] = lambda: False
 
 
-def _inner_toolbar_hook(plot, element) -> None:
-    """Draw the toolbar inside the frame rather than beside it.
+# Axis spacing of compact figures, in pixels: the gap between an axis name
+# and its tick labels (HoloViews uses 10) and between tick labels and tick marks
+# (Bokeh uses 5). With the axis name's font size, these decide how much of a
+# phone-width figure its axes take.
+_COMPACT_AXIS_LABEL_STANDOFF = 2
+_COMPACT_MAJOR_LABEL_STANDOFF = 3
+_COMPACT_AXIS_LABEL_FONT_SIZE = '1.1em'
 
-    Beside the frame, the toolbar takes a strip of the plot's width or height.
-    Inside it takes none, and all its tools -- including the autoscale toggles
-    and reset -- stay available, at the cost of covering an edge of the plot.
-    Auto-hiding hides it while a mouse pointer is outside the plot; a finger
-    never leaves the plot in that sense, so on a touch screen it stays shown.
-    Idempotent, since HoloViews runs hooks on every update.
+
+def _compact_figure_hook(plot, element) -> None:
+    """Give the plot area as much of a small figure as possible.
+
+    The toolbar is drawn inside the frame rather than beside it. Beside the
+    frame, it takes a strip of the plot's width or height. Inside it takes
+    none, and all its tools -- including the autoscale toggles and reset --
+    stay available, at the cost of covering an edge of the plot. Auto-hiding
+    hides it while a mouse pointer is outside the plot; a finger never leaves
+    the plot in that sense, so on a touch screen it stays shown.
+
+    The axes are tightened: less space around the axis names, and a smaller
+    font for them. The tick labels keep their size, since they carry the
+    values.
+
+    Runs on every update, after HoloViews has applied its own axis styling,
+    which is what makes these settings stick. Idempotent.
     """
     figure = plot.state
     figure.toolbar_inner = True
     figure.toolbar.autohide = True
+    for axis in [*figure.left, *figure.below]:
+        if hasattr(axis, 'axis_label_standoff'):
+            axis.axis_label_standoff = _COMPACT_AXIS_LABEL_STANDOFF
+            axis.major_label_standoff = _COMPACT_MAJOR_LABEL_STANDOFF
+            axis.axis_label_text_font_size = _COMPACT_AXIS_LABEL_FONT_SIZE
 
 
 def _place_colorbar(
@@ -891,7 +912,7 @@ class CellWidget:
 
         hooks: list = [make_hover_suspend_hook()]
         if self._deps.compact_figures:
-            hooks.append(_inner_toolbar_hook)
+            hooks.append(_compact_figure_hook)
         filename = build_save_filename_from_cell(
             self._cell,
             self._deps.workflow_registry,
