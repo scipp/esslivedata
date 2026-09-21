@@ -42,11 +42,14 @@ from .styles import Colors
 # of a phone-width grid.
 _PREVIEW_ROW_HEIGHT = 64
 
-# The open plot fills the screen below the back button and the page's top band.
-_OPEN_PLOT_HEIGHT = 'calc(100dvh - 80px)'
+# Height of the navigation bar above an open plot, in pixels: the smallest
+# comfortable fingertip target.
+_NAV_HEIGHT = 40
 
-# Size of the previous/next buttons: a comfortable fingertip target.
-_STEP_BUTTON_SIZE = 44
+# The open plot fills the screen below the navigation bar. What else takes
+# height: the page's top band (8 px, ``dashboard.py``), the tab content's
+# padding (2 x 4 px, ``plot_grid_tabs.py``), and 2 px to spare for rounding.
+_OPEN_PLOT_HEIGHT = f'calc(100dvh - {_NAV_HEIGHT + 18}px)'
 
 # Scrolling the previews comes to rest with a grid's heading at the top when it
 # ends near one. ``proximity`` rather than ``mandatory``: a preview taller than
@@ -54,18 +57,20 @@ _STEP_BUTTON_SIZE = 44
 _SNAP_CONTAINER_CSS = ':host { scroll-snap-type: y proximity; }'
 _SNAP_TARGET_CSS = ':host { scroll-snap-align: start; }'
 
+# ``!important`` outranks the design's button padding.
 _BACK_BUTTON_CSS = """
     .bk-btn {
         justify-content: flex-start;
         text-align: left;
-        font-size: 16px;
+        font-size: 15px;
         font-weight: 600;
-        padding: 10px 8px;
+        padding: 0 6px !important;
         white-space: nowrap;
         overflow: hidden;
         text-overflow: ellipsis;
     }
 """
+_STEP_BUTTON_CSS = '.bk-btn { padding: 0 !important; }'
 
 
 class PlotOverviewSection:
@@ -200,15 +205,16 @@ class PlotOverview:
             icon=get_icon('layout-grid'),
             color='light',
             sizing_mode='stretch_width',
+            height=_NAV_HEIGHT,
             stylesheets=[_BACK_BUTTON_CSS],
-            margin=(2, 0),
+            margin=0,
             css_classes=['lt-plot-back'],
         )
         self._back.on_click(lambda _: self.close())
         self._prev = self._step_button('chevron-left', -1, 'lt-plot-prev')
         self._next = self._step_button('chevron-right', 1, 'lt-plot-next')
         self._nav = pn.Row(
-            self._back, self._prev, self._next, sizing_mode='stretch_width'
+            self._back, self._prev, self._next, sizing_mode='stretch_width', margin=0
         )
         # A stretching child makes Panel give this column ``flex: 1 0 0``, and
         # a zero flex basis overrides any height, so both are pinned here.
@@ -230,9 +236,10 @@ class PlotOverview:
             icon=get_icon(icon),
             icon_size='1.6em',
             color='light',
-            width=_STEP_BUTTON_SIZE,
-            height=_STEP_BUTTON_SIZE,
-            margin=(2, 0, 2, 4),
+            width=_NAV_HEIGHT,
+            height=_NAV_HEIGHT,
+            margin=(0, 0, 0, 4),
+            stylesheets=[_STEP_BUTTON_CSS],
             css_classes=[css_class],
         )
         button.on_click(lambda _: self.step(step))
