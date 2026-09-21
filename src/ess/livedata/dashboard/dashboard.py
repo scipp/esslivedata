@@ -25,6 +25,7 @@ from .session_registry import SessionId
 from .session_updater import SessionUpdater
 from .theme import DEFAULT_THEME, THEMES
 from .transport import NullTransport, Transport
+from .widgets.styles import PhoneLayout
 
 # Bokeh's own reaper, distinct from the registry's: seconds an unused Bokeh
 # session (one with no connections left) is kept before its document is dropped.
@@ -36,9 +37,6 @@ pn.config.throttled = True
 _TEMPLATES_DIR = Path(__file__).parent / 'templates'
 _LOGIN_TEMPLATE = str(_TEMPLATES_DIR / 'login.html')
 _LOGOUT_TEMPLATE = str(_TEMPLATES_DIR / 'logout.html')
-
-# Height of the band in the header's color above the phone layout's content.
-_PHONE_TOP_BAND = '8px'
 
 
 def _phone_template_css(header_background: str) -> str:
@@ -69,7 +67,7 @@ def _phone_template_css(header_background: str) -> str:
     .main-content {{
         box-sizing: border-box;
         padding: 0 !important;
-        border-top: {_PHONE_TOP_BAND} solid {header_background};
+        border-top: {PhoneLayout.TOP_BAND}px solid {header_background};
         height: 100dvh !important;
     }}
 """

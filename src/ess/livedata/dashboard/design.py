@@ -29,9 +29,11 @@ Modals are sized in pixels by their owners, which Panel writes as inline styles
 on the dialog box. On a screen smaller than that -- a phone, or a short laptop
 screen for the height -- the box runs past the viewport, taking its close
 button and the action buttons of its footer with it. Capping the box to the
-viewport and letting it scroll keeps all of it reachable; footers that must
-stay in view while the rest scrolls make themselves sticky
-(``ModalSizing.STICKY_FOOTER_STYLES``).
+viewport keeps all of it reachable, since Panel already lets the box scroll;
+footers that must stay in view while the rest scrolls make themselves sticky
+(``ModalSizing.STICKY_FOOTER_STYLES``). The cap replaces any ``max_height``
+or ``max_width`` an owner sets, rather than combining with it: owners bound
+their dialogs by bounding the scrolling body inside instead.
 """
 
 from typing import Any, ClassVar
@@ -54,7 +56,6 @@ _MODAL_FITS_VIEWPORT = """
         min-width: 0 !important;
         max-width: calc(100vw - 16px) !important;
         max-height: calc(100dvh - 16px) !important;
-        overflow-y: auto;
     }
 """
 

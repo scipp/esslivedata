@@ -218,9 +218,9 @@ class CellDeps:
     ``compact_figures`` asks for figures that give the plot area as much of
     the screen as possible, for the phone layout: the toolbar inside the plot
     and tighter axes (:func:`_compact_figure_hook`), and color bars on the side
-    the screen has room for -- below the plot while ``portrait`` returns true,
-    else beside it (:func:`_place_colorbar`). A cell is composed for the
-    orientation at build time; the owner rebuilds cells when it changes. The
+    the screen has room for -- below the plot in portrait, else beside it
+    (:func:`_place_colorbar`). The orientation is a build input
+    (``CellBuildInputs.portrait``), so a rotation rebuilds the cell. The
     toolbar of a layout-mode plot, shared by its sub-figures, stays where it
     is.
     """
@@ -233,7 +233,6 @@ class CellDeps:
     on_reconfigure_layer: Callable[[LayerId], None]
     on_popout: Callable[[CellId], None] | None
     compact_figures: bool = False
-    portrait: Callable[[], bool] = lambda: False
 
 
 # Axis spacing of compact figures, in pixels: the gap between an axis name
@@ -921,7 +920,7 @@ class CellWidget:
         # by the plotter (see Plotter._sizing_opts), so it reaches every
         # sub-figure of a Layout regardless.
         if self._deps.compact_figures:
-            result = _place_colorbar(result, below=self._deps.portrait())
+            result = _place_colorbar(result, below=bool(self.build_inputs.portrait))
         if non_overlayable:
             return result
 

@@ -83,6 +83,7 @@ from .plot_grid_manager import PlotGridManager
 from .plot_overview import PlotOverview, PlotOverviewSection
 from .plot_popout import PlotPopoutManager
 from .plot_widgets import derive_cell_title
+from .styles import PhoneLayout
 
 logger = structlog.get_logger(__name__)
 
@@ -116,20 +117,20 @@ class _PassStamps(NamedTuple):
 # rather than in ``em``. Sized for a fingertip. The padding around the tab
 # content is reduced too, since a phone has no width to spare; the selector is
 # the one the theme pads the content with (``theme.py``).
-_PHONE_TAB_CSS = """
-    :host(.bk-left) > :not(.bk-header):not(style):not(link) {
-        padding: 4px !important;
-    }
-    .bk-header .bk-tab {
+_PHONE_TAB_CSS = f"""
+    :host(.bk-left) > :not(.bk-header):not(style):not(link) {{
+        padding: {PhoneLayout.TAB_CONTENT_PADDING}px !important;
+    }}
+    .bk-header .bk-tab {{
         font-size: 0 !important;
         min-width: 0 !important;
         padding: 12px 10px !important;
-    }
-    .bk-header .bk-tab::before {
+    }}
+    .bk-header .bk-tab::before {{
         width: 24px !important;
         height: 24px !important;
         margin-right: 0 !important;
-    }
+    }}
 """
 
 
@@ -268,7 +269,6 @@ class PlotGridTabs:
         phone: bool = False,
     ) -> None:
         self._orchestrator = plot_orchestrator
-        self._phone = phone
         self._workflow_registry = dict(workflow_registry)
         self._plotting_controller = plotting_controller
         self._plot_data_service = plot_data_service
@@ -279,9 +279,13 @@ class PlotGridTabs:
         # Phone layout only: the Plots tab, and the cells it showed at the
         # last completed pass. Opening or closing a plot changes what is
         # visible without moving shared state, like a tab switch.
-        self._plot_overview = PlotOverview(
-            title_of=self._cell_title,
-            on_open_changed=lambda: self._session_updater.request_tick(full=True),
+        self._plot_overview = (
+            PlotOverview(
+                title_of=self._cell_title,
+                on_open_changed=lambda: self._session_updater.request_tick(full=True),
+            )
+            if phone
+            else None
         )
         self._last_overview_shown: frozenset[CellId] = frozenset()
 
@@ -329,10 +333,13 @@ class PlotGridTabs:
         self._last_freshness_update: float = 0.0
 
         # Phone layout only: the window's orientation decides which side of a
-        # plot gets its color bar, so a rotation rebuilds the built cells.
-        self._orientation = OrientationReporter()
-        if phone:
-            self._orientation.param.watch(self._on_orientation_changed, 'portrait')
+        # plot gets its color bar. It is a build input of the planned cells,
+        # so a rotation needs only a pass, which rebuilds them.
+        self._orientation = OrientationReporter() if phone else None
+        if self._orientation is not None:
+            self._orientation.param.watch(
+                lambda _: self._session_updater.request_tick(full=True), 'portrait'
+            )
 
         # Shared dependencies handed to every CellWidget. Built once; the
         # callbacks route modal interactions back here (modal container lives
@@ -348,7 +355,6 @@ class PlotGridTabs:
             # fills the screen anyway.
             on_popout=None if phone else self._show_popout,
             compact_figures=phone,
-            portrait=lambda: self._orientation.portrait,
         )
 
         # Floating pop-out windows, one per cell at most. Kept out of
@@ -378,7 +384,7 @@ class PlotGridTabs:
                 ('System Status', 'activity', system_status_widget.panel())
             )
         static_tabs.append(('Manage Plots', 'layout-grid', self._grid_manager.panel))
-        if phone:
+        if self._plot_overview is not None:
             static_tabs.append(('Plots', 'chart-line', self._plot_overview.panel))
 
         # Main tabs widget.
@@ -419,7 +425,7 @@ class PlotGridTabs:
             self._modal_container,
             self._popouts.container,
             ModalEscapeCloser(),
-            *([self._orientation] if phone else []),
+            *([self._orientation] if self._orientation is not None else []),
             sizing_mode='stretch_both',
         )
 
@@ -462,7 +468,7 @@ class PlotGridTabs:
 
     def _add_grid_tab(self, grid_id: GridId, grid_config: PlotGridConfig) -> None:
         """Add a new grid tab after the Manage tab."""
-        if self._phone:
+        if self._plot_overview is not None:
             section = self._plot_overview.section(grid_id, grid_config.title)
             section.sync(grid_config)
             self._grid_widgets[grid_id] = section
@@ -513,6 +519,8 @@ class PlotGridTabs:
         another tab is up. A plot of a disabled grid or of a removed cell is
         not shown, even before the Plots tab has caught up with topology.
         """
+        if self._plot_overview is None:
+            return frozenset()
         open_cell = self._plot_overview.open_cell
         if (
             open_cell is None
@@ -679,7 +687,7 @@ class PlotGridTabs:
                     # Grid was re-enabled or is new — create fresh tab
                     self._add_grid_tab(grid_id, grid_config)
 
-            if self._phone:
+            if self._plot_overview is not None:
                 self._plot_overview.set_listed(
                     [gid for gid, config in all_grids.items() if config.enabled]
                 )
@@ -901,15 +909,32 @@ class PlotGridTabs:
         grid_config = self._orchestrator.peek_grid(cell_widget.grid_id)
         if grid_config is None or cell_id not in grid_config.cells:
             return
-        self._insert_cell(cell_id, grid_config.cells[cell_id], cell_widget.grid_id)
+        self._insert_cell(
+            cell_id,
+            grid_config.cells[cell_id],
+            cell_widget.grid_id,
+            portrait=cell_widget.build_inputs.portrait,
+        )
 
-    def _insert_cell(self, cell_id: CellId, cell: PlotCell, grid_id: GridId) -> None:
+    def _insert_cell(
+        self,
+        cell_id: CellId,
+        cell: PlotCell,
+        grid_id: GridId,
+        *,
+        portrait: bool | None,
+    ) -> None:
         """Build a cell's widget and place it in its grid."""
-        widget = self._build_cell(cell_id, cell, grid_id)
+        widget = self._build_cell(cell_id, cell, grid_id, portrait=portrait)
         self._grid_widgets[grid_id].insert_widget_at(cell.geometry, widget.view)
 
     def _build_cell(
-        self, cell_id: CellId, cell: PlotCell, grid_id: GridId
+        self,
+        cell_id: CellId,
+        cell: PlotCell,
+        grid_id: GridId,
+        *,
+        portrait: bool | None = None,
     ) -> CellWidget:
         """Build (or rebuild) the session widget for a cell.
 
@@ -927,6 +952,9 @@ class PlotGridTabs:
         restart), and having the floating view vanish -- or jump back to its
         default size and position, which is all a replacement window could do
         (see :meth:`PlotPopoutManager.rebind`) -- would read as a fault.
+
+        ``portrait`` is the orientation to lay the figure out for, recorded
+        with the build inputs (see :class:`~..cell_plan.CellBuildInputs`).
         """
         previous = self._cells.get(cell_id)
         toolbars_visible = previous.toolbars_shown if previous is not None else False
@@ -936,7 +964,9 @@ class PlotGridTabs:
             self._cell_deps,
             toolbars_visible=toolbars_visible,
             grid_id=grid_id,
-            build_inputs=cell_build_inputs(cell, self._plot_data_service.get),
+            build_inputs=cell_build_inputs(
+                cell, self._plot_data_service.get, portrait=portrait
+            ),
         )
         self._cells[cell_id] = cell_widget
         if previous is not None:
@@ -982,22 +1012,6 @@ class PlotGridTabs:
             self._poll_for_plot_updates(reconcile_topology=False)
         except Exception:
             logger.exception("Failed to pre-build revealed grid %s", grid_id)
-
-    def _on_orientation_changed(self, event) -> None:
-        """Rebuild the built cells for the window's new orientation.
-
-        In the phone layout that is the open cell, plus any that another session
-        keeps computing, so a rotation costs about what opening a plot does.
-        Cells built later pick up the new orientation on their own.
-        """
-        with batched_update():
-            for cell_id, cell_widget in list(self._cells.items()):
-                grid_config = self._orchestrator.peek_grid(cell_widget.grid_id)
-                if grid_config is not None and cell_id in grid_config.cells:
-                    self._insert_cell(
-                        cell_id, grid_config.cells[cell_id], cell_widget.grid_id
-                    )
-        self._session_updater.request_tick(full=True)
 
     def _on_active_tab_changed(self, event) -> None:
         # Full tick: a tab switch changes what is visible without changing any
@@ -1262,10 +1276,15 @@ class PlotGridTabs:
         # set no longer counts this session's own released tokens; read once
         # rather than lock-per-layer.
         viewed = self._plot_data_service.viewed_layers()
+        portrait = None if self._orientation is None else self._orientation.portrait
         plans = desired_cells(
             grids,
             self._plot_data_service.get,
-            SessionView(active_grid_id=active_grid_id, live_cell_ids=live_cells),
+            SessionView(
+                active_grid_id=active_grid_id,
+                live_cell_ids=live_cells,
+                portrait=portrait,
+            ),
             viewed.__contains__,
         )
 
@@ -1321,7 +1340,12 @@ class PlotGridTabs:
             applied = self._cells.get(cell_id)
             if applied is not None and applied.build_inputs == plan.inputs:
                 continue
-            self._insert_cell(cell_id, grids[plan.grid_id].cells[cell_id], plan.grid_id)
+            self._insert_cell(
+                cell_id,
+                grids[plan.grid_id].cells[cell_id],
+                plan.grid_id,
+                portrait=plan.inputs.portrait,
+            )
             rebuilt = True
 
         # Sample the per-layer time bounds driving the titlebar freshness pill

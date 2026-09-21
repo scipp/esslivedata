@@ -64,15 +64,22 @@ class CellBuildInputs:
     exactly when the current inputs no longer compare equal. There is no
     record to update by hand, so a record cannot go stale: a failed build
     leaves the previous record (or none) in place, and the next pass retries.
+
+    ``portrait`` is the screen orientation the figure is laid out for, in a
+    layout whose figures depend on it (the phone layout); None otherwise.
     """
 
     geometry: CellGeometry
     user_title: str | None
     layers: tuple[LayerBuildInput, ...]
+    portrait: bool | None = None
 
 
 def cell_build_inputs(
-    cell: PlotCell, layer_snapshot: Callable[[LayerId], LayerSnapshot | None]
+    cell: PlotCell,
+    layer_snapshot: Callable[[LayerId], LayerSnapshot | None],
+    *,
+    portrait: bool | None = None,
 ) -> CellBuildInputs:
     """Sample a cell's build inputs as of right now.
 
@@ -95,7 +102,10 @@ def cell_build_inputs(
             )
         )
     return CellBuildInputs(
-        geometry=cell.geometry, user_title=cell.user_title, layers=tuple(layers)
+        geometry=cell.geometry,
+        user_title=cell.user_title,
+        layers=tuple(layers),
+        portrait=portrait,
     )
 
 
@@ -126,10 +136,14 @@ class SessionView:
     the visible Plots tab (``widgets/plot_overview.py``). A minimized window
     renders nothing and contributes no cell, so parking a pop-out costs exactly
     what a hidden tab does.
+
+    ``portrait`` is the screen orientation, where figures are laid out for it
+    (the phone layout), else None.
     """
 
     active_grid_id: GridId | None
     live_cell_ids: frozenset[CellId] = frozenset()
+    portrait: bool | None = None
 
 
 def desired_cells(
@@ -194,8 +208,11 @@ def desired_cells(
                 or any(watched(layer.layer_id) for layer in cell.layers)
             ):
                 continue
+            # Pre-warmed cells follow the orientation too, so opening one needs
+            # no second build: a rotation rebuilds every planned cell, but only
+            # the shown ones build figures, and rotating is rarer than opening.
             plans[cell_id] = CellPlan(
                 grid_id=grid_id,
-                inputs=cell_build_inputs(cell, layer_snapshot),
+                inputs=cell_build_inputs(cell, layer_snapshot, portrait=view.portrait),
             )
     return plans

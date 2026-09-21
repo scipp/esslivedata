@@ -36,20 +36,23 @@ from ..plot_orchestrator import (
 )
 from .grid_preview import PreviewCell, create_grid_preview
 from .icons import get_icon
-from .styles import Colors
+from .styles import Colors, PhoneLayout
 
-# Height of a grid preview per grid row: room for a two-line title in a cell
-# of a phone-width grid.
-_PREVIEW_ROW_HEIGHT = 64
+# Height of a grid preview per grid row:
+_PREVIEW_ROW_HEIGHT = 96
 
 # Height of the navigation bar above an open plot, in pixels: the smallest
 # comfortable fingertip target.
 _NAV_HEIGHT = 40
 
 # The open plot fills the screen below the navigation bar. What else takes
-# height: the page's top band (8 px, ``dashboard.py``), the tab content's
-# padding (2 x 4 px, ``plot_grid_tabs.py``), and 2 px to spare for rounding.
-_OPEN_PLOT_HEIGHT = f'calc(100dvh - {_NAV_HEIGHT + 18}px)'
+# height: the page's top band, the tab content's padding above and below, and
+# 2 px to spare for rounding.
+_OPEN_PLOT_HEIGHT = (
+    'calc(100dvh - '
+    f'{_NAV_HEIGHT + PhoneLayout.TOP_BAND + 2 * PhoneLayout.TAB_CONTENT_PADDING + 2}'
+    'px)'
+)
 
 # Scrolling the previews comes to rest with a grid's heading at the top when it
 # ends near one. ``proximity`` rather than ``mandatory``: a preview taller than

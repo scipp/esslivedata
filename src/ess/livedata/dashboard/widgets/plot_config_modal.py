@@ -1395,7 +1395,6 @@ class PlotConfigModal:
             name=modal_title,
             margin=20,
             width=ModalSizing.WIDTH,
-            max_height=ModalSizing.MAX_HEIGHT,
         )
 
         # Watch for modal close events

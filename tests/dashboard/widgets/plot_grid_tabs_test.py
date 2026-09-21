@@ -2626,6 +2626,37 @@ class TestPhoneLayout:
         assert phone_tabs._cells[cell_id] is not before
         assert self._shows(phone_tabs, cell_id)
 
+    def test_rotation_leaves_closed_plots_until_reopened(
+        self, plot_orchestrator, phone_tabs
+    ):
+        grid_id = plot_orchestrator.add_grid(title='G', nrows=2, ncols=2)
+        closed = _add_static_cell(plot_orchestrator, grid_id, _GEO)
+        opened = _add_static_cell(
+            plot_orchestrator,
+            grid_id,
+            CellGeometry(row=1, col=0, row_span=1, col_span=1),
+        )
+        self._show_plots_tab(phone_tabs)
+        _tick(phone_tabs)
+        section = phone_tabs._grid_widgets[grid_id]
+        section.tap(closed)
+        _tick(phone_tabs)
+        section.tap(opened)
+        _tick(phone_tabs)
+        closed_before = phone_tabs._cells[closed]
+
+        phone_tabs._orientation.portrait = not phone_tabs._orientation.portrait
+
+        assert phone_tabs._cells[closed] is closed_before
+        section.tap(closed)
+        _tick(phone_tabs)
+        assert phone_tabs._cells[closed] is not closed_before
+        assert self._shows(phone_tabs, closed)
+
+    def test_desktop_session_has_no_phone_widgets(self, plot_grid_tabs):
+        assert plot_grid_tabs._plot_overview is None
+        assert plot_grid_tabs._orientation is None
+
     def test_open_plot_offers_no_popout(self, plot_orchestrator, phone_tabs):
         grid_id = plot_orchestrator.add_grid(title='G', nrows=2, ncols=2)
         cell_id = _add_static_cell(plot_orchestrator, grid_id, _GEO)
