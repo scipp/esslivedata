@@ -37,15 +37,27 @@ _TEMPLATES_DIR = Path(__file__).parent / 'templates'
 _LOGIN_TEMPLATE = str(_TEMPLATES_DIR / 'login.html')
 _LOGOUT_TEMPLATE = str(_TEMPLATES_DIR / 'logout.html')
 
-# Page rules for the phone layout (``?layout=phone``). ``dvh`` rather than
-# ``vh``: on a phone ``100vh`` includes the height hidden behind the browser's
-# toolbars, which pushes the bottom of the page off screen. Material's main-area
-# padding (``.main-content`` in ``panel/template/material/material.css``) is
-# given back to the plots, which need every pixel of a phone's width.
+# Page rules for the phone layout (``?layout=phone``). The header is hidden to
+# give its height to the plots; with it go the sidebar menu and the logout
+# link. Losing the connection is still shown: Panel's disconnect notification
+# (``pn.config.disconnect_notification``) does not live in the header.
+# Material pushes the page below the fixed header with
+# ``.mdc-top-app-bar--fixed-adjust``, which is undone here too. ``dvh`` rather
+# than ``vh``: on a phone ``100vh`` includes the height hidden behind the
+# browser's toolbars, which pushes the bottom of the page off screen. Material's
+# main-area padding (``.main-content`` in
+# ``panel/template/material/material.css``) is given back to the plots, which
+# need every pixel of a phone's width.
 _PHONE_TEMPLATE_CSS = """
+    #header {
+        display: none !important;
+    }
+    .mdc-top-app-bar--fixed-adjust {
+        padding-top: 0 !important;
+    }
     .main-content {
         padding: 0 !important;
-        height: calc(100dvh - 64px) !important;
+        height: 100dvh !important;
     }
 """
 
