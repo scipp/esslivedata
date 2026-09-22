@@ -144,5 +144,5 @@ Single-sentence: `"""Returns the number of dimensions."""`
 
 ## Instrument Support
 
-Instruments registered in `src/ess/livedata/config/instruments/`: `dummy`, `dream`, `bifrost`, `loki`, `odin`, `nmx`, `tbl`, `estia`, `beer`.
+Instruments registered in `src/ess/livedata/config/instruments/`: `dummy`, `dream`, `bifrost`, `loki`, `odin`, `nmx`, `tbl`, `estia`, `beer`, `magic`, `freia`.
 Optional deps installed as extras: `pip install esslivedata[dream]`, etc.
