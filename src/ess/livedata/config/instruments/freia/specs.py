@@ -10,8 +10,6 @@ nor a reduction workflow nor a wavelength lookup table has the positions it need
 See ``views`` for what the detector's pixel offsets do and do not tell us.
 """
 
-import math
-
 from ess.livedata.config import (
     Instrument,
     filter_authorized_streams,
@@ -26,15 +24,14 @@ from ess.livedata.workflows.monitor_workflow_specs import (
 )
 
 from .streams_parsed import PARSED_STREAMS
-from .views import DETECTOR_BANK_SIZES, get_multiblade_view, get_spectrum_view
+from .views import get_multiblade_view, get_spectrum_view
 
-detector_names = list(DETECTOR_BANK_SIZES)
+detector_names = ['multiblade_detector']
 
-#: Inclusive ``detector_number`` range of the single bank.
-detector_pixel_range = (
-    1,
-    math.prod(DETECTOR_BANK_SIZES['multiblade_detector'].values()),
-)
+#: Inclusive ``detector_number`` range of the single bank, as in
+#: ``coda_freia_999999_00022031.hdf``. Stated here rather than derived from
+#: ``ess.freia``'s bank sizes, which specs may not import.
+detector_pixel_range = (1, 65536)
 
 #: Named after their NeXus groups, without the ``MISSING_ESSCONFIG_`` prefix the
 #: file writer puts on 4-6. Their Kafka source names upstream are

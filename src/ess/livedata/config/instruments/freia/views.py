@@ -37,14 +37,6 @@ before adding a geometric projection or a reduction workflow.
 
 import scipp as sc
 
-#: Fold of ``detector_number`` (1..65536, contiguous) in
-#: ``coda_freia_999999_00022031.hdf``: strips slowest, wires fastest, the same
-#: order as ESTIA. Derived from the pixel offsets: ``y`` depends on ``strip``
-#: alone, and the in-plane coordinates are identical for every strip. Matches
-#: ``ess.freia`` from essreflectometry 26.9.1; earlier releases carried ESTIA's
-#: 48 blades.
-DETECTOR_BANK_SIZES = {'multiblade_detector': {'strip': 64, 'blade': 32, 'wire': 32}}
-
 
 def get_multiblade_view(da: sc.DataArray, source_name: str) -> sc.DataArray:
     """Fold detector_number into strip, blade, and wire dimensions.
@@ -53,8 +45,17 @@ def get_multiblade_view(da: sc.DataArray, source_name: str) -> sc.DataArray:
     along the stacking direction; ``strip`` and ``wire`` are coordinates within a
     single plate. See ``estia.views.get_multiblade_view`` for the same hardware
     on ESTIA.
+
+    The sizes come from ``ess.freia``: 64 strips (slowest) x 32 blades x 32
+    wires (fastest), the same order as ESTIA. They agree with the pixel offsets
+    in ``coda_freia_999999_00022031.hdf``: ``y`` depends on ``strip`` alone, and
+    the in-plane coordinates are identical for every strip.
     """
-    return da.fold(dim=da.dim, sizes=DETECTOR_BANK_SIZES[source_name])
+    from ess.freia.workflow import default_parameters
+    from ess.reduce.nexus.types import DetectorBankSizes
+
+    sizes = default_parameters()[DetectorBankSizes][source_name]
+    return da.fold(dim=da.dim, sizes=sizes)
 
 
 def get_spectrum_view(histogram: sc.DataArray) -> sc.DataArray:

@@ -51,7 +51,7 @@ dynamic = ["version"]
 [project.optional-dependencies]
 test = [
     "essdiffraction>=26.5.0",
-    "essreflectometry>=26.6.0",
+    "essreflectometry>=26.9.1",
     "esssans",
     "essspectroscopy>=26.9.0",
     "holoviews>=1.23.0",
@@ -71,9 +71,11 @@ dream = [
 ]
 dummy = []
 estia = [
-    "essreflectometry>=26.6.0",
+    "essreflectometry>=26.9.1",
 ]
-freia = []
+freia = [
+    "essreflectometry>=26.9.1",
+]
 loki = [
     "esssans>=26.4.0",
 ]
