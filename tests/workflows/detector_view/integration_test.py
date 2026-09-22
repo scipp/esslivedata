@@ -126,11 +126,11 @@ class TestIntegrationWithStreamProcessor:
         assert result['cumulative'].dims == ('y', 'x')
         assert result['cumulative'].sizes == {'y': 4, 'x': 4}
 
-        # Images go on the wire as float32; the count scalars are not images and
-        # keep the accumulator's dtype.
+        # Images go on the wire as float32; the count scalars are sums over the int32
+        # histogram, which scipp promotes to int64.
         assert result['cumulative'].dtype == 'float32'
         assert result['current'].dtype == 'float32'
-        assert result['counts_total_cumulative'].dtype == 'float64'
+        assert result['counts_total_cumulative'].dtype == 'int64'
 
     def test_cumulative_accumulates_current_resets(self):
         """Test that cumulative accumulates and current resets after finalize."""
