@@ -196,7 +196,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        instrument: [beer, bifrost, dream, dummy, estia, loki, magic, nmx, odin, tbl]
+        instrument: [beer, bifrost, dream, dummy, estia, freia, loki, magic, nmx, odin, tbl]
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5

@@ -1,0 +1,62 @@
+# SPDX-License-Identifier: BSD-3-Clause
+# Copyright (c) 2025 Scipp contributors (https://github.com/scipp)
+#
+# GENERATED -- do not edit. NICOS derived-device list for freia.
+# Regenerate: python -m ess.livedata.config.device_contract
+devices:
+- device_name: monitor_1_counts_total
+  workflow_id: freia/monitor_histogram/1
+  source_name: monitor_1
+  output_name: counts_total_cumulative
+- device_name: monitor_2_counts_total
+  workflow_id: freia/monitor_histogram/1
+  source_name: monitor_2
+  output_name: counts_total_cumulative
+- device_name: monitor_3_counts_total
+  workflow_id: freia/monitor_histogram/1
+  source_name: monitor_3
+  output_name: counts_total_cumulative
+- device_name: monitor_4_counts_total
+  workflow_id: freia/monitor_histogram/1
+  source_name: monitor_4
+  output_name: counts_total_cumulative
+- device_name: monitor_5_counts_total
+  workflow_id: freia/monitor_histogram/1
+  source_name: monitor_5
+  output_name: counts_total_cumulative
+- device_name: monitor_6_counts_total
+  workflow_id: freia/monitor_histogram/1
+  source_name: monitor_6
+  output_name: counts_total_cumulative
+- device_name: monitor_1_histogram
+  workflow_id: freia/monitor_histogram/1
+  source_name: monitor_1
+  output_name: cumulative
+- device_name: monitor_2_histogram
+  workflow_id: freia/monitor_histogram/1
+  source_name: monitor_2
+  output_name: cumulative
+- device_name: monitor_3_histogram
+  workflow_id: freia/monitor_histogram/1
+  source_name: monitor_3
+  output_name: cumulative
+- device_name: monitor_4_histogram
+  workflow_id: freia/monitor_histogram/1
+  source_name: monitor_4
+  output_name: cumulative
+- device_name: monitor_5_histogram
+  workflow_id: freia/monitor_histogram/1
+  source_name: monitor_5
+  output_name: cumulative
+- device_name: monitor_6_histogram
+  workflow_id: freia/monitor_histogram/1
+  source_name: monitor_6
+  output_name: cumulative
+- device_name: multiblade_detector_counts_total
+  workflow_id: freia/freia_multiblade_detector_view/1
+  source_name: multiblade_detector
+  output_name: counts_total_cumulative
+- device_name: multiblade_detector_image
+  workflow_id: freia/freia_multiblade_detector_view/1
+  source_name: multiblade_detector
+  output_name: cumulative

@@ -51,7 +51,7 @@ dynamic = ["version"]
 [project.optional-dependencies]
 test = [
     "essdiffraction>=26.5.0",
-    "essreflectometry>=26.6.0",
+    "essreflectometry>=26.9.1",
     "esssans",
     "essspectroscopy>=26.9.0",
     "holoviews>=1.23.0",
@@ -71,7 +71,10 @@ dream = [
 ]
 dummy = []
 estia = [
-    "essreflectometry>=26.6.0",
+    "essreflectometry>=26.9.1",
+]
+freia = [
+    "essreflectometry>=26.9.1",
 ]
 loki = [
     "esssans>=26.4.0",
@@ -86,7 +89,7 @@ odin = [
 tbl = []
 # Compose the instrument extras so their dependencies remain defined in one place.
 all-instruments = [
-    "esslivedata[beer,bifrost,dream,dummy,estia,loki,magic,nmx,odin,tbl]",
+    "esslivedata[beer,bifrost,dream,dummy,estia,freia,loki,magic,nmx,odin,tbl]",
 ]
 dashboard = [
   # 3.9 is where a runtime change to ``min_border_*`` started triggering a
