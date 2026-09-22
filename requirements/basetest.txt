@@ -299,7 +299,7 @@ sciline==25.11.1
     #   esspolarization
     #   essreduce
     #   esssans
-scipp==26.3.1
+scipp==26.9.0
     # via
     #   esspolarization
     #   essreduce

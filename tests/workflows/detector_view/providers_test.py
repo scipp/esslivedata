@@ -167,6 +167,24 @@ class TestComputeDetectorHistogram:
 
         assert DETECTOR_TRANSFORM not in result.coords
 
+    def test_histogram_is_int32(self):
+        """The accumulated histogram is the dominant memory cost, so it is int32."""
+        data = make_fake_nexus_detector_data(y_size=4, x_size=4)
+        bins = sc.linspace('event_time_offset', 0, 71_000_000, 11, unit='ns')
+        transform = make_logical_transform(4, 4)
+        projector = make_logical_projector(transform=transform, reduction_dim=None)
+        screen_binned = projector.project_events(sc.values(data))
+
+        result = compute_detector_histogram(
+            screen_binned_events=screen_binned,
+            bins=bins,
+            event_coord='event_time_offset',
+            geometry=None,
+        )
+
+        assert result.dtype == 'int32'
+        assert result.sum().value == screen_binned.bins.size().sum().value
+
 
 class TestDetectorGeometry:
     """Tests for the detector_geometry provider."""
@@ -334,14 +352,7 @@ class TestDetectorImageProviders:
     @pytest.mark.parametrize("use_weighting", [False, True])
     def test_detector_image_is_published_as_float32(self, use_weighting):
         """The image is cast on the way out to halve the da00 payload."""
-        data = sc.DataArray(
-            sc.ones(
-                dims=['y', 'x', 'event_time_offset'],
-                shape=[4, 4, 10],
-                unit='counts',
-                dtype='float64',
-            )
-        )
+        data = _int32_histogram(1, [4, 4, 10])
         weights = PixelWeights(sc.full(dims=['y', 'x'], shape=[4, 4], value=2.0))
 
         result = detector_image(
@@ -360,27 +371,22 @@ class TestDetectorImageProviders:
             ),
         )
 
-    def test_detector_image_cast_leaves_accumulated_histogram_untouched(self):
-        """Accumulation must stay float64: float32 stops counting at 2**24."""
-        data = sc.DataArray(
-            sc.full(
-                dims=['y', 'x', 'event_time_offset'],
-                shape=[1, 1, 1],
-                value=2.0**24,
-                unit='counts',
+
+def _int32_histogram(value: int, shape: list[int]) -> sc.DataArray:
+    return sc.DataArray(
+        sc.full(
+            dims=['y', 'x', 'event_time_offset'],
+            shape=shape,
+            value=value,
+            unit='counts',
+            dtype='int32',
+        ),
+        coords={
+            'event_time_offset': sc.linspace(
+                'event_time_offset', 0, 100000, shape[-1] + 1, unit='ns'
             )
-        )
-        histogram = AccumulatedHistogram[Cumulative](data)
-
-        detector_image(
-            histogram=histogram,
-            histogram_slice=None,
-            weights=PixelWeights(sc.ones(dims=['y', 'x'], shape=[1, 1])),
-            use_weighting=UsePixelWeighting(False),
-        )
-
-        assert histogram.dtype == 'float64'
-        assert (histogram + sc.scalar(1.0, unit='counts')).sum().value == 2.0**24 + 1
+        },
+    )
 
 
 class TestCountProviders:
@@ -389,33 +395,31 @@ class TestCountProviders:
     @pytest.mark.parametrize("mode", [Current, Cumulative])
     def test_counts_total(self, mode):
         """Test that counts_total sums all counts for both modes."""
-        data = sc.DataArray(
-            sc.ones(
-                dims=['y', 'x', 'event_time_offset'], shape=[4, 4, 10], unit='counts'
-            )
-        )
+        data = _int32_histogram(1, [4, 4, 10])
 
         result = counts_total(histogram=AccumulatedHistogram[mode](data))
 
-        expected = sc.scalar(4 * 4 * 10, unit='counts', dtype='float64')
+        expected = sc.scalar(4 * 4 * 10, unit='counts', dtype='int64')
         assert sc.identical(result.data, expected)
+
+    def test_counts_total_exceeding_int32_is_exact(self):
+        """Only individual bins are bounded by int32, not their sum."""
+        data = _int32_histogram(2**31 - 1, [2, 2, 2])
+
+        result = counts_total(histogram=AccumulatedHistogram[Cumulative](data))
+
+        assert result.value == 8 * (2**31 - 1)
 
     @pytest.mark.parametrize("mode", [Current, Cumulative])
     def test_counts_in_range_with_and_without_slice(self, mode):
         """Test counts_in_range with and without histogram slice for both modes."""
-        coord = sc.linspace('event_time_offset', 0, 100000, 11, unit='ns')
-        data = sc.DataArray(
-            sc.ones(
-                dims=['y', 'x', 'event_time_offset'], shape=[4, 4, 10], unit='counts'
-            ),
-            coords={'event_time_offset': coord},
-        )
+        data = _int32_histogram(1, [4, 4, 10])
 
         # Without slice - should count all bins
         result_no_slice = counts_in_range(
             histogram=AccumulatedHistogram[mode](data), histogram_slice=None
         )
-        expected_all = sc.scalar(4 * 4 * 10, unit='counts', dtype='float64')
+        expected_all = sc.scalar(4 * 4 * 10, unit='counts', dtype='int64')
         assert sc.identical(result_no_slice.data, expected_all)
 
         # With slice to first half - should count approximately half

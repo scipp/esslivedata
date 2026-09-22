@@ -40,7 +40,7 @@ dependencies = [
   "jinja2",
   "numba",  # Compiled wavelength-LUT interpolation, see core/numba_threading.py
   "pydantic>=2",
-  "scipp>=25.02.0",  # Improved performance of scipp.group
+  "scipp>=26.9.0",  # Integer sums promote to int64 (int32 detector histograms)
   "scippneutron>=26.9.1",  # Chopper calls no longer mint a scipp dim label each time
   "pooch",
   "structlog>=24.0.0",
