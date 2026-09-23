@@ -19,6 +19,7 @@ import uuid
 
 import pytest
 import scipp as sc
+from structlog.testing import capture_logs
 
 from ess.livedata.config.chopper import delay_setpoint_stream, speed_setpoint_stream
 from ess.livedata.config.instrument import Instrument, instrument_registry
@@ -26,7 +27,7 @@ from ess.livedata.config.instruments import get_config
 from ess.livedata.config.streams import get_stream_mapping
 from ess.livedata.config.workflow_spec import JobId, WorkflowConfig
 from ess.livedata.core.context_outputs import ContextOutputExtractor
-from ess.livedata.core.job import JobData
+from ess.livedata.core.job import JobData, JobReply, JobResult
 from ess.livedata.core.job_manager import JobFactory
 from ess.livedata.core.message import StreamKind
 from ess.livedata.core.timestamp import Timestamp
@@ -47,6 +48,7 @@ from ess.livedata.workflows.wavelength_lut_workflow_specs import (
 pytestmark = pytest.mark.slow
 
 MONITOR = 'monitor_bunker'
+DETECTOR = 'high_resolution_detector'
 DETECTOR_STREAM = LUT_STREAM_NAMES[DETECTOR_LUT_OUTPUT]
 MONITOR_STREAM = LUT_STREAM_NAMES[MONITOR_LUT_OUTPUT]
 
@@ -102,16 +104,81 @@ def _create_job(
     )
 
 
-def _run_lut_job(instrument: Instrument):
-    """Run the lookup-table job once and return its result."""
+#: A DREAM phasing whose cascade transmits, in nanoseconds of chopper delay at
+#: 14 Hz. Zero delay throughout closes the beam a few millimetres past the
+#: pulse-shaping pair, giving an all-NaN table under which every event is
+#: dropped, so the consumer half of this chain needs a cascade that actually
+#: lets neutrons through to show that events are converted. Found by scanning
+#: each chopper's delay over one rotation in beam order and keeping what
+#: maximised transmission downstream; re-run that scan if regenerating the
+#: geometry artifact moves a chopper and these stop working.
+_TRANSMITTING_DELAYS_NS = {
+    'pulse_shaping_chopper2': 45_600_000.0,
+    'overlap_chopper': 17_200_000.0,
+}
+
+
+def _events_across_one_frame(count: int = 200) -> sc.DataArray:
+    """Binned events spanning a pulse, in the shape ``ToNXevent_data`` hands over.
+
+    Spread across the whole frame so some fall in whatever window the cascade
+    leaves open; events bunched at the start of the frame convert to NaN under
+    any realistic phasing and would say nothing about the table.
+    """
+    toa = sc.linspace('event', 0.0, 1e9 / 14.0, count, unit='ns')
+    events = sc.DataArray(
+        data=sc.ones(sizes={'event': count}, dtype='float64', unit='counts'),
+        coords={'event_time_offset': toa},
+    )
+    sizes = sc.array(dims=['event_time_zero'], values=[count], unit=None, dtype='int64')
+    return sc.DataArray(
+        sc.bins(begin=sc.cumsum(sizes, mode='exclusive'), dim='event', data=events)
+    )
+
+
+def _detector_events_across_one_frame(count: int = 200) -> sc.DataArray:
+    """Like :func:`_events_across_one_frame`, but hitting one detector pixel.
+
+    Carries the pulse time as ``ToNXevent_data`` does, which converting at a
+    pulse stride above one needs.
+    """
+    constituents = _events_across_one_frame(count).bins.constituents
+    events = constituents['data'].copy()
+    # First pixel of DREAM's high-resolution bank.
+    events.coords['event_id'] = sc.full(
+        dims=['event'], shape=[count], value=1122337, unit=None, dtype='int32'
+    )
+    binned = sc.DataArray(
+        sc.bins(
+            begin=constituents['begin'],
+            end=constituents['end'],
+            dim='event',
+            data=events,
+        )
+    )
+    binned.coords['event_time_zero'] = sc.datetimes(
+        dims=['event_time_zero'], values=['2026-09-10T08:00:00'], unit='ns'
+    )
+    return binned
+
+
+def _run_lut_job(instrument: Instrument, speeds: dict[str, float] | None = None):
+    """Run the lookup-table job once and return its result.
+
+    ``speeds`` overrides individual chopper rotation-speed setpoints; the rest
+    run at the source frequency.
+    """
+    speeds = speeds or {}
     job = _create_job(instrument, 'wavelength_lut', CHOPPER_CASCADE_SOURCE)
     aux = {}
     for chopper in instrument.choppers:
         aux[speed_setpoint_stream(chopper)] = _nxlog(
-            14.0, instrument.streams[speed_setpoint_stream(chopper)].units
+            speeds.get(chopper, 14.0),
+            instrument.streams[speed_setpoint_stream(chopper)].units,
         )
         aux[delay_setpoint_stream(chopper)] = _nxlog(
-            0.0, instrument.streams[delay_setpoint_stream(chopper)].units
+            _TRANSMITTING_DELAYS_NS.get(chopper, 0.0),
+            instrument.streams[delay_setpoint_stream(chopper)].units,
         )
     data = JobData(
         start_time=Timestamp.from_ns(0),
@@ -125,15 +192,15 @@ def _run_lut_job(instrument: Instrument):
     return result
 
 
-@pytest.fixture(scope='module')
-def ingested(dream: Instrument) -> dict[str, sc.DataArray]:
-    """The group tables as they arrive at a consuming service."""
-    result = _run_lut_job(dream)
-    messages = ContextOutputExtractor(registry=dream.workflow_factory).extract([result])
-    serializer = make_default_sink_serializer(instrument='dream')
+def _ingest(instrument: Instrument, result) -> dict[str, sc.DataArray]:
+    """Put a lookup-table result on the wire and take it off again."""
+    messages = ContextOutputExtractor(registry=instrument.workflow_factory).extract(
+        [result]
+    )
+    serializer = make_default_sink_serializer(instrument=instrument.name)
     adapter = (
         RoutingAdapterBuilder(
-            stream_mapping=get_stream_mapping(instrument='dream', dev=True)
+            stream_mapping=get_stream_mapping(instrument=instrument.name, dev=True)
         )
         .with_livedata_context_route()
         .build()
@@ -147,6 +214,12 @@ def ingested(dream: Instrument) -> dict[str, sc.DataArray]:
         assert received.stream.kind == StreamKind.LIVEDATA_CONTEXT
         out[received.stream.name] = received.value
     return out
+
+
+@pytest.fixture(scope='module')
+def ingested(dream: Instrument) -> dict[str, sc.DataArray]:
+    """The group tables as they arrive at a consuming service."""
+    return _ingest(dream, _run_lut_job(dream))
 
 
 def test_publishes_one_table_per_group(ingested: dict[str, sc.DataArray]) -> None:
@@ -248,41 +321,144 @@ def test_wavelength_job_gates_on_its_table_and_toa_job_does_not(
     assert wavelength.gating_streams == {MONITOR_STREAM}
 
 
+def _run_wavelength_monitor_job(
+    instrument: Instrument, table: sc.DataArray
+) -> tuple[JobReply, JobResult]:
+    """Feed one frame of monitor events to a wavelength-mode monitor job."""
+    params_model = _params_model(instrument, 'monitor_histogram')
+    job = _create_job(
+        instrument,
+        'monitor_histogram',
+        MONITOR,
+        params_model(coordinate_mode=CoordinateModeSettings(mode='wavelength')),
+    )
+    data = JobData(
+        start_time=Timestamp.from_ns(0),
+        end_time=Timestamp.from_ns(1),
+        primary_data={MONITOR: _events_across_one_frame()},
+        aux_data={MONITOR_STREAM: table},
+    )
+    return job.process(data, finalize=True)
+
+
 def test_wavelength_monitor_job_consumes_the_streamed_table(
     dream: Instrument, ingested: dict[str, sc.DataArray]
 ) -> None:
     """The whole chain: a job created in wavelength mode takes the table that
     came off the wire as context and reduces with it, with no file anywhere."""
-    params_model = _params_model(dream, 'monitor_histogram')
-    job = _create_job(
-        dream,
-        'monitor_histogram',
-        MONITOR,
-        params_model(coordinate_mode=CoordinateModeSettings(mode='wavelength')),
-    )
-
-    assert job.gating_streams == {MONITOR_STREAM}
-
-    # Binned events in the shape ToNXevent_data hands to the workflow.
-    toa = sc.array(dims=['event'], values=[1.0, 2.0, 3.0, 4.0], unit='ns')
-    weights = sc.ones(sizes={'event': 4}, dtype='float64', unit='counts')
-    events = sc.DataArray(data=weights, coords={'event_time_offset': toa})
-    sizes = sc.array(dims=['event_time_zero'], values=[4], unit=None, dtype='int64')
-    binned = sc.DataArray(
-        sc.bins(begin=sc.cumsum(sizes, mode='exclusive'), dim='event', data=events)
-    )
-    data = JobData(
-        start_time=Timestamp.from_ns(0),
-        end_time=Timestamp.from_ns(1),
-        primary_data={MONITOR: binned},
-        aux_data={MONITOR_STREAM: ingested[MONITOR_STREAM]},
-    )
-
-    reply, result = job.process(data, finalize=True)
+    reply, result = _run_wavelength_monitor_job(dream, ingested[MONITOR_STREAM])
 
     assert not reply.has_error, reply.error_message
     assert result.error_message is None, result.error_message
     assert result.data['cumulative'].unit == 'counts'
+    # Events were actually converted, not dropped as NaN. Without this the test
+    # passes on a table that assigns no wavelength at all, which is what it did
+    # while the cascade was closed.
+    assert result.data['cumulative'].sum().value > 0
+
+
+def _run_wavelength_detector_view(
+    instrument: Instrument, table: sc.DataArray
+) -> tuple[JobReply, JobResult]:
+    """Feed one frame of detector events to a wavelength-mode detector view.
+
+    The job is driven directly, so the cold-start context the ``JobManager``
+    would deliver (the empty ROI requests) is fed alongside the table.
+    """
+    params_model = _params_model(instrument, 'detector_projection')
+    job = _create_job(
+        instrument,
+        'detector_projection',
+        DETECTOR,
+        params_model(coordinate_mode=CoordinateModeSettings(mode='wavelength')),
+    )
+    data = JobData(
+        start_time=Timestamp.from_ns(0),
+        end_time=Timestamp.from_ns(1),
+        primary_data={DETECTOR: _detector_events_across_one_frame(count=200)},
+        aux_data={
+            **instrument.bound_context_defaults(
+                _spec_id(instrument, 'detector_projection'), DETECTOR
+            ),
+            DETECTOR_STREAM: table,
+        },
+    )
+    return job.process(data, finalize=True)
+
+
+def test_wavelength_detector_view_counts_only_events_with_a_wavelength(
+    dream: Instrument, ingested: dict[str, sc.DataArray]
+) -> None:
+    """A detector view over the full wavelength range still omits events the
+    table assigns no wavelength, unlike a time-of-arrival view, which shows
+    them all."""
+    reply, result = _run_wavelength_detector_view(dream, ingested[DETECTOR_STREAM])
+
+    assert not reply.has_error, reply.error_message
+    assert 0 < result.data['counts_total'].value < 200
+
+
+def test_chopper_out_of_phase_empties_the_consumer(dream: Instrument) -> None:
+    """The out-of-phase mechanism in isolation, end to end (#1309).
+
+    Every other chopper runs at the source frequency, so the 5 Hz overlap
+    chopper is the only reason the table blocks; see
+    ``test_dream_prod_setpoints_empty_the_consumer`` for the configuration as
+    actually observed.
+
+    An overlap chopper at 5 Hz cannot be phase-locked to a 14 Hz source. The
+    lookup-table job publishes a table that lets nothing through rather than
+    raising, so the consumer replaces the table it had and keeps publishing
+    with no counts: the same result as an opening too narrow to catch any
+    neutrons.
+    """
+    table = _ingest(dream, _run_lut_job(dream, speeds={'overlap_chopper': 5.0}))
+
+    reply, result = _run_wavelength_monitor_job(dream, table[MONITOR_STREAM])
+
+    assert not reply.has_error, reply.error_message
+    assert result.error_message is None, result.error_message
+    assert result.data['current'].sum().value == 0
+
+
+#: DREAM's rotation-speed setpoints as the timeseries service received them on
+#: 2026-09-10 (#1309), in Hz. Two faults at once: the overlap chopper is not
+#: phase-locked to the 14 Hz source, and the T0 chopper is parked.
+_DREAM_PROD_SPEEDS = {
+    'pulse_shaping_chopper1': 7.0,
+    'pulse_shaping_chopper2': 7.0,
+    'band_chopper': 14.0,
+    'overlap_chopper': 5.0,
+    'T0_chopper': 0.0,
+}
+
+
+def test_dream_prod_setpoints_empty_the_consumer(dream: Instrument) -> None:
+    """DREAM's PROD failure at the setpoints actually observed (#1309).
+
+    The parked T0 chopper blanks the table from its own distance downstream on
+    its own, independently of the overlap chopper, so repairing the phasing
+    alone would not make this configuration reduce. Both faults are named in
+    the log, which is the only thing that distinguishes them once the table is
+    all-NaN either way.
+
+    Consumed by a detector view rather than a monitor job: the pulse-shaping
+    choppers at 7 Hz make the pulse stride 2, and a wavelength-mode monitor job
+    cannot convert at a stride above one because its events do not carry
+    ``event_time_zero``.
+    """
+    with capture_logs() as captured:
+        result = _run_lut_job(dream, speeds=_DREAM_PROD_SPEEDS)
+    events = {entry['event'] for entry in captured}
+    assert 'choppers_out_of_phase_with_source' in events
+    assert 'choppers_stopped' in events
+
+    table = _ingest(dream, result)
+    reply, result = _run_wavelength_detector_view(dream, table[DETECTOR_STREAM])
+
+    assert not reply.has_error, reply.error_message
+    assert result.error_message is None, result.error_message
+    assert result.data['current'].sum().value == 0
 
 
 @pytest.fixture(scope='module')
