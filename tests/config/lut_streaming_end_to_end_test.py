@@ -360,7 +360,11 @@ def test_wavelength_monitor_job_consumes_the_streamed_table(
 def _run_wavelength_detector_view(
     instrument: Instrument, table: sc.DataArray
 ) -> tuple[JobReply, JobResult]:
-    """Feed one frame of detector events to a wavelength-mode detector view."""
+    """Feed one frame of detector events to a wavelength-mode detector view.
+
+    The job is driven directly, so the cold-start context the ``JobManager``
+    would deliver (the empty ROI requests) is fed alongside the table.
+    """
     params_model = _params_model(instrument, 'detector_projection')
     job = _create_job(
         instrument,
@@ -372,7 +376,12 @@ def _run_wavelength_detector_view(
         start_time=Timestamp.from_ns(0),
         end_time=Timestamp.from_ns(1),
         primary_data={DETECTOR: _detector_events_across_one_frame(count=200)},
-        aux_data={DETECTOR_STREAM: table},
+        aux_data={
+            **instrument.bound_context_defaults(
+                _spec_id(instrument, 'detector_projection'), DETECTOR
+            ),
+            DETECTOR_STREAM: table,
+        },
     )
     return job.process(data, finalize=True)
 
