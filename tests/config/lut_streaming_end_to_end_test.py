@@ -422,8 +422,8 @@ def test_chopper_out_of_phase_empties_the_consumer(dream: Instrument) -> None:
 
 
 #: DREAM's rotation-speed setpoints as the timeseries service received them on
-#: 2026-09-10 (#1309), in Hz. Two faults at once: the overlap chopper is not
-#: phase-locked to the 14 Hz source, and the T0 chopper is parked.
+#: 2026-09-10 (#1309), in Hz. The overlap chopper is not phase-locked to the
+#: 14 Hz source, and the T0 chopper is parked.
 _DREAM_PROD_SPEEDS = {
     'pulse_shaping_chopper1': 7.0,
     'pulse_shaping_chopper2': 7.0,
@@ -436,11 +436,9 @@ _DREAM_PROD_SPEEDS = {
 def test_dream_prod_setpoints_empty_the_consumer(dream: Instrument) -> None:
     """DREAM's PROD failure at the setpoints actually observed (#1309).
 
-    The parked T0 chopper blanks the table from its own distance downstream on
-    its own, independently of the overlap chopper, so repairing the phasing
-    alone would not make this configuration reduce. Both faults are named in
-    the log, which is the only thing that distinguishes them once the table is
-    all-NaN either way.
+    essreduce treats the parked T0 chopper as open, so it is the overlap
+    chopper that empties the table. Both are named in the log: whether a parked
+    disc really sits open is not knowable from its speed (#1312).
 
     Consumed by a detector view rather than a monitor job: the pulse-shaping
     choppers at 7 Hz make the pulse stride 2, and a wavelength-mode monitor job
