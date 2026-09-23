@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Any
 
 import h5py
 import numpy as np
@@ -20,8 +21,8 @@ from ess.livedata.config.chopper import delay_setpoint_stream, speed_setpoint_st
 from ess.livedata.kafka.scipp_da00_compat import da00_to_scipp, scipp_to_da00
 from ess.livedata.workflows.wavelength_lut_workflow import (
     create_wavelength_lut_workflow,
+    log_processed_disk_choppers,
     make_chopper_setpoint_keys,
-    shut_choppers_out_of_phase,
 )
 from ess.livedata.workflows.wavelength_lut_workflow_specs import (
     CHOPPER_CASCADE_SOURCE,
@@ -320,73 +321,46 @@ def _disk_chopper(frequency: float) -> DiskChopper:
     )
 
 
-class TestShutChoppersOutOfPhase:
-    """Substitution of choppers the source cannot be phase-locked to; the
-    function's docstring has the rationale."""
+class TestLogProcessedDiskChoppers:
+    """essreduce shuts or drops these choppers; the log is what names them."""
 
     PULSE_PERIOD = sc.scalar(1 / 14, unit='s')
 
+    def _logged(self, choppers: dict[str, DiskChopper]) -> dict[str, Any]:
+        with capture_logs() as captured:
+            log_processed_disk_choppers(choppers, self.PULSE_PERIOD)
+        return {entry['event']: entry['choppers'] for entry in captured}
+
     @pytest.mark.parametrize('frequency', [14.0, -14.0, 7.0, 28.0, 14 / 3])
-    def test_phase_locked_chopper_is_untouched(self, frequency: float) -> None:
+    def test_phase_locked_chopper_is_not_reported(self, frequency: float) -> None:
         # A whole number of turns per pulse, or of pulses per turn. Sign is the
         # direction of rotation and says nothing about phase.
-        choppers = sc.DataGroup({'ch': _disk_chopper(frequency)})
-
-        result = shut_choppers_out_of_phase(choppers, self.PULSE_PERIOD)
-
-        assert_identical(result['ch'].slit_begin, choppers['ch'].slit_begin)
-        assert_identical(result['ch'].frequency, choppers['ch'].frequency)
+        assert self._logged({'ch': _disk_chopper(frequency)}) == {}
 
     @pytest.mark.parametrize('frequency', [5.0, -5.0, 20.0])
-    def test_out_of_phase_chopper_loses_its_slits(self, frequency: float) -> None:
-        choppers = sc.DataGroup({'ch': _disk_chopper(frequency)})
+    def test_out_of_phase_chopper_is_reported(self, frequency: float) -> None:
+        logged = self._logged({'ch': _disk_chopper(frequency)})
 
-        result = shut_choppers_out_of_phase(choppers, self.PULSE_PERIOD)
-
-        assert result['ch'].slit_begin.sizes == {'slit': 0}
-        assert result['ch'].slit_end.sizes == {'slit': 0}
-        # Retimed to the source so essreduce's own phase check passes; with no
-        # slits the rate it turns at changes nothing.
-        assert result['ch'].frequency.value == pytest.approx(14.0)
-
-    def test_stopped_chopper_is_left_alone(self) -> None:
-        # essreduce reads a zero rotation speed as an inactive chopper, and
-        # whether a parked disc blocks the beam or sits open is not knowable
-        # from its speed (#1312).
-        choppers = sc.DataGroup({'ch': _disk_chopper(0.0)})
-
-        result = shut_choppers_out_of_phase(choppers, self.PULSE_PERIOD)
-
-        assert_identical(result['ch'].slit_begin, choppers['ch'].slit_begin)
+        assert logged == {'choppers_out_of_phase_with_source': {'ch': frequency}}
 
     def test_stopped_chopper_is_reported(self) -> None:
-        # Left alone but not passed over in silence: a disc at 0 Hz blanks the
-        # table downstream of itself just as a shut one does, so without this
-        # the consumers stop with nothing naming the cause.
-        choppers = sc.DataGroup({'parked': _disk_chopper(0.0)})
+        logged = self._logged({'parked': _disk_chopper(0.0)})
 
-        with capture_logs() as captured:
-            shut_choppers_out_of_phase(choppers, self.PULSE_PERIOD)
+        assert logged == {'choppers_stopped': ['parked']}
 
-        assert [entry for entry in captured if entry['event'] == 'choppers_stopped']
-
-    def test_a_turning_cascade_reports_nothing(self) -> None:
-        choppers = sc.DataGroup({'ch': _disk_chopper(14.0)})
-
-        with capture_logs() as captured:
-            shut_choppers_out_of_phase(choppers, self.PULSE_PERIOD)
-
-        assert captured == []
-
-    def test_only_the_offending_chopper_is_shut(self) -> None:
-        choppers = sc.DataGroup(
-            {'locked': _disk_chopper(-14.0), 'loose': _disk_chopper(-5.0)}
+    def test_only_the_offending_choppers_are_named(self) -> None:
+        logged = self._logged(
+            {
+                'locked': _disk_chopper(-14.0),
+                'loose': _disk_chopper(-5.0),
+                'parked': _disk_chopper(0.0),
+            }
         )
 
-        result = shut_choppers_out_of_phase(choppers, self.PULSE_PERIOD)
-
-        assert result['locked'].slit_begin.sizes == {'slit': 1}
-        assert result['loose'].slit_begin.sizes == {'slit': 0}
+        assert logged == {
+            'choppers_stopped': ['parked'],
+            'choppers_out_of_phase_with_source': {'loose': -5.0},
+        }
 
 
 class TestMultiChopperWorkflow:
@@ -409,7 +383,7 @@ class TestMultiChopperWorkflow:
         self, two_chopper_geometry: Path
     ) -> None:
         # 5 Hz cannot be phase-locked to a 14 Hz source; see
-        # shut_choppers_out_of_phase for why the table blocks instead of the
+        # log_processed_disk_choppers for why the table blocks instead of the
         # job raising.
         table = _run_chopper_lut(
             two_chopper_geometry,

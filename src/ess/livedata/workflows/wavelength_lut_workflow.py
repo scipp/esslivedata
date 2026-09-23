@@ -28,7 +28,6 @@ An instrument with no choppers simply supplies a geometry artifact whose
 
 from __future__ import annotations
 
-import dataclasses
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any, NewType
@@ -49,13 +48,14 @@ from ess.reduce.unwrap import GenericUnwrapWorkflow
 from ess.reduce.unwrap.lut import (
     ChopperFrameSequence,
     DistanceResolution,
+    ProcessedDiskChoppers,
     PulsePeriod,
     PulseStride,
     TimeResolution,
     _estimate_wavelength_by_polygon_centers,
     make_wavelength_lut_from_polygons,
+    process_disk_choppers,
 )
-from scippneutron.chopper import DiskChopper
 
 from ..config.chopper import delay_setpoint_stream, speed_setpoint_stream
 from ..config.stream import AxisRange
@@ -134,105 +134,53 @@ def _latest(container: sc.DataArray) -> sc.Variable:
     return container['time', -1].data
 
 
-def _is_whole(value: float, *, rtol: float = 1e-8) -> bool:
-    return abs(value - round(value)) <= rtol * max(1.0, abs(value))
-
-
-def _shut(chopper: DiskChopper, pulse_frequency: sc.Variable) -> DiskChopper:
-    """The same chopper, retimed to the source and with no slits, so nothing passes.
-
-    Retiming does two things: the substitute passes essreduce's own phase check
-    whatever pulse stride is in force, and it drops out of essreduce's
-    pulse-stride guess, which the original frequency would inflate (5 Hz
-    against 14 Hz guesses a stride of 3). With no slits, the rate it turns at
-    changes nothing else.
-    """
-
-    def _no_slits(field: sc.Variable | None) -> sc.Variable | None:
-        # slit_height is optional; a chopper that declares none keeps none.
-        return (
-            None
-            if field is None
-            else sc.array(dims=['slit'], values=[], unit=field.unit)
-        )
-
-    return dataclasses.replace(
-        chopper,
-        frequency=pulse_frequency.to(unit=chopper.frequency.unit),
-        slit_begin=_no_slits(chopper.slit_begin),
-        slit_end=_no_slits(chopper.slit_end),
-        slit_height=_no_slits(chopper.slit_height),
-    )
-
-
-def shut_choppers_out_of_phase(
+def log_processed_disk_choppers(
     choppers: DiskChoppers[AnyRun], pulse_period: PulsePeriod
-) -> DiskChoppers[AnyRun]:
-    """Replace every chopper not phase-locked to the source with a shut one.
+) -> ProcessedDiskChoppers[AnyRun]:
+    """essreduce's :func:`~ess.reduce.unwrap.lut.process_disk_choppers`, logging
+    every chopper it changed.
 
-    A chopper is phase-locked when it turns a whole number of times per pulse
-    or the source pulses a whole number of times per rotation. This is the
-    per-chopper condition. The cascade condition -- every chopper completes a
-    whole number of turns per frame period, i.e. ``|f| * pulse_stride *
-    pulse_period`` is whole -- needs the stride, which essreduce derives from
-    the choppers this function returns. The per-chopper check therefore lets a
-    few cascades through that essreduce rejects (14/3 Hz alongside 14/4 Hz), and
-    what essreduce rejects follows its chopper-rotation count, which this check
-    must track. Moving the condition and the substitution upstream is proposed
-    in scipp/ess#751; this function then reduces to a parameter and logging.
+    essreduce drops a stopped chopper, i.e. treats it as open, and replaces a
+    chopper not phase-locked to the source with one that has no slits. A
+    chopper that is not phase-locked transmits a different band on every
+    pulse, so no single table describes it. Blocking it publishes a table that
+    lets nothing through from that distance on. Consumers then replace their
+    table and publish no counts for neutrons whose wavelength cannot be
+    assigned, instead of reducing with the table they held from before the
+    choppers moved. Neutrons do pass such a chopper; blocking states what we
+    know, not what the beam does.
 
-    A chopper that fails the check transmits a different band on every pulse,
-    so no single table describes it, and scippneutron refuses to compute its
-    opening times. Letting that raise would publish nothing, leaving every
-    consumer reducing with the table it was last given, from before the
-    choppers moved. Substituting a disc that never opens publishes a table that
-    lets nothing through from that distance on: consumers replace their table
-    and go on publishing, with no counts for neutrons whose wavelength cannot
-    be assigned. Neutrons do pass such a chopper; blocking states what we know,
-    not what the beam does. The bands output shows the cut as an all-NaN row
-    at the chopper's distance.
+    A blocked table looks like a quiet beam on the plots, so the log is where
+    the cause is named. The bands output shows the cut as an all-NaN row at the
+    chopper's distance. Whether a parked disc really sits open is not knowable
+    from its speed (#1312), so stopped choppers are logged as well.
 
-    Stopped choppers are left alone but reported. Whether a parked disc blocks
-    the beam or sits open is not knowable from its speed (#1312), and the
-    cascade does not survive it either way: a disc at 0 Hz opens over
-    ``[-inf, inf]`` and closes over ``[nan, inf]``, which blanks the table
-    downstream exactly as a shut chopper would. The log line is what
-    distinguishes a parked disc from a chopper this function shut.
+    The changed choppers are found by comparing input and output rather than
+    by repeating essreduce's phase condition: a chopper missing from the output
+    was stopped, one that lost its slits was shut.
     """
-    pulse_frequency = (1.0 / pulse_period.to(unit='s')).to(unit='Hz')
-    out_of_phase = {}
-    stopped = []
-    for name, chopper in choppers.items():
-        frequency = abs(chopper.frequency.to(unit='Hz'))
-        if frequency.value == 0.0:
-            stopped.append(name)
-            continue
-        quotient = (frequency / pulse_frequency).value
-        if not _is_whole(quotient) and not _is_whole(1.0 / quotient):
-            out_of_phase[name] = frequency.value
+    processed = process_disk_choppers(choppers, pulse_period)
+    stopped = [name for name in choppers if name not in processed]
+    shut = {
+        name: chopper.frequency.to(unit='Hz').value
+        for name, chopper in choppers.items()
+        if name in processed
+        and processed[name].slit_begin.size == 0 < chopper.slit_begin.size
+    }
+    pulse_frequency_hz = (1.0 / pulse_period.to(unit='s')).value
     if stopped:
         logger.warning(
             'choppers_stopped',
             choppers=stopped,
-            pulse_frequency_hz=pulse_frequency.value,
+            pulse_frequency_hz=pulse_frequency_hz,
         )
-    if not out_of_phase:
-        return choppers
-    logger.warning(
-        'choppers_out_of_phase_with_source',
-        choppers=out_of_phase,
-        pulse_frequency_hz=pulse_frequency.value,
-    )
-    return DiskChoppers[AnyRun](
-        sc.DataGroup(
-            {
-                name: _shut(chopper, pulse_frequency)
-                if name in out_of_phase
-                else chopper
-                for name, chopper in choppers.items()
-            }
+    if shut:
+        logger.warning(
+            'choppers_out_of_phase_with_source',
+            choppers=shut,
+            pulse_frequency_hz=pulse_frequency_hz,
         )
-    )
+    return processed
 
 
 def build_disk_choppers_provider(
@@ -249,8 +197,6 @@ def build_disk_choppers_provider(
     chopper, including the default zero ``beam_position`` for ESS files) to
     essreduce's :func:`~ess.reduce.nexus.workflow.to_disk_choppers`. Producing
     ``DiskChoppers`` directly replaces the workflow's own call to that provider.
-    A chopper the setpoints put out of phase with the source is substituted by a
-    shut one on the way out; see :func:`shut_choppers_out_of_phase`.
 
     The arity is fixed at synthesis time from ``setpoint_keys``; sciline reads a
     provider's ``__code__`` and ignores ``__signature__``, so a real function
@@ -266,10 +212,7 @@ def build_disk_choppers_provider(
     order = [(name, quantity) for name in names for quantity in ('speed', 'delay')]
 
     def _impl(
-        raw_choppers: sc.DataGroup,
-        _trigger: Any,
-        pulse_period: PulsePeriod,
-        *containers: sc.DataArray,
+        raw_choppers: sc.DataGroup, _trigger: Any, *containers: sc.DataArray
     ) -> DiskChoppers[AnyRun]:
         latest: dict[tuple[str, str], sc.Variable] = {
             key: _latest(container)
@@ -281,13 +224,11 @@ def build_disk_choppers_provider(
             merged['rotation_speed_setpoint'] = latest[name, 'speed']
             merged['delay'] = latest[name, 'delay']
             patched[name] = merged
-        choppers = to_disk_choppers(RawChoppers[AnyRun](sc.DataGroup(patched)))
-        return shut_choppers_out_of_phase(choppers, pulse_period)
+        return to_disk_choppers(RawChoppers[AnyRun](sc.DataGroup(patched)))
 
     annotations: dict[str, Any] = {
         'raw_choppers': RawChoppers[AnyRun],
         'trigger': ChopperCascadeTrigger,
-        'pulse_period': PulsePeriod,
     }
     for name in names:
         annotations[f'speed_{name}'] = setpoint_keys[name].speed
@@ -456,6 +397,7 @@ def _build_pipeline(params: WavelengthLutParams) -> sciline.Pipeline:
     # Per-component diagnostic evaluated at exact chopper distances, sidestepping
     # the table's distance resolution. Reuses the analytical ChopperFrameSequence.
     wf.insert(make_wavelength_bands_from_frames)
+    wf.insert(log_processed_disk_choppers)
     return wf
 
 
