@@ -295,8 +295,11 @@ class CellAutoscaleController:
             self._active[axis] = new
             for tools in list(self._figure_tools.values()):
                 toggle = tools.toggles[axis]
-                toggle.active = new
-                toggle.icon = icons[new]
+                # The clicked toggle already shows the state; its client sets
+                # the icon itself, and a server write would only echo it back.
+                if toggle.active != new:
+                    toggle.active = new
+                    toggle.icon = icons[new]
 
         return handler
 
