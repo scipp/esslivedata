@@ -551,12 +551,13 @@ class TestToggleStateAcrossFigures:
 
     def test_toggle_in_one_figure_shows_in_the_other(self, figures) -> None:
         _plotter, _hook, first, second = figures
+        other = _tool(second, _TOGGLE['x'])
+        on_icon = other.icon
 
         _click_toggle(first, 'x')
 
-        other = _tool(second, _TOGGLE['x'])
         assert other.active is False
-        assert other.icon == _tool(first, _TOGGLE['x']).icon
+        assert other.icon != on_icon
         assert _tool(second, _TOGGLE['y']).active is True
 
     def test_toggle_in_one_figure_freezes_both(self, figures) -> None:
