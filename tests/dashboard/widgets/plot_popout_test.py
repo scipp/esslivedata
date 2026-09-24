@@ -227,13 +227,12 @@ class TestPopoutRendersTheCellsPlotAgain:
         window = _open_windows(plot_grid_tabs)[0]
         assert _rendered_plot(window) is cell_widget._plot
 
-    def test_both_toolbars_get_the_same_autoscale_tools(
-        self, plot_grid_tabs, line_cell
-    ):
+    def test_both_toolbars_get_autoscale_tools(self, plot_grid_tabs, line_cell):
         """Tools install per figure, so neither toolbar goes bare.
 
-        Both toolbars get the *same* tool models: that identity is what makes
-        a toggle flipped in the window show as flipped in the cell.
+        Each toolbar gets tool models of its own: BokehJS runs a tool's click
+        callback once per figure holding it, so a toggle shared by two
+        toolbars flips twice per click and never changes.
         """
         plot = plot_grid_tabs._cells[line_cell]._plot
 
@@ -242,7 +241,8 @@ class TestPopoutRendersTheCellsPlotAgain:
 
         assert _FIT in cell_tools
         assert cell_tools.keys() > {_FIT}  # at least one axis toggle too
-        assert cell_tools == popout_tools
+        assert cell_tools.keys() == popout_tools.keys()
+        assert all(popout_tools[name] is not cell_tools[name] for name in cell_tools)
 
     def test_toggling_autoscale_in_one_view_shows_in_the_other(
         self, plot_grid_tabs, line_cell
