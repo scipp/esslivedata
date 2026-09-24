@@ -7,17 +7,21 @@ appear on a plot cell's toolbar (one per autoscalable axis, plus one for Fit)
 and on each HoloViews render writes per-axis ranges based on the toggle state.
 
 One cell can be rendered into several figures at once -- its grid cell and a
-pop-out window (``widgets/plot_popout.py``). They share one controller and one
-set of tool models, so the toolbars show a single toggle state: turning
-autoscale off in the pop-out turns it off in the cell too. Anything the
-controller tracks per render is therefore keyed by figure.
+pop-out window (``widgets/plot_popout.py``). They share one controller, which
+holds a single toggle state per axis: turning autoscale off in the pop-out
+turns it off in the cell too. Each figure nevertheless gets its *own* tool
+models, which the controller keeps in step. A tool model must not sit in two
+toolbars: BokehJS creates one tool view per figure, every view runs the tool's
+``CustomJS`` on a click, and a toggle flipped once per figure ends up where it
+started. Anything the controller tracks per render is keyed by figure.
 """
 
 from __future__ import annotations
 
 from collections.abc import Callable
+from dataclasses import dataclass
 from typing import Any
-from weakref import WeakSet
+from weakref import WeakKeyDictionary, WeakSet
 
 import structlog
 
@@ -42,6 +46,16 @@ def _union(
     if b is None:
         return a
     return (min(a[0], b[0]), max(a[1], b[1]))
+
+
+def _toggle_icons(axis: Axis) -> dict[bool, str]:
+    """A toggle's icon when autoscale is on (``True``) and off (``False``)."""
+    from .widgets.icons import get_icon_data_uri
+
+    return {
+        True: get_icon_data_uri(f'autoscale-{axis}-on'),
+        False: get_icon_data_uri(f'autoscale-{axis}'),
+    }
 
 
 def _make_toggle_action(
@@ -87,13 +101,22 @@ def _make_fit_action(*, description: str, icon: str | None) -> Any:
     return tool
 
 
+@dataclass(frozen=True)
+class _FigureTools:
+    """The autoscale tools on one figure's toolbar."""
+
+    toggles: dict[Axis, Any]
+    fit: Any
+
+
 class CellAutoscaleController:
     """Per-cell, per-session controller for axis autoscale toggles + Fit.
 
-    Owns one Bokeh ``CustomAction`` per autoscalable axis (toggle) plus one
-    for Fit. Exposes a single HoloViews-compatible hook that installs the
-    tools on every figure the cell renders into and on each render writes
-    that figure's per-axis ranges based on each toggle's ``.active``.
+    Installs one Bokeh ``CustomAction`` per autoscalable axis (toggle) plus
+    one for Fit on every figure the cell renders into, via a single
+    HoloViews-compatible hook. On each render the hook writes that figure's
+    per-axis ranges based on the cell's toggle state, which a click on any
+    figure's toggle sets for all of them.
 
     Toggles default to ``True`` so the very first render with real data snaps
     the range away from the pipe's dummy bounds (strategy §4.5).
@@ -110,15 +133,22 @@ class CellAutoscaleController:
         self._axes: frozenset[Axis] = frozenset().union(
             *(plotter.autoscale_axes for plotter in self._plotters)
         )
-        # Lazy-created on first render so each session's tools live in the
-        # session's own Bokeh document (see dashboard-widgets rules). The
-        # models are shared by every figure this cell renders into, which is
-        # what keeps their toggle states in step.
-        self._toggles: dict[Axis, Any] = {}
-        self._fit_tool: Any | None = None
-        # Figures this cell renders into, as seen by the hook. Only the Fit
-        # handler needs it -- installation keys on the toolbar itself.
-        self._figures: WeakSet = WeakSet()
+        # The cell's toggle state, shown by every figure's toggle of the axis.
+        self._active: dict[Axis, bool] = dict.fromkeys(self._axes, True)
+        # Toggle icon per axis and state.
+        self._toggle_icons: dict[Axis, dict[bool, str]] = {
+            axis: _toggle_icons(axis) for axis in self._axes
+        }
+        # One change handler per axis, shared by that axis's toggles on every
+        # figure, so dispose() can detach them by identity.
+        self._toggle_handlers: dict[Axis, Callable[[str, bool, bool], None]] = {
+            axis: self._make_toggle_handler(axis) for axis in self._axes
+        }
+        # Figures this cell renders into, as seen by the hook, with the tools
+        # installed on each. Created on first render so each session's tools
+        # live in the session's own Bokeh document (see dashboard-widgets
+        # rules).
+        self._figure_tools: WeakKeyDictionary[Any, _FigureTools] = WeakKeyDictionary()
         # Last target written per axis. Read back on subsequent off-state
         # renders so the c-axis freeze has a stable value to apply.
         self._last_targets: dict[Axis, tuple[float, float]] = {}
@@ -186,31 +216,28 @@ class CellAutoscaleController:
         reference cycle so long sessions don't accumulate detached
         controllers when cells are rebuilt or removed.
         """
-        if self._fit_tool is not None:
-            try:
-                self._fit_tool.remove_on_change('active', self._on_fit_active_change)
-            except (ValueError, KeyError):
-                # Already removed, or stub without remove_on_change.
-                pass
-        self._toggles = {}
-        self._fit_tool = None
-        self._figures.clear()
+        for tools in self._figure_tools.values():
+            tools.fit.remove_on_change('active', self._on_fit_active_change)
+            for axis, toggle in tools.toggles.items():
+                toggle.remove_on_change('active', self._toggle_handlers[axis])
+        self._figure_tools.clear()
         self._fit_pending.clear()
 
     def _install_tools(self, plot: Any) -> None:
         """Ensure this cell's ``CustomAction`` tools are on the figure's toolbar.
 
-        Keyed on the toolbar rather than on a controller-wide latch: a cell's
-        hook is attached to the session's ``DynamicMap``, which HoloViews can
-        render into more than one Bokeh figure (a pop-out window showing the
-        cell a second time, a rebuilt cell whose previous pane is still in the
+        Per figure rather than a controller-wide latch: a cell's hook is
+        attached to the session's ``DynamicMap``, which HoloViews can render
+        into more than one Bokeh figure (a pop-out window showing the cell a
+        second time, a rebuilt cell whose previous pane is still in the
         document, a kdim/Layout figure swap). A one-shot latch let whichever
         figure rendered first consume the installation and left the figure the
         user sees with no toggles at all.
 
-        The tool models are created once and shared across figures, so the
-        toggle state a user set survives a figure swap -- and a pop-out's
-        toolbar drives, and displays, the same state as its grid cell's.
+        Each figure gets tools of its own (see the module docstring for why
+        they cannot be shared), created in the cell's current toggle state, so
+        that state survives a figure swap -- and a pop-out's toolbar drives,
+        and displays, the same state as its grid cell's.
         """
         figure = getattr(plot, 'state', None)
         toolbar = getattr(figure, 'toolbar', None)
@@ -220,39 +247,61 @@ class CellAutoscaleController:
                 "toggles will be unavailable until the next render."
             )
             return
-        # Recorded even when the tools are already there: this is the only
-        # place the controller learns which figures a Fit click has to reach.
-        self._figures.add(figure)
-        if self._fit_tool is not None and any(
-            tool is self._fit_tool for tool in toolbar.tools
-        ):
+        tools = self._figure_tools.get(figure)
+        if tools is None:
+            tools = self._figure_tools[figure] = self._create_tools()
+        elif any(tool is tools.fit for tool in toolbar.tools):
             return
-        if self._fit_tool is None:
-            self._create_tools()
         # Tools are added via assignment to keep Bokeh's property setter
         # notified; in-place append would not trigger change events.
-        toolbar.tools = [
-            *toolbar.tools,
-            *self._toggles.values(),
-            self._fit_tool,
-        ]
+        toolbar.tools = [*toolbar.tools, *tools.toggles.values(), tools.fit]
 
-    def _create_tools(self) -> None:
-        """Create the per-axis toggles and the Fit action."""
+    def _create_tools(self) -> _FigureTools:
+        """Create one figure's per-axis toggles and Fit action."""
         from .widgets.icons import get_icon_data_uri
 
+        toggles = {}
         for axis in sorted(self._axes):
-            self._toggles[axis] = _make_toggle_action(
-                active=True,
+            icons = self._toggle_icons[axis]
+            toggle = _make_toggle_action(
+                active=self._active[axis],
                 description=_TOGGLE_DESCRIPTIONS[axis],
-                on_icon=get_icon_data_uri(f'autoscale-{axis}-on'),
-                off_icon=get_icon_data_uri(f'autoscale-{axis}'),
+                on_icon=icons[True],
+                off_icon=icons[False],
             )
-        self._fit_tool = _make_fit_action(
+            toggle.on_change('active', self._toggle_handlers[axis])
+            toggles[axis] = toggle
+        fit = _make_fit_action(
             description='Fit ranges to current data',
             icon=get_icon_data_uri('arrows-minimize'),
         )
-        self._fit_tool.on_change('active', self._on_fit_active_change)
+        fit.on_change('active', self._on_fit_active_change)
+        return _FigureTools(toggles=toggles, fit=fit)
+
+    def _make_toggle_handler(self, axis: Axis) -> Callable[[str, bool, bool], None]:
+        """Bokeh server-side handler for the ``active`` property of a toggle.
+
+        A click flips one figure's toggle; the handler records the new state
+        for the cell and shows it on the axis's toggle in every other figure.
+        Those writes fire this handler again, which the state check turns into
+        a no-op.
+        """
+        icons = self._toggle_icons[axis]
+
+        def handler(attr: str, old: bool, new: bool) -> None:
+            del attr, old
+            if self._active[axis] == new:
+                return
+            self._active[axis] = new
+            for tools in list(self._figure_tools.values()):
+                toggle = tools.toggles[axis]
+                # The clicked toggle already shows the state; its client sets
+                # the icon itself, and a server write would only echo it back.
+                if toggle.active != new:
+                    toggle.active = new
+                    toggle.icon = icons[new]
+
+        return handler
 
     def _apply_targets(self, plot: Any) -> None:
         """Write current targets to handles based on toggle / Fit state.
@@ -269,9 +318,7 @@ class CellAutoscaleController:
         figure = getattr(plot, 'state', None)
         fit = figure in self._fit_pending
         for axis in self._axes:
-            toggle = self._toggles.get(axis)
-            active = fit or (toggle is not None and toggle.active)
-            if active:
+            if fit or self._active[axis]:
                 target = self.get_target(axis)
                 if target is None:
                     continue
@@ -326,17 +373,17 @@ class CellAutoscaleController:
 
         When the user clicks Fit, ``active`` flips to ``True``; every figure
         this cell renders into is marked as owing a fit, which its next hook
-        invocation honours regardless of toggle state. One click therefore
-        fits the grid cell and the pop-out alike -- they share the tool, so
-        there is only one click to observe. Robust to figure swaps between the
-        click and the next render: the hook writes through the live handles.
+        invocation honours regardless of toggle state. One click on either
+        figure's Fit therefore fits the grid cell and the pop-out alike.
+        Robust to figure swaps between the click and the next render: the hook
+        writes through the live handles.
         """
         del attr, old
         if not new:
             return
-        self._fit_pending.update(self._figures)
-        if self._fit_tool is not None:
-            self._fit_tool.active = False
+        self._fit_pending.update(self._figure_tools.keys())
+        for tools in list(self._figure_tools.values()):
+            tools.fit.active = False
 
 
 def _noop_hook(plot: Any, element: Any) -> None:
