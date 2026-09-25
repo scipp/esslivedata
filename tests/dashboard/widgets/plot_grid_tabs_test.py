@@ -28,6 +28,7 @@ from ess.livedata.dashboard.session_registry import SessionId, SessionRegistry
 from ess.livedata.dashboard.session_updater import SessionUpdater
 from ess.livedata.dashboard.theme import THEMES
 from ess.livedata.dashboard.widgets.plot_grid_tabs import PlotGridTabs
+from ess.livedata.dashboard.widgets.reload_button import ReloadButton
 from ess.livedata.dashboard.widgets.workflow_status_widget import (
     WorkflowStatusListWidget,
 )
@@ -2656,6 +2657,10 @@ class TestPhoneLayout:
     def test_desktop_session_has_no_phone_widgets(self, plot_grid_tabs):
         assert plot_grid_tabs._plot_overview is None
         assert plot_grid_tabs._orientation is None
+        assert not plot_grid_tabs.panel.select(ReloadButton)
+
+    def test_phone_session_can_reload_the_page(self, phone_tabs):
+        assert len(phone_tabs.panel.select(ReloadButton)) == 1
 
     def test_open_plot_offers_no_popout(self, plot_orchestrator, phone_tabs):
         grid_id = plot_orchestrator.add_grid(title='G', nrows=2, ncols=2)
