@@ -1,0 +1,79 @@
+# Logical wire and strip views of one DREAM bank. Pixel centres are at
+# integer indices, so unit boundaries are at k * width - 0.5.
+title: 'Wires and strips: Mantle'
+description: Mantle wire and strip views since start. Lines separate the mounting units (modules).
+nrows: 2
+ncols: 1
+cells:
+- geometry:
+    row: 0
+    col: 0
+    row_span: 1
+    col_span: 1
+  layers:
+  - data_sources:
+      primary:
+        workflow_id: dream/wire_view/1
+        view_name: image
+        source_names:
+        - mantle_detector
+    plot_name: image
+    params:
+      plot_aspect:
+        aspect_type: Free
+      time_window:
+        mode: since_start
+      plot_scale:
+        x_scale: linear
+        y_scale: linear
+        color_scale: log
+  - data_sources:
+      primary:
+        workflow_id: static/geometric/1
+        view_name: Modules
+        source_names: []
+    plot_name: hlines
+    params:
+      geometry:
+        positions: 11.5,23.5,35.5,47.5
+      style:
+        color: '#ff0000'
+        line_width: 2.5
+        line_dash: solid
+        alpha: 1.0
+- geometry:
+    row: 1
+    col: 0
+    row_span: 1
+    col_span: 1
+  layers:
+  - data_sources:
+      primary:
+        workflow_id: dream/strip_view/1
+        view_name: image
+        source_names:
+        - mantle_detector
+    plot_name: image
+    params:
+      plot_aspect:
+        aspect_type: Free
+      time_window:
+        mode: since_start
+      plot_scale:
+        x_scale: linear
+        y_scale: linear
+        color_scale: log
+  - data_sources:
+      primary:
+        workflow_id: static/geometric/1
+        view_name: Modules
+        source_names: []
+    plot_name: hlines
+    params:
+      geometry:
+        positions: 5.5,11.5,17.5,23.5
+      style:
+        color: '#ff0000'
+        line_width: 2.5
+        line_dash: solid
+        alpha: 1.0

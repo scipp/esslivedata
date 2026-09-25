@@ -1,0 +1,79 @@
+# Logical wire and strip views of one DREAM bank. Pixel centres are at
+# integer indices, so unit boundaries are at k * width - 0.5.
+title: 'Wires and strips: SANS'
+description: SANS wire and strip views since start. Lines separate the cuboids, numbered row by row from the top of the 7x7 grid.
+nrows: 2
+ncols: 1
+cells:
+- geometry:
+    row: 0
+    col: 0
+    row_span: 1
+    col_span: 1
+  layers:
+  - data_sources:
+      primary:
+        workflow_id: dream/wire_view/1
+        view_name: image
+        source_names:
+        - sans_detector
+    plot_name: image
+    params:
+      plot_aspect:
+        aspect_type: Free
+      time_window:
+        mode: since_start
+      plot_scale:
+        x_scale: linear
+        y_scale: linear
+        color_scale: log
+  - data_sources:
+      primary:
+        workflow_id: static/geometric/1
+        view_name: Cuboids
+        source_names: []
+    plot_name: vlines
+    params:
+      geometry:
+        positions: 15.5,31.5,47.5,63.5,79.5,95.5,111.5,127.5,143.5,159.5,175.5,191.5,207.5,223.5,239.5,255.5,271.5,287.5,303.5,319.5,335.5,351.5,367.5,383.5,399.5,415.5,431.5,447.5,463.5,479.5,495.5,511.5,527.5,543.5,559.5
+      style:
+        color: '#ff0000'
+        line_width: 2.0
+        line_dash: solid
+        alpha: 1.0
+- geometry:
+    row: 1
+    col: 0
+    row_span: 1
+    col_span: 1
+  layers:
+  - data_sources:
+      primary:
+        workflow_id: dream/strip_view/1
+        view_name: image
+        source_names:
+        - sans_detector
+    plot_name: image
+    params:
+      plot_aspect:
+        aspect_type: Free
+      time_window:
+        mode: since_start
+      plot_scale:
+        x_scale: linear
+        y_scale: linear
+        color_scale: log
+  - data_sources:
+      primary:
+        workflow_id: static/geometric/1
+        view_name: Cuboids
+        source_names: []
+    plot_name: vlines
+    params:
+      geometry:
+        positions: 7.5,15.5,23.5,31.5,39.5,47.5,55.5,63.5,71.5,79.5,87.5,95.5,103.5,111.5,119.5,127.5,135.5,143.5,151.5,159.5,167.5,175.5,183.5,191.5,199.5,207.5,215.5,223.5,231.5,239.5,247.5,255.5,263.5,271.5,279.5
+      style:
+        color: '#ff0000'
+        line_width: 2.0
+        line_dash: solid
+        alpha: 1.0
