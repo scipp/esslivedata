@@ -1,7 +1,7 @@
 # Logical wire and strip views of one DREAM bank. Pixel centres are at
 # integer indices, so unit boundaries are at k * width - 0.5.
-title: 'Forward endcap: wires and strips'
-description: Forward endcap wire and strip views since start. Solid lines separate sectors, dashed lines separate SUMO6 | SUMO5 | SUMO4 | SUMO3 within a sector.
+title: 'Wires and strips: Mantle'
+description: Mantle wire and strip views since start. Lines separate the mounting units (modules).
 nrows: 2
 ncols: 1
 cells:
@@ -16,7 +16,7 @@ cells:
         workflow_id: dream/wire_view/1
         view_name: image
         source_names:
-        - endcap_forward_detector
+        - mantle_detector
     plot_name: image
     params:
       plot_aspect:
@@ -30,30 +30,16 @@ cells:
   - data_sources:
       primary:
         workflow_id: static/geometric/1
-        view_name: Sectors
+        view_name: Modules
         source_names: []
-    plot_name: vlines
+    plot_name: hlines
     params:
       geometry:
-        positions: 55.5,111.5,167.5,223.5
+        positions: 11.5,23.5,35.5,47.5
       style:
         color: '#ff0000'
         line_width: 2.5
         line_dash: solid
-        alpha: 1.0
-  - data_sources:
-      primary:
-        workflow_id: static/geometric/1
-        view_name: SUMOs
-        source_names: []
-    plot_name: vlines
-    params:
-      geometry:
-        positions: 19.5,35.5,47.5,75.5,91.5,103.5,131.5,147.5,159.5,187.5,203.5,215.5,243.5,259.5,271.5
-      style:
-        color: '#ff0000'
-        line_width: 2.0
-        line_dash: dashed
         alpha: 1.0
 - geometry:
     row: 1
@@ -66,7 +52,7 @@ cells:
         workflow_id: dream/strip_view/1
         view_name: image
         source_names:
-        - endcap_forward_detector
+        - mantle_detector
     plot_name: image
     params:
       plot_aspect:
@@ -80,28 +66,14 @@ cells:
   - data_sources:
       primary:
         workflow_id: static/geometric/1
-        view_name: Sectors
+        view_name: Modules
         source_names: []
-    plot_name: vlines
+    plot_name: hlines
     params:
       geometry:
-        positions: 27.5,55.5,83.5,111.5
+        positions: 5.5,11.5,17.5,23.5
       style:
         color: '#ff0000'
         line_width: 2.5
         line_dash: solid
-        alpha: 1.0
-  - data_sources:
-      primary:
-        workflow_id: static/geometric/1
-        view_name: SUMOs
-        source_names: []
-    plot_name: vlines
-    params:
-      geometry:
-        positions: 9.5,17.5,23.5,37.5,45.5,51.5,65.5,73.5,79.5,93.5,101.5,107.5,121.5,129.5,135.5
-      style:
-        color: '#ff0000'
-        line_width: 2.0
-        line_dash: dashed
         alpha: 1.0

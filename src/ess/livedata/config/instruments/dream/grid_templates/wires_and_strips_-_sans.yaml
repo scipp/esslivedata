@@ -1,6 +1,6 @@
 # Logical wire and strip views of one DREAM bank. Pixel centres are at
 # integer indices, so unit boundaries are at k * width - 0.5.
-title: 'SANS: wires and strips'
+title: 'Wires and strips: SANS'
 description: SANS wire and strip views since start. Lines separate the cuboids, numbered row by row from the top of the 7x7 grid.
 nrows: 2
 ncols: 1

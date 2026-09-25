@@ -1,6 +1,6 @@
 # Logical wire and strip views of one DREAM bank. Pixel centres are at
 # integer indices, so unit boundaries are at k * width - 0.5.
-title: 'Backward endcap: wires and strips'
+title: 'Wires and strips: Backward endcap'
 description: Backward endcap wire and strip views since start. Solid lines separate sectors, dashed lines separate SUMO6 | SUMO5 | SUMO4 | SUMO3 within a sector.
 nrows: 2
 ncols: 1

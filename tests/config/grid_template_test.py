@@ -160,6 +160,18 @@ class TestLoadRawGridTemplates:
         templates = load_raw_grid_templates('dummy')
         assert len(templates) >= 1
 
+    def test_templates_are_listed_in_file_name_order(self):
+        """Templates sharing a file name prefix are listed together, in order."""
+        titles = [t['title'] for t in load_raw_grid_templates('dream')]
+        assert titles == [
+            'Choppers -> Wavelength',
+            'Wires and strips: Backward endcap',
+            'Wires and strips: Forward endcap',
+            'Wires and strips: High-resolution',
+            'Wires and strips: Mantle',
+            'Wires and strips: SANS',
+        ]
+
     def test_loaded_template_has_expected_keys(self):
         """Loaded templates have the expected structure."""
         templates = load_raw_grid_templates('dummy')
