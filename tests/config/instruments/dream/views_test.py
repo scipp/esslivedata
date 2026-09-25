@@ -173,22 +173,32 @@ def test_cuboid_rotations_form_a_pinwheel(
 def test_transforms_gather_pixels_into_logical_order(bank: str) -> None:
     # With the detector number as data, the transform output must reproduce the
     # ICD layout.
-    wire_view = get_wire_view(_raw(bank), bank)
-    strip_view = get_strip_view(_raw(bank), bank)
     number = logical_detector_number(bank)
+    groups = [d for d in number.dims if d not in ('counter', 'wire', 'strip')]
+    wire_group = '/'.join([*groups, 'counter'])
+    strip_group = '/'.join(groups)
+    wire_view = get_wire_view(_raw(bank), bank).transpose(('strip', 'wire', wire_group))
+    strip_view = get_strip_view(_raw(bank), bank).transpose(
+        ('counter', 'wire', 'strip', strip_group)
+    )
     expected_wire = number.transpose(
-        ['strip', 'wire', *(d for d in number.dims if d not in ('strip', 'wire'))]
+        ['strip', 'wire', *groups, 'counter']
     ).values.reshape(wire_view.shape)
     np.testing.assert_array_equal(wire_view.values, expected_wire)
     expected_strip = number.transpose(
-        [
-            'counter',
-            'wire',
-            'strip',
-            *(d for d in number.dims if d not in ('counter', 'wire', 'strip')),
-        ]
+        ['counter', 'wire', 'strip', *groups]
     ).values.reshape(strip_view.shape)
     np.testing.assert_array_equal(strip_view.values, expected_strip)
+
+
+def test_mantle_views_put_the_azimuth_on_y_and_strips_on_x() -> None:
+    bank = 'mantle_detector'
+    wire_view = get_wire_view(_raw(bank), bank).sum('strip')
+    strip_view = get_strip_view(_raw(bank), bank).sum(['counter', 'wire'])
+    front_layer = get_mantle_front_layer(_raw(bank), bank)
+    assert wire_view.dims == ('module/cassette/counter', 'wire')
+    assert strip_view.dims == ('module/cassette', 'strip')
+    assert front_layer.dims == ('module/cassette/counter', 'strip')
 
 
 @pytest.mark.parametrize(

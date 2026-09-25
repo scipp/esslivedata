@@ -32,7 +32,7 @@ cells:
         workflow_id: static/geometric/1
         view_name: Modules
         source_names: []
-    plot_name: vlines
+    plot_name: hlines
     params:
       geometry:
         positions: 11.5,23.5,35.5,47.5
@@ -68,7 +68,7 @@ cells:
         workflow_id: static/geometric/1
         view_name: Modules
         source_names: []
-    plot_name: vlines
+    plot_name: hlines
     params:
       geometry:
         positions: 5.5,11.5,17.5,23.5

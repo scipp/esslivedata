@@ -41,12 +41,12 @@ def _events(source_name: str, size: int) -> sc.DataArray:
 @pytest.mark.parametrize(
     ('handle', 'source_name', 'sizes'),
     [
-        (specs.wire_view_handle, 'mantle_detector', (32, 60)),
+        (specs.wire_view_handle, 'mantle_detector', (60, 32)),
         (specs.wire_view_handle, 'endcap_backward_detector', (16, 616)),
         (specs.wire_view_handle, 'endcap_forward_detector', (16, 280)),
         (specs.wire_view_handle, 'high_resolution_detector', (16, 528)),
         (specs.wire_view_handle, 'sans_detector', (16, 576)),
-        (specs.strip_view_handle, 'mantle_detector', (256, 30)),
+        (specs.strip_view_handle, 'mantle_detector', (30, 256)),
         (specs.strip_view_handle, 'endcap_backward_detector', (16, 308)),
         (specs.strip_view_handle, 'endcap_forward_detector', (16, 140)),
         (specs.strip_view_handle, 'high_resolution_detector', (32, 264)),

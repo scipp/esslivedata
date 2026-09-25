@@ -197,6 +197,18 @@ def _unit_dims(folded: sc.DataArray) -> tuple[str, ...]:
     return tuple(d for d in folded.dims if d not in ('counter', 'wire', 'strip'))
 
 
+def _image_order(source_name: str, component: str, group: str) -> tuple[str, str]:
+    """Return the (y, x) order of the per-component dim and the grouping dim.
+
+    The mantle puts the grouping (azimuth) on y, so that strips, which run along
+    the beam, are horizontal as in ICD Fig. 15. The other banks follow the ICD
+    figures with the grouping on x.
+    """
+    if source_name == 'mantle_detector':
+        return group, component
+    return component, group
+
+
 def get_mantle_front_layer(da: sc.DataArray, source_name: str) -> sc.DataArray:
     """Transform to extract mantle front layer."""
     return _to_logical(da, source_name)['wire', 0].flatten(
@@ -222,13 +234,16 @@ def get_wire_view(da: sc.DataArray, source_name: str) -> sc.DataArray:
     Returns
     -------
     :
-        Data with dimensions ``(strip, wire, <unit>/cassette/counter)``.
+        Data with dimensions ``strip``, ``wire`` and ``<unit>/cassette/counter``.
         After reduction over ``strip``, each wire of the bank is one pixel.
     """
     folded = _to_logical(da, source_name)
     planes = (*_unit_dims(folded), 'counter')
-    return folded.transpose(('strip', 'wire', *planes)).flatten(
-        planes, to='/'.join(planes)
+    flat = '/'.join(planes)
+    return (
+        folded.transpose(('strip', 'wire', *planes))
+        .flatten(planes, to=flat)
+        .transpose(('strip', *_image_order(source_name, 'wire', flat)))
     )
 
 
@@ -250,12 +265,15 @@ def get_strip_view(da: sc.DataArray, source_name: str) -> sc.DataArray:
     Returns
     -------
     :
-        Data with dimensions ``(counter, wire, strip, <unit>/cassette)``.
-        After reduction over ``counter`` and ``wire``, each strip of the bank is
-        one pixel.
+        Data with dimensions ``counter``, ``wire``, ``strip`` and
+        ``<unit>/cassette``. After reduction over ``counter`` and ``wire``, each
+        strip of the bank is one pixel.
     """
     folded = _to_logical(da, source_name)
     cassettes = _unit_dims(folded)
-    return folded.transpose(('counter', 'wire', 'strip', *cassettes)).flatten(
-        cassettes, to='/'.join(cassettes)
+    flat = '/'.join(cassettes)
+    return (
+        folded.transpose(('counter', 'wire', 'strip', *cassettes))
+        .flatten(cassettes, to=flat)
+        .transpose(('counter', 'wire', *_image_order(source_name, 'strip', flat)))
     )
