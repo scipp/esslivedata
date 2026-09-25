@@ -46,3 +46,13 @@ def get_panel_view(da: sc.DataArray, source_name: str) -> sc.DataArray:
 def get_bank_view(da: sc.DataArray, source_name: str) -> sc.DataArray:
     """Fold a bank for the panel-summed image, downsampled spatially."""
     return _fold_bank(da, factor=_BANK_VIEW_FACTOR)
+
+
+def get_panel_counts_view(da: sc.DataArray, source_name: str) -> sc.DataArray:
+    """Fold a bank into its 12 panels, with all pixels of a panel along ``pixel``.
+
+    Summing ``pixel`` (via ``reduction_dim``) yields the total counts per panel.
+    """
+    return da.fold(
+        dim='detector_number', sizes={'panel': BANK_SIZES['panel'], 'pixel': -1}
+    )
