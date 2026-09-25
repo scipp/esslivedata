@@ -240,3 +240,29 @@ def test_transform_rejects_pixel_count_mismatch() -> None:
     da = _raw('sans_detector')['detector_number', :-1]
     with pytest.raises(ValueError, match='voxels'):
         get_wire_view(da, 'sans_detector')
+
+
+@pytest.mark.parametrize('bank', BANKS)
+def test_transforms_gather_binned_events_into_logical_order(bank: str) -> None:
+    # Events carry their pixel's detector number as the value, and pixels hold
+    # a varying number of events, so a wrong bin mapping changes the per-pixel
+    # sums.
+    raw = _raw(bank)
+    number = raw.data
+    counts = sc.array(dims=number.dims, values=number.values % 3, unit=None)
+    events = sc.DataArray(
+        sc.array(dims=['event'], values=np.repeat(number.values, counts.values))
+    )
+    end = sc.cumsum(counts)
+    binned = sc.DataArray(
+        sc.bins(begin=end - counts, end=end, dim='event', data=events),
+        coords={'detector_number': number},
+    )
+    result = get_strip_view(binned, bank)
+    total = sc.array(dims=number.dims, values=number.values * counts.values)
+    expected = get_strip_view(sc.DataArray(total), bank)
+    np.testing.assert_array_equal(result.bins.sum().values, expected.values)
+    np.testing.assert_array_equal(
+        result.coords['detector_number'].transpose(result.dims).values,
+        get_strip_view(raw, bank).values,
+    )

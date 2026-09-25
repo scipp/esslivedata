@@ -188,8 +188,44 @@ def _to_logical(da: sc.DataArray, source_name: str) -> sc.DataArray:
             f"has {n_voxel} voxels."
         )
     if positions is not None:
-        da = da[da.dim, positions]
+        da = _gather(da, positions)
     return da.fold(dim=da.dim, sizes=sizes)
+
+
+def _gather(da: sc.DataArray, positions: np.ndarray) -> sc.DataArray:
+    """Reorder the pixels of ``da``.
+
+    Integer-array indexing in scipp costs ~10x more per batch than this: it is
+    slow per element, and for binned data it copies all events and validates the
+    new bin indices. Here the reordering is done in numpy on the bin indices and
+    the 1-D coords, sharing the event buffer. Validation is skipped since the new
+    indices are a permutation of valid ones.
+    """
+    dim = da.dim
+
+    def take(var: sc.Variable) -> sc.Variable:
+        if dim not in var.dims:
+            return var
+        if var.dims != (dim,) or var.bins is not None or var.variances is not None:
+            return var[dim, positions]
+        return sc.array(dims=[dim], values=var.values[positions], unit=var.unit)
+
+    if da.bins is None:
+        data = take(da.data)
+    else:
+        constituents = da.bins.constituents
+        data = sc.bins(
+            begin=take(constituents['begin']),
+            end=take(constituents['end']),
+            dim=constituents['dim'],
+            data=constituents['data'],
+            validate_indices=False,
+        )
+    return sc.DataArray(
+        data,
+        coords={name: take(coord) for name, coord in da.coords.items()},
+        masks={name: take(mask) for name, mask in da.masks.items()},
+    )
 
 
 def _unit_dims(folded: sc.DataArray) -> tuple[str, ...]:
