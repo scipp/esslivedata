@@ -33,7 +33,11 @@ class SessionComponents:
     pipe:
         Session-local HoloViews Pipe for data updates.
     dmap:
-        The DynamicMap or Element created by the presenter.
+        The DynamicMap or Element created by the presenter. It outlives every
+        cell widget built over it (until the plotter is replaced), so builds
+        must compose over it without modifying it. ``DynamicMap.opts()``
+        modifies it: it wraps the map's callback in place and returns the same
+        object, so each build would stack one more wrap. Pass ``clone=True``.
     layout_shape:
         :func:`~.plots.layout_shape` of the frame ``dmap`` was created with,
         the only shape of frame it can display.

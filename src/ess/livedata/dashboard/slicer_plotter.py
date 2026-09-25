@@ -78,26 +78,30 @@ class SlicerPresenter(PresenterBase):
         if self._kdims is None and pipe.data is not None:
             self._initialize_kdims(pipe.data)
 
-        def render(mode: str, slice_dim: str, *, data: SlicerState = None, **kwargs):
+        kdim_names = [kdim.name for kdim in self._kdims or []]
+
+        def render(*key: Any, **kwargs: Any) -> hv.Element:
             """Render a slice based on current kdim selections.
 
-            The `data` keyword argument is provided by the Pipe stream.
-            The `mode`, `slice_dim`, and other slider kwargs come from kdims.
+            The kdim values arrive positionally in ``key``; the ``data`` keyword
+            argument is provided by the Pipe stream. The key is taken as
+            ``*key`` rather than as named parameters because every ``.opts()``
+            on the DynamicMap wraps it in a HoloViews operation, and from the
+            second wrap on HoloViews rebuilds the key from the callback's named
+            positional parameters. Named parameters could cover only a fixed
+            subset of the data-dependent kdims, so the rebuilt key would be too
+            short and HoloViews fails its key-length assertion.
             """
+            data: SlicerState | None = kwargs.get('data')
             if data is None or not data.data:
                 return hv.Text(0.5, 0.5, 'No data').opts(**self._sizing_opts)
 
             # Get first data item (expects single data source)
             array_data = next(iter(data.data.values()))
             return self.render_slice(
-                array_data, data.clim, mode=mode, slice_dim=slice_dim, **kwargs
+                array_data, data.clim, **dict(zip(kdim_names, key, strict=True))
             )
 
-        # Unlike DefaultPresenter, styling is applied per rendered slice rather
-        # than declared on the DynamicMap: element options on a DynamicMap wrap
-        # it in a HoloViews operation, and a kdim-carrying DynamicMap tolerates
-        # only one such wrap. The grid cell adds a second one when it attaches
-        # its hooks, and the wrapper is then unable to reconstruct the kdim key.
         return hv.DynamicMap(render, streams=[pipe], kdims=self._kdims, cache_size=1)
 
     def _initialize_kdims(self, state: SlicerState) -> None:

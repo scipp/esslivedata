@@ -1918,6 +1918,35 @@ class TestDisposeSeversPipeSubscribers:
 
         assert len(pipe.subscribers) == settled
 
+    def test_rebuild_leaves_the_session_dynamicmap_unwrapped(
+        self,
+        plot_orchestrator,
+        plot_grid_tabs,
+        job_orchestrator,
+        data_service,
+        workflow_id,
+    ):
+        """A cell composes over the session's DynamicMap without modifying it.
+
+        ``DynamicMap.opts`` wraps in place by default, so each rebuild would
+        stack one more operation on the long-lived session DynamicMap. A
+        kdim-carrying DynamicMap (the slicer) fails from the second wrap on.
+        """
+        cell_id = self._revealed_workflow_cell(
+            plot_orchestrator,
+            plot_grid_tabs,
+            job_orchestrator,
+            data_service,
+            workflow_id,
+        )
+        (layer,) = plot_orchestrator.get_cell(cell_id).layers
+        dmap = plot_grid_tabs._session_layers[layer.layer_id].components.dmap
+
+        plot_orchestrator.set_cell_title(cell_id, 'Renamed')
+        _tick(plot_grid_tabs)
+
+        assert dmap.callback.inputs == []
+
     def test_cell_removal_via_sweep_severs_subscribers(
         self,
         plot_orchestrator,
