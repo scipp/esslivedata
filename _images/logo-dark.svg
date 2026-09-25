@@ -1,0 +1,41 @@
+<?xml version='1.0' encoding='utf-8'?>
+<svg:svg xmlns:svg="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" width="320" height="90" viewBox="0 0 320 90">
+<svg:defs>
+<svg:path d="M6,73 L87.60000000000001,73" opacity="1" id="d0" />
+<svg:path d="M87.60000000000001,73 L171.75,73" opacity="1" id="d1" />
+<svg:path d="M171.75,73 L272,73" opacity="1" id="d2" />
+</svg:defs>
+<svg:g>
+<svg:path d="M22,36 L280,36" stroke-width="3" stroke="#5E6100" stroke-linecap="round" />
+<svg:path d="M110.25,36 L280,36" stroke-width="3" stroke="#A3A800" stroke-linecap="round" />
+</svg:g>
+<svg:g>
+<svg:text font-size="61" text-anchor="start" font-family="Comic Neue" font-weight="normal" fill="#5E6100"><svg:textPath xlink:href="#d0" startOffset="0">
+<svg:tspan dy="0em">ess</svg:tspan>
+</svg:textPath></svg:text>
+<svg:text font-size="61" text-anchor="start" font-family="Comic Neue" font-weight="bold" fill="#A3A800"><svg:textPath xlink:href="#d1" startOffset="0">
+<svg:tspan dy="0em">live</svg:tspan>
+</svg:textPath></svg:text>
+<svg:text font-size="61" text-anchor="start" font-family="Comic Neue" font-weight="normal" fill="#5E6100"><svg:textPath xlink:href="#d2" startOffset="0">
+<svg:tspan dy="0em">data</svg:tspan>
+</svg:textPath></svg:text>
+</svg:g>
+<svg:g>
+<svg:path d="M281,36 L260.2153903091735,24.000000000000007" stroke-width="4" stroke="#A3A800" stroke-linecap="round" />
+<svg:circle cx="267.42354980121826" cy="22.423549801218286" r="3.84" stroke-dasharray="3.015928947446201 21.111502632123408" stroke-dashoffset="-10.05309649148734" stroke-width="2" stroke="#A3A800" stroke-linecap="round" fill="none" />
+<svg:path d="M281,36 L274.7883429175395,12.81778016906236" stroke-width="4" stroke="#A3A800" stroke-linecap="round" />
+<svg:circle cx="281.0" cy="16.799999999999997" r="3.84" stroke-dasharray="3.015928947446201 21.111502632123408" stroke-dashoffset="-13.069025438933542" stroke-width="2" stroke="#A3A800" stroke-linecap="round" fill="none" />
+<svg:circle cx="271.4" cy="19.372312247338773" r="3.84" stroke-dasharray="3.015928947446201 21.111502632123408" stroke-dashoffset="-18.09557368467721" stroke-width="2" stroke="#A3A800" stroke-linecap="round" fill="none" />
+<svg:path d="M281,36 L293.0,15.215390309173465" stroke-width="4" stroke="#A3A800" stroke-linecap="round" />
+<svg:circle cx="294.5764501987817" cy="22.42354980121827" r="3.84" stroke-dasharray="3.0159289474461994 21.11150263212341" stroke-dashoffset="-16.084954386379742" stroke-width="2" stroke="#A3A800" stroke-linecap="round" fill="none" />
+<svg:circle cx="285.96932566596837" cy="17.454224135249884" r="3.84" stroke-dasharray="3.015928947446201 21.111502632123408" stroke-dashoffset="-21.111502632123408" stroke-width="2" stroke="#A3A800" stroke-linecap="round" fill="none" />
+<svg:path d="M281,36 L304.18221983093764,29.788342917539502" stroke-width="4" stroke="#A3A800" stroke-linecap="round" />
+<svg:circle cx="300.2" cy="35.99999999999999" r="3.84" stroke-dasharray="3.015928947446201 21.111502632123408" stroke-dashoffset="-19.10088333382594" stroke-width="2" stroke="#A3A800" stroke-linecap="round" fill="none" />
+<svg:circle cx="297.62768775266125" cy="26.400000000000006" r="3.84" stroke-dasharray="3.015928947446201 21.111502632123408" stroke-dashoffset="-0.0" stroke-width="2" stroke="#A3A800" stroke-linecap="round" fill="none" />
+<svg:path d="M281,36 L301.7846096908265,47.999999999999986" stroke-width="4" stroke="#A3A800" stroke-linecap="round" />
+<svg:circle cx="299.5457758647501" cy="40.96932566596839" r="3.84" stroke-dasharray="3.015928947446201 21.111502632123408" stroke-dashoffset="-3.015928947446201" stroke-width="2" stroke="#A3A800" stroke-linecap="round" fill="none" />
+</svg:g>
+<svg:g>
+<svg:circle cx="281" cy="36" r="24" stroke-dasharray="75.39822368615503 75.39822368615503" stroke-dashoffset="-87.96459430051422" stroke-width="5" stroke="#A3A800" stroke-linecap="round" fill="none" />
+</svg:g>
+</svg:svg>
