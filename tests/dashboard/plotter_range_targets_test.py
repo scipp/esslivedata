@@ -88,6 +88,15 @@ class TestLinePlotterRangeTargets:
         np.testing.assert_allclose(targets['x'], _expected(hv.Curve, 'x', 10.0, 30.0))
         np.testing.assert_allclose(targets['y'], _expected(hv.Curve, 'y', 2.0, 8.0))
 
+    def test_x_target_spans_indices_without_coord(self):
+        plotter = LinePlotter.from_params(PlotParams1d())
+        key = _key()
+        data = sc.DataArray(sc.array(dims=['panel'], values=[2.0, 5.0, 8.0]))
+        plotter.compute({PRIMARY: {key: data}})
+
+        targets = plotter.get_range_targets(key)
+        np.testing.assert_allclose(targets['x'], _expected(hv.Curve, 'x', -0.5, 2.5))
+
     def test_targets_use_log_padding_when_logy(self):
         params = PlotParams1d()
         params.plot_scale.y_scale = PlotScale.log
@@ -305,6 +314,17 @@ class TestOverlay1DPlotterRangeTargets:
         assert set(targets) == {'x', 'y'}
         np.testing.assert_allclose(targets['x'], _expected(hv.Curve, 'x', 10.0, 40.0))
         np.testing.assert_allclose(targets['y'], _expected(hv.Curve, 'y', -1.0, 7.0))
+
+    def test_x_target_spans_indices_without_coord(self):
+        plotter = Overlay1DPlotter.from_params(PlotParams1d())
+        key = _key()
+        data = sc.DataArray(
+            sc.array(dims=['slice', 'x'], values=np.ones((2, 4)), unit='counts')
+        )
+        plotter.compute({PRIMARY: {key: data}})
+
+        targets = plotter.get_range_targets(key)
+        np.testing.assert_allclose(targets['x'], _expected(hv.Curve, 'x', -0.5, 3.5))
 
 
 class TestBarsPlotterRangeTargets:

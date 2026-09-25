@@ -1107,6 +1107,17 @@ def _color_error_element(el: hv.Element, color: Any) -> hv.Element:
     return el.opts(color=color)
 
 
+def _with_index_edges(data: sc.DataArray, dim: str) -> sc.DataArray:
+    """Give ``dim`` bin edges centred on the indices ``0..n-1`` if it has no coord.
+
+    Edges make histogram mode available and give the autoscaler an x-extent.
+    The other modes reduce them to midpoints, i.e., to the indices themselves.
+    """
+    if dim in data.coords:
+        return data
+    return data.assign_coords({dim: sc.arange(dim, -0.5, data.sizes[dim], unit=None)})
+
+
 def _resolve_line1d_mode(
     mode: str, data: sc.DataArray, dim: str | None = None
 ) -> tuple[str, sc.DataArray]:
@@ -1309,6 +1320,7 @@ class LinePlotter(Plotter):
         **kwargs,
     ) -> hv.Element | hv.Overlay:
         """Create a 1D plot from a scipp DataArray."""
+        data = _with_index_edges(data, data.dim)
         mode, da = _resolve_line1d_mode(self._mode, data)
         targets = self._compute_line_range_targets(data, mode)
         if targets:
@@ -1661,6 +1673,7 @@ class Overlay1DPlotter(Plotter):
         if slice_size == 0:
             return hv.Curve([])
 
+        data = _with_index_edges(data, data.dims[1])
         actual_mode, plot_data = _resolve_line1d_mode(
             self._mode, data, dim=data.dims[1]
         )

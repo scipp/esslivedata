@@ -750,6 +750,24 @@ class TestLinePlotter:
         result = plotter.plot(data, data_key)
         assert isinstance(result, hv.Curve)
 
+    def test_histogram_mode_without_coord_bins_around_indices(self, data_key):
+        params = PlotParams1d(line=Line1dParams(mode=Line1dRenderMode.histogram))
+        plotter = plots.LinePlotter.from_params(params)
+        data = sc.DataArray(
+            sc.array(dims=['panel'], values=[1.0, 2.0, 3.0], unit='counts')
+        )
+        result = plotter.plot(data, data_key)
+        assert isinstance(result, hv.Histogram)
+        np.testing.assert_array_equal(result.edges, [-0.5, 0.5, 1.5, 2.5])
+
+    def test_line_mode_without_coord_plots_at_indices(self, data_key):
+        plotter = plots.LinePlotter.from_params(PlotParams1d())
+        data = sc.DataArray(
+            sc.array(dims=['panel'], values=[1.0, 2.0, 3.0], unit='counts')
+        )
+        result = plotter.plot(data, data_key)
+        np.testing.assert_array_equal(result.dimension_values(0), [0.0, 1.0, 2.0])
+
     def test_histogram_mode_with_errors(self, data_key):
         params = PlotParams1d(
             line=Line1dParams(mode=Line1dRenderMode.histogram, errors=ErrorDisplay.bars)
