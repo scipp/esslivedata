@@ -1,7 +1,7 @@
 # Logical wire and strip views of one DREAM bank. Pixel centres are at
 # integer indices, so unit boundaries are at k * width - 0.5.
 title: 'Mantle: wires and strips'
-description: Mantle wire and strip views since start. Solid lines separate the mounting units (modules), dashed lines the cassettes.
+description: Mantle wire and strip views since start. Lines separate the mounting units (modules).
 nrows: 2
 ncols: 1
 cells:
@@ -38,23 +38,9 @@ cells:
         positions: 11.5,23.5,35.5,47.5
       style:
         color: '#ff0000'
-        line_width: 1.5
+        line_width: 2.5
         line_dash: solid
-        alpha: 0.7
-  - data_sources:
-      primary:
-        workflow_id: static/geometric/1
-        view_name: Cassettes
-        source_names: []
-    plot_name: vlines
-    params:
-      geometry:
-        positions: 1.5,3.5,5.5,7.5,9.5,13.5,15.5,17.5,19.5,21.5,25.5,27.5,29.5,31.5,33.5,37.5,39.5,41.5,43.5,45.5,49.5,51.5,53.5,55.5,57.5
-      style:
-        color: '#ff0000'
-        line_width: 0.5
-        line_dash: dashed
-        alpha: 0.7
+        alpha: 1.0
 - geometry:
     row: 1
     col: 0
@@ -88,6 +74,6 @@ cells:
         positions: 5.5,11.5,17.5,23.5
       style:
         color: '#ff0000'
-        line_width: 1.5
+        line_width: 2.5
         line_dash: solid
-        alpha: 0.7
+        alpha: 1.0
