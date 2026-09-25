@@ -100,3 +100,7 @@ class PhoneLayout:
     TOP_BAND = 8
     # Padding around the tab content (``plot_grid_tabs.py``).
     TAB_CONTENT_PADDING = 4
+    # Edge of an icon-only tab: the icon plus its padding (``plot_grid_tabs.py``).
+    TAB_ICON = 24
+    TAB_PADDING = 12
+    TAB_SIZE = TAB_ICON + 2 * TAB_PADDING
