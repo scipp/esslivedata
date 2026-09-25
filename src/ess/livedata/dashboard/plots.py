@@ -355,8 +355,9 @@ class DefaultPresenter(PresenterBase):
 
         The elements arrive already styled from :meth:`Plotter.compute`. Styling
         must not be applied here: ``DynamicMap.opts`` is not a one-off, it wraps
-        the map in a ``Dynamic`` operation that re-applies the options to every
-        frame, in every session, on the shared IOLoop.
+        the map (in place, unless ``clone=True``) in a ``Dynamic`` operation that
+        re-applies the options to every frame, in every session, on the shared
+        IOLoop.
         """
 
         def passthrough(data):
