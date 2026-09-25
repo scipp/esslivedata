@@ -1299,6 +1299,30 @@ class TestSlicerPlotter:
         """Cell-attached hooks must not break the slicer's kdim-driven DynamicMap."""
         present_figure_with_cell_hooks(slicer_plotter, {data_key: data_3d})
 
+    def test_presenter_dmap_updates_through_stacked_opts(
+        self, slicer_plotter, data_3d, data_key
+    ):
+        """A pipe update must reach the slice when the DynamicMap is wrapped twice.
+
+        The phone layout's cell places the color bar with one ``.opts()`` and
+        attaches its hooks with another; each wraps the DynamicMap once more.
+        """
+        slicer_plotter.compute({'primary': {data_key: data_3d}})
+        pipe = hv.streams.Pipe(data=slicer_plotter.get_cached_state())
+        composed = (
+            slicer_plotter.create_presenter()
+            .present(pipe)
+            .opts(hv.opts.Image(colorbar_position='bottom'))
+            .opts(hooks=[lambda plot, element: None])
+        )
+        bokeh_plot = render_to_bokeh(composed)
+
+        slicer_plotter.compute({'primary': {data_key: data_3d * 2.0}})
+        pipe.send(slicer_plotter.get_cached_state())
+
+        rendered = bokeh_plot.handles['source'].data['image'][0]
+        np.testing.assert_array_equal(rendered, 2.0 * data_3d['z', 0].values)
+
     # === Edge coordinate tests ===
 
     def test_edge_coordinates_in_presenter(self, slicer_plotter, data_key):
