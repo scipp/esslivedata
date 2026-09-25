@@ -18,7 +18,7 @@ from ess.livedata.workflows.monitor_workflow_specs import (
 )
 
 from .streams_parsed import PARSED_STREAMS
-from .views import get_bank_view, get_panel_view
+from .views import get_bank_view, get_panel_counts_view, get_panel_view
 
 #: Contiguous pixel-ID range per detector bank, matching ``detector_number`` in
 #: the NeXus baseline. On the wire the banks are the sources ``detector_a``
@@ -101,5 +101,16 @@ instrument.add_logical_view(
     transform=get_panel_view,
     reduction_dim=['y_bin', 'x_bin'],
     output_ndim=3,
+    roi_support=False,
+)
+
+instrument.add_logical_view(
+    name='panel_counts',
+    title='Panel Counts',
+    description='Total counts in each of the 12 panels of a bank.',
+    source_names=detector_names,
+    transform=get_panel_counts_view,
+    reduction_dim='pixel',
+    output_ndim=1,
     roi_support=False,
 )
