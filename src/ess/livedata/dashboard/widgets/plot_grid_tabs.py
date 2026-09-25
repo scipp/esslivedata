@@ -143,12 +143,8 @@ def _phone_reload_button(theme: Theme) -> ReloadButton:
 
     Sized and placed like one more tab (see ``_PHONE_TAB_CSS`` and the theme's
     tab strip CSS): in a left rail below the last tab, in a strip along the
-    top after it, at the right edge.
-
-    It is stacked above Panel's notifications (``.notyf``, z-index 9999). On a
-    phone-width screen the "Server connection lost" notification spans the
-    bottom of the window and would otherwise cover the button exactly when it
-    is needed.
+    top after it, at the right edge. Only the icon is drawn, on the strip's own
+    background, so it does not read as a tab.
     """
     inset = f'{theme.strip_inset}px'
     if theme.tabs_location == 'left':
@@ -159,14 +155,8 @@ def _phone_reload_button(theme: Theme) -> ReloadButton:
         width=PhoneLayout.TAB_SIZE,
         height=PhoneLayout.TAB_SIZE,
         sizing_mode='fixed',
-        styles={'position': 'fixed', 'z-index': '10000', **corner},
-        stylesheets=[
-            f"""
-            button {{
-                color: {theme.tab_color};
-                background: {theme.tab_background};
-            }}"""
-        ],
+        styles={'position': 'fixed', **corner},
+        stylesheets=[f'button {{ color: {theme.strip_icon_color}; }}'],
     )
 
 

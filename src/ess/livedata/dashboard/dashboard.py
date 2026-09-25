@@ -23,7 +23,7 @@ from .kafka_transport import DashboardKafkaTransport
 from .loop_monitor import start_loop_monitor
 from .session_registry import SessionId
 from .session_updater import SessionUpdater
-from .theme import DEFAULT_THEME, THEMES
+from .theme import DEFAULT_THEME, THEMES, Theme
 from .transport import NullTransport, Transport
 from .widgets.styles import PhoneLayout
 
@@ -39,7 +39,7 @@ _LOGIN_TEMPLATE = str(_TEMPLATES_DIR / 'login.html')
 _LOGOUT_TEMPLATE = str(_TEMPLATES_DIR / 'logout.html')
 
 
-def _phone_template_css(header_background: str) -> str:
+def _phone_template_css(theme: Theme) -> str:
     """Page rules for the phone layout (``?layout=phone``).
 
     The header is hidden to give its height to the plots; with it go the
@@ -56,7 +56,22 @@ def _phone_template_css(header_background: str) -> str:
     left at the top so the tabs do not touch the screen edge; it is a border
     because the tab content is transparent, so a background would show
     through it.
+
+    On a phone-width screen Panel's notifications (``.notyf``) span the bottom
+    of the window. With the tabs in a left rail they are moved clear of it, so
+    they do not cover the reload button at the rail's foot (``plot_grid_tabs``)
+    -- the "Server connection lost" notification appears exactly when that
+    button is needed.
     """
+    rail = theme.strip_inset + PhoneLayout.TAB_SIZE
+    notifications = (
+        f"""
+    .notyf {{
+        padding-left: {rail}px !important;
+    }}"""
+        if theme.tabs_location == 'left'
+        else ''
+    )
     return f"""
     #header {{
         display: none !important;
@@ -67,9 +82,9 @@ def _phone_template_css(header_background: str) -> str:
     .main-content {{
         box-sizing: border-box;
         padding: 0 !important;
-        border-top: {PhoneLayout.TOP_BAND}px solid {header_background};
+        border-top: {PhoneLayout.TOP_BAND}px solid {theme.header_background};
         height: 100dvh !important;
-    }}
+    }}{notifications}
 """
 
 
@@ -367,9 +382,7 @@ class DashboardBase(ServiceBase, ABC):
         # and whatever the theme needs from the page around the tabs.
         template.config.raw_css.extend([*self.get_raw_css(), self._theme.template_css])
         if phone:
-            template.config.raw_css.append(
-                _phone_template_css(self._theme.header_background)
-            )
+            template.config.raw_css.append(_phone_template_css(self._theme))
         self._start_periodic_callback(session_updater)
         return template
 

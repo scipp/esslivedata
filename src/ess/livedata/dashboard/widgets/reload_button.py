@@ -25,9 +25,9 @@ class ReloadButton(ReactiveHTML):
     server can no longer be reached, so it must not route through Python.
 
     The button floats in a fixed corner of the window rather than taking space
-    in the layout. Where it goes is up to the caller, through ``styles``, and so
-    are its colors, through ``stylesheets`` rules on ``button``: the icon paints
-    in the button's text color.
+    in the layout. Where it goes is up to the caller, through ``styles``. Only the
+    icon is drawn, in the button's text color, which the caller sets through a
+    ``stylesheets`` rule on ``button``.
     """
 
     # ``${{script(...)}}`` is ReactiveHTML's hook into ``_scripts``, doubled for
@@ -36,7 +36,7 @@ class ReloadButton(ReactiveHTML):
         <button id="reload" type="button" title="Reload page"
             aria-label="Reload page" onclick="${{script('reload')}}"
             style="width: 100%; height: 100%; margin: 0; padding: 0;
-                border: none; border-radius: 3px; cursor: pointer;
+                border: none; background: transparent; cursor: pointer;
                 display: flex; align-items: center; justify-content: center;">
             <span style="width: 24px; height: 24px;
                 background-color: currentColor;
