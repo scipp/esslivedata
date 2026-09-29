@@ -153,7 +153,11 @@ def patch_custom_action(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(cell_autoscale, '_make_fit_action', fit_factory)
 
 
-_TOGGLE = {'x': 'X-axis autoscale', 'y': 'Y-axis autoscale', 'c': 'Color autoscale'}
+_TOGGLE = {
+    'x': 'X-axis autoscale on data change',
+    'y': 'Y-axis autoscale on data change',
+    'c': 'Color autoscale',
+}
 _FIT = 'Fit ranges to current data'
 
 
@@ -291,6 +295,91 @@ class TestHookWrites:
         hook(plot, None)
 
         # Hook must re-write the last-known target, overriding HV's update.
+        assert (c.low, c.high) == (0.0, 10.0)
+
+
+class TestAutoscaleOnChange:
+    """An active x/y toggle writes only when the data extent changed."""
+
+    @pytest.fixture
+    def rendered(self) -> tuple[_FakePlotter, Any, _StubPlot, _StubRange]:
+        plotter = _FakePlotter(frozenset({'x', 'y'}), {_key(): {'x': (0.0, 10.0)}})
+        controller = CellAutoscaleController([plotter])
+        hook = controller.make_hook()
+        plot, x, _y, _c = _make_plot_all_handles()
+        hook(plot, None)
+        return plotter, hook, plot, x
+
+    def test_zoom_survives_render_with_unchanged_extent(self, rendered) -> None:
+        _plotter, hook, plot, x = rendered
+        x.start, x.end = 2.0, 3.0  # user zooms in
+
+        hook(plot, None)
+
+        assert (x.start, x.end) == (2.0, 3.0)
+
+    def test_changed_extent_resets_zoom(self, rendered) -> None:
+        plotter, hook, plot, x = rendered
+        x.start, x.end = 2.0, 3.0
+        plotter._targets = {_key(): {'x': (0.0, 20.0)}}
+
+        hook(plot, None)
+
+        assert (x.start, x.end) == (0.0, 20.0)
+
+    def test_source_joining_refits(self, rendered) -> None:
+        plotter, hook, plot, x = rendered
+        x.start, x.end = 2.0, 3.0
+        plotter._targets = {
+            _key('a'): {'x': (0.0, 10.0)},
+            _key('b'): {'x': (5.0, 30.0)},
+        }
+
+        hook(plot, None)
+
+        assert (x.start, x.end) == (0.0, 30.0)
+
+    def test_switching_toggle_on_refits_unchanged_extent(self, rendered) -> None:
+        _plotter, hook, plot, x = rendered
+        _click_toggle(plot, 'x', active=False)
+        x.start, x.end = 2.0, 3.0
+        hook(plot, None)
+        assert (x.start, x.end) == (2.0, 3.0)
+
+        _click_toggle(plot, 'x', active=True)
+        hook(plot, None)
+
+        assert (x.start, x.end) == (0.0, 10.0)
+
+    def test_fit_refits_unchanged_extent_with_toggle_on(self, rendered) -> None:
+        _plotter, hook, plot, x = rendered
+        x.start, x.end = 2.0, 3.0
+
+        _tool(plot, _FIT).fire_active(True)
+        hook(plot, None)
+
+        assert (x.start, x.end) == (0.0, 10.0)
+
+    def test_new_figure_is_fitted(self, rendered) -> None:
+        _plotter, hook, _plot, _x = rendered
+        popout = _StubPlot(x_range=_StubRange())
+
+        hook(popout, None)
+
+        x = popout.handles['x_range']
+        assert (x.start, x.end) == (0.0, 10.0)
+
+    def test_color_written_every_render(self) -> None:
+        """HoloViews re-derives the color mapper from data on every render."""
+        plotter = _FakePlotter(frozenset({'c'}), {_key(): {'c': (0.0, 10.0)}})
+        controller = CellAutoscaleController([plotter])
+        hook = controller.make_hook()
+        plot, _x, _y, c = _make_plot_all_handles()
+        hook(plot, None)
+        c.low, c.high = 99.0, 999.0
+
+        hook(plot, None)
+
         assert (c.low, c.high) == (0.0, 10.0)
 
 

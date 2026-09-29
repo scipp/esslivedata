@@ -6,6 +6,15 @@ A :class:`CellAutoscaleController` owns the Bokeh ``CustomAction`` tools that
 appear on a plot cell's toolbar (one per autoscalable axis, plus one for Fit)
 and on each HoloViews render writes per-axis ranges based on the toggle state.
 
+An active ``x``/``y`` toggle means "autoscale on change": the range is written
+when the data extent differs from what was last written to that range, and is
+otherwise left alone. A fixed extent (a spectrum's x-axis, an image's pixel
+grid) is therefore fitted once and then keeps the user's pan/zoom, while a
+growing one (a timeseries, a correlation histogram) keeps being followed. The
+same rule fits a new figure, and refits when a layer or source joins and
+widens the union of extents. The color axis has no pan/zoom to preserve and
+is written on every render while its toggle is active.
+
 One cell can be rendered into several figures at once -- its grid cell and a
 pop-out window (``widgets/plot_popout.py``). They share one controller, which
 holds a single toggle state per axis: turning autoscale off in the pop-out
@@ -13,7 +22,8 @@ turns it off in the cell too. Each figure nevertheless gets its *own* tool
 models, which the controller keeps in step. A tool model must not sit in two
 toolbars: BokehJS creates one tool view per figure, every view runs the tool's
 ``CustomJS`` on a click, and a toggle flipped once per figure ends up where it
-started. Anything the controller tracks per render is keyed by figure.
+started. Anything the controller tracks per render is keyed by figure, or by
+the figure's range handle.
 """
 
 from __future__ import annotations
@@ -31,8 +41,8 @@ from .range_hook import Axis, RangeHandles
 logger = structlog.get_logger(__name__)
 
 _TOGGLE_DESCRIPTIONS: dict[Axis, str] = {
-    'x': 'X-axis autoscale',
-    'y': 'Y-axis autoscale',
+    'x': 'X-axis autoscale on data change',
+    'y': 'Y-axis autoscale on data change',
     'c': 'Color autoscale',
 }
 
@@ -118,8 +128,8 @@ class CellAutoscaleController:
     per-axis ranges based on the cell's toggle state, which a click on any
     figure's toggle sets for all of them.
 
-    Toggles default to ``True`` so the very first render with real data snaps
-    the range away from the pipe's dummy bounds (strategy §4.5).
+    Toggles default to ``True``: the first render with real data then fits
+    every axis, since nothing has been written to the new figure's ranges yet.
 
     Parameters
     ----------
@@ -152,6 +162,14 @@ class CellAutoscaleController:
         # Last target written per axis. Read back on subsequent off-state
         # renders so the c-axis freeze has a stable value to apply.
         self._last_targets: dict[Axis, tuple[float, float]] = {}
+        # Last target written to each x/y range handle, per axis. An active
+        # toggle writes only when the target differs, so a user's pan/zoom
+        # survives renders that do not change the data extent. Keyed by the
+        # handle rather than the figure: a figure swap or a second figure
+        # brings a fresh handle, which nothing has been written to yet.
+        self._written: dict[Axis, WeakKeyDictionary[Any, tuple[float, float]]] = {
+            axis: WeakKeyDictionary() for axis in self._axes if axis != 'c'
+        }
         # Figures that still owe a Fit: filled by the Fit on_change handler,
         # honoured on each figure's next render regardless of toggle state,
         # then dropped. Per figure rather than a single flag because sibling
@@ -190,11 +208,14 @@ class CellAutoscaleController:
         1. Installs the ``CustomAction`` tools on the figure's toolbar (once
            per figure, idempotent).
         2. For each axis whose toggle is active, writes ``(lo, hi)`` to the
-           current Bokeh handle. Handles are read from ``plot.handles`` per
-           render -- HoloViews swaps the figure on kdim/Layout transitions,
-           so a cached handle would soon point at a detached model.
+           current Bokeh handle -- for ``x``/``y`` only when it differs from
+           the last target written to that handle. Handles are read from
+           ``plot.handles`` per render -- HoloViews swaps the figure on
+           kdim/Layout transitions, so a cached handle would soon point at a
+           detached model.
         3. If a Fit click is pending for this figure, writes all axes
-           regardless of toggle state, then drops the figure's claim.
+           regardless of toggle state or last write, then drops the figure's
+           claim.
 
         When :attr:`axes` is empty the hook is a no-op.
         """
@@ -284,7 +305,9 @@ class CellAutoscaleController:
         A click flips one figure's toggle; the handler records the new state
         for the cell and shows it on the axis's toggle in every other figure.
         Those writes fire this handler again, which the state check turns into
-        a no-op.
+        a no-op. Switching an ``x``/``y`` toggle on forgets what was written to
+        the axis's ranges, so the next render fits them even if the data
+        extent has not changed since the user panned or zoomed.
         """
         icons = self._toggle_icons[axis]
 
@@ -293,6 +316,8 @@ class CellAutoscaleController:
             if self._active[axis] == new:
                 return
             self._active[axis] = new
+            if new and axis in self._written:
+                self._written[axis].clear()
             for tools in list(self._figure_tools.values()):
                 toggle = tools.toggles[axis]
                 # The clicked toggle already shows the state; its client sets
@@ -306,8 +331,9 @@ class CellAutoscaleController:
     def _apply_targets(self, plot: Any) -> None:
         """Write current targets to handles based on toggle / Fit state.
 
-        For x/y the hook writes only when the toggle is active or a Fit is
-        pending for this figure; HoloViews honours ``framewise=False`` for
+        For x/y the hook writes only when a Fit is pending for this figure,
+        or when the toggle is active and the target differs from the last one
+        written to the range handle; HoloViews honours ``framewise=False`` for
         ``Range1d`` so the previous range (and any manual pan/zoom) is
         preserved when we skip.
         For ``c`` the hook also re-applies the last target when the toggle is
@@ -323,21 +349,25 @@ class CellAutoscaleController:
                 if target is None:
                     continue
                 self._last_targets[axis] = target
-                # Write the exact (padded) data extent on every render the
-                # toggle is active for -- there is no hysteresis here, unlike
-                # the threshold-based predecessor. Each render where the extent
-                # actually moved emits a Range1d / color-mapper patch; Bokeh
-                # coalesces no-op writes (setting a property to its current
-                # value sends nothing), so a steady extent costs nothing on the
-                # wire. For live data whose min/max drifts every tick this
-                # means one small range patch per update and some range
-                # "breathing". That is intentional: an active autoscale toggle
-                # is meant to track the data, and pan/zoom is preserved by
-                # turning the toggle off (the write is then skipped entirely).
-                # If the per-tick patching or visual jitter proves problematic
-                # in practice, reintroduce a grow/shrink threshold here so the
+                if axis == 'c':
+                    RangeHandles.write(plot, axis, *target)
+                    continue
+                handle = RangeHandles.range(plot, axis)
+                written = self._written[axis]
+                if handle is None or (not fit and written.get(handle) == target):
+                    continue
+                # Write the exact (padded) data extent whenever it moved --
+                # there is no hysteresis here. For live data whose min/max
+                # drifts every tick (typically the value axis of a 1-D plot)
+                # this means one small range patch per update and some range
+                # "breathing", and any pan/zoom on that axis is undone on the
+                # next update. That is intentional: an active autoscale toggle
+                # is meant to track the data, and pan/zoom is kept by turning
+                # the toggle off. If the visual jitter proves problematic in
+                # practice, introduce a grow/shrink threshold here so the
                 # range only moves once the extent leaves a deadband.
                 RangeHandles.write(plot, axis, *target)
+                written[handle] = target
             elif axis == 'c' and (frozen := self._last_targets.get(axis)) is not None:
                 RangeHandles.write(plot, axis, *frozen)
         if fit:
