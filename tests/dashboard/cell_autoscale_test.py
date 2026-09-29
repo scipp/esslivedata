@@ -4,9 +4,9 @@
 
 Uses lightweight stubs in the spirit of ``range_hook_test.py``: real
 ``Plotter`` instances aren't needed -- only the public surface
-(``AUTOSCALE_AXES``, ``iter_range_targets``) is exercised. Bokeh
-``CustomAction`` instances are stubbed for the toggle/Fit state so tests
-don't require a live Bokeh document.
+(``AUTOSCALE_AXES``, ``iter_range_targets``) is exercised. The toolbar tools
+are real Bokeh ``CustomAction`` models: setting ``active`` on one fires the
+controller's handler as a click in the browser would, without a document.
 """
 
 from __future__ import annotations
@@ -18,8 +18,10 @@ from typing import Any
 import pytest
 
 from ess.livedata.config.workflow_spec import DataKey, WorkflowId
-from ess.livedata.dashboard import cell_autoscale
-from ess.livedata.dashboard.cell_autoscale import CellAutoscaleController
+from ess.livedata.dashboard.cell_autoscale import (
+    CellAutoscaleController,
+    build_controller_from_layers,
+)
 from ess.livedata.dashboard.range_hook import Axis
 
 
@@ -50,36 +52,15 @@ class _FakePlotter:
         return iter(self._targets.items())
 
 
-class _StubAction:
-    """Stub for ``bokeh.models.CustomAction`` -- mutable ``active`` flag."""
+class _RaisingPlotter(_FakePlotter):
+    """A plotter whose targets fail to read once ``fail`` is set."""
 
-    def __init__(
-        self,
-        *,
-        active: bool,
-        description: str,
-        icon: Any | None,
-        reset_axes: tuple[Axis, ...] = (),
-    ) -> None:
-        self.active = active
-        self.description = description
-        self.icon = icon
-        self.reset_axes = reset_axes
-        self._callbacks: list[Any] = []
+    fail = False
 
-    def on_change(self, attr: str, callback: Any) -> None:
-        assert attr == 'active'
-        self._callbacks.append(callback)
-
-    def remove_on_change(self, attr: str, callback: Any) -> None:
-        assert attr == 'active'
-        self._callbacks.remove(callback)
-
-    def fire_active(self, new: bool) -> None:
-        """Simulate Bokeh firing the ``active`` change callback."""
-        old, self.active = self.active, new
-        for cb in self._callbacks:
-            cb('active', old, new)
+    def iter_range_targets(self):
+        if self.fail:
+            raise RuntimeError("targets unavailable")
+        return super().iter_range_targets()
 
 
 class _StubRange:
@@ -102,8 +83,14 @@ class _StubToolbar:
 
 
 class _StubFigState:
+    """Stub for the Bokeh figure: its toolbar, plus the ranges Fit may reset."""
+
     def __init__(self, toolbar: _StubToolbar) -> None:
+        from bokeh.models import Range1d
+
         self.toolbar = toolbar
+        self.x_range = Range1d()
+        self.y_range = Range1d()
         self.document = None
 
 
@@ -140,32 +127,6 @@ class _StubPlot:
         self.clim: tuple[float, float] | None = None
 
 
-@pytest.fixture(autouse=True)
-def patch_custom_action(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Replace Bokeh ``CustomAction`` factories with stubs for tests."""
-
-    def toggle_factory(
-        *,
-        active: bool,
-        description: str,
-        on_icon: Any | None,
-        off_icon: Any | None,
-    ) -> Any:
-        icon = on_icon if active else off_icon
-        return _StubAction(active=active, description=description, icon=icon)
-
-    def fit_factory(
-        *, description: str, figure: Any, reset_axes: tuple[Axis, ...]
-    ) -> Any:
-        del figure
-        return _StubAction(
-            active=False, description=description, icon='reset', reset_axes=reset_axes
-        )
-
-    monkeypatch.setattr(cell_autoscale, '_make_toggle_action', toggle_factory)
-    monkeypatch.setattr(cell_autoscale, '_make_fit_action', fit_factory)
-
-
 _TOGGLE = {
     'x': 'X-axis autoscale on data change',
     'y': 'Y-axis autoscale on data change',
@@ -174,14 +135,19 @@ _TOGGLE = {
 _FIT = 'Fit ranges to current data'
 
 
-def _tool(plot: _StubPlot, description: str) -> _StubAction:
+def _tool(plot: _StubPlot, description: str) -> Any:
     """The tool with the given tooltip on the plot's figure."""
     return next(t for t in plot.state.toolbar.tools if t.description == description)
 
 
 def _click_toggle(plot: _StubPlot, axis: Axis, active: bool = False) -> None:
     """Simulate the user switching the plot's ``axis`` toggle to ``active``."""
-    _tool(plot, _TOGGLE[axis]).fire_active(active)
+    _tool(plot, _TOGGLE[axis]).active = active
+
+
+def _click_fit(plot: _StubPlot) -> None:
+    """Simulate the user clicking the plot's Fit button."""
+    _tool(plot, _FIT).active = True
 
 
 def _make_plot_all_handles() -> tuple[
@@ -360,21 +326,30 @@ class TestAutoscaleOnChange:
         assert (x.start, x.end) == (2.0, 3.0)
 
         _click_toggle(plot, 'x', active=True)
-        hook(plot, None)
 
         assert (x.start, x.end) == (0.0, 10.0)
 
     def test_fit_refits_unchanged_extent_with_toggle_on(self, rendered) -> None:
-        _plotter, hook, plot, x = rendered
+        _plotter, _hook, plot, x = rendered
         x.start, x.end = 2.0, 3.0
 
-        _tool(plot, _FIT).fire_active(True)
-        hook(plot, None)
+        _click_fit(plot)
 
         assert (x.start, x.end) == (0.0, 10.0)
 
     def test_new_figure_is_fitted(self, rendered) -> None:
         _plotter, hook, _plot, _x = rendered
+        popout = _StubPlot(x_range=_StubRange())
+
+        hook(popout, None)
+
+        x = popout.handles['x_range']
+        assert (x.start, x.end) == (0.0, 10.0)
+
+    def test_new_figure_is_fitted_with_toggle_off(self, rendered) -> None:
+        """Nothing else sets the range, so it would stay at Bokeh's (0, 1)."""
+        _plotter, hook, plot, _x = rendered
+        _click_toggle(plot, 'x', active=False)
         popout = _StubPlot(x_range=_StubRange())
 
         hook(popout, None)
@@ -483,18 +458,16 @@ class TestFitButton:
             k: {'x': (10.0, 11.0), 'y': (12.0, 13.0), 'c': (14.0, 15.0)}
         }
 
-        # Simulate user pressing Fit: sets a pending flag honoured at the
-        # next render. Robust to figure swaps between click and render.
-        _tool(plot, _FIT).fire_active(True)
+        _click_fit(plot)
+
         assert _tool(plot, _FIT).active is False
-        hook(plot, None)
 
         assert (x.start, x.end) == (10.0, 11.0)
         assert (y.start, y.end) == (12.0, 13.0)
         assert (c.low, c.high) == (14.0, 15.0)
 
-    def test_fit_pending_cleared_after_render(self) -> None:
-        """A Fit click drives one render; later renders honour toggles again."""
+    def test_fit_is_one_shot(self) -> None:
+        """A Fit writes once; later renders honour the toggles again."""
         k = _key()
         plotter = _FakePlotter(frozenset({'x'}), {k: {'x': (0.0, 1.0)}})
         controller = CellAutoscaleController([plotter])
@@ -504,13 +477,12 @@ class TestFitButton:
         _click_toggle(plot, 'x')
 
         plotter._targets = {k: {'x': (10.0, 11.0)}}
-        _tool(plot, _FIT).fire_active(True)
-        hook(plot, None)
+        _click_fit(plot)
         assert (x.start, x.end) == (10.0, 11.0)
 
         plotter._targets = {k: {'x': (20.0, 21.0)}}
         hook(plot, None)
-        # Toggle still off, no Fit pending -> previous values stick.
+        # Toggle still off -> the fitted values stick.
         assert (x.start, x.end) == (10.0, 11.0)
 
     def test_fit_with_no_targets_is_safe(self) -> None:
@@ -521,7 +493,7 @@ class TestFitButton:
         hook(plot, None)
 
         # Should not raise on click or on the following render.
-        _tool(plot, _FIT).fire_active(True)
+        _click_fit(plot)
         hook(plot, None)
         assert _tool(plot, _FIT).active is False
 
@@ -550,7 +522,7 @@ class TestFitReplacesReset:
         controller.make_hook()(plot, None)
         x.start, x.end = 2.0, 3.0
 
-        _tool(plot, _FIT).fire_active(True)
+        _click_fit(plot)
 
         assert (x.start, x.end) == (0.0, 10.0)
 
@@ -569,7 +541,36 @@ class TestFitReplacesReset:
 
         controller.make_hook()(plot, None)
 
-        assert _tool(plot, _FIT).reset_axes == reset_axes
+        ranges = [getattr(plot.state, f'{axis}_range') for axis in reset_axes]
+        assert _tool(plot, _FIT).callback.args['ranges'] == ranges
+
+    def test_fit_rearmed_when_fitting_raises(self) -> None:
+        """The browser only sets ``active`` to True; a tool left active would
+        ignore every later click."""
+        plotter = _RaisingPlotter(frozenset({'x'}), {_key(): {'x': (0.0, 1.0)}})
+        controller = CellAutoscaleController([plotter])
+        plot, *_ = _make_plot_all_handles()
+        controller.make_hook()(plot, None)
+        plotter.fail = True
+
+        with pytest.raises(RuntimeError):
+            _click_fit(plot)
+
+        assert _tool(plot, _FIT).active is False
+
+    def test_figure_collectable_while_controller_lives(self) -> None:
+        """A closed pop-out's figure must not outlive it until the cell is
+        rebuilt."""
+        controller = CellAutoscaleController([_FakePlotter(frozenset({'c'}))])
+        hook = controller.make_hook()
+        plot, *_ = _make_plot_all_handles()
+        hook(plot, None)
+        ref = weakref.ref(plot.state)
+
+        del plot
+        gc.collect()
+
+        assert ref() is None
 
 
 class TestEmptyController:
@@ -588,10 +589,10 @@ class TestEmptyController:
 
     def test_build_controller_returns_none_when_no_axes(self) -> None:
         plotter = _FakePlotter(frozenset(), {})
-        assert cell_autoscale.build_controller_from_layers([plotter]) is None
+        assert build_controller_from_layers([plotter]) is None
 
     def test_build_controller_returns_none_when_no_plotters(self) -> None:
-        assert cell_autoscale.build_controller_from_layers([]) is None
+        assert build_controller_from_layers([]) is None
 
 
 class TestIdempotentInstallation:
@@ -734,13 +735,11 @@ class TestToggleStateAcrossFigures:
         assert _tool(later, _TOGGLE['x']).active is False
 
     def test_fit_in_one_figure_fits_both(self, figures) -> None:
-        plotter, hook, first, second = figures
+        plotter, _hook, first, second = figures
         _click_toggle(first, 'x')
         plotter._targets = {_key(): {'x': (10.0, 11.0)}}
 
-        _tool(second, _FIT).fire_active(True)
-        hook(first, None)
-        hook(second, None)
+        _click_fit(second)
 
         for plot in (first, second):
             x = plot.handles['x_range']
@@ -810,18 +809,6 @@ class TestMultiSession:
 
 
 class TestDispose:
-    def test_dispose_removes_on_change_callbacks(self) -> None:
-        plotter = _FakePlotter(frozenset({'x'}), {})
-        controller = CellAutoscaleController([plotter])
-        plot, _x, _y, _c = _make_plot_all_handles()
-        controller.make_hook()(plot, None)
-
-        tools = plot.state.toolbar.tools
-        assert all(tool._callbacks for tool in tools), "on_change must be installed"
-
-        controller.dispose()
-        assert all(tool._callbacks == [] for tool in tools)
-
     def test_controller_collectable_after_dispose(self) -> None:
         """The on_change cycle (controller -> tool -> bound method ->
         controller) keeps a controller alive across cell rebuilds. After
