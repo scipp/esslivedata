@@ -53,10 +53,18 @@ class _FakePlotter:
 class _StubAction:
     """Stub for ``bokeh.models.CustomAction`` -- mutable ``active`` flag."""
 
-    def __init__(self, *, active: bool, description: str, icon: Any | None) -> None:
+    def __init__(
+        self,
+        *,
+        active: bool,
+        description: str,
+        icon: Any | None,
+        reset_axes: tuple[Axis, ...] = (),
+    ) -> None:
         self.active = active
         self.description = description
         self.icon = icon
+        self.reset_axes = reset_axes
         self._callbacks: list[Any] = []
 
     def on_change(self, attr: str, callback: Any) -> None:
@@ -146,8 +154,13 @@ def patch_custom_action(monkeypatch: pytest.MonkeyPatch) -> None:
         icon = on_icon if active else off_icon
         return _StubAction(active=active, description=description, icon=icon)
 
-    def fit_factory(*, description: str, icon: Any | None) -> Any:
-        return _StubAction(active=False, description=description, icon=icon)
+    def fit_factory(
+        *, description: str, figure: Any, reset_axes: tuple[Axis, ...]
+    ) -> Any:
+        del figure
+        return _StubAction(
+            active=False, description=description, icon='reset', reset_axes=reset_axes
+        )
 
     monkeypatch.setattr(cell_autoscale, '_make_toggle_action', toggle_factory)
     monkeypatch.setattr(cell_autoscale, '_make_fit_action', fit_factory)
@@ -511,6 +524,52 @@ class TestFitButton:
         _tool(plot, _FIT).fire_active(True)
         hook(plot, None)
         assert _tool(plot, _FIT).active is False
+
+
+class TestFitReplacesReset:
+    def test_bokeh_reset_tool_removed(self) -> None:
+        from bokeh.models import PanTool, ResetTool
+
+        controller = CellAutoscaleController([_FakePlotter(frozenset({'x', 'y'}))])
+        plot, *_ = _make_plot_all_handles()
+        pan = PanTool()
+        plot.state.toolbar.tools = [pan, ResetTool()]
+
+        controller.make_hook()(plot, None)
+
+        tools = plot.state.toolbar.tools
+        assert pan in tools
+        assert not any(isinstance(tool, ResetTool) for tool in tools)
+        assert _tool(plot, _FIT).icon == 'reset'
+
+    def test_fit_writes_without_waiting_for_a_render(self) -> None:
+        """A stopped layer renders no more frames; Fit must still act."""
+        plotter = _FakePlotter(frozenset({'x'}), {_key(): {'x': (0.0, 10.0)}})
+        controller = CellAutoscaleController([plotter])
+        plot, x, _y, _c = _make_plot_all_handles()
+        controller.make_hook()(plot, None)
+        x.start, x.end = 2.0, 3.0
+
+        _tool(plot, _FIT).fire_active(True)
+
+        assert (x.start, x.end) == (0.0, 10.0)
+
+    @pytest.mark.parametrize(
+        ('axes', 'reset_axes'),
+        [
+            (frozenset({'x', 'y', 'c'}), ()),
+            (frozenset({'c'}), ('x', 'y')),
+        ],
+    )
+    def test_fit_resets_axes_the_controller_does_not_own(
+        self, axes: frozenset[Axis], reset_axes: tuple[Axis, ...]
+    ) -> None:
+        controller = CellAutoscaleController([_FakePlotter(axes)])
+        plot, *_ = _make_plot_all_handles()
+
+        controller.make_hook()(plot, None)
+
+        assert _tool(plot, _FIT).reset_axes == reset_axes
 
 
 class TestEmptyController:
