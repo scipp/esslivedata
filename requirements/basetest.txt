@@ -294,7 +294,7 @@ requests==2.34.2
     # via
     #   panel
     #   pooch
-sciline==25.11.1
+sciline==26.9.0
     # via
     #   esspolarization
     #   essreduce

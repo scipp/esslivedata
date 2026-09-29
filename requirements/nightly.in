@@ -10,6 +10,7 @@ essreduce>=26.9.0
 jinja2
 numba
 pydantic>=2
+sciline>=26.9.0
 scipp>=26.9.0
 scippneutron>=26.9.1
 pooch
