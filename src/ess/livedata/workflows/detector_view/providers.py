@@ -194,7 +194,8 @@ def compute_detector_histogram(
     Returns
     -------
     :
-        Histogram with spatial dims and the event coordinate dimension.
+        Histogram with spatial dims and the event coordinate dimension, as int32
+        counts.
     """
     if screen_binned_events.bins is None:
         # Already dense data (shouldn't happen in normal flow)
@@ -208,6 +209,15 @@ def compute_detector_histogram(
         result = screen_binned_events.hist({event_coord: bins_converted})
         result = result.rename_dims({event_coord: output_dim})
         result.coords[output_dim] = bins
+
+    # The accumulated histogram is (y, x, spectral) and by far the largest array the
+    # detector view holds, so it is stored as int32: half the memory of float64 and
+    # half the cost of the per-update `+=` and reductions. float32 is not an option,
+    # since incremental accumulation stops counting once a bin outgrows the
+    # increment. int32 counts exactly up to 2**31 per pixel and spectral bin, which is
+    # the accepted ceiling. Events have unit weight, so the cast is exact. scipp
+    # promotes integer sums to int64, so reductions over pixels cannot overflow.
+    result = result.to(dtype='int32', copy=False)
 
     if geometry is not None:
         result.coords[DETECTOR_TRANSFORM] = geometry
@@ -274,10 +284,10 @@ def detector_image(
     if use_weighting:
         image = image / weights
     # da00 is uncompressed, so float32 halves the wire size of every image (and what
-    # the dashboard buffers per frame). Only the published image is cast: the
-    # accumulation above must stay float64 because float32 stops incrementing at
-    # 2**24, which a long-running cumulative image can reach. Casting the result
-    # instead rounds it by at most one part in 2**24 and nothing accumulates on top.
+    # the dashboard buffers per frame). Only the published image is cast: float32
+    # stops incrementing at 2**24, which a long-running cumulative image can reach,
+    # so it must not be used for accumulation. Casting the result instead rounds it
+    # by at most one part in 2**24 and nothing accumulates on top.
     return DetectorImage[AccumulationMode](image.to(dtype='float32', copy=False))
 
 

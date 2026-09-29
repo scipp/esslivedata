@@ -251,7 +251,10 @@ def roi_spectra(
         return ROISpectra[AccumulationMode](
             sc.DataArray(
                 data=sc.zeros(
-                    dims=['roi', spectral_dim], shape=[0, n_spectral], unit='counts'
+                    dims=['roi', spectral_dim],
+                    shape=[0, n_spectral],
+                    unit='counts',
+                    dtype='int64',
                 ),
                 coords={
                     'roi': sc.array(dims=['roi'], values=[], dtype='int32'),
