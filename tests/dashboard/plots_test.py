@@ -13,6 +13,7 @@ from holoviews.plotting.bokeh import BokehRenderer
 from ess.livedata.config.workflow_spec import DataKey, WorkflowId
 from ess.livedata.core.timestamp import Timestamp
 from ess.livedata.dashboard import plots
+from ess.livedata.dashboard.data_roles import PRIMARY
 from ess.livedata.dashboard.extractors import WindowAggregatingExtractor
 from ess.livedata.dashboard.plot_params import (
     ErrorDisplay,
@@ -452,6 +453,7 @@ class TestImagePlotterRenderedValues:
         )
 
         image = plotter.plot(data, data_key)
+        plotter.compute({PRIMARY: {data_key: data}})
 
         np.testing.assert_array_equal(
             image.dimension_values(2, flat=False),

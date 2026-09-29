@@ -102,14 +102,9 @@ class RangeHandles:
     """
 
     @staticmethod
-    def x_range(plot: Any) -> Any | None:
-        """Return the current ``x_range`` handle, or ``None`` if not present."""
-        return plot.handles.get('x_range')
-
-    @staticmethod
-    def y_range(plot: Any) -> Any | None:
-        """Return the current ``y_range`` handle, or ``None`` if not present."""
-        return plot.handles.get('y_range')
+    def axis_range(plot: Any, axis: Literal['x', 'y']) -> Any | None:
+        """Return the current range handle for ``axis``, or ``None``."""
+        return plot.handles.get(f'{axis}_range')
 
     @staticmethod
     def color_mapper(plot: Any) -> Any | None:
@@ -147,7 +142,7 @@ class RangeHandles:
                 return False
             _ordered_write(mapper, lo, hi, 'low', 'high', datetime=False)
             return True
-        handle = cls.x_range(plot) if axis == 'x' else cls.y_range(plot)
+        handle = cls.axis_range(plot, axis)
         if handle is None:
             return False
         # The bound-dtype check is a fallback for figures without introspectable
