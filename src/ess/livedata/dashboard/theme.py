@@ -52,6 +52,8 @@ _NICOS_TEAL = '#1f5366'
 _NICOS_BLUE = '#0094ca'
 _NICOS_TAB_BG = '#d9d9d9'
 _NICOS_TAB_HOVER_BG = '#e9eaea'
+# Teal left between the rail's outer edges and its tabs.
+_NICOS_RAIL_INSET = 8
 
 # The rail has to bleed into the window corners for the teal to read as chrome
 # rather than as a floating panel, so the theme takes the main area's padding
@@ -94,7 +96,7 @@ _NICOS_TEMPLATE_CSS = """
 _NICOS_TAB_CSS = f"""
     :host(.bk-left) .bk-header {{
         background-color: {_NICOS_TEAL};
-        padding: 0 0 8px 8px;
+        padding: 0 0 {_NICOS_RAIL_INSET}px {_NICOS_RAIL_INSET}px;
         border-right: none;
     }}
     :host(.bk-left) > :not(.bk-header):not(style):not(link) {{
@@ -139,6 +141,10 @@ class Theme:
     """Edge the tab strip sits on. Extend only together with matching CSS."""
     tab_strip_css: str
     """Rules layered over Bokeh's tab CSS, valid for ``tabs_location``."""
+    strip_icon_color: str
+    """Color of an icon placed directly on the tab strip's background."""
+    strip_inset: int
+    """Pixels between the tab strip's outer edges and its tabs."""
     template_css: str = ''
     """Rules for the page around the tabs, injected as the template's raw CSS."""
 
@@ -159,6 +165,8 @@ CLASSIC_THEME = Theme(
     header_background='#2596be',
     tabs_location='above',
     tab_strip_css=_CLASSIC_TAB_CSS,
+    strip_icon_color=Colors.TEXT_DARK,
+    strip_inset=0,
 )
 
 NICOS_THEME = Theme(
@@ -166,6 +174,8 @@ NICOS_THEME = Theme(
     header_background=_NICOS_TEAL,
     tabs_location='left',
     tab_strip_css=_NICOS_TAB_CSS,
+    strip_icon_color=_NICOS_TAB_BG,
+    strip_inset=_NICOS_RAIL_INSET,
     template_css=_NICOS_TEMPLATE_CSS,
 )
 

@@ -28,6 +28,7 @@ from ess.livedata.dashboard.session_registry import SessionId, SessionRegistry
 from ess.livedata.dashboard.session_updater import SessionUpdater
 from ess.livedata.dashboard.theme import THEMES
 from ess.livedata.dashboard.widgets.plot_grid_tabs import PlotGridTabs
+from ess.livedata.dashboard.widgets.reload_button import ReloadButton
 from ess.livedata.dashboard.widgets.workflow_status_widget import (
     WorkflowStatusListWidget,
 )
@@ -1917,6 +1918,35 @@ class TestDisposeSeversPipeSubscribers:
 
         assert len(pipe.subscribers) == settled
 
+    def test_rebuild_leaves_the_session_dynamicmap_unwrapped(
+        self,
+        plot_orchestrator,
+        plot_grid_tabs,
+        job_orchestrator,
+        data_service,
+        workflow_id,
+    ):
+        """A cell composes over the session's DynamicMap without modifying it.
+
+        ``DynamicMap.opts`` wraps in place by default, so each rebuild would
+        stack one more operation on the long-lived session DynamicMap. A
+        kdim-carrying DynamicMap (the slicer) fails from the second wrap on.
+        """
+        cell_id = self._revealed_workflow_cell(
+            plot_orchestrator,
+            plot_grid_tabs,
+            job_orchestrator,
+            data_service,
+            workflow_id,
+        )
+        (layer,) = plot_orchestrator.get_cell(cell_id).layers
+        dmap = plot_grid_tabs._session_layers[layer.layer_id].components.dmap
+
+        plot_orchestrator.set_cell_title(cell_id, 'Renamed')
+        _tick(plot_grid_tabs)
+
+        assert dmap.callback.inputs == []
+
     def test_cell_removal_via_sweep_severs_subscribers(
         self,
         plot_orchestrator,
@@ -2656,6 +2686,10 @@ class TestPhoneLayout:
     def test_desktop_session_has_no_phone_widgets(self, plot_grid_tabs):
         assert plot_grid_tabs._plot_overview is None
         assert plot_grid_tabs._orientation is None
+        assert not plot_grid_tabs.panel.select(ReloadButton)
+
+    def test_phone_session_can_reload_the_page(self, phone_tabs):
+        assert len(phone_tabs.panel.select(ReloadButton)) == 1
 
     def test_open_plot_offers_no_popout(self, plot_orchestrator, phone_tabs):
         grid_id = plot_orchestrator.add_grid(title='G', nrows=2, ncols=2)

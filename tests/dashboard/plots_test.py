@@ -13,6 +13,7 @@ from holoviews.plotting.bokeh import BokehRenderer
 from ess.livedata.config.workflow_spec import DataKey, WorkflowId
 from ess.livedata.core.timestamp import Timestamp
 from ess.livedata.dashboard import plots
+from ess.livedata.dashboard.data_roles import PRIMARY
 from ess.livedata.dashboard.extractors import WindowAggregatingExtractor
 from ess.livedata.dashboard.plot_params import (
     ErrorDisplay,
@@ -452,6 +453,7 @@ class TestImagePlotterRenderedValues:
         )
 
         image = plotter.plot(data, data_key)
+        plotter.compute({PRIMARY: {data_key: data}})
 
         np.testing.assert_array_equal(
             image.dimension_values(2, flat=False),
@@ -749,6 +751,24 @@ class TestLinePlotter:
         )
         result = plotter.plot(data, data_key)
         assert isinstance(result, hv.Curve)
+
+    def test_histogram_mode_without_coord_bins_around_indices(self, data_key):
+        params = PlotParams1d(line=Line1dParams(mode=Line1dRenderMode.histogram))
+        plotter = plots.LinePlotter.from_params(params)
+        data = sc.DataArray(
+            sc.array(dims=['panel'], values=[1.0, 2.0, 3.0], unit='counts')
+        )
+        result = plotter.plot(data, data_key)
+        assert isinstance(result, hv.Histogram)
+        np.testing.assert_array_equal(result.edges, [-0.5, 0.5, 1.5, 2.5])
+
+    def test_line_mode_without_coord_plots_at_indices(self, data_key):
+        plotter = plots.LinePlotter.from_params(PlotParams1d())
+        data = sc.DataArray(
+            sc.array(dims=['panel'], values=[1.0, 2.0, 3.0], unit='counts')
+        )
+        result = plotter.plot(data, data_key)
+        np.testing.assert_array_equal(result.dimension_values(0), [0.0, 1.0, 2.0])
 
     def test_histogram_mode_with_errors(self, data_key):
         params = PlotParams1d(
@@ -1298,6 +1318,30 @@ class TestSlicerPlotter:
     ):
         """Cell-attached hooks must not break the slicer's kdim-driven DynamicMap."""
         present_figure_with_cell_hooks(slicer_plotter, {data_key: data_3d})
+
+    def test_presenter_dmap_updates_through_stacked_opts(
+        self, slicer_plotter, data_3d, data_key
+    ):
+        """A pipe update must reach the slice when the DynamicMap is wrapped twice.
+
+        The phone layout's cell places the color bar with one ``.opts()`` and
+        attaches its hooks with another; each wraps the DynamicMap once more.
+        """
+        slicer_plotter.compute({'primary': {data_key: data_3d}})
+        pipe = hv.streams.Pipe(data=slicer_plotter.get_cached_state())
+        composed = (
+            slicer_plotter.create_presenter()
+            .present(pipe)
+            .opts(hv.opts.Image(colorbar_position='bottom'))
+            .opts(hooks=[lambda plot, element: None])
+        )
+        bokeh_plot = render_to_bokeh(composed)
+
+        slicer_plotter.compute({'primary': {data_key: data_3d * 2.0}})
+        pipe.send(slicer_plotter.get_cached_state())
+
+        rendered = bokeh_plot.handles['source'].data['image'][0]
+        np.testing.assert_array_equal(rendered, 2.0 * data_3d['z', 0].values)
 
     # === Edge coordinate tests ===
 

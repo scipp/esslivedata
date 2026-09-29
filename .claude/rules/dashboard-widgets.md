@@ -102,6 +102,27 @@ Two consequences to preserve:
   Panel, so a replacement window can only come back at the default size in the
   next cascade slot.
 
+### Never modify the session's DynamicMap
+
+A layer's session DynamicMap (`SessionComponents.dmap`) outlives every cell
+widget built over it: it is replaced only with the plotter, not on a cell
+rebuild (rename, move, closing a pop-out, orientation change). And
+`DynamicMap.opts()` is not a pure function. It swaps a wrapper into the map's
+callback and returns the *same* object:
+
+```python
+w = dmap.opts(hooks=[h])              # w is dmap; dmap is now wrapped
+w = dmap.opts(hooks=[h], clone=True)  # new map; dmap untouched
+```
+
+Without `clone=True`, every rebuild stacks one more permanent wrap, about
+0.75 ms per frame each, for the rest of the session. A map with kdims (the
+slicer) breaks outright from the second wrap on: HoloViews rebuilds the kdim
+key from the callback's named parameters, gets too few values, and fails an
+`AssertionError` in `_validate_key` on every data update. So anything that
+decorates a cell's plot at build time passes `clone=True`.
+`test_rebuild_leaves_the_session_dynamicmap_unwrapped` guards this.
+
 ## Icons
 
 Do not use Unicode characters for button icons. Use embedded SVG icons from `dashboard/widgets/icons.py` via `get_icon()`. Use the `create_tool_button()` helper from `dashboard/widgets/buttons.py` for consistent styling.

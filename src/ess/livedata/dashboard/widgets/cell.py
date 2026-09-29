@@ -283,16 +283,16 @@ def _place_colorbar(
     """Draw color bars below the plot, or beside it.
 
     In portrait, width is what the plot lacks, so the color bar goes below; in
-    landscape, height is, so it goes beside. Both positions are set explicitly:
-    a rebuild composes over the session's same DynamicMaps, which keep options
-    applied by an earlier build. Only these element types draw a color bar;
-    the option reaches them inside overlays and layouts alike. The option specs
-    are built here, not at import: they need the plotting backend loaded.
+    landscape, height is, so it goes beside. Only these element types draw a
+    color bar; the option reaches them inside overlays and layouts alike. The
+    option specs are built here, not at import: they need the plotting backend
+    loaded.
     """
     position = 'bottom' if below else 'right'
     return plot.opts(
         hv.opts.Image(colorbar_position=position),
         hv.opts.QuadMesh(colorbar_position=position),
+        clone=True,
     )
 
 
@@ -954,4 +954,10 @@ class CellWidget:
             ),
             None,
         )
-        return result.opts(hooks=hooks, **legend_overlay_opts(legend_position))
+        # ``clone=True``: ``DynamicMap.opts`` otherwise wraps the map in place,
+        # and a single-layer ``result`` is the session's own DynamicMap, which
+        # outlives this widget. Every rebuild would then stack one more wrap on
+        # it for the rest of the session.
+        return result.opts(
+            hooks=hooks, **legend_overlay_opts(legend_position), clone=True
+        )

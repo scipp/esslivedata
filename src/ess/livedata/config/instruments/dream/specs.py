@@ -150,28 +150,29 @@ instrument.add_logical_view(
     source_names=['mantle_detector'],
     transform=get_mantle_front_layer,
 )
-instrument.add_logical_view(
+wire_view_handle = instrument.add_logical_view(
     name='wire_view',
     title='Wire view',
-    description='Sum over strips to show counts per wire.',
-    source_names=[
-        'mantle_detector',
-        'endcap_backward_detector',
-        'endcap_forward_detector',
-    ],
+    description=(
+        'Counts per wire, summed over strips. One pixel per wire, grouped by the '
+        'wire plane (unit, cassette, counter) it belongs to.'
+    ),
+    source_names=detector_names,
     transform=get_wire_view,
     roi_support=False,
     reduction_dim='strip',
 )
-instrument.add_logical_view(
+strip_view_handle = instrument.add_logical_view(
     name='strip_view',
     title='Strip view',
-    description='Sum over all dimensions except strip to show counts per strip.',
+    description=(
+        'Counts per strip, summed over the wires of both counters. One pixel per '
+        'strip, grouped by the cassette (unit, cassette) it belongs to.'
+    ),
     source_names=detector_names,
     transform=get_strip_view,
-    output_ndim=1,
     roi_support=False,
-    reduction_dim='other',
+    reduction_dim=['counter', 'wire'],
 )
 
 
@@ -198,8 +199,7 @@ projection_handle = instrument.register_detector_view(
     ),
     source_names=detector_names,
     params=DreamDetectorViewParams,
-    # The projection covers every bank, so it carries the NICOS devices; the
-    # wire and strip views cover subsets.
+    # The projection carries the NICOS devices, not the logical views.
     device_outputs=DETECTOR_VIEW_DEVICES,
 )
 

@@ -76,7 +76,9 @@ def load_raw_grid_templates(instrument: str) -> list[dict[str, Any]]:
             logger.debug('No grid_templates directory for instrument %s', instrument)
             return templates
 
-        for item in templates_dir.iterdir():
+        # Sorted so the template list has a stable order; iterdir order is up
+        # to the filesystem.
+        for item in sorted(templates_dir.iterdir(), key=lambda item: item.name):
             if item.is_file() and item.name.endswith('.yaml'):
                 raw = _load_template_file(item)
                 if raw is not None:

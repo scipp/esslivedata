@@ -227,13 +227,12 @@ class TestPopoutRendersTheCellsPlotAgain:
         window = _open_windows(plot_grid_tabs)[0]
         assert _rendered_plot(window) is cell_widget._plot
 
-    def test_both_toolbars_get_the_same_autoscale_tools(
-        self, plot_grid_tabs, line_cell
-    ):
+    def test_both_toolbars_get_autoscale_tools(self, plot_grid_tabs, line_cell):
         """Tools install per figure, so neither toolbar goes bare.
 
-        Both toolbars get the *same* tool models: that identity is what makes
-        a toggle flipped in the window show as flipped in the cell.
+        Each toolbar gets tool models of its own: BokehJS runs a tool's click
+        callback once per figure holding it, so a toggle shared by two
+        toolbars flips twice per click and never changes.
         """
         plot = plot_grid_tabs._cells[line_cell]._plot
 
@@ -242,7 +241,8 @@ class TestPopoutRendersTheCellsPlotAgain:
 
         assert _FIT in cell_tools
         assert cell_tools.keys() > {_FIT}  # at least one axis toggle too
-        assert cell_tools == popout_tools
+        assert cell_tools.keys() == popout_tools.keys()
+        assert all(popout_tools[name] is not cell_tools[name] for name in cell_tools)
 
     def test_toggling_autoscale_in_one_view_shows_in_the_other(
         self, plot_grid_tabs, line_cell
@@ -257,15 +257,8 @@ class TestPopoutRendersTheCellsPlotAgain:
 
         assert not popout_tools[toggle].active
 
-    def test_fit_reaches_every_rendered_figure(
-        self, plot_grid_tabs, line_cell, line_plotter
-    ):
-        """A Fit click must fit both views, not whichever renders first.
-
-        Both figures repaint from one pipe push, so tracking the pending fit
-        as a single flag would let the first figure consume it and leave the
-        second showing a stale range.
-        """
+    def test_fit_reaches_every_rendered_figure(self, plot_grid_tabs, line_cell):
+        """A Fit click fits both views at once, without waiting for data."""
         plot = plot_grid_tabs._cells[line_cell]._plot
         figures = [_render(plot).state for _ in range(2)]
         tools = _autoscale_tools_of(figures[0])
@@ -276,7 +269,6 @@ class TestPopoutRendersTheCellsPlotAgain:
             figure.x_range.start, figure.x_range.end = -999.0, 999.0
 
         tools[_FIT].active = True  # the user clicks Fit
-        _repaint(plot_grid_tabs, line_plotter)
 
         for figure in figures:
             assert (figure.x_range.start, figure.x_range.end) != (-999.0, 999.0)
@@ -311,12 +303,6 @@ def _autoscale_tools_of(figure) -> dict[str, object]:
         for tool in figure.toolbar.tools
         if isinstance(tool, CustomAction)
     }
-
-
-def _repaint(plot_grid_tabs, plotter) -> None:
-    """Push a frame through the layer's pipe, repainting every rendered view."""
-    session_layer = next(iter(plot_grid_tabs._session_layers.values()))
-    session_layer.components.pipe.send(plotter.get_cached_state())
 
 
 def _rendered_plot(window):

@@ -4,9 +4,9 @@
 
 Uses lightweight stubs in the spirit of ``range_hook_test.py``: real
 ``Plotter`` instances aren't needed -- only the public surface
-(``AUTOSCALE_AXES``, ``iter_range_targets``) is exercised. Bokeh
-``CustomAction`` instances are stubbed for the toggle/Fit state so tests
-don't require a live Bokeh document.
+(``AUTOSCALE_AXES``, ``iter_range_targets``) is exercised. The toolbar tools
+are real Bokeh ``CustomAction`` models: setting ``active`` on one fires the
+controller's handler as a click in the browser would, without a document.
 """
 
 from __future__ import annotations
@@ -18,8 +18,10 @@ from typing import Any
 import pytest
 
 from ess.livedata.config.workflow_spec import DataKey, WorkflowId
-from ess.livedata.dashboard import cell_autoscale
-from ess.livedata.dashboard.cell_autoscale import CellAutoscaleController
+from ess.livedata.dashboard.cell_autoscale import (
+    CellAutoscaleController,
+    build_controller_from_layers,
+)
 from ess.livedata.dashboard.range_hook import Axis
 
 
@@ -50,28 +52,15 @@ class _FakePlotter:
         return iter(self._targets.items())
 
 
-class _StubAction:
-    """Stub for ``bokeh.models.CustomAction`` -- mutable ``active`` flag."""
+class _RaisingPlotter(_FakePlotter):
+    """A plotter whose targets fail to read once ``fail`` is set."""
 
-    def __init__(self, *, active: bool, description: str, icon: Any | None) -> None:
-        self.active = active
-        self.description = description
-        self.icon = icon
-        self._callbacks: list[Any] = []
+    fail = False
 
-    def on_change(self, attr: str, callback: Any) -> None:
-        assert attr == 'active'
-        self._callbacks.append(callback)
-
-    def remove_on_change(self, attr: str, callback: Any) -> None:
-        assert attr == 'active'
-        self._callbacks.remove(callback)
-
-    def fire_active(self, new: bool) -> None:
-        """Simulate Bokeh firing the ``active`` change callback."""
-        old, self.active = self.active, new
-        for cb in self._callbacks:
-            cb('active', old, new)
+    def iter_range_targets(self):
+        if self.fail:
+            raise RuntimeError("targets unavailable")
+        return super().iter_range_targets()
 
 
 class _StubRange:
@@ -94,8 +83,14 @@ class _StubToolbar:
 
 
 class _StubFigState:
+    """Stub for the Bokeh figure: its toolbar, plus the ranges Fit may reset."""
+
     def __init__(self, toolbar: _StubToolbar) -> None:
+        from bokeh.models import Range1d
+
         self.toolbar = toolbar
+        self.x_range = Range1d()
+        self.y_range = Range1d()
         self.document = None
 
 
@@ -132,25 +127,27 @@ class _StubPlot:
         self.clim: tuple[float, float] | None = None
 
 
-@pytest.fixture(autouse=True)
-def patch_custom_action(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Replace Bokeh ``CustomAction`` factories with stubs for tests."""
+_TOGGLE = {
+    'x': 'X-axis autoscale on data change',
+    'y': 'Y-axis autoscale on data change',
+    'c': 'Color autoscale',
+}
+_FIT = 'Fit ranges to current data'
 
-    def toggle_factory(
-        *,
-        active: bool,
-        description: str,
-        on_icon: Any | None,
-        off_icon: Any | None,
-    ) -> Any:
-        icon = on_icon if active else off_icon
-        return _StubAction(active=active, description=description, icon=icon)
 
-    def fit_factory(*, description: str, icon: Any | None) -> Any:
-        return _StubAction(active=False, description=description, icon=icon)
+def _tool(plot: _StubPlot, description: str) -> Any:
+    """The tool with the given tooltip on the plot's figure."""
+    return next(t for t in plot.state.toolbar.tools if t.description == description)
 
-    monkeypatch.setattr(cell_autoscale, '_make_toggle_action', toggle_factory)
-    monkeypatch.setattr(cell_autoscale, '_make_fit_action', fit_factory)
+
+def _click_toggle(plot: _StubPlot, axis: Axis, active: bool = False) -> None:
+    """Simulate the user switching the plot's ``axis`` toggle to ``active``."""
+    _tool(plot, _TOGGLE[axis]).active = active
+
+
+def _click_fit(plot: _StubPlot) -> None:
+    """Simulate the user clicking the plot's Fit button."""
+    _tool(plot, _FIT).active = True
 
 
 def _make_plot_all_handles() -> tuple[
@@ -236,7 +233,7 @@ class TestHookWrites:
         assert (y.start, y.end) == (2.0, 3.0)
 
         # Now turn X off, advance targets, render again.
-        controller._toggles['x'].active = False
+        _click_toggle(plot, 'x')
         plotter._targets = {k: {'x': (10.0, 11.0), 'y': (20.0, 21.0)}}
         hook(plot, None)
 
@@ -271,12 +268,106 @@ class TestHookWrites:
 
         # User turns off the c-toggle, then HoloViews' next render overwrites
         # the color_mapper from new data extent (simulated here).
-        controller._toggles['c'].active = False
+        _click_toggle(plot, 'c')
         c.low, c.high = 99.0, 999.0
         plotter._targets = {k: {'c': (100.0, 200.0)}}
         hook(plot, None)
 
         # Hook must re-write the last-known target, overriding HV's update.
+        assert (c.low, c.high) == (0.0, 10.0)
+
+
+class TestAutoscaleOnChange:
+    """An active x/y toggle writes only when the data extent changed."""
+
+    @pytest.fixture
+    def rendered(self) -> tuple[_FakePlotter, Any, _StubPlot, _StubRange]:
+        plotter = _FakePlotter(frozenset({'x', 'y'}), {_key(): {'x': (0.0, 10.0)}})
+        controller = CellAutoscaleController([plotter])
+        hook = controller.make_hook()
+        plot, x, _y, _c = _make_plot_all_handles()
+        hook(plot, None)
+        return plotter, hook, plot, x
+
+    def test_zoom_survives_render_with_unchanged_extent(self, rendered) -> None:
+        _plotter, hook, plot, x = rendered
+        x.start, x.end = 2.0, 3.0  # user zooms in
+
+        hook(plot, None)
+
+        assert (x.start, x.end) == (2.0, 3.0)
+
+    def test_changed_extent_resets_zoom(self, rendered) -> None:
+        plotter, hook, plot, x = rendered
+        x.start, x.end = 2.0, 3.0
+        plotter._targets = {_key(): {'x': (0.0, 20.0)}}
+
+        hook(plot, None)
+
+        assert (x.start, x.end) == (0.0, 20.0)
+
+    def test_source_joining_refits(self, rendered) -> None:
+        plotter, hook, plot, x = rendered
+        x.start, x.end = 2.0, 3.0
+        plotter._targets = {
+            _key('a'): {'x': (0.0, 10.0)},
+            _key('b'): {'x': (5.0, 30.0)},
+        }
+
+        hook(plot, None)
+
+        assert (x.start, x.end) == (0.0, 30.0)
+
+    def test_switching_toggle_on_refits_unchanged_extent(self, rendered) -> None:
+        _plotter, hook, plot, x = rendered
+        _click_toggle(plot, 'x', active=False)
+        x.start, x.end = 2.0, 3.0
+        hook(plot, None)
+        assert (x.start, x.end) == (2.0, 3.0)
+
+        _click_toggle(plot, 'x', active=True)
+
+        assert (x.start, x.end) == (0.0, 10.0)
+
+    def test_fit_refits_unchanged_extent_with_toggle_on(self, rendered) -> None:
+        _plotter, _hook, plot, x = rendered
+        x.start, x.end = 2.0, 3.0
+
+        _click_fit(plot)
+
+        assert (x.start, x.end) == (0.0, 10.0)
+
+    def test_new_figure_is_fitted(self, rendered) -> None:
+        _plotter, hook, _plot, _x = rendered
+        popout = _StubPlot(x_range=_StubRange())
+
+        hook(popout, None)
+
+        x = popout.handles['x_range']
+        assert (x.start, x.end) == (0.0, 10.0)
+
+    def test_new_figure_is_fitted_with_toggle_off(self, rendered) -> None:
+        """Nothing else sets the range, so it would stay at Bokeh's (0, 1)."""
+        _plotter, hook, plot, _x = rendered
+        _click_toggle(plot, 'x', active=False)
+        popout = _StubPlot(x_range=_StubRange())
+
+        hook(popout, None)
+
+        x = popout.handles['x_range']
+        assert (x.start, x.end) == (0.0, 10.0)
+
+    def test_color_written_every_render(self) -> None:
+        """HoloViews re-derives the color mapper from data on every render."""
+        plotter = _FakePlotter(frozenset({'c'}), {_key(): {'c': (0.0, 10.0)}})
+        controller = CellAutoscaleController([plotter])
+        hook = controller.make_hook()
+        plot, _x, _y, c = _make_plot_all_handles()
+        hook(plot, None)
+        c.low, c.high = 99.0, 999.0
+
+        hook(plot, None)
+
         assert (c.low, c.high) == (0.0, 10.0)
 
 
@@ -303,7 +394,7 @@ class TestClimFreeze:
         assert plot.clim == (4.0, 5.0)
 
         # Toggle off, advance targets: clim must stay at the frozen value.
-        controller._toggles['c'].active = False
+        _click_toggle(plot, 'c')
         plotter._targets = {k: {'c': (100.0, 200.0)}}
         plot.clim = None  # simulate HV resetting it
         hook(plot, None)
@@ -358,7 +449,7 @@ class TestFitButton:
 
         # Turn all toggles off and clear what the first render wrote.
         for axis in controller.axes:
-            controller._toggles[axis].active = False
+            _click_toggle(plot, axis)
         x.start = x.end = None
         y.start = y.end = None
         c.low = c.high = None
@@ -367,34 +458,31 @@ class TestFitButton:
             k: {'x': (10.0, 11.0), 'y': (12.0, 13.0), 'c': (14.0, 15.0)}
         }
 
-        # Simulate user pressing Fit: sets a pending flag honoured at the
-        # next render. Robust to figure swaps between click and render.
-        controller._fit_tool.fire_active(True)
-        assert controller._fit_tool.active is False
-        hook(plot, None)
+        _click_fit(plot)
+
+        assert _tool(plot, _FIT).active is False
 
         assert (x.start, x.end) == (10.0, 11.0)
         assert (y.start, y.end) == (12.0, 13.0)
         assert (c.low, c.high) == (14.0, 15.0)
 
-    def test_fit_pending_cleared_after_render(self) -> None:
-        """A Fit click drives one render; later renders honour toggles again."""
+    def test_fit_is_one_shot(self) -> None:
+        """A Fit writes once; later renders honour the toggles again."""
         k = _key()
         plotter = _FakePlotter(frozenset({'x'}), {k: {'x': (0.0, 1.0)}})
         controller = CellAutoscaleController([plotter])
         plot, x, _y, _c = _make_plot_all_handles()
         hook = controller.make_hook()
         hook(plot, None)
-        controller._toggles['x'].active = False
+        _click_toggle(plot, 'x')
 
         plotter._targets = {k: {'x': (10.0, 11.0)}}
-        controller._fit_tool.fire_active(True)
-        hook(plot, None)
+        _click_fit(plot)
         assert (x.start, x.end) == (10.0, 11.0)
 
         plotter._targets = {k: {'x': (20.0, 21.0)}}
         hook(plot, None)
-        # Toggle still off, no Fit pending -> previous values stick.
+        # Toggle still off -> the fitted values stick.
         assert (x.start, x.end) == (10.0, 11.0)
 
     def test_fit_with_no_targets_is_safe(self) -> None:
@@ -405,9 +493,84 @@ class TestFitButton:
         hook(plot, None)
 
         # Should not raise on click or on the following render.
-        controller._fit_tool.fire_active(True)
+        _click_fit(plot)
         hook(plot, None)
-        assert controller._fit_tool.active is False
+        assert _tool(plot, _FIT).active is False
+
+
+class TestFitReplacesReset:
+    def test_bokeh_reset_tool_removed(self) -> None:
+        from bokeh.models import PanTool, ResetTool
+
+        controller = CellAutoscaleController([_FakePlotter(frozenset({'x', 'y'}))])
+        plot, *_ = _make_plot_all_handles()
+        pan = PanTool()
+        plot.state.toolbar.tools = [pan, ResetTool()]
+
+        controller.make_hook()(plot, None)
+
+        tools = plot.state.toolbar.tools
+        assert pan in tools
+        assert not any(isinstance(tool, ResetTool) for tool in tools)
+        assert _tool(plot, _FIT).icon == 'reset'
+
+    def test_fit_writes_without_waiting_for_a_render(self) -> None:
+        """A stopped layer renders no more frames; Fit must still act."""
+        plotter = _FakePlotter(frozenset({'x'}), {_key(): {'x': (0.0, 10.0)}})
+        controller = CellAutoscaleController([plotter])
+        plot, x, _y, _c = _make_plot_all_handles()
+        controller.make_hook()(plot, None)
+        x.start, x.end = 2.0, 3.0
+
+        _click_fit(plot)
+
+        assert (x.start, x.end) == (0.0, 10.0)
+
+    @pytest.mark.parametrize(
+        ('axes', 'reset_axes'),
+        [
+            (frozenset({'x', 'y', 'c'}), ()),
+            (frozenset({'c'}), ('x', 'y')),
+        ],
+    )
+    def test_fit_resets_axes_the_controller_does_not_own(
+        self, axes: frozenset[Axis], reset_axes: tuple[Axis, ...]
+    ) -> None:
+        controller = CellAutoscaleController([_FakePlotter(axes)])
+        plot, *_ = _make_plot_all_handles()
+
+        controller.make_hook()(plot, None)
+
+        ranges = [getattr(plot.state, f'{axis}_range') for axis in reset_axes]
+        assert _tool(plot, _FIT).callback.args['ranges'] == ranges
+
+    def test_fit_rearmed_when_fitting_raises(self) -> None:
+        """The browser only sets ``active`` to True; a tool left active would
+        ignore every later click."""
+        plotter = _RaisingPlotter(frozenset({'x'}), {_key(): {'x': (0.0, 1.0)}})
+        controller = CellAutoscaleController([plotter])
+        plot, *_ = _make_plot_all_handles()
+        controller.make_hook()(plot, None)
+        plotter.fail = True
+
+        with pytest.raises(RuntimeError):
+            _click_fit(plot)
+
+        assert _tool(plot, _FIT).active is False
+
+    def test_figure_collectable_while_controller_lives(self) -> None:
+        """A closed pop-out's figure must not outlive it until the cell is
+        rebuilt."""
+        controller = CellAutoscaleController([_FakePlotter(frozenset({'c'}))])
+        hook = controller.make_hook()
+        plot, *_ = _make_plot_all_handles()
+        hook(plot, None)
+        ref = weakref.ref(plot.state)
+
+        del plot
+        gc.collect()
+
+        assert ref() is None
 
 
 class TestEmptyController:
@@ -426,10 +589,10 @@ class TestEmptyController:
 
     def test_build_controller_returns_none_when_no_axes(self) -> None:
         plotter = _FakePlotter(frozenset(), {})
-        assert cell_autoscale.build_controller_from_layers([plotter]) is None
+        assert build_controller_from_layers([plotter]) is None
 
     def test_build_controller_returns_none_when_no_plotters(self) -> None:
-        assert cell_autoscale.build_controller_from_layers([]) is None
+        assert build_controller_from_layers([]) is None
 
 
 class TestIdempotentInstallation:
@@ -477,10 +640,10 @@ class TestIdempotentInstallation:
         """Every figure the cell's hook renders into must carry the tools.
 
         The hook lives on the session's DynamicMap, which HoloViews can render
-        into more than one Bokeh figure (a rebuilt cell whose previous pane is
-        still in the document, or a kdim/Layout figure swap). Installing only
-        into the figure that happens to render first leaves the figure the
-        user sees with no toggles.
+        into more than one Bokeh figure (a pop-out, a rebuilt cell whose
+        previous pane is still in the document, or a kdim/Layout figure swap).
+        Installing only into the figure that happens to render first leaves
+        the figure the user sees with no toggles.
         """
         k = _key()
         plotter = _FakePlotter(frozenset({'x', 'y'}), {k: {'x': (0.0, 1.0)}})
@@ -492,9 +655,95 @@ class TestIdempotentInstallation:
         hook(first, None)
         hook(second, None)
 
-        # Same tool models on both toolbars, so toggle state is shared.
-        assert second.state.toolbar.tools == first.state.toolbar.tools
-        assert len(second.state.toolbar.tools) == 3
+        first_tools = first.state.toolbar.tools
+        second_tools = second.state.toolbar.tools
+        assert [t.description for t in second_tools] == [
+            t.description for t in first_tools
+        ]
+        assert len(second_tools) == 3
+
+    def test_figures_get_tool_models_of_their_own(self) -> None:
+        """A tool model in two toolbars cannot be toggled.
+
+        BokehJS runs a tool's ``CustomJS`` once per figure holding it, so a
+        shared toggle flips once per figure on every click and, with two
+        figures, lands back where it started.
+        """
+        plotter = _FakePlotter(frozenset({'x', 'y'}), {})
+        controller = CellAutoscaleController([plotter])
+        hook = controller.make_hook()
+
+        first, *_ = _make_plot_all_handles()
+        second, *_ = _make_plot_all_handles()
+        hook(first, None)
+        hook(second, None)
+
+        shared = {id(t) for t in first.state.toolbar.tools} & {
+            id(t) for t in second.state.toolbar.tools
+        }
+        assert shared == set()
+
+
+class TestToggleStateAcrossFigures:
+    """A cell rendered into two figures (grid cell and pop-out) has one state."""
+
+    @pytest.fixture
+    def figures(self) -> tuple[_FakePlotter, Any, _StubPlot, _StubPlot]:
+        plotter = _FakePlotter(frozenset({'x', 'y'}), {_key(): {'x': (0.0, 1.0)}})
+        controller = CellAutoscaleController([plotter])
+        hook = controller.make_hook()
+        first = _StubPlot(x_range=_StubRange())
+        second = _StubPlot(x_range=_StubRange())
+        hook(first, None)
+        hook(second, None)
+        return plotter, hook, first, second
+
+    def test_toggle_in_one_figure_shows_in_the_other(self, figures) -> None:
+        _plotter, _hook, first, second = figures
+        other = _tool(second, _TOGGLE['x'])
+        on_icon = other.icon
+
+        _click_toggle(first, 'x')
+
+        assert other.active is False
+        assert other.icon != on_icon
+        assert _tool(second, _TOGGLE['y']).active is True
+
+    def test_toggle_in_one_figure_freezes_both(self, figures) -> None:
+        plotter, hook, first, second = figures
+
+        _click_toggle(second, 'x')
+        plotter._targets = {_key(): {'x': (10.0, 11.0)}}
+        hook(first, None)
+        hook(second, None)
+
+        for plot in (first, second):
+            x = plot.handles['x_range']
+            assert (x.start, x.end) == (0.0, 1.0)
+
+    def test_figure_rendered_later_starts_in_the_current_state(self) -> None:
+        plotter = _FakePlotter(frozenset({'x'}), {})
+        controller = CellAutoscaleController([plotter])
+        hook = controller.make_hook()
+        first, *_ = _make_plot_all_handles()
+        hook(first, None)
+        _click_toggle(first, 'x')
+
+        later, *_ = _make_plot_all_handles()
+        hook(later, None)
+
+        assert _tool(later, _TOGGLE['x']).active is False
+
+    def test_fit_in_one_figure_fits_both(self, figures) -> None:
+        plotter, _hook, first, second = figures
+        _click_toggle(first, 'x')
+        plotter._targets = {_key(): {'x': (10.0, 11.0)}}
+
+        _click_fit(second)
+
+        for plot in (first, second):
+            x = plot.handles['x_range']
+            assert (x.start, x.end) == (10.0, 11.0)
 
 
 class TestHandleRefreshPerRender:
@@ -542,8 +791,8 @@ class TestMultiSession:
         ctrl_b.make_hook()(plot_b, None)
 
         # Session A turns X off; session B turns Y off. Advance targets.
-        ctrl_a._toggles['x'].active = False
-        ctrl_b._toggles['y'].active = False
+        _click_toggle(plot_a, 'x')
+        _click_toggle(plot_b, 'y')
         plotters[0]._targets = {k: {'x': (10.0, 11.0), 'y': (20.0, 21.0)}}
 
         ctrl_a.make_hook()(plot_a, None)
@@ -556,25 +805,10 @@ class TestMultiSession:
         assert (xb.start, xb.end) == (10.0, 11.0)
         assert (yb.start, yb.end) == (2.0, 3.0)
         # Tool sets are independent.
-        assert ctrl_a._toggles['x'] is not ctrl_b._toggles['x']
+        assert _tool(plot_a, _TOGGLE['x']) is not _tool(plot_b, _TOGGLE['x'])
 
 
 class TestDispose:
-    def test_dispose_removes_fit_on_change(self) -> None:
-        plotter = _FakePlotter(frozenset({'x'}), {})
-        controller = CellAutoscaleController([plotter])
-        plot, _x, _y, _c = _make_plot_all_handles()
-        controller.make_hook()(plot, None)
-
-        fit_tool = controller._fit_tool
-        assert fit_tool is not None
-        assert fit_tool._callbacks, "Fit on_change must be installed"
-
-        controller.dispose()
-        assert fit_tool._callbacks == []
-        assert controller._fit_tool is None
-        assert controller._toggles == {}
-
     def test_controller_collectable_after_dispose(self) -> None:
         """The on_change cycle (controller -> tool -> bound method ->
         controller) keeps a controller alive across cell rebuilds. After

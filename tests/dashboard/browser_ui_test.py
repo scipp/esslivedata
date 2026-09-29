@@ -667,6 +667,82 @@ def test_opening_a_popout_does_not_make_the_page_scroll():
         assert page.evaluate(_PAGE_OVERFLOW) == before
 
 
+# ``active`` of every copy of a toolbar tool, one per figure it is on.
+_TOOL_STATES = """
+(description) => {
+  const out = [];
+  for (const doc of Bokeh.documents)
+    for (const m of doc._all_models.values())
+      if (m.type === 'CustomAction' && m.description === description)
+        out.push(m.active);
+  return out;
+}
+"""
+
+
+def _click_tool_in_popout(dash: Dashboard, description: str) -> None:
+    """Click the toolbar button with this tooltip inside the pop-out window.
+
+    The grid cell behind the window has a button with the same tooltip, and
+    descendant selectors do not reach into the window's shadow roots, so the
+    window's own button is told apart by position.
+    """
+    page = dash.page
+    window = page.locator(".jsPanel").first.bounding_box()
+    assert window is not None
+    buttons = page.locator(f'[title="{description}"]')
+    for i in range(buttons.count()):
+        box = buttons.nth(i).bounding_box()
+        if box is None:
+            continue
+        if (
+            window["x"] <= box["x"] <= window["x"] + window["width"]
+            and window["y"] <= box["y"] <= window["y"] + window["height"]
+        ):
+            buttons.nth(i).click()
+            return
+    raise AssertionError(f"no {description!r} button in the pop-out window")
+
+
+@pytest.mark.browser
+def test_autoscale_toggle_works_in_a_popped_out_plot():
+    """A toggle clicked in the window switches, and shows so in the cell too.
+
+    BokehJS runs a tool's click callback once per figure holding the tool, so
+    a toggle shared by the cell's and the window's toolbars flips twice per
+    click and never changes. Only a real click in a browser shows this.
+    """
+    toggle = "Color autoscale"
+    with fake_dashboard("dummy") as fake, Dashboard.connect(fake.url) as dash:
+        del fake
+        page = dash.page
+        page.set_viewport_size({"width": 1400, "height": 1000})
+        dash.goto_tab("Detectors")
+
+        # r0c1: the fixture's detector image with a color autoscale toggle.
+        click_until(
+            dash,
+            ".lt-cell-r0c1.lt-tool-arrows-maximize",
+            lambda: page.locator(".lt-popout-r0c1").count() == 1,
+            label="the pop-out window to open",
+        )
+        # One button in the cell, one in the window.
+        wait_until(
+            dash,
+            lambda: page.locator(f'[title="{toggle}"]').count() == 2,
+            label="the window's toolbar to get the autoscale toggles",
+        )
+        assert all(page.evaluate(_TOOL_STATES, toggle))
+
+        _click_tool_in_popout(dash, toggle)
+
+        wait_until(
+            dash,
+            lambda: not any(page.evaluate(_TOOL_STATES, toggle)),
+            label="the toggle to switch off in both toolbars",
+        )
+
+
 def _drag(dash: Dashboard, selector: str, *, dx: int, dy: int) -> None:
     """Drag an element's centre by (dx, dy), as a mouse gesture."""
     page = dash.page

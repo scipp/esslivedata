@@ -198,7 +198,7 @@ class _RaisingPlotter(Plotter):
     ) -> hv.Element:
         self._call_count += 1
         # Always populate targets so we can assert cleanup happens.
-        self._range_targets[data_key] = {'x': (0.0, 1.0)}
+        self._pending_range_targets[data_key] = {'x': (0.0, 1.0)}
         if self._call_count == 1:
             return hv.Curve([(0, 0), (1, 1)])
         raise RuntimeError("boom")
@@ -234,3 +234,39 @@ class TestComputeExceptionResetsRangeTargets:
         plotter.compute(data)
 
         assert plotter.get_range_targets(key1) == {'x': (0.0, 1.0)}
+
+
+class _ObservingPlotter(Plotter):
+    """Test plotter recording the published targets while compute() runs.
+
+    The cell's autoscale controller reads the targets on the IOLoop while
+    ``compute()`` runs on the ingestion thread, so what ``plot()`` sees
+    published mid-compute is what a concurrent render would see.
+    """
+
+    AUTOSCALE_AXES = frozenset({'x'})
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.seen: list[dict[DataKey, dict]] = []
+
+    def plot(
+        self, data: sc.DataArray, data_key: DataKey, *, label: str = '', **kwargs: Any
+    ) -> hv.Element:
+        self.seen.append(dict(self.iter_range_targets()))
+        self._pending_range_targets[data_key] = {'x': (0.0, float(len(self.seen)))}
+        return hv.Curve([(0, 0), (1, 1)])
+
+
+class TestRangeTargetsPublishedWhole:
+    def test_readers_never_see_a_partial_set_during_compute(self):
+        plotter = _ObservingPlotter()
+        da = sc.DataArray(sc.array(dims=['x'], values=[1.0, 2.0]))
+        data = {PRIMARY: {_key('a'): da, _key('b'): da}}
+        plotter.compute(data)
+        first = dict(plotter.iter_range_targets())
+
+        plotter.compute(data)
+
+        assert plotter.seen[2:] == [first, first]
+        assert dict(plotter.iter_range_targets()) != first

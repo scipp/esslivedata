@@ -11,6 +11,7 @@ from ess.livedata.config.instruments.beer.specs import detector_pixel_ranges
 from ess.livedata.config.instruments.beer.views import (
     BANK_SIZES,
     get_bank_view,
+    get_panel_counts_view,
     get_panel_view,
 )
 
@@ -39,6 +40,14 @@ def test_panel_view_keeps_panels_separate(bank: sc.DataArray) -> None:
     # Each screen pixel collects an 8x8 pixel block of a single panel.
     assert sc.identical(
         image.data, sc.full(sizes=image.sizes, value=64.0, unit='counts')
+    )
+
+
+def test_panel_counts_view_sums_each_panel(bank: sc.DataArray) -> None:
+    counts = get_panel_counts_view(bank, 'beer_detector_s2').sum('pixel')
+    assert counts.sizes == {'panel': 12}
+    assert sc.identical(
+        counts.data, sc.full(sizes=counts.sizes, value=1e6, unit='counts')
     )
 
 

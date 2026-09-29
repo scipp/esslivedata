@@ -83,6 +83,7 @@ from .plot_grid_manager import PlotGridManager
 from .plot_overview import PlotOverview, PlotOverviewSection
 from .plot_popout import PlotPopoutManager
 from .plot_widgets import derive_cell_title
+from .reload_button import ReloadButton
 from .styles import PhoneLayout
 
 logger = structlog.get_logger(__name__)
@@ -116,22 +117,47 @@ class _PassStamps(NamedTuple):
 # label text is hidden with a zero font size, so the icon is sized in pixels
 # rather than in ``em``. Sized for a fingertip. The padding around the tab
 # content is reduced too, since a phone has no width to spare; the selector is
-# the one the theme pads the content with (``theme.py``).
+# the one the theme pads the content with (``theme.py``). The tab rules name the
+# strip side for the same reason: the theme's tab rules do, and would outrank
+# them otherwise.
 _PHONE_TAB_CSS = f"""
     :host(.bk-left) > :not(.bk-header):not(style):not(link) {{
         padding: {PhoneLayout.TAB_CONTENT_PADDING}px !important;
     }}
-    .bk-header .bk-tab {{
+    :host(.bk-left) .bk-header .bk-tab,
+    :host(.bk-above) .bk-header .bk-tab {{
         font-size: 0 !important;
         min-width: 0 !important;
-        padding: 12px 10px !important;
+        padding: {PhoneLayout.TAB_PADDING}px 10px !important;
     }}
     .bk-header .bk-tab::before {{
-        width: 24px !important;
-        height: 24px !important;
+        width: {PhoneLayout.TAB_ICON}px !important;
+        height: {PhoneLayout.TAB_ICON}px !important;
         margin-right: 0 !important;
     }}
 """
+
+
+def _phone_reload_button(theme: Theme) -> ReloadButton:
+    """Reload button for the phone layout, in the empty end of the tab strip.
+
+    Sized and placed like one more tab (see ``_PHONE_TAB_CSS`` and the theme's
+    tab strip CSS): in a left rail below the last tab, in a strip along the
+    top after it, at the right edge. Only the icon is drawn, on the strip's own
+    background, so it does not read as a tab.
+    """
+    inset = f'{theme.strip_inset}px'
+    if theme.tabs_location == 'left':
+        corner = {'left': inset, 'bottom': inset}
+    else:
+        corner = {'right': inset, 'top': f'{PhoneLayout.TOP_BAND}px'}
+    return ReloadButton(
+        width=PhoneLayout.TAB_SIZE,
+        height=PhoneLayout.TAB_SIZE,
+        sizing_mode='fixed',
+        styles={'position': 'fixed', **corner},
+        stylesheets=[f'button {{ color: {theme.strip_icon_color}; }}'],
+    )
 
 
 def _tab_stylesheet(icons: Sequence[str], theme: Theme) -> str:
@@ -426,6 +452,7 @@ class PlotGridTabs:
             self._popouts.container,
             ModalEscapeCloser(),
             *([self._orientation] if self._orientation is not None else []),
+            *([_phone_reload_button(theme)] if phone else []),
             sizing_mode='stretch_both',
         )
 

@@ -180,17 +180,6 @@ _ICONS: dict[str, str] = {
         '<path d="M14 15a1 1 0 0 1 1 -1h4a1 1 0 0 1 1 1v4a1 1 0 0 1 -1 1h-4a1 1 0 0 1 '
         '-1 -1l0 -4"/>'
     ),
-    # Arrows-minimize (fit data to viewport)
-    'arrows-minimize': _svg(
-        '<path d="M5 9l4 0l0 -4"/>'
-        '<path d="M3 3l6 6"/>'
-        '<path d="M5 15l4 0l0 4"/>'
-        '<path d="M3 21l6 -6"/>'
-        '<path d="M19 9l-4 0l0 -4"/>'
-        '<path d="M15 9l6 -6"/>'
-        '<path d="M19 15l-4 0l0 4"/>'
-        '<path d="M15 15l6 6"/>'
-    ),
     # Arrows-maximize (pop the plot out into a floating window)
     'arrows-maximize': _svg(
         '<path d="M16 4l4 0l0 4"/>'
@@ -260,7 +249,7 @@ def get_icon(name: str) -> str:
     ----------
     name:
         Icon name. Available icons:
-        activity, arrows-minimize, autoscale-c, autoscale-c-on, autoscale-x,
+        activity, autoscale-c, autoscale-c-on, autoscale-x,
         autoscale-x-on, autoscale-y, autoscale-y-on, backspace, chart-line, check,
         chevron-down, chevron-left, chevron-right, chevron-up, download, eye, eye-off,
         layout-grid, pencil, player-pause, player-play, player-stop, plus,

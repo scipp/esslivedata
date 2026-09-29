@@ -355,8 +355,9 @@ class DefaultPresenter(PresenterBase):
 
         The elements arrive already styled from :meth:`Plotter.compute`. Styling
         must not be applied here: ``DynamicMap.opts`` is not a one-off, it wraps
-        the map in a ``Dynamic`` operation that re-applies the options to every
-        frame, in every session, on the shared IOLoop.
+        the map (in place, unless ``clone=True``) in a ``Dynamic`` operation that
+        re-applies the options to every frame, in every session, on the shared
+        IOLoop.
         """
 
         def passthrough(data):
@@ -578,7 +579,13 @@ class Plotter:
         self._legend_position = legend_position
         self._cached_state: Any | None = None
         self._time_bounds: TimeBounds | None = None
+        # Published by compute() in a single assignment and never mutated
+        # afterwards: compute() runs on the ingestion thread while the cell's
+        # autoscale controller reads the targets on the IOLoop, and a
+        # half-filled dict would read as a change in the data extent.
         self._range_targets: dict[DataKey, RangeTargets] = {}
+        # Filled by plot() during compute(), then published as _range_targets.
+        self._pending_range_targets: dict[DataKey, RangeTargets] = {}
         self._presenters: weakref.WeakSet[PresenterBase] = weakref.WeakSet()
         self.layout_params = layout_params or LayoutParams()
         aspect_params = aspect_params or PlotAspect()
@@ -787,12 +794,12 @@ class Plotter:
         if self._normalize_to_rate:
             data = {key: _normalize_to_rate(da) for key, da in data.items()}
 
-        self._range_targets = {}
+        self._pending_range_targets = {}
         resolver = title_resolver or TitleResolver()
         try:
             result = self._build_result(data, resolver, **kwargs)
         except Exception as e:
-            self._range_targets = {}
+            self._pending_range_targets = {}
             result = self._error_placeholder(f"Error: {e}")
 
         # Time bounds drive the cell titlebar's freshness indicator; they are
@@ -800,6 +807,7 @@ class Plotter:
         # Computed outside the try so a render failure still stamps the bounds
         # of the data that was received.
         self._time_bounds = _compute_time_bounds(data)
+        self._range_targets = self._pending_range_targets
         self._set_cached_state(result.opts(*self._frame_opts()))
 
     def _build_result(
@@ -1106,6 +1114,17 @@ def _color_error_element(el: hv.Element, color: Any) -> hv.Element:
     return el.opts(color=color)
 
 
+def _with_index_edges(data: sc.DataArray, dim: str) -> sc.DataArray:
+    """Give ``dim`` bin edges centred on the indices ``0..n-1`` if it has no coord.
+
+    Edges make histogram mode available and give the autoscaler an x-extent.
+    The other modes reduce them to midpoints, i.e., to the indices themselves.
+    """
+    if dim in data.coords:
+        return data
+    return data.assign_coords({dim: sc.arange(dim, -0.5, data.sizes[dim], unit=None)})
+
+
 def _resolve_line1d_mode(
     mode: str, data: sc.DataArray, dim: str | None = None
 ) -> tuple[str, sc.DataArray]:
@@ -1308,10 +1327,11 @@ class LinePlotter(Plotter):
         **kwargs,
     ) -> hv.Element | hv.Overlay:
         """Create a 1D plot from a scipp DataArray."""
+        data = _with_index_edges(data, data.dim)
         mode, da = _resolve_line1d_mode(self._mode, data)
         targets = self._compute_line_range_targets(data, mode)
         if targets:
-            self._range_targets[data_key] = targets
+            self._pending_range_targets[data_key] = targets
         converter = HvConverter1d(
             da, value_label=output_display_name, dim_label=dim_label
         )
@@ -1442,7 +1462,7 @@ class ImagePlotter(Plotter):
 
         targets = self._compute_image_range_targets(histogram, plot_data, use_log_scale)
         if targets:
-            self._range_targets[data_key] = targets
+            self._pending_range_targets[data_key] = targets
 
         # base_opts are declared once in style_opts(); only the data-dependent clim
         # guard (log scale with all-NaN data) must be set per element here.
@@ -1660,12 +1680,13 @@ class Overlay1DPlotter(Plotter):
         if slice_size == 0:
             return hv.Curve([])
 
+        data = _with_index_edges(data, data.dims[1])
         actual_mode, plot_data = _resolve_line1d_mode(
             self._mode, data, dim=data.dims[1]
         )
         targets = self._compute_overlay_range_targets(data, actual_mode)
         if targets:
-            self._range_targets[data_key] = targets
+            self._pending_range_targets[data_key] = targets
 
         # Get coordinate values for labels and colors
         if slice_dim in data.coords:
