@@ -41,6 +41,7 @@ from weakref import WeakKeyDictionary, WeakSet
 
 import structlog
 
+from .batched_update import batched_update
 from .plots import Plotter
 from .range_hook import Axis, RangeHandles
 
@@ -421,13 +422,19 @@ class CellAutoscaleController:
         this cell renders into is fitted at once, regardless of toggle state,
         through its plot's current handles. One click on either figure's Fit
         therefore fits the grid cell and the pop-out alike.
+
+        The writes are batched into one message, as a render's are. Sent one
+        by one, the browser can paint with x fitted and y not yet, and a
+        data-aspect figure (see ``frame_aspect.py``) resizes its frame to that
+        transient x/y ratio for a frame.
         """
         del attr, old
         if not new:
             return
-        for plot in list(self._plots):
-            self._apply_targets(plot, fit=True)
-            self._apply_clim_freeze(plot)
+        with batched_update():
+            for plot in list(self._plots):
+                self._apply_targets(plot, fit=True)
+                self._apply_clim_freeze(plot)
         for tools in list(self._figure_tools.values()):
             tools.fit.active = False
 
