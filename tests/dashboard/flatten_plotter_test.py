@@ -19,7 +19,7 @@ from ess.livedata.dashboard.flatten_plotter import (
     FlattenPlotter,
     make_flatten_params,
 )
-from ess.livedata.dashboard.plot_params import PlotScale
+from ess.livedata.dashboard.plot_params import PlotAspect, PlotAspectType, PlotScale
 
 
 class _FakeToolbar:
@@ -371,6 +371,19 @@ class TestFlattenPlotterHover:
         # Exactly one hover survives — the custom flatten one.
         assert len(hovers) == 1
         assert hovers[0] in fig.added_tools
+
+    def test_fixed_aspect_keeps_custom_hover(self, data_abc, data_key) -> None:
+        """A fixed aspect adds sizing hooks without dropping the hover hook."""
+        params = _make_params(('a', 'b', 'c'), axis_x='b')
+        params.plot_aspect = PlotAspect(aspect_type=PlotAspectType.square)
+        plotter = FlattenPlotter.from_params(params)
+        plotter.compute({'primary': {data_key: data_abc}})
+        pipe = hv.streams.Pipe(data=plotter.get_cached_state())
+        fig = hv.render(plotter.create_presenter().present(pipe))
+        # Precondition: the fixed aspect is active.
+        assert 'change:inner_width' in fig.js_property_callbacks
+        [hover] = [t for t in fig.toolbar.tools if isinstance(t, HoverTool)]
+        assert set(hover.formatters) == {'$x', '$y'}
 
     def test_hover_tooltips_one_row_per_dim_then_value(
         self, data_abc, data_key

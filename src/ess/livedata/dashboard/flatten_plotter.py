@@ -11,7 +11,9 @@ back into per-dim labels with coord values when available.
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from enum import IntEnum
+from typing import Any
 
 import holoviews as hv
 import pydantic
@@ -155,28 +157,9 @@ def _c_order_strides(sizes: tuple[int, ...]) -> list[int]:
     return strides
 
 
-def _build_axis_hover_formatter(
-    names: tuple[str, ...],
-    coords: tuple[sc.Variable | None, ...],
-    sizes: tuple[int, ...],
-) -> CustomJSHover:
-    """Hover formatter for one image axis with one or more flattened input dims.
-
-    Tooltip rows reference this formatter via ``${field}{dim_name}``; the JS
-    side either does a binary search (single non-flattened dim with physical
-    coords) or splits the flat integer cursor index via stride math (flattened
-    multi-dim axis where the image always carries integer indices).
-    """
-    strides = _c_order_strides(sizes)
-    values_by_dim = [[] if c is None else [float(v) for v in c.values] for c in coords]
-    return CustomJSHover(
-        args={
-            'names': list(names),
-            'sizes': list(sizes),
-            'strides': strides,
-            'values_by_dim': values_by_dim,
-        },
-        code="""
+# JS body of each axis's ``CustomJSHover``; its ``args`` come from
+# :func:`_axis_hover_formatter_args`.
+_AXIS_HOVER_FORMATTER_JS = """
         const k = names.indexOf(format);
         if (k < 0) return '';
         const vals = values_by_dim[k];
@@ -204,14 +187,39 @@ def _build_axis_hover_formatter(
         if (vals.length === 0) return String(i);
         if (i >= vals.length) return '';
         return String(vals[i]);
-        """,
-    )
+        """
 
 
-def _make_hover_hook(hover: HoverTool):
+def _axis_hover_formatter_args(
+    names: tuple[str, ...],
+    coords: tuple[sc.Variable | None, ...],
+    sizes: tuple[int, ...],
+) -> dict[str, list]:
+    """``CustomJSHover`` args for one image axis with one or more flattened dims.
+
+    Tooltip rows reference the formatter via ``${field}{dim_name}``; the JS
+    side either does a binary search (single non-flattened dim with physical
+    coords) or splits the flat integer cursor index via stride math (flattened
+    multi-dim axis where the image always carries integer indices).
+    """
+    return {
+        'names': list(names),
+        'sizes': list(sizes),
+        'strides': _c_order_strides(sizes),
+        'values_by_dim': [
+            [] if c is None else [float(v) for v in c.values] for c in coords
+        ],
+    }
+
+
+def _make_hover_hook(
+    tooltips: list[tuple[str, str]], formatter_args: dict[str, dict[str, list]]
+) -> Callable[[Any, hv.Element], None]:
     """HoloViews hook replacing the default HoverTool with a custom one.
 
-    Idempotent across re-renders.
+    The hook creates the HoverTool and its formatters itself, so each session's
+    figure gets its own models (see :meth:`Plotter.style_opts`). Idempotent
+    across re-renders.
     """
 
     def hook(plot, _element):
@@ -221,7 +229,11 @@ def _make_hover_hook(hover: HoverTool):
         fig.toolbar.tools = [
             t for t in fig.toolbar.tools if not isinstance(t, HoverTool)
         ]
-        fig.add_tools(hover)
+        formatters = {
+            field: CustomJSHover(args=args, code=_AXIS_HOVER_FORMATTER_JS)
+            for field, args in formatter_args.items()
+        }
+        fig.add_tools(HoverTool(tooltips=tooltips, formatters=formatters))
         plot.handles['flatten_hover_installed'] = True
 
     return hook
@@ -340,17 +352,23 @@ class FlattenPlotter(ImagePlotter):
             **kwargs,
         )
 
-        tooltips, formatters = self._build_hover_spec(data, x_names, y_names)
-        hover = HoverTool(tooltips=tooltips, formatters=formatters)
-        return image.opts(hooks=[_make_hover_hook(hover)])
+        tooltips, formatter_args = self._build_hover_spec(data, x_names, y_names)
+        hover_hook = _make_hover_hook(tooltips, formatter_args)
+        return image.opts(hooks=[*self._sizing_opts.get('hooks', ()), hover_hook])
+
+    def _image_opts(self) -> dict[str, Any]:
+        # ``hooks`` is a single option, and style opts are applied after plot():
+        # the sizing hooks would replace each element's hover hook, so plot()
+        # declares them next to it instead.
+        return {k: v for k, v in super()._image_opts().items() if k != 'hooks'}
 
     def _build_hover_spec(
         self,
         data: sc.DataArray,
         x_names: tuple[str, ...],
         y_names: tuple[str, ...],
-    ) -> tuple[list[tuple[str, str]], dict[str, CustomJSHover]]:
-        """Tooltip rows + per-axis ``CustomJSHover`` dispatcher.
+    ) -> tuple[list[tuple[str, str]], dict[str, dict[str, list]]]:
+        """Tooltip rows + per-axis ``CustomJSHover`` args.
 
         Each row references its axis formatter via ``${field}{dim_name}``;
         the formatter looks up the dim by ``format`` and resolves the cursor
@@ -359,15 +377,15 @@ class FlattenPlotter(ImagePlotter):
         axes go through a formatter — there is no float-fallback path.
         """
         tooltips: list[tuple[str, str]] = []
-        formatters: dict[str, CustomJSHover] = {}
+        formatter_args: dict[str, dict[str, list]] = {}
         for field, names in (('$x', x_names), ('$y', y_names)):
             coords = tuple(_coord_1d(data, n) for n in names)
             sizes = tuple(data.sizes[n] for n in names)
-            formatters[field] = _build_axis_hover_formatter(names, coords, sizes)
+            formatter_args[field] = _axis_hover_formatter_args(names, coords, sizes)
             for name, coord in zip(names, coords, strict=True):
                 tooltips.append((_dim_label(name, coord), f'{field}{{{name}}}'))
         tooltips.append(('value', '@image'))
-        return tooltips, formatters
+        return tooltips, formatter_args
 
 
 def _dim_label(name: str, coord: sc.Variable | None) -> str:

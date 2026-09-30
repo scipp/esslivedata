@@ -1491,14 +1491,13 @@ class ImagePlotter(Plotter):
             return histogram.opts(clim=clim)
         return histogram
 
+    def _image_opts(self) -> dict[str, Any]:
+        """Opts declared once for every image element this plotter draws."""
+        return {**self._base_opts, **self._sizing_opts}
+
     def style_opts(self) -> list[hv.Options]:
         return [
-            *_typed_opts(
-                _HOVER_ELEMENTS_2D,
-                **self._base_opts,
-                **self._sizing_opts,
-                tools=['hover'],
-            ),
+            *_typed_opts(_HOVER_ELEMENTS_2D, **self._image_opts(), tools=['hover']),
             *super().style_opts(),
         ]
 
