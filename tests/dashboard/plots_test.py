@@ -8,7 +8,7 @@ import numpy as np
 import pytest
 import scipp as sc
 from bokeh.document import Document
-from bokeh.models import GlyphRenderer, Whisker
+from bokeh.models import GlyphRenderer, Plot, Whisker
 from holoviews.plotting.bokeh import BokehRenderer
 
 from ess.livedata.config.workflow_spec import DataKey, WorkflowId
@@ -42,7 +42,7 @@ from ess.livedata.dashboard.temporal_buffers import TemporalBuffer
 hv.extension('bokeh')
 
 
-def _assert_error_bar_endcaps_colored(fig, colors: set[str]) -> None:
+def _assert_error_bar_endcaps_colored(fig: Plot, colors: set[str]) -> None:
     """Assert the figure's Whiskers use ``colors`` and their endcaps match them.
 
     Endcaps are separate ``TeeHead`` models that default to black, so coloring
@@ -73,6 +73,22 @@ def make_data_key(source_name: str, output_name: str = 'test_result') -> DataKey
     )
     return DataKey(
         workflow_id=workflow_id, source_name=source_name, output_name=output_name
+    )
+
+
+_FIRST_CYCLE_COLOR = hv.Cycle.default_cycles['default_colors'][0]
+
+
+@pytest.fixture
+def data_1d_with_variances() -> sc.DataArray:
+    return sc.DataArray(
+        sc.array(
+            dims=['x'],
+            values=[1.0, 2.0, 3.0],
+            variances=[0.1, 0.2, 0.3],
+            unit='counts',
+        ),
+        coords={'x': sc.array(dims=['x'], values=[10.0, 20.0, 30.0], unit='m')},
     )
 
 
@@ -862,8 +878,10 @@ class TestLinePlotter:
         assert line_colors[0] != line_colors[1]
         _assert_error_bar_endcaps_colored(fig, set(line_colors))
 
-    def test_error_bars_render_in_several_sessions(self, data_key):
-        """One computed element can be rendered into several sessions' documents.
+    def test_error_bars_render_in_several_sessions(
+        self, data_key, data_1d_with_variances
+    ):
+        """One computed element renders, with colored endcaps, in each session.
 
         The element is computed once and shared by every session. Bokeh lets a
         model belong to only one document, so the element must not hold models.
@@ -872,45 +890,28 @@ class TestLinePlotter:
             line=Line1dParams(mode=Line1dRenderMode.line, errors=ErrorDisplay.bars)
         )
         plotter = plots.LinePlotter.from_params(params)
-        data = sc.DataArray(
-            sc.array(
-                dims=['x'],
-                values=[1.0, 2.0, 3.0],
-                variances=[0.1, 0.2, 0.3],
-                unit='counts',
-            ),
-            coords={'x': sc.array(dims=['x'], values=[10.0, 20.0, 30.0], unit='m')},
-        )
-        plotter.compute({'primary': {data_key: data}})
+        plotter.compute({'primary': {data_key: data_1d_with_variances}})
         presenter = plotter.create_presenter()
         for _ in range(2):
             doc = Document()
             pipe = hv.streams.Pipe(data=plotter.get_cached_state())
             plot = BokehRenderer.instance().get_plot(presenter.present(pipe), doc=doc)
             doc.add_root(plot.state)
+            _assert_error_bar_endcaps_colored(plot.state, {_FIRST_CYCLE_COLOR})
 
-    def test_error_bar_endcaps_colored_with_fixed_aspect(self, data_key):
-        """A fixed aspect adds the frame-aspect hook without dropping the endcap
-        hook: both are declared under the single ``hooks`` option."""
+    def test_error_bar_endcaps_colored_with_fixed_aspect(
+        self, data_key, data_1d_with_variances
+    ):
+        """A fixed aspect adds sizing hooks without dropping the endcap hook."""
         params = PlotParams1d(
             line=Line1dParams(mode=Line1dRenderMode.line, errors=ErrorDisplay.bars),
             plot_aspect=PlotAspect(aspect_type=PlotAspectType.square),
         )
         plotter = plots.LinePlotter.from_params(params)
-        data = sc.DataArray(
-            sc.array(
-                dims=['x'],
-                values=[1.0, 2.0, 3.0],
-                variances=[0.1, 0.2, 0.3],
-                unit='counts',
-            ),
-            coords={'x': sc.array(dims=['x'], values=[10.0, 20.0, 30.0], unit='m')},
-        )
-        fig = present_figure(plotter, {data_key: data})
+        fig = present_figure(plotter, {data_key: data_1d_with_variances})
+        # Precondition: the fixed aspect is active.
         assert 'change:inner_width' in fig.js_property_callbacks
-        (whisker,) = fig.select(Whisker)
-        assert whisker.upper_head.line_color == whisker.line_color
-        assert whisker.lower_head.line_color == whisker.line_color
+        _assert_error_bar_endcaps_colored(fig, {_FIRST_CYCLE_COLOR})
 
     def test_layered_error_free_lines_get_distinct_colors(self, data_key):
         """Error-free lines from independent plotters auto-cycle when layered.

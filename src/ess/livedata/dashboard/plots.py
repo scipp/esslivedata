@@ -990,6 +990,11 @@ class Plotter:
         render path, where HoloViews would re-apply them per frame per session
         (see :meth:`DefaultPresenter.present`). Subclasses extend this with opts
         for their leaf element types; the base provides the container-level opts.
+
+        The frame and its opts are shared by every session, so they must not hold
+        Bokeh model instances: Bokeh lets a model belong to only one document, and
+        the second session to render the frame would fail. Create such models
+        inside a hook body, which runs for each session's plot.
         """
         # title='' stops Bokeh promoting a single overlaid element's label to the
         # plot title when there is no legend to carry it.
@@ -1101,28 +1106,34 @@ def _color_endcaps_like_whisker(plot: Any, element: hv.Element) -> None:
 
     HoloViews maps ``color`` to the Whisker body line only; its endcaps are
     separate ``TeeHead`` models whose ``line_color`` otherwise stays black.
-    The hook edits the heads of the Whisker that HoloViews built for the
-    rendering session. ``TeeHead`` instances passed as ``upper_head`` and
-    ``lower_head`` opts would instead live on the element, which is computed once
-    and shared by every session. Bokeh lets a model belong to only one document,
-    so the second session to render the element would fail.
+    ``TeeHead`` instances cannot be passed as ``upper_head``/``lower_head`` opts
+    (see :meth:`Plotter.style_opts`), so the hook edits the heads of the Whisker
+    built for the rendering session.
     """
     whisker = plot.handles['glyph']
     whisker.upper_head.line_color = whisker.line_color
     whisker.lower_head.line_color = whisker.line_color
 
 
-def _error_bars_opts(sizing_opts: dict[str, Any]) -> hv.Options:
-    """``ErrorBars`` opts adding the endcap hook to the sizing hooks.
+def _line1d_style_opts(
+    base_opts: dict[str, Any], sizing_opts: dict[str, Any]
+) -> list[hv.Options]:
+    """Leaf-element opts of the 1-D line plotters.
 
-    ``hooks`` is a single option holding a list, so declaring the endcap hook on
-    its own would replace the frame-aspect hook from ``sizing_opts``.
-    ``Spread`` (a subclass of ``ErrorBars``) is styled under its own name and
-    renders as a filled band without endcaps, so these opts do not reach it.
+    HoloViews merges opts for the same element type key by key, and ``hooks`` is
+    a single key holding a list. The ``ErrorBars`` entry therefore repeats the
+    sizing hooks next to the endcap hook, and must come after the generic leaf
+    entry, whose ``hooks`` would otherwise replace it. ``Spread`` (a subclass of
+    ``ErrorBars``) is styled under its own name and draws a band without
+    endcaps, so the endcap hook does not reach it.
     """
-    return hv.opts.ErrorBars(
-        hooks=[*sizing_opts.get('hooks', ()), _color_endcaps_like_whisker]
-    )
+    return [
+        *_typed_opts(_LINE1D_LEAF_ELEMENTS, **base_opts, **sizing_opts),
+        hv.opts.ErrorBars(
+            hooks=[*sizing_opts.get('hooks', ()), _color_endcaps_like_whisker]
+        ),
+        *_typed_opts(_HOVER_ELEMENTS_1D, tools=['hover']),
+    ]
 
 
 def _with_index_edges(data: sc.DataArray, dim: str) -> sc.DataArray:
@@ -1372,9 +1383,7 @@ class LinePlotter(Plotter):
 
     def style_opts(self) -> list[hv.Options]:
         return [
-            *_typed_opts(_LINE1D_LEAF_ELEMENTS, **self._base_opts, **self._sizing_opts),
-            _error_bars_opts(self._sizing_opts),
-            *_typed_opts(_HOVER_ELEMENTS_1D, tools=['hover']),
+            *_line1d_style_opts(self._base_opts, self._sizing_opts),
             *super().style_opts(),
         ]
 
@@ -1764,8 +1773,6 @@ class Overlay1DPlotter(Plotter):
     def style_opts(self) -> list[hv.Options]:
         # Per-slice ``color`` stays on the elements in plot(); the rest is static.
         return [
-            *_typed_opts(_LINE1D_LEAF_ELEMENTS, **self._base_opts, **self._sizing_opts),
-            _error_bars_opts(self._sizing_opts),
-            *_typed_opts(_HOVER_ELEMENTS_1D, tools=['hover']),
+            *_line1d_style_opts(self._base_opts, self._sizing_opts),
             *super().style_opts(),
         ]
