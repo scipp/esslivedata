@@ -7,6 +7,7 @@ import holoviews as hv
 import numpy as np
 import pytest
 import scipp as sc
+from bokeh.document import Document
 from bokeh.models import GlyphRenderer, Whisker
 from holoviews.plotting.bokeh import BokehRenderer
 
@@ -21,6 +22,8 @@ from ess.livedata.dashboard.plot_params import (
     LegendPosition,
     Line1dParams,
     Line1dRenderMode,
+    PlotAspect,
+    PlotAspectType,
     PlotParams1d,
     PlotParams2d,
     PlotParams3d,
@@ -39,19 +42,18 @@ from ess.livedata.dashboard.temporal_buffers import TemporalBuffer
 hv.extension('bokeh')
 
 
-def _assert_error_bar_endcaps_colored(error_bars: hv.ErrorBars, color: str) -> None:
-    """Assert the rendered Whisker body and both endcaps use ``color``.
+def _assert_error_bar_endcaps_colored(fig, colors: set[str]) -> None:
+    """Assert the figure's Whiskers use ``colors`` and their endcaps match them.
 
-    Endcaps are separate ``TeeHead`` glyphs that default to black, so coloring
+    Endcaps are separate ``TeeHead`` models that default to black, so coloring
     the Whisker body alone leaves them mismatched.
     """
-    fig = hv.render(error_bars)
     whiskers = fig.select(Whisker)
     assert whiskers, "expected a Whisker glyph for ErrorBars"
-    whisker = whiskers[0]
-    assert whisker.line_color == color
-    assert whisker.upper_head.line_color == color
-    assert whisker.lower_head.line_color == color
+    assert {w.line_color for w in whiskers} == colors
+    for w in whiskers:
+        assert w.upper_head.line_color == w.line_color
+        assert w.lower_head.line_color == w.line_color
 
 
 @pytest.fixture
@@ -825,7 +827,8 @@ class TestLinePlotter:
         ]
         assert base_color == error_color
         if error_type is hv.ErrorBars:
-            _assert_error_bar_endcaps_colored(elements[1], base_color)
+            fig = present_figure(plotter, {data_key: data})
+            _assert_error_bar_endcaps_colored(fig, {base_color})
 
     def test_overlaid_sources_get_distinct_matching_colors(self, data_key):
         """Each overlaid source gets a distinct color; its error bars match it."""
@@ -857,12 +860,57 @@ class TestLinePlotter:
         ]
         assert len(line_colors) == 2
         assert line_colors[0] != line_colors[1]
-        whiskers = fig.select(Whisker)
-        whisker_colors = {w.line_color for w in whiskers}
-        assert whisker_colors == set(line_colors)
-        for w in whiskers:
-            assert w.upper_head.line_color == w.line_color
-            assert w.lower_head.line_color == w.line_color
+        _assert_error_bar_endcaps_colored(fig, set(line_colors))
+
+    def test_error_bars_render_in_several_sessions(self, data_key):
+        """One computed element can be rendered into several sessions' documents.
+
+        The element is computed once and shared by every session. Bokeh lets a
+        model belong to only one document, so the element must not hold models.
+        """
+        params = PlotParams1d(
+            line=Line1dParams(mode=Line1dRenderMode.line, errors=ErrorDisplay.bars)
+        )
+        plotter = plots.LinePlotter.from_params(params)
+        data = sc.DataArray(
+            sc.array(
+                dims=['x'],
+                values=[1.0, 2.0, 3.0],
+                variances=[0.1, 0.2, 0.3],
+                unit='counts',
+            ),
+            coords={'x': sc.array(dims=['x'], values=[10.0, 20.0, 30.0], unit='m')},
+        )
+        plotter.compute({'primary': {data_key: data}})
+        presenter = plotter.create_presenter()
+        for _ in range(2):
+            doc = Document()
+            pipe = hv.streams.Pipe(data=plotter.get_cached_state())
+            plot = BokehRenderer.instance().get_plot(presenter.present(pipe), doc=doc)
+            doc.add_root(plot.state)
+
+    def test_error_bar_endcaps_colored_with_fixed_aspect(self, data_key):
+        """A fixed aspect adds the frame-aspect hook without dropping the endcap
+        hook: both are declared under the single ``hooks`` option."""
+        params = PlotParams1d(
+            line=Line1dParams(mode=Line1dRenderMode.line, errors=ErrorDisplay.bars),
+            plot_aspect=PlotAspect(aspect_type=PlotAspectType.square),
+        )
+        plotter = plots.LinePlotter.from_params(params)
+        data = sc.DataArray(
+            sc.array(
+                dims=['x'],
+                values=[1.0, 2.0, 3.0],
+                variances=[0.1, 0.2, 0.3],
+                unit='counts',
+            ),
+            coords={'x': sc.array(dims=['x'], values=[10.0, 20.0, 30.0], unit='m')},
+        )
+        fig = present_figure(plotter, {data_key: data})
+        assert 'change:inner_width' in fig.js_property_callbacks
+        (whisker,) = fig.select(Whisker)
+        assert whisker.upper_head.line_color == whisker.line_color
+        assert whisker.lower_head.line_color == whisker.line_color
 
     def test_layered_error_free_lines_get_distinct_colors(self, data_key):
         """Error-free lines from independent plotters auto-cycle when layered.
@@ -2568,9 +2616,12 @@ class TestOverlay1DPlotter:
         assert isinstance(elements[1], hv.ErrorBars)
         assert isinstance(elements[2], hv.Curve)
         assert isinstance(elements[3], hv.ErrorBars)
-        for base, error in ((elements[0], elements[1]), (elements[2], elements[3])):
-            base_color = hv.Store.lookup_options('bokeh', base, 'style').kwargs['color']
-            _assert_error_bar_endcaps_colored(error, base_color)
+        base_colors = {
+            hv.Store.lookup_options('bokeh', base, 'style').kwargs['color']
+            for base in (elements[0], elements[2])
+        }
+        fig = present_figure(plotter, {data_key: data})
+        _assert_error_bar_endcaps_colored(fig, base_colors)
 
     def test_error_band_with_variances(self, data_key):
         params = PlotParams1d(
