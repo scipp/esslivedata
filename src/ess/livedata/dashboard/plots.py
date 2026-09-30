@@ -18,7 +18,6 @@ import numpy as np
 # before any render thread exists.
 import pandas  # noqa: F401
 import scipp as sc
-from bokeh.models import TeeHead
 from holoviews.core.util import range_pad
 from holoviews.plotting.util import get_axis_padding
 
@@ -991,6 +990,11 @@ class Plotter:
         render path, where HoloViews would re-apply them per frame per session
         (see :meth:`DefaultPresenter.present`). Subclasses extend this with opts
         for their leaf element types; the base provides the container-level opts.
+
+        The frame and its opts are shared by every session, so they must not hold
+        Bokeh model instances: Bokeh lets a model belong to only one document, and
+        the second session to render the frame would fail. Create such models
+        inside a hook body, which runs for each session's plot.
         """
         # title='' stops Bokeh promoting a single overlaid element's label to the
         # plot title when there is no legend to carry it.
@@ -1097,21 +1101,39 @@ _HOVER_ELEMENTS_1D: tuple[type, ...] = (hv.Curve, hv.Scatter, hv.Histogram)
 _HOVER_ELEMENTS_2D: tuple[type, ...] = (hv.Image, hv.QuadMesh)
 
 
-def _color_error_element(el: hv.Element, color: Any) -> hv.Element:
-    """Apply ``color`` to an error element, including ``ErrorBars`` endcaps.
+def _color_endcaps_like_whisker(plot: Any, element: hv.Element) -> None:
+    """Hook giving the ``ErrorBars`` endcaps the color of the Whisker body.
 
     HoloViews maps ``color`` to the Whisker body line only; its endcaps are
-    separate ``TeeHead`` glyphs whose ``line_color`` otherwise stays black.
-    ``Spread`` (a subclass of ``ErrorBars``) renders as a filled band with no
-    endcaps, so it takes the plain ``color`` path.
+    separate ``TeeHead`` models whose ``line_color`` otherwise stays black.
+    ``TeeHead`` instances cannot be passed as ``upper_head``/``lower_head`` opts
+    (see :meth:`Plotter.style_opts`), so the hook edits the heads of the Whisker
+    built for the rendering session.
     """
-    if type(el) is hv.ErrorBars:
-        return el.opts(
-            color=color,
-            upper_head=TeeHead(line_color=color),
-            lower_head=TeeHead(line_color=color),
-        )
-    return el.opts(color=color)
+    whisker = plot.handles['glyph']
+    whisker.upper_head.line_color = whisker.line_color
+    whisker.lower_head.line_color = whisker.line_color
+
+
+def _line1d_style_opts(
+    base_opts: dict[str, Any], sizing_opts: dict[str, Any]
+) -> list[hv.Options]:
+    """Leaf-element opts of the 1-D line plotters.
+
+    HoloViews merges opts for the same element type key by key, and ``hooks`` is
+    a single key holding a list. The ``ErrorBars`` entry therefore repeats the
+    sizing hooks next to the endcap hook, and must come after the generic leaf
+    entry, whose ``hooks`` would otherwise replace it. ``Spread`` (a subclass of
+    ``ErrorBars``) is styled under its own name and draws a band without
+    endcaps, so the endcap hook does not reach it.
+    """
+    return [
+        *_typed_opts(_LINE1D_LEAF_ELEMENTS, **base_opts, **sizing_opts),
+        hv.opts.ErrorBars(
+            hooks=[*sizing_opts.get('hooks', ()), _color_endcaps_like_whisker]
+        ),
+        *_typed_opts(_HOVER_ELEMENTS_1D, tools=['hover']),
+    ]
 
 
 def _with_index_edges(data: sc.DataArray, dim: str) -> sc.DataArray:
@@ -1339,11 +1361,11 @@ class LinePlotter(Plotter):
         base = base_method(label=label)
 
         if da.variances is not None and self._errors != 'none':
-            # An error element must be colored explicitly to match its line and
-            # to color its endcaps; this picks a distinct cycle color per source
-            # but forfeits HoloViews' cross-overlay auto-cycling. Error-free lines
-            # keep no explicit color so auto-cycling still distinguishes sources
-            # across independently overlaid layers.
+            # An error element must be colored explicitly to match its line; this
+            # picks a distinct cycle color per source but forfeits HoloViews'
+            # cross-overlay auto-cycling. Error-free lines keep no explicit color
+            # so auto-cycling still distinguishes sources across independently
+            # overlaid layers.
             color = self._colors[plot_index % len(self._colors)]
             base = base.opts(color=color)
             if mode == 'histogram':
@@ -1354,15 +1376,14 @@ class LinePlotter(Plotter):
                     dim_label=dim_label,
                 )
             error_method = getattr(converter, _LINE1D_ERROR_METHOD[self._errors])
-            error = _color_error_element(error_method(label=label), color)
+            error = error_method(label=label).opts(color=color)
             return base * error
 
         return base
 
     def style_opts(self) -> list[hv.Options]:
         return [
-            *_typed_opts(_LINE1D_LEAF_ELEMENTS, **self._base_opts, **self._sizing_opts),
-            *_typed_opts(_HOVER_ELEMENTS_1D, tools=['hover']),
+            *_line1d_style_opts(self._base_opts, self._sizing_opts),
             *super().style_opts(),
         ]
 
@@ -1739,7 +1760,7 @@ class Overlay1DPlotter(Plotter):
                         mid, value_label=output_display_name, dim_label=dim_label
                     )
                 error_method = getattr(converter, _LINE1D_ERROR_METHOD[self._errors])
-                error_el = _color_error_element(error_method(label=curve_label), color)
+                error_el = error_method(label=curve_label).opts(color=color)
                 elements.append(base)
                 elements.append(error_el)
             else:
@@ -1752,7 +1773,6 @@ class Overlay1DPlotter(Plotter):
     def style_opts(self) -> list[hv.Options]:
         # Per-slice ``color`` stays on the elements in plot(); the rest is static.
         return [
-            *_typed_opts(_LINE1D_LEAF_ELEMENTS, **self._base_opts, **self._sizing_opts),
-            *_typed_opts(_HOVER_ELEMENTS_1D, tools=['hover']),
+            *_line1d_style_opts(self._base_opts, self._sizing_opts),
             *super().style_opts(),
         ]
