@@ -114,9 +114,7 @@ _POLYGONS = PolygonROI.to_concatenated_data_array(
     {4: PolygonROI(x=[0.0, 2.0, 1.0], y=[0.0, 0.0, 1.0], x_unit='m', y_unit='m')}
 )
 
-# Input to every registered plotter that makes it draw its full frame. A newly
-# registered plotter fails the session test below with a KeyError until it is
-# given an entry here.
+# Input to every registered plotter that makes it draw its full frame.
 _DATA: dict[str, Callable[[], RoleData]] = {
     'image': lambda: _primary(_array({'y': 3, 'x': 4})),
     'lines': lambda: _primary(
@@ -137,9 +135,9 @@ _DATA: dict[str, Callable[[], RoleData]] = {
         X_AXIS: {_key('axis_x'): _history()},
         Y_AXIS: {_key('axis_y'): _history()},
     },
-    'rectangles': dict,
-    'vlines': dict,
-    'hlines': dict,
+    'rectangles': lambda: {},
+    'vlines': lambda: {},
+    'hlines': lambda: {},
     'rectangles_readback': lambda: _primary(_RECTANGLES),
     'rectangles_request': lambda: _primary(_RECTANGLES),
     'polygons_readback': lambda: _primary(_POLYGONS),
@@ -201,6 +199,7 @@ def test_computed_frame_renders_in_several_sessions(
     plotter = plotter_registry[plotter_name].factory(params)
     plotter.compute(data)
 
+    pipes = []
     for _ in range(2):
         doc = Document()
         pipe = hv.streams.Pipe(data=plotter.get_cached_state())
@@ -209,3 +208,15 @@ def test_computed_frame_renders_in_several_sessions(
         doc.add_root(BokehRenderer.instance().get_plot(dmap, doc=doc).state)
         # A "No data" or error placeholder would pass vacuously.
         assert not list(doc.select({'type': Text}))
+        pipes.append(pipe)
+
+    # Sessions keep receiving frames, and HoloViews runs hooks on each update.
+    plotter.compute(data)
+    for pipe in pipes:
+        pipe.send(plotter.get_cached_state())
+
+
+def test_session_test_covers_every_plotter() -> None:
+    """A newly registered plotter needs input in ``_DATA`` for the session test."""
+    assert set(_DATA) == set(plotter_registry.keys())
+    assert set(_PARAMS) <= set(plotter_registry.keys())

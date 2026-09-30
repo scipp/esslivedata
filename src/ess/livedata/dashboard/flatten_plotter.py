@@ -157,37 +157,40 @@ def _c_order_strides(sizes: tuple[int, ...]) -> list[int]:
     return strides
 
 
-# JS body of each axis's ``CustomJSHover``; its ``args`` come from
-# :func:`_axis_hover_formatter_args`.
+# JS body of each axis's CustomJSHover, with args from _axis_hover_formatter_args.
+# Tooltip rows reference the formatter via ``${field}{dim_name}``. The code
+# either does a binary search (single non-flattened dim with physical coords)
+# or splits the flat integer cursor index via stride math (flattened multi-dim
+# axis, where the image always carries integer indices).
 _AXIS_HOVER_FORMATTER_JS = """
-        const k = names.indexOf(format);
-        if (k < 0) return '';
-        const vals = values_by_dim[k];
-        if (names.length === 1) {
-            // Single non-flattened dim: value is in image coordinate space
-            // (physical units or integer indices depending on the coord).
-            if (vals.length === 0) return String(Math.round(value));
-            // Binary search for the nearest coordinate value.
-            let lo = 0, hi = vals.length - 1;
-            while (lo < hi) {
-                const mid = lo + ((hi - lo + 1) >> 1);
-                if (vals[mid] <= value) lo = mid; else hi = mid - 1;
-            }
-            if (lo + 1 < vals.length &&
-                    Math.abs(vals[lo + 1] - value) < Math.abs(vals[lo] - value)) lo++;
-            return String(vals[lo]);
-        }
-        // Flattened multi-dim axis: the image always carries integer indices
-        // (0..N-1), so value is the flat integer position.
-        const idx = Math.round(value);
-        if (idx < 0) return '';
-        const size = sizes[k];
-        const stride = strides[k];
-        const i = ((Math.floor(idx / stride) % size) + size) % size;
-        if (vals.length === 0) return String(i);
-        if (i >= vals.length) return '';
-        return String(vals[i]);
-        """
+const k = names.indexOf(format);
+if (k < 0) return '';
+const vals = values_by_dim[k];
+if (names.length === 1) {
+    // Single non-flattened dim: value is in image coordinate space
+    // (physical units or integer indices depending on the coord).
+    if (vals.length === 0) return String(Math.round(value));
+    // Binary search for the nearest coordinate value.
+    let lo = 0, hi = vals.length - 1;
+    while (lo < hi) {
+        const mid = lo + ((hi - lo + 1) >> 1);
+        if (vals[mid] <= value) lo = mid; else hi = mid - 1;
+    }
+    if (lo + 1 < vals.length &&
+            Math.abs(vals[lo + 1] - value) < Math.abs(vals[lo] - value)) lo++;
+    return String(vals[lo]);
+}
+// Flattened multi-dim axis: the image always carries integer indices
+// (0..N-1), so value is the flat integer position.
+const idx = Math.round(value);
+if (idx < 0) return '';
+const size = sizes[k];
+const stride = strides[k];
+const i = ((Math.floor(idx / stride) % size) + size) % size;
+if (vals.length === 0) return String(i);
+if (i >= vals.length) return '';
+return String(vals[i]);
+"""
 
 
 def _axis_hover_formatter_args(
@@ -197,10 +200,8 @@ def _axis_hover_formatter_args(
 ) -> dict[str, list]:
     """``CustomJSHover`` args for one image axis with one or more flattened dims.
 
-    Tooltip rows reference the formatter via ``${field}{dim_name}``; the JS
-    side either does a binary search (single non-flattened dim with physical
-    coords) or splits the flat integer cursor index via stride math (flattened
-    multi-dim axis where the image always carries integer indices).
+    Per input dim of the axis, in flattening order: its name, size, C-order
+    stride, and coord values (empty when the dim has no coord).
     """
     return {
         'names': list(names),
@@ -222,7 +223,7 @@ def _make_hover_hook(
     across re-renders.
     """
 
-    def hook(plot, _element):
+    def hook(plot: Any, _element: hv.Element) -> None:
         if plot.handles.get('flatten_hover_installed'):
             return
         fig = plot.handles['plot']

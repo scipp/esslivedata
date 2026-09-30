@@ -11,6 +11,8 @@ import pydantic
 import pytest
 import scipp as sc
 from bokeh.models import HoverTool
+from holoviews.plotting.bokeh import BokehRenderer
+from holoviews.plotting.bokeh.element import ElementPlot
 
 from ess.livedata.config.workflow_spec import DataKey, WorkflowId
 from ess.livedata.dashboard.flatten_plotter import (
@@ -22,33 +24,23 @@ from ess.livedata.dashboard.flatten_plotter import (
 from ess.livedata.dashboard.plot_params import PlotAspect, PlotAspectType, PlotScale
 
 
-class _FakeToolbar:
-    def __init__(self) -> None:
-        # Mimic the default HoloViews-added HoverTool that the hook should drop.
-        self.tools: list = [HoverTool()]
+def _present(
+    plotter: FlattenPlotter, data: sc.DataArray, data_key: DataKey
+) -> tuple[hv.streams.Pipe, ElementPlot]:
+    """Compute ``data`` and render it the way a session does."""
+    plotter.compute({'primary': {data_key: data}})
+    pipe = hv.streams.Pipe(data=plotter.get_cached_state())
+    dmap = plotter.create_presenter().present(pipe)
+    return pipe, BokehRenderer.instance().get_plot(dmap)
 
 
-class _FakeFigure:
-    def __init__(self) -> None:
-        self.toolbar = _FakeToolbar()
-        self.added_tools: list = []
-
-    def add_tools(self, tool) -> None:
-        self.added_tools.append(tool)
-        self.toolbar.tools.append(tool)
-
-
-class _FakePlot:
-    def __init__(self) -> None:
-        self.handles: dict = {'plot': _FakeFigure()}
-
-
-def _run_hook(img: hv.Image) -> _FakeFigure:
-    """Invoke the plotter's hook against a fake bokeh figure and return it."""
-    [hook] = img.opts.get('plot').kwargs['hooks']
-    plot = _FakePlot()
-    hook(plot, None)
-    return plot.handles['plot']
+def _render_hover(
+    plotter: FlattenPlotter, data: sc.DataArray, data_key: DataKey
+) -> HoverTool:
+    """The one HoverTool on the rendered figure."""
+    _, plot = _present(plotter, data, data_key)
+    [hover] = [t for t in plot.state.toolbar.tools if isinstance(t, HoverTool)]
+    return hover
 
 
 hv.extension('bokeh')
@@ -360,29 +352,27 @@ class TestFlattenPlotterDirectConstruction:
 class TestFlattenPlotterHover:
     """Hover decomposes each image axis into per-dim labels."""
 
-    def test_hook_replaces_default_hover_with_custom_one(
-        self, data_abc, data_key
-    ) -> None:
+    def test_default_hover_is_replaced_by_custom_one(self, data_abc, data_key) -> None:
         params = _make_params(('a', 'b', 'c'), axis_x='b')
         plotter = FlattenPlotter.from_params(params)
-        img = plotter.plot(data_abc, data_key)
-        fig = _run_hook(img)
-        hovers = [t for t in fig.toolbar.tools if isinstance(t, HoverTool)]
-        # Exactly one hover survives — the custom flatten one.
-        assert len(hovers) == 1
-        assert hovers[0] in fig.added_tools
+        # The default HoloViews hover has no formatters.
+        hover = _render_hover(plotter, data_abc, data_key)
+        assert set(hover.formatters) == {'$x', '$y'}
 
-    def test_fixed_aspect_keeps_custom_hover(self, data_abc, data_key) -> None:
-        """A fixed aspect adds sizing hooks without dropping the hover hook."""
+    def test_fixed_aspect_keeps_hover_and_sizing_hooks(
+        self, data_abc, data_key
+    ) -> None:
+        """Both the hover hook and the frame-aspect hook reach the figure.
+
+        ``hooks`` is a single option, so declaring one set of hooks where the
+        other is declared too would silently drop it.
+        """
         params = _make_params(('a', 'b', 'c'), axis_x='b')
         params.plot_aspect = PlotAspect(aspect_type=PlotAspectType.square)
         plotter = FlattenPlotter.from_params(params)
-        plotter.compute({'primary': {data_key: data_abc}})
-        pipe = hv.streams.Pipe(data=plotter.get_cached_state())
-        fig = hv.render(plotter.create_presenter().present(pipe))
-        # Precondition: the fixed aspect is active.
-        assert 'change:inner_width' in fig.js_property_callbacks
-        [hover] = [t for t in fig.toolbar.tools if isinstance(t, HoverTool)]
+        _, plot = _present(plotter, data_abc, data_key)
+        assert 'change:inner_width' in plot.state.js_property_callbacks
+        [hover] = [t for t in plot.state.toolbar.tools if isinstance(t, HoverTool)]
         assert set(hover.formatters) == {'$x', '$y'}
 
     def test_hover_tooltips_one_row_per_dim_then_value(
@@ -390,9 +380,7 @@ class TestFlattenPlotterHover:
     ) -> None:
         params = _make_params(('a', 'b', 'c'), axis_x='b')
         plotter = FlattenPlotter.from_params(params)
-        img = plotter.plot(data_abc, data_key)
-        fig = _run_hook(img)
-        [hover] = [t for t in fig.toolbar.tools if isinstance(t, HoverTool)]
+        hover = _render_hover(plotter, data_abc, data_key)
         # x first, y next, value last. Per-dim format directive = dim name.
         # Each dim's row label carries its unit; values come back unit-less.
         labels = [name for name, _ in hover.tooltips]
@@ -413,18 +401,14 @@ class TestFlattenPlotterHover:
         del data.coords['b']
         params = _make_params(('a', 'b', 'c'), axis_x='b')
         plotter = FlattenPlotter.from_params(params)
-        img = plotter.plot(data, data_key)
-        fig = _run_hook(img)
-        [hover] = [t for t in fig.toolbar.tools if isinstance(t, HoverTool)]
+        hover = _render_hover(plotter, data, data_key)
         labels = [name for name, _ in hover.tooltips]
         assert labels[0] == 'b'
 
     def test_hover_swaps_axes_when_transposed(self, data_abc, data_key) -> None:
         params = _make_params(('a', 'b', 'c'), axis_x='b', transpose=True)
         plotter = FlattenPlotter.from_params(params)
-        img = plotter.plot(data_abc, data_key)
-        fig = _run_hook(img)
-        [hover] = [t for t in fig.toolbar.tools if isinstance(t, HoverTool)]
+        hover = _render_hover(plotter, data_abc, data_key)
         labels = [name for name, _ in hover.tooltips]
         assert labels == ['a [m]', 'c [K]', 'b [s]', 'value']
         templates = dict(hover.tooltips)
@@ -437,9 +421,7 @@ class TestFlattenPlotterHover:
     ) -> None:
         params = _make_params(('a', 'b', 'c'), axis_x='b')
         plotter = FlattenPlotter.from_params(params)
-        img = plotter.plot(data_abc, data_key)
-        fig = _run_hook(img)
-        [hover] = [t for t in fig.toolbar.tools if isinstance(t, HoverTool)]
+        hover = _render_hover(plotter, data_abc, data_key)
         # Y axis flattens (a outer, c inner); strides are C-order.
         y_fmt = hover.formatters['$y']
         assert y_fmt.args['names'] == ['a', 'c']
@@ -486,9 +468,7 @@ class TestFlattenPlotterHover:
         da.data.unit = 'counts'
         params = _make_params(('a', 'b', 'c'), axis_x='b')
         plotter = FlattenPlotter.from_params(params)
-        img = plotter.plot(da, data_key)
-        fig = _run_hook(img)
-        [hover] = [t for t in fig.toolbar.tools if isinstance(t, HoverTool)]
+        hover = _render_hover(plotter, da, data_key)
         labels = [name for name, _ in hover.tooltips]
         assert expected_a in labels
         assert expected_c in labels
@@ -500,9 +480,7 @@ class TestFlattenPlotterHover:
         del data.coords['c']
         params = _make_params(('a', 'b', 'c'), axis_x='b')
         plotter = FlattenPlotter.from_params(params)
-        img = plotter.plot(data, data_key)
-        fig = _run_hook(img)
-        [hover] = [t for t in fig.toolbar.tools if isinstance(t, HoverTool)]
+        hover = _render_hover(plotter, data, data_key)
         y_fmt = hover.formatters['$y']
         # 'c' has no coord → empty values list → JS emits the bare index.
         assert y_fmt.args['values_by_dim'][1] == []
@@ -518,9 +496,7 @@ class TestFlattenPlotterHover:
         del data.coords['b']
         params = _make_params(('a', 'b', 'c'), axis_x='b')
         plotter = FlattenPlotter.from_params(params)
-        img = plotter.plot(data, data_key)
-        fig = _run_hook(img)
-        [hover] = [t for t in fig.toolbar.tools if isinstance(t, HoverTool)]
+        hover = _render_hover(plotter, data, data_key)
         x_fmt = hover.formatters['$x']
         assert x_fmt.args['values_by_dim'] == [[]]
 
@@ -529,25 +505,22 @@ class TestFlattenPlotterHover:
     ) -> None:
         params = _make_params(('a', 'b', 'c'), axis_x='b')
         plotter = FlattenPlotter.from_params(params)
-        img = plotter.plot(data_abc, data_key)
-        fig = _run_hook(img)
-        [hover] = [t for t in fig.toolbar.tools if isinstance(t, HoverTool)]
+        hover = _render_hover(plotter, data_abc, data_key)
         x_fmt = hover.formatters['$x']
         # 'b' coord is present → values lookup; the row label carries the unit.
         assert len(x_fmt.args['values_by_dim'][0]) == 4
 
-    def test_hook_is_idempotent(self, data_abc, data_key) -> None:
-        # HoloViews may invoke hooks on every re-render; the hover must not
-        # be installed multiple times.
+    def test_hover_is_installed_once_across_updates(self, data_abc, data_key) -> None:
+        # HoloViews runs hooks on every update; the installed hover must stay.
         params = _make_params(('a', 'b', 'c'), axis_x='b')
         plotter = FlattenPlotter.from_params(params)
-        img = plotter.plot(data_abc, data_key)
-        [hook] = img.opts.get('plot').kwargs['hooks']
-        plot = _FakePlot()
-        hook(plot, None)
-        hook(plot, None)
-        fig = plot.handles['plot']
-        assert len(fig.added_tools) == 1
+        pipe, plot = _present(plotter, data_abc, data_key)
+        installed = [t for t in plot.state.toolbar.tools if isinstance(t, HoverTool)]
+        for _ in range(2):
+            plotter.compute({'primary': {data_key: data_abc}})
+            pipe.send(plotter.get_cached_state())
+        hovers = [t for t in plot.state.toolbar.tools if isinstance(t, HoverTool)]
+        assert hovers == installed
 
     def test_flat_axis_label_is_not_suppressed(self, data_abc, data_key) -> None:
         # The synthetic flat-dim name (e.g. "(a,c)") flows through as the default
@@ -569,9 +542,7 @@ class TestFlattenPlotterNDimGeneralization:
         # carries a per-dim formatter.
         params = _make_params(('a', 'b', 'c', 'd'), axis_x=('a', 'b'))
         plotter = FlattenPlotter.from_params(params)
-        img = plotter.plot(data_abcd, data_key)
-        fig = _run_hook(img)
-        [hover] = [t for t in fig.toolbar.tools if isinstance(t, HoverTool)]
+        hover = _render_hover(plotter, data_abcd, data_key)
         labels = [name for name, _ in hover.tooltips]
         assert labels == ['a [m]', 'b [s]', 'c [K]', 'd [J]', 'value']
         x_fmt = hover.formatters['$x']
@@ -615,9 +586,7 @@ class TestFlattenPlotterNDimGeneralization:
     ) -> None:
         params = _make_params(('a', 'b', 'c', 'd'), axis_x=axis_x, **flags)
         plotter = FlattenPlotter.from_params(params)
-        img = plotter.plot(data_abcd, data_key)
-        fig = _run_hook(img)
-        [hover] = [t for t in fig.toolbar.tools if isinstance(t, HoverTool)]
+        hover = _render_hover(plotter, data_abcd, data_key)
         fmt = hover.formatters[fmt_key]
         assert fmt.args['names'] == names
         assert fmt.args['sizes'] == sizes

@@ -1492,7 +1492,10 @@ class ImagePlotter(Plotter):
         return histogram
 
     def _image_opts(self) -> dict[str, Any]:
-        """Opts declared once for every image element this plotter draws."""
+        """Opts that :meth:`style_opts` declares on every Image/QuadMesh element.
+
+        Subclasses that declare per-element ``hooks`` remove ``hooks`` here.
+        """
         return {**self._base_opts, **self._sizing_opts}
 
     def style_opts(self) -> list[hv.Options]:
