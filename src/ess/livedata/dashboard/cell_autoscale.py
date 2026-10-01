@@ -27,6 +27,18 @@ each pan or zoom, applies the y toggle to that figure. With the y toggle active
 this also refits the y-range a box zoom selected to the values within its
 x-range.
 
+HoloViews' ``autorange='y'`` option does this fit in the browser, but does not
+fit here (HoloViews 1.23):
+
+- It is not set up for an element plotted with ``apply_ranges=False``, which
+  1-D layers use to skip HoloViews' own range computation
+  (``Plotter.applies_ranges``).
+- It pads the y-range linearly, so on a log axis the lower bound can go
+  negative.
+- It ignores the y toggle, and it would compete with the y-range this
+  controller writes on each data update: the browser could draw the full
+  range first and the fitted one only after its data callback ran.
+
 The controller removes Bokeh's own reset tool, which returns to the view the
 figure was created with -- stale on a live plot -- and gives Fit the reset
 tool's icon. Fit writes the current data extent to the axes the controller
