@@ -23,7 +23,7 @@ import holoviews as hv
 import numpy as np
 import pytest
 import scipp as sc
-from bokeh.models import Plot
+from bokeh.models import Plot, Text
 from holoviews.plotting.bokeh import BokehRenderer
 
 from ess.livedata.config.workflow_spec import DataKey, WorkflowId
@@ -50,12 +50,15 @@ def _figures(hv_obj) -> list[Plot]:
 
 def _present_figures(plotter, data: dict) -> list[Plot]:
     plotter.compute({'primary': data})
-    state = plotter.get_cached_state()
-    # compute() turns any failure into a Text placeholder, which would render a
-    # single default-sized figure and make the assertions below pass vacuously.
-    assert not isinstance(state, hv.Text), f'plotter did not plot the data: {state}'
     presenter = plotter.create_presenter()
-    return _figures(presenter.present(hv.streams.Pipe(data=state)))
+    rendered = presenter.present(hv.streams.Pipe(data=plotter.get_cached_state()))
+    figures = _figures(rendered)
+    # compute() turns any failure into a Text placeholder (wrapped in the plotter's
+    # container), which would render a single default-sized figure and make the
+    # assertions in the tests pass vacuously.
+    glyphs = [g for fig in figures for g in fig.renderers if isinstance(g.glyph, Text)]
+    assert not glyphs, 'plotter did not plot the data: rendered a Text placeholder'
+    return figures
 
 
 def _keys(n: int) -> list[DataKey]:
