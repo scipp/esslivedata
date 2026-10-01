@@ -22,7 +22,7 @@ import holoviews as hv
 import numpy as np
 import pytest
 import scipp as sc
-from bokeh.models import ColumnDataSource, Plot
+from bokeh.models import ColumnDataSource, Plot, Text
 from holoviews.core.options import Compositor
 from holoviews.plotting.bokeh import BokehRenderer
 from holoviews.plotting.util import apply_nodata
@@ -59,12 +59,11 @@ def test_2d_data_reaches_bokeh_unchanged(bin_edges: bool) -> None:
     """The 2D element types the compositor used to match still render."""
     plotter = plots.ImagePlotter.from_params(PlotParams2d())
     plotter.compute({'primary': _data_2d(bin_edges=bin_edges)})
-    state = plotter.get_cached_state()
-    assert not isinstance(state, hv.Text), f'plotter did not plot the data: {state}'
-
     presenter = plotter.create_presenter()
-    rendered = presenter.present(hv.streams.Pipe(data=state))
+    rendered = presenter.present(hv.streams.Pipe(data=plotter.get_cached_state()))
     models = BokehRenderer.instance().get_plot(rendered).state.references()
+    # compute() turns any failure into a Text placeholder, which would pass vacuously.
+    assert not [model for model in models if isinstance(model, Text)]
     assert [model for model in models if isinstance(model, Plot)]
 
     columns = [

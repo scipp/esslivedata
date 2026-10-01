@@ -22,7 +22,7 @@ import holoviews as hv
 import numpy as np
 import pytest
 import scipp as sc
-from bokeh.models import Plot
+from bokeh.models import Plot, Text
 from holoviews.plotting.bokeh import BokehRenderer
 
 from ess.livedata.config.workflow_spec import DataKey, WorkflowId
@@ -91,13 +91,16 @@ def _rendered_figures(plotter, data: dict) -> list[Plot]:
     exactly the case where nothing would write the bounds.
     """
     plotter.compute({'primary': data})
-    state = plotter.get_cached_state()
-    assert not isinstance(state, hv.Text), f'plotter did not plot the data: {state}'
-    obj = plotter.create_presenter().present(hv.streams.Pipe(data=state))
+    obj = plotter.create_presenter().present(
+        hv.streams.Pipe(data=plotter.get_cached_state())
+    )
     if plotter.is_overlayable:
         obj = obj.opts(hooks=[build_controller_from_layers([plotter]).make_hook()])
     bokeh_state = BokehRenderer.instance().get_plot(obj).state
-    return [m for m in bokeh_state.references() if isinstance(m, Plot)]
+    models = bokeh_state.references()
+    # compute() turns any failure into a Text placeholder, which would pass vacuously.
+    assert not [m for m in models if isinstance(m, Text)]
+    return [m for m in models if isinstance(m, Plot)]
 
 
 def _spans(axis_range, lo: float, hi: float) -> bool:
