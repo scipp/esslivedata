@@ -458,6 +458,28 @@ class TestYFitsVisibleX:
 
         assert (y.start, y.end) == (1.0, 100.0)
 
+    def test_x_refit_refits_y_zoomed_before_the_gesture_event(self) -> None:
+        """A growing extent refits x while y still shows a zoom whose
+        RangesUpdate has not arrived; y must follow in the same render even
+        though its target equals the last one written."""
+        profile = _peak_profile()
+        plotter = _FakePlotter(
+            frozenset({'x', 'y'}),
+            {_key(): {'x': (0.0, 8.0), 'y': profile.target()}},
+            {_key(): profile},
+        )
+        hook = CellAutoscaleController([plotter]).make_hook()
+        plot, x, y, _c = _make_plot_all_handles()
+        hook(plot, None)
+        x.start, x.end = 0.0, 4.0
+        y.start, y.end = 50.0, 60.0
+        plotter._targets[_key()]['x'] = (0.0, 9.0)
+
+        hook(plot, None)
+
+        assert (x.start, x.end) == (0.0, 9.0)
+        assert (y.start, y.end) == (1.0, 100.0)
+
     def test_window_without_values_keeps_y(self, rendered) -> None:
         _hook, plot, x, y = rendered
         x.start, x.end = 5.0, 7.0

@@ -152,6 +152,11 @@ def _make_fit_action(*, description: str, reset_ranges: list[Any]) -> Any:
     return tool
 
 
+# A target written to a range, with the x-range it was fitted to (see
+# ``CellAutoscaleController._written``).
+_Written = tuple[tuple[float, float] | None, tuple[float, float]]
+
+
 @dataclass(frozen=True)
 class _FigureTools:
     """The autoscale tools on one figure's toolbar."""
@@ -211,12 +216,17 @@ class CellAutoscaleController:
         # Last color range written. Re-applied while the toggle is off, so the
         # colorbar stays frozen at it.
         self._clim: tuple[float, float] | None = None
-        # Last target written to each x/y range handle, per axis. An active
-        # toggle writes only when the target differs, so a user's pan/zoom
-        # survives renders that do not change the data extent. Keyed by the
-        # handle rather than the figure: a figure swap or a second figure
-        # brings a fresh handle, which nothing has been written to yet.
-        self._written: dict[Axis, WeakKeyDictionary[Any, tuple[float, float]]] = {
+        # Last target written to each x/y range handle, per axis, with the
+        # x-range a y target was fitted to (None for x). An active toggle writes
+        # only when either differs, so a user's pan/zoom survives renders that
+        # do not change the data extent. The y-range is written whenever the
+        # x-range moved since, even to a target equal to the last one: the user
+        # may have zoomed y with x in between (the gesture's RangesUpdate can
+        # arrive after the next render), and y must be refitted together with
+        # x. Keyed by the handle rather than the figure: a figure swap or a
+        # second figure brings a fresh handle, which nothing has been written
+        # to yet.
+        self._written: dict[Axis, WeakKeyDictionary[Any, _Written]] = {
             axis: WeakKeyDictionary() for axis in self._range_axes
         }
         # HoloViews plots that rendered into this cell's figures, so Fit and a
@@ -443,7 +453,7 @@ class CellAutoscaleController:
             return
         x_window = self._x_window(plot) if axis == 'y' else None
         target = self.get_target(axis, x_window=x_window)
-        if target is None or (not fit and written.get(handle) == target):
+        if target is None or (not fit and written.get(handle) == (x_window, target)):
             return
         # Write the exact (padded) data extent whenever it moved -- there
         # is no hysteresis here. For live data whose min/max drifts every
@@ -456,7 +466,7 @@ class CellAutoscaleController:
         # grow/shrink threshold here so the range only moves once the
         # extent leaves a deadband.
         RangeHandles.write(plot, axis, *target)
-        written[handle] = target
+        written[handle] = (x_window, target)
 
     def _x_window(self, plot: Any) -> tuple[float, float] | None:
         """The x-range ``plot`` shows, or ``None`` before the controller set it.
