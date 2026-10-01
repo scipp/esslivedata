@@ -261,6 +261,28 @@ class TestCorrelationHistogramPlotter:
 
         assert histogram_of(plotter)['values'].sum() == 30.0
 
+    def test_handles_integer_axis_values(self):
+        """Integer-valued axes (e.g. a state or counter) are usable as coordinates."""
+        axis_data = sc.DataArray(
+            data=sc.array(dims=['time'], values=[1, 2, 3], unit='m', dtype='int64'),
+            coords={'time': sc.array(dims=['time'], values=[100, 200, 300], unit='ms')},
+        )
+        source_data = make_source_data(times=[150, 250], values=[10.0, 20.0])
+
+        axes = [AxisSpec(role=X_AXIS, name='position', bins=2)]
+        plotter = CorrelationHistogramPlotter(
+            axes=axes, normalize=False, renderer=_make_line_renderer()
+        )
+
+        plotter.compute(
+            {
+                PRIMARY: {_make_result_key('detector'): source_data},
+                X_AXIS: {_make_result_key('position'): axis_data},
+            }
+        )
+
+        assert histogram_of(plotter)['values'].sum() == 30.0
+
     def test_handles_datetime64_time_coords(self):
         """Correlation works when timestamps are datetime64 rather than integers."""
         base_ns = 1_000_000_000_000_000_000

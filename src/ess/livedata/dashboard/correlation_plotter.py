@@ -251,8 +251,11 @@ class CorrelationHistogramPlotter:
                 )
             axis_data[axis.name] = ax
 
+        # sc.values only accepts float dtypes, so integer axes are used as is.
         lookups = {
-            name: sc.lookup(sc.values(ax), mode='previous')
+            name: sc.lookup(
+                sc.values(ax) if ax.variances is not None else ax, mode='previous'
+            )
             for name, ax in axis_data.items()
         }
         # Earliest time at which every axis has a reading. Before it, 'previous'
