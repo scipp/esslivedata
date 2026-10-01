@@ -197,6 +197,7 @@ class CorrelationHistogramPlotter:
 
     AUTOSCALE_AXES: ClassVar[frozenset[Axis]] = frozenset()
     """Subclasses delegate to the inner renderer's ``AUTOSCALE_AXES``."""
+    FITS_Y_TO_VISIBLE_X: ClassVar[bool] = False
 
     kdims: list[str] | None = None
 
@@ -329,13 +330,17 @@ class CorrelationHistogramPlotter:
         """
         return self._renderer.autoscale_axes
 
-    def get_range_targets(self, data_key: DataKey) -> RangeTargets | None:
+    def get_range_targets(
+        self, data_key: DataKey, *, x_window: tuple[float, float] | None = None
+    ) -> RangeTargets | None:
         """Delegate per-axis target lookup to the inner renderer."""
-        return self._renderer.get_range_targets(data_key)
+        return self._renderer.get_range_targets(data_key, x_window=x_window)
 
-    def iter_range_targets(self) -> Iterator[tuple[DataKey, RangeTargets]]:
+    def iter_range_targets(
+        self, *, x_window: tuple[float, float] | None = None
+    ) -> Iterator[tuple[DataKey, RangeTargets]]:
         """Delegate per-key target iteration to the inner renderer."""
-        return self._renderer.iter_range_targets()
+        return self._renderer.iter_range_targets(x_window=x_window)
 
     def create_presenter(self) -> PresenterBase:
         """Create a presenter owned by this plotter.
@@ -353,6 +358,7 @@ class CorrelationHistogram1dPlotter(CorrelationHistogramPlotter):
     """Plotter for 1D correlation histograms."""
 
     AUTOSCALE_AXES: ClassVar[frozenset[Axis]] = frozenset({'x', 'y'})
+    FITS_Y_TO_VISIBLE_X: ClassVar[bool] = True
 
     def __init__(self, params: CorrelationHistogram1dParams) -> None:
         axes = [

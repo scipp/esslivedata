@@ -18,6 +18,32 @@ owns alone (``Plotter.applies_ranges``), so it would otherwise stay at Bokeh's
 default of (0, 1). The color axis has no pan/zoom to preserve and is written
 on every render while its toggle is active.
 
+The y-range of a 1-D plot (``Plotter.FITS_Y_TO_VISIBLE_X``) is fitted to the
+values within the figure's visible x-range rather than to all data, so a zoom
+onto a small feature is not flattened by a peak outside the view. The y target
+therefore depends on each figure's x-range as well as on the data, and an
+active y toggle also writes it when the x-range moved since the last write.
+That includes a pan or zoom, which changes no data: Bokeh's ``RangesUpdate``
+event, sent once at the end of each, refits y on that figure at once rather
+than at the next render. Pan and wheel zoom move y along with x, so this refit
+is written even when the visible values did not change. With the y toggle
+active, any pan or zoom therefore ends with y fitted to the visible values,
+including one that only changed the y-range. On a live plot a data update
+during a drag refits y too, to the x-range the drag has reached. The y-range of
+an image is a second spatial axis and follows only the data, like the x-range.
+
+HoloViews' ``autorange='y'`` option does this fit in the browser, but does not
+fit here (HoloViews 1.23):
+
+- It is not set up for an element plotted with ``apply_ranges=False``, which
+  1-D layers use to skip HoloViews' own range computation
+  (``Plotter.applies_ranges``).
+- It pads the y-range linearly, so on a log axis the lower bound can go
+  negative.
+- It ignores the y toggle, and it would compete with the y-range this
+  controller writes on each data update: the browser could draw the full
+  range first and the fitted one only after its data callback ran.
+
 The controller removes Bokeh's own reset tool, which returns to the view the
 figure was created with -- stale on a live plot -- and gives Fit the reset
 tool's icon. Fit writes the current data extent to the axes the controller
@@ -41,7 +67,7 @@ from __future__ import annotations
 from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any
-from weakref import WeakKeyDictionary, WeakSet
+from weakref import WeakKeyDictionary, WeakMethod, WeakSet
 
 import structlog
 
@@ -56,6 +82,7 @@ _TOGGLE_DESCRIPTIONS: dict[Axis, str] = {
     'y': 'Y-axis autoscale on data change',
     'c': 'Color autoscale',
 }
+_FIT_Y_TO_VISIBLE_X_DESCRIPTION = 'Y-axis autoscale to visible data'
 
 
 def _union(
@@ -131,6 +158,11 @@ def _make_fit_action(*, description: str, reset_ranges: list[Any]) -> Any:
     return tool
 
 
+# A target written to a range, with the x-range it was fitted to (see
+# ``CellAutoscaleController._written``).
+_Written = tuple[tuple[float, float] | None, tuple[float, float]]
+
+
 @dataclass(frozen=True)
 class _FigureTools:
     """The autoscale tools on one figure's toolbar."""
@@ -155,7 +187,7 @@ class CellAutoscaleController:
     ----------
     layer_plotters:
         Plotters for the cell's layers. Targets are unioned
-        across all plotters' computed ``_range_targets`` entries.
+        across all plotters' range targets.
     """
 
     def __init__(self, layer_plotters: list[Plotter]) -> None:
@@ -165,6 +197,14 @@ class CellAutoscaleController:
         )
         # The cell's toggle state, shown by every figure's toggle of the axis.
         self._active: dict[Axis, bool] = dict.fromkeys(self._axes, True)
+        # Whether y follows each figure's x-range (see the module docstring).
+        self._fits_y_to_x = any(
+            plotter.FITS_Y_TO_VISIBLE_X and 'y' in plotter.autoscale_axes
+            for plotter in self._plotters
+        )
+        self._toggle_descriptions: dict[Axis, str] = dict(_TOGGLE_DESCRIPTIONS)
+        if self._fits_y_to_x:
+            self._toggle_descriptions['y'] = _FIT_Y_TO_VISIBLE_X_DESCRIPTION
         # Toggle icon per axis and state.
         self._toggle_icons: dict[Axis, dict[bool, str]] = {
             axis: _toggle_icons(axis) for axis in self._axes
@@ -190,34 +230,55 @@ class CellAutoscaleController:
         # Last color range written. Re-applied while the toggle is off, so the
         # colorbar stays frozen at it.
         self._clim: tuple[float, float] | None = None
-        # Last target written to each x/y range handle, per axis. An active
-        # toggle writes only when the target differs, so a user's pan/zoom
-        # survives renders that do not change the data extent. Keyed by the
-        # handle rather than the figure: a figure swap or a second figure
-        # brings a fresh handle, which nothing has been written to yet.
-        self._written: dict[Axis, WeakKeyDictionary[Any, tuple[float, float]]] = {
+        # Last target written to each x/y range handle, per axis, with the
+        # x-range a y target was fitted to (None for x, and for y unless it
+        # follows the x-range). An active toggle writes only when either
+        # differs, so a user's pan/zoom survives renders that do not change the
+        # data extent. A y-range that follows the x-range is written whenever
+        # the x-range moved since, even to a target equal to the last one: the
+        # user may have zoomed y with x in between (the gesture's RangesUpdate
+        # can arrive after the next render), and y must be refitted together
+        # with x. Keyed by the handle rather than the figure: a figure swap or a
+        # second figure brings a fresh handle, which nothing has been written
+        # to yet.
+        self._written: dict[Axis, WeakKeyDictionary[Any, _Written]] = {
             axis: WeakKeyDictionary() for axis in self._range_axes
         }
         # HoloViews plots that rendered into this cell's figures, so Fit and a
         # toggle switched on can write through their current handles at once.
         self._plots: WeakSet = WeakSet()
+        # Subscribed to each figure's RangesUpdate. Holds the controller weakly:
+        # Bokeh has no way to unsubscribe, and a figure that outlives the cell
+        # would otherwise keep the controller and its plotters' data alive.
+        on_ranges_update = WeakMethod(self._on_ranges_update)
+
+        def ranges_update_callback(event: Any) -> None:
+            if (method := on_ranges_update()) is not None:
+                method(event)
+
+        self._ranges_update_callback = ranges_update_callback
 
     @property
     def axes(self) -> frozenset[Axis]:
         """Axes for which this controller exposes a toggle."""
         return self._axes
 
-    def get_target(self, axis: Axis) -> tuple[float, float] | None:
+    def get_target(
+        self, axis: Axis, *, x_window: tuple[float, float] | None = None
+    ) -> tuple[float, float] | None:
         """Union of per-plotter ``(lo, hi)`` targets for ``axis``.
 
         Skips plotters that do not expose ``axis`` and plotters with no
         computed targets yet. Returns ``None`` when no plotter contributes.
+
+        With ``x_window``, the ``y`` target of plotters with
+        ``FITS_Y_TO_VISIBLE_X`` is fitted to the values within the window.
         """
         result: tuple[float, float] | None = None
         for plotter in self._plotters:
             if axis not in plotter.autoscale_axes:
                 continue
-            for _key, targets in plotter.iter_range_targets():
+            for _key, targets in plotter.iter_range_targets(x_window=x_window):
                 target = targets.get(axis)
                 if target is None:
                     continue
@@ -296,6 +357,8 @@ class CellAutoscaleController:
         tools = self._figure_tools.get(figure)
         if tools is None:
             tools = self._figure_tools[figure] = self._create_tools(figure)
+            if self._fits_y_to_x:
+                figure.on_event('rangesupdate', self._ranges_update_callback)
         elif any(tool is tools.fit for tool in toolbar.tools):
             return
         # Tools are set via assignment to keep Bokeh's property setter
@@ -313,7 +376,7 @@ class CellAutoscaleController:
             icons = self._toggle_icons[axis]
             toggle = _make_toggle_action(
                 active=self._active[axis],
-                description=_TOGGLE_DESCRIPTIONS[axis],
+                description=self._toggle_descriptions[axis],
                 on_icon=icons[True],
                 off_icon=icons[False],
             )
@@ -365,8 +428,9 @@ class CellAutoscaleController:
         """Write the current targets to ``plot``'s handles.
 
         An x/y range is written for a Fit, or when the target differs from
-        the last one written to that range handle and either the toggle is
-        active or nothing has been written to the handle yet (see the module
+        the last one written to that range handle -- for a y-range that follows
+        the x-range, also when the x-range moved since -- and either the toggle
+        is active or nothing has been written to the handle yet (see the module
         docstring). A skipped range keeps its previous value, including any
         manual pan/zoom.
 
@@ -375,28 +439,9 @@ class CellAutoscaleController:
         written on every render: HoloViews re-derives the color mapper from
         the data each time, and ``_apply_clim`` is what makes it keep ours.
         """
+        # x first: the y target depends on the x-range.
         for axis in self._range_axes:
-            handle = RangeHandles.axis_range(plot, axis)
-            if handle is None:
-                continue
-            written = self._written[axis]
-            if not (fit or self._active[axis] or handle not in written):
-                continue
-            target = self.get_target(axis)
-            if target is None or (not fit and written.get(handle) == target):
-                continue
-            # Write the exact (padded) data extent whenever it moved -- there
-            # is no hysteresis here. For live data whose min/max drifts every
-            # tick (typically the value axis of a 1-D plot) this means one
-            # small range patch per update and some range "breathing", and any
-            # pan/zoom on that axis is undone on the next update. That is
-            # intentional: an active autoscale toggle is meant to track the
-            # data, and pan/zoom is kept by turning the toggle off. If the
-            # visual jitter proves problematic in practice, introduce a
-            # grow/shrink threshold here so the range only moves once the
-            # extent leaves a deadband.
-            RangeHandles.write(plot, axis, *target)
-            written[handle] = target
+            self._apply_range(plot, axis, fit=fit)
         if 'c' not in self._axes:
             return
         if (fit or self._active['c']) and (target := self.get_target('c')) is not None:
@@ -404,6 +449,44 @@ class CellAutoscaleController:
         if self._clim is not None:
             RangeHandles.write(plot, 'c', *self._clim)
             self._apply_clim(plot, self._clim)
+
+    def _apply_range(self, plot: Any, axis: Axis, *, fit: bool) -> None:
+        """Write the current target to ``plot``'s x/y range if due.
+
+        See :meth:`_apply_targets` for when it is due.
+        """
+        handle = RangeHandles.axis_range(plot, axis)
+        if handle is None:
+            return
+        written = self._written[axis]
+        if not (fit or self._active[axis] or handle not in written):
+            return
+        x_window = self._x_window(plot) if axis == 'y' and self._fits_y_to_x else None
+        target = self.get_target(axis, x_window=x_window)
+        if target is None or (not fit and written.get(handle) == (x_window, target)):
+            return
+        # Write the exact (padded) data extent whenever it moved -- there
+        # is no hysteresis here. For live data whose min/max drifts every
+        # tick (typically the value axis of a 1-D plot) this means one
+        # small range patch per update and some range "breathing", and any
+        # pan/zoom on that axis is undone on the next update. That is
+        # intentional: an active autoscale toggle is meant to track the
+        # data, and pan/zoom is kept by turning the toggle off. If the
+        # visual jitter proves problematic in practice, introduce a
+        # grow/shrink threshold here so the range only moves once the
+        # extent leaves a deadband.
+        RangeHandles.write(plot, axis, *target)
+        written[handle] = (x_window, target)
+
+    def _x_window(self, plot: Any) -> tuple[float, float] | None:
+        """The x-range ``plot`` shows, or ``None`` before the controller set it.
+
+        Until then the range holds Bokeh's default, not a view of the data.
+        """
+        handle = RangeHandles.axis_range(plot, 'x')
+        if handle is None or handle not in self._written.get('x', ()):
+            return None
+        return RangeHandles.read(plot, 'x')
 
     @staticmethod
     def _apply_clim(plot: Any, clim: tuple[float, float]) -> None:
@@ -437,6 +520,22 @@ class CellAutoscaleController:
         with batched_update():
             for plot in list(self._plots):
                 self._apply_targets(plot, fit=fit)
+
+    def _on_ranges_update(self, event: Any) -> None:
+        """Refit the y-range of the figure the user panned or zoomed, if active.
+
+        ``event`` is Bokeh's ``RangesUpdate``, for the figure ``event.model``.
+
+        The refit is written as for a Fit, even when it equals the last target
+        written: pan and wheel zoom move y along with x, so the range need no
+        longer show what was last written to it.
+        """
+        if not self._active['y']:
+            return
+        with batched_update():
+            for plot in list(self._plots):
+                if plot.state is event.model:
+                    self._apply_range(plot, 'y', fit=True)
 
     def _on_fit_active_change(self, attr: str, old: bool, new: bool) -> None:
         """Bokeh server-side handler for the Fit tool's ``active`` property.

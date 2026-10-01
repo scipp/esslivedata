@@ -129,6 +129,23 @@ class RangeHandles:
         return None
 
     @classmethod
+    def read(cls, plot: Any, axis: Literal['x', 'y']) -> tuple[float, float] | None:
+        """Current ``(lo, hi)`` of ``plot``'s ``axis``, in the units of the targets.
+
+        A datetime axis is read as epoch nanoseconds, from either form its bounds
+        take (see :func:`_to_ns_float`). Returns ``None`` when the handle is
+        missing or a bound is unset.
+        """
+        handle = cls.axis_range(plot, axis)
+        start = getattr(handle, 'start', None)
+        end = getattr(handle, 'end', None)
+        if start is None or end is None:
+            return None
+        if _axis_is_datetime(plot, axis) or isinstance(end, np.datetime64):
+            start, end = _to_ns_float(start), _to_ns_float(end)
+        return (min(start, end), max(start, end))
+
+    @classmethod
     def write(cls, plot: Any, axis: Axis, lo: float, hi: float) -> bool:
         """Write ``(lo, hi)`` to ``plot``'s handle for ``axis``.
 

@@ -202,3 +202,33 @@ def test_write_color_mapper_avoids_inversion() -> None:
         else:
             seen_hi = value
         assert seen_lo <= seen_hi, f"inverted: low={seen_lo} high={seen_hi}"
+
+
+def test_read_returns_bounds_in_ascending_order() -> None:
+    plot = _StubPlot(x_range=_StubRange(5.0, 1.0))
+    assert RangeHandles.read(plot, 'x') == (1.0, 5.0)
+
+
+def test_read_returns_none_for_unset_or_missing_range() -> None:
+    assert RangeHandles.read(_StubPlot(x_range=_StubRange()), 'x') is None
+    assert RangeHandles.read(_StubPlot(), 'x') is None
+
+
+def test_read_datetime_axis_in_epoch_ns_before_and_after_zoom() -> None:
+    """Bounds are ``np.datetime64`` as written, epoch-ms floats after a zoom."""
+    import holoviews as hv
+
+    hv.extension('bokeh')
+    t = np.array(['2025-01-01T00:00', '2025-01-01T00:10'], dtype='datetime64[ns]')
+    plot = hv.renderer('bokeh').get_plot(hv.Curve((t, [0.0, 1.0])))
+    xr = plot.handles['x_range']
+    lo = np.datetime64('2025-01-01T00:02', 'ns')
+    hi = np.datetime64('2025-01-01T00:05', 'ns')
+    expected = (float(lo.astype('int64')), float(hi.astype('int64')))
+
+    xr.start, xr.end = lo, hi
+    assert RangeHandles.read(plot, 'x') == expected
+
+    xr.start = float(lo.astype('datetime64[ms]').astype('int64'))
+    xr.end = float(hi.astype('datetime64[ms]').astype('int64'))
+    assert RangeHandles.read(plot, 'x') == expected

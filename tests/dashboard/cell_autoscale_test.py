@@ -13,16 +13,25 @@ from __future__ import annotations
 
 import gc
 import weakref
+from types import SimpleNamespace
 from typing import Any
 
+import holoviews as hv
+import numpy as np
 import pytest
+import scipp as sc
 
 from ess.livedata.config.workflow_spec import DataKey, WorkflowId
 from ess.livedata.dashboard.cell_autoscale import (
     CellAutoscaleController,
     build_controller_from_layers,
 )
+from ess.livedata.dashboard.data_roles import PRIMARY
+from ess.livedata.dashboard.plot_params import PlotParams1d, PlotParams2d
+from ess.livedata.dashboard.plots import ImagePlotter, LinePlotter
 from ess.livedata.dashboard.range_hook import Axis
+
+hv.extension('bokeh')
 
 
 def _key(source: str = 'src', output: str = 'out') -> DataKey:
@@ -37,8 +46,12 @@ class _FakePlotter:
     """Stand-in for a real :class:`Plotter`.
 
     Implements the minimum surface used by :class:`CellAutoscaleController`:
-    the ``autoscale_axes`` property and ``iter_range_targets()``.
+    the ``autoscale_axes`` property, ``FITS_Y_TO_VISIBLE_X`` and
+    ``iter_range_targets()``. Fitting y to the visible x-range is exercised
+    through a real :class:`LinePlotter`.
     """
+
+    FITS_Y_TO_VISIBLE_X = False
 
     def __init__(
         self,
@@ -48,7 +61,7 @@ class _FakePlotter:
         self.autoscale_axes = axes
         self._targets = targets_by_key or {}
 
-    def iter_range_targets(self):
+    def iter_range_targets(self, *, x_window=None):
         return iter(self._targets.items())
 
 
@@ -57,10 +70,10 @@ class _RaisingPlotter(_FakePlotter):
 
     fail = False
 
-    def iter_range_targets(self):
+    def iter_range_targets(self, *, x_window=None):
         if self.fail:
             raise RuntimeError("targets unavailable")
-        return super().iter_range_targets()
+        return super().iter_range_targets(x_window=x_window)
 
 
 class _StubRange:
@@ -92,6 +105,10 @@ class _StubFigState:
         self.x_range = Range1d()
         self.y_range = Range1d()
         self.document = None
+        self.event_callbacks: dict[str, list[Any]] = {}
+
+    def on_event(self, event: str, *callbacks: Any) -> None:
+        self.event_callbacks.setdefault(event, []).extend(callbacks)
 
 
 class _StubSubPlot:
@@ -127,17 +144,22 @@ class _StubPlot:
         self.clim: tuple[float, float] | None = None
 
 
+# Tooltip prefixes: the y toggle's tooltip says whether y follows the x-range.
 _TOGGLE = {
-    'x': 'X-axis autoscale on data change',
-    'y': 'Y-axis autoscale on data change',
+    'x': 'X-axis autoscale',
+    'y': 'Y-axis autoscale',
     'c': 'Color autoscale',
 }
 _FIT = 'Fit ranges to current data'
 
 
 def _tool(plot: _StubPlot, description: str) -> Any:
-    """The tool with the given tooltip on the plot's figure."""
-    return next(t for t in plot.state.toolbar.tools if t.description == description)
+    """The tool whose tooltip starts with ``description`` on the plot's figure."""
+    return next(
+        t
+        for t in plot.state.toolbar.tools
+        if (t.description or '').startswith(description)
+    )
 
 
 def _click_toggle(plot: _StubPlot, axis: Axis, active: bool = False) -> None:
@@ -148,6 +170,13 @@ def _click_toggle(plot: _StubPlot, axis: Axis, active: bool = False) -> None:
 def _click_fit(plot: _StubPlot) -> None:
     """Simulate the user clicking the plot's Fit button."""
     _tool(plot, _FIT).active = True
+
+
+def _end_pan_or_zoom(plot: _StubPlot) -> None:
+    """Simulate the ``RangesUpdate`` Bokeh sends at the end of a pan or zoom."""
+    event = SimpleNamespace(model=plot.state)
+    for callback in plot.state.event_callbacks.get('rangesupdate', []):
+        callback(event)
 
 
 def _make_plot_all_handles() -> tuple[
@@ -369,6 +398,217 @@ class TestAutoscaleOnChange:
         hook(plot, None)
 
         assert (c.low, c.high) == (0.0, 10.0)
+
+
+def _compute_line(plotter: LinePlotter, x: list[float], y: list[float]) -> None:
+    data = sc.DataArray(
+        sc.array(dims=['x'], values=y, unit='counts'),
+        coords={'x': sc.array(dims=['x'], values=x, unit='m')},
+    )
+    plotter.compute({PRIMARY: {_key(): data}})
+
+
+def _peak_plotter() -> LinePlotter:
+    """Points at x = 0..4 next to a peak at x = 8."""
+    params = PlotParams1d()
+    params.line.mode = 'points'
+    plotter = LinePlotter.from_params(params)
+    _compute_line(plotter, [0.0, 1.0, 2.0, 3.0, 4.0, 8.0], [1, 2, 1, 3, 2, 100])
+    return plotter
+
+
+def _fitted_y(plotter: LinePlotter, x_window=None) -> tuple[float, float]:
+    """The y target ``plotter`` fits to ``x_window`` (all data if ``None``)."""
+    return plotter.get_range_targets(_key(), x_window=x_window)['y']
+
+
+def _y_of(y: _StubRange) -> tuple[float, float]:
+    return (y.start, y.end)
+
+
+class TestYFitsVisibleX:
+    """The y-range of 1-D data is fitted to the values within the x-range."""
+
+    @pytest.fixture
+    def plotter(self) -> LinePlotter:
+        return _peak_plotter()
+
+    @pytest.fixture
+    def rendered(self, plotter) -> tuple[Any, _StubPlot, _StubRange, _StubRange]:
+        hook = CellAutoscaleController([plotter]).make_hook()
+        plot, x, y, _c = _make_plot_all_handles()
+        hook(plot, None)
+        return hook, plot, x, y
+
+    def test_first_render_fits_all_values(self, plotter, rendered) -> None:
+        _hook, _plot, _x, y = rendered
+
+        assert _y_of(y) == _fitted_y(plotter)
+
+    def test_render_fits_values_within_zoomed_x(self, plotter, rendered) -> None:
+        hook, plot, x, y = rendered
+        x.start, x.end = 0.0, 4.0  # user zooms in, away from the peak
+
+        hook(plot, None)
+
+        assert (x.start, x.end) == (0.0, 4.0)
+        assert _y_of(y) == _fitted_y(plotter, (0.0, 4.0))
+        assert y.end < 100.0
+
+    def test_end_of_pan_refits_without_a_render(self, plotter, rendered) -> None:
+        _hook, plot, x, y = rendered
+        x.start, x.end = 2.5, 4.5
+
+        _end_pan_or_zoom(plot)
+
+        assert _y_of(y) == _fitted_y(plotter, (2.5, 4.5))
+
+    def test_end_of_pan_keeps_y_with_toggle_off(self, plotter, rendered) -> None:
+        _hook, plot, x, y = rendered
+        _click_toggle(plot, 'y', active=False)
+        x.start, x.end = 0.0, 4.0
+
+        _end_pan_or_zoom(plot)
+
+        assert _y_of(y) == _fitted_y(plotter)
+
+    def test_end_of_pan_refits_y_moved_with_unchanged_visible_values(
+        self, plotter, rendered
+    ) -> None:
+        """A small pan moves y along with x without changing the visible values,
+        so the target equals the last one written."""
+        _hook, plot, x, y = rendered
+        x.start, x.end = x.start + 0.1, x.end + 0.1
+        y.start, y.end = 11.0, 110.0
+
+        _end_pan_or_zoom(plot)
+
+        assert _y_of(y) == _fitted_y(plotter)
+
+    def test_window_without_values_keeps_y(self, plotter, rendered) -> None:
+        _hook, plot, x, y = rendered
+        x.start, x.end = 5.0, 7.0
+
+        _end_pan_or_zoom(plot)
+
+        assert _y_of(y) == _fitted_y(plotter)
+
+    def test_fit_fits_all_values(self, plotter, rendered) -> None:
+        _hook, plot, x, y = rendered
+        full_x = (x.start, x.end)
+        x.start, x.end = 0.0, 4.0
+        _end_pan_or_zoom(plot)
+
+        _click_fit(plot)
+
+        assert (x.start, x.end) == full_x
+        assert _y_of(y) == _fitted_y(plotter)
+
+    def test_x_refit_refits_y_zoomed_before_the_gesture_event(
+        self, plotter, rendered
+    ) -> None:
+        """A growing extent refits x while y still shows a zoom whose
+        RangesUpdate has not arrived; y must follow in the same render even
+        though its target equals the last one written."""
+        hook, plot, x, y = rendered
+        x.start, x.end = 0.0, 4.0
+        y.start, y.end = 50.0, 60.0
+        _compute_line(
+            plotter, [0.0, 1.0, 2.0, 3.0, 4.0, 8.0, 9.0], [1, 2, 1, 3, 2, 100, 1]
+        )
+
+        hook(plot, None)
+
+        assert (x.start, x.end) == plotter.get_range_targets(_key())['x']
+        assert _y_of(y) == _fitted_y(plotter)
+
+    def test_pan_with_x_toggle_off_refits_y_at_next_render(
+        self, plotter, rendered
+    ) -> None:
+        hook, plot, x, y = rendered
+        _click_toggle(plot, 'x', active=False)
+        x.start, x.end = 0.0, 4.0
+
+        hook(plot, None)
+
+        assert (x.start, x.end) == (0.0, 4.0)
+        assert _y_of(y) == _fitted_y(plotter, (0.0, 4.0))
+
+    def test_each_figure_fits_its_own_x_range(self, plotter, rendered) -> None:
+        hook, plot, x, y = rendered
+        popout, _x2, popout_y, _c2 = _make_plot_all_handles()
+        hook(popout, None)
+        x.start, x.end = 0.0, 4.0
+
+        _end_pan_or_zoom(plot)
+        hook(plot, None)
+        hook(popout, None)
+
+        assert _y_of(y) == _fitted_y(plotter, (0.0, 4.0))
+        assert _y_of(popout_y) == _fitted_y(plotter)
+
+    def test_y_toggle_tooltip_says_y_follows_visible_data(self, rendered) -> None:
+        _hook, plot, _x, _y = rendered
+
+        assert _tool(plot, _TOGGLE['y']).description == (
+            'Y-axis autoscale to visible data'
+        )
+
+    def test_figure_does_not_keep_disposed_controller_alive(self) -> None:
+        """Bokeh cannot unsubscribe from ``RangesUpdate``; the subscription
+        must not keep the controller and its plotters alive."""
+        controller = CellAutoscaleController([_peak_plotter()])
+        plot, *_ = _make_plot_all_handles()
+        controller.make_hook()(plot, None)
+
+        controller.dispose()
+        ref = weakref.ref(controller)
+        del controller
+        gc.collect()
+
+        assert ref() is None
+        _end_pan_or_zoom(plot)  # a dead controller's subscription is a no-op
+
+
+class TestImageYFollowsDataOnly:
+    """An image's y-axis is spatial: zooming must not refit it."""
+
+    @pytest.fixture
+    def rendered(self) -> tuple[Any, _StubPlot, _StubRange, _StubRange]:
+        plotter = ImagePlotter.from_params(PlotParams2d())
+        data = sc.DataArray(
+            sc.array(dims=['y', 'x'], values=np.arange(200.0).reshape(20, 10))
+        )
+        plotter.compute({PRIMARY: {_key(): data}})
+        hook = CellAutoscaleController([plotter]).make_hook()
+        plot, x, y, _c = _make_plot_all_handles()
+        hook(plot, None)
+        return hook, plot, x, y
+
+    def test_zoom_survives_render(self, rendered) -> None:
+        hook, plot, x, y = rendered
+        x.start, x.end = 2.0, 4.0
+        y.start, y.end = 5.0, 8.0
+
+        hook(plot, None)
+
+        assert (x.start, x.end, y.start, y.end) == (2.0, 4.0, 5.0, 8.0)
+
+    def test_zoom_survives_end_of_gesture(self, rendered) -> None:
+        _hook, plot, x, y = rendered
+        x.start, x.end = 2.0, 4.0
+        y.start, y.end = 5.0, 8.0
+
+        _end_pan_or_zoom(plot)
+
+        assert (x.start, x.end, y.start, y.end) == (2.0, 4.0, 5.0, 8.0)
+
+    def test_y_toggle_tooltip_unchanged(self, rendered) -> None:
+        _hook, plot, _x, _y = rendered
+
+        assert _tool(plot, _TOGGLE['y']).description == (
+            'Y-axis autoscale on data change'
+        )
 
 
 class TestClimFreeze:
