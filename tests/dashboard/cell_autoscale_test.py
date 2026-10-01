@@ -445,14 +445,18 @@ class TestYFitsVisibleX:
 
         assert (y.start, y.end) == (1.0, 100.0)
 
-    def test_y_zoom_kept_while_x_unchanged(self, rendered) -> None:
-        hook, plot, _x, y = rendered
-        y.start, y.end = 10.0, 20.0  # user zooms y only
+    def test_end_of_pan_refits_y_moved_with_unchanged_visible_values(
+        self, rendered
+    ) -> None:
+        """A small pan moves y along with x without changing the visible values,
+        so the target equals the last one written."""
+        _hook, plot, x, y = rendered
+        x.start, x.end = 0.1, 8.1
+        y.start, y.end = 11.0, 110.0
 
         _end_pan_or_zoom(plot)
-        hook(plot, None)
 
-        assert (y.start, y.end) == (10.0, 20.0)
+        assert (y.start, y.end) == (1.0, 100.0)
 
     def test_window_without_values_keeps_y(self, rendered) -> None:
         _hook, plot, x, y = rendered

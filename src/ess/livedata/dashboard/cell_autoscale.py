@@ -24,8 +24,8 @@ a small feature is not flattened by a peak outside the view. The fit therefore
 depends on each figure's x-range, and is redone when the user pans or zooms,
 which changes no data: Bokeh's ``RangesUpdate`` event, sent once at the end of
 each pan or zoom, applies the y toggle to that figure. With the y toggle active
-this also refits the y-range a box zoom selected to the values within its
-x-range.
+any pan or zoom therefore ends with y fitted to the visible values, including
+one that only changed the y-range.
 
 HoloViews' ``autorange='y'`` option does this fit in the browser, but does not
 fit here (HoloViews 1.23):
@@ -505,13 +505,17 @@ class CellAutoscaleController:
         """Refit the y-range of the figure the user panned or zoomed, if active.
 
         ``event`` is Bokeh's ``RangesUpdate``, for the figure ``event.model``.
+
+        The refit is written as for a Fit, even when it equals the last target
+        written: pan and wheel zoom move y along with x, so the range need no
+        longer show what was last written to it.
         """
         if not self._active['y']:
             return
         with batched_update():
             for plot in list(self._plots):
                 if plot.state is event.model:
-                    self._apply_range(plot, 'y', fit=False)
+                    self._apply_range(plot, 'y', fit=True)
 
     def _on_fit_active_change(self, attr: str, old: bool, new: bool) -> None:
         """Bokeh server-side handler for the Fit tool's ``active`` property.
