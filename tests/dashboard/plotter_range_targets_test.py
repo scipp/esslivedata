@@ -209,6 +209,163 @@ class TestLinePlotterRangeTargets:
         np.testing.assert_allclose(targets['y'], _expected(hv.Curve, 'y', 2.0, 8.0))
 
 
+def _line(values, *, x, variances=None, dtype='float64') -> sc.DataArray:
+    return sc.DataArray(
+        sc.array(dims=['x'], values=values, variances=variances, unit='counts'),
+        coords={'x': sc.array(dims=['x'], values=x, unit='m', dtype=dtype)},
+    )
+
+
+def _line_plotter(mode: str, *, logy: bool = False) -> LinePlotter:
+    params = PlotParams1d()
+    params.line.mode = mode
+    if logy:
+        params.plot_scale.y_scale = PlotScale.log
+    return LinePlotter.from_params(params)
+
+
+class TestYProfile:
+    """The y target of a 1-D plot fitted to the values within an x-window."""
+
+    def test_fits_values_within_window(self):
+        plotter = _line_plotter('points')
+        key = _key()
+        data = _line([1.0, 2.0, 100.0, 3.0], x=[10.0, 20.0, 30.0, 40.0])
+        plotter.compute({PRIMARY: {key: data}})
+
+        target = plotter.get_y_profile(key).target((5.0, 25.0))
+
+        np.testing.assert_allclose(target, _expected(hv.Scatter, 'y', 1.0, 2.0))
+
+    def test_without_window_matches_range_target(self):
+        plotter = _line_plotter('points')
+        key = _key()
+        data = _line([1.0, 2.0, 100.0, 3.0], x=[10.0, 20.0, 30.0, 40.0])
+        plotter.compute({PRIMARY: {key: data}})
+
+        target = plotter.get_y_profile(key).target()
+
+        assert target == plotter.get_range_targets(key)['y']
+
+    def test_window_without_values_gives_none(self):
+        plotter = _line_plotter('points')
+        key = _key()
+        plotter.compute({PRIMARY: {key: _line([1.0, 2.0], x=[10.0, 20.0])}})
+
+        assert plotter.get_y_profile(key).target((12.0, 18.0)) is None
+
+    def test_histogram_includes_partially_visible_bins(self):
+        plotter = _line_plotter('histogram')
+        key = _key()
+        data = _line([1.0, 2.0, 100.0], x=[0.0, 10.0, 20.0, 30.0])
+        plotter.compute({PRIMARY: {key: data}})
+
+        target = plotter.get_y_profile(key).target((5.0, 15.0))
+
+        np.testing.assert_allclose(target, _expected(hv.Histogram, 'y', 1.0, 2.0))
+
+    def test_points_mode_places_values_at_bin_midpoints(self):
+        plotter = _line_plotter('points')
+        key = _key()
+        data = _line([1.0, 2.0, 100.0], x=[0.0, 10.0, 20.0, 30.0])
+        plotter.compute({PRIMARY: {key: data}})
+
+        # Midpoints 5, 15, 25: the window reaches into the third bin, not its point.
+        target = plotter.get_y_profile(key).target((0.0, 22.0))
+
+        np.testing.assert_allclose(target, _expected(hv.Scatter, 'y', 1.0, 2.0))
+
+    def test_line_includes_segments_crossing_the_window_edge(self):
+        plotter = _line_plotter('line')
+        key = _key()
+        data = _line([100.0, 1.0, 2.0, 3.0, 50.0], x=[0.0, 1.0, 2.0, 3.0, 4.0])
+        plotter.compute({PRIMARY: {key: data}})
+
+        # The segments 0-1 and 3-4 are drawn up to the window's edges.
+        target = plotter.get_y_profile(key).target((0.5, 3.5))
+
+        np.testing.assert_allclose(target, _expected(hv.Curve, 'y', 1.0, 100.0))
+
+    def test_line_excludes_points_beyond_the_neighbours(self):
+        plotter = _line_plotter('line')
+        key = _key()
+        data = _line([100.0, 1.0, 2.0, 3.0, 50.0], x=[0.0, 1.0, 2.0, 3.0, 4.0])
+        plotter.compute({PRIMARY: {key: data}})
+
+        target = plotter.get_y_profile(key).target((1.5, 2.5))
+
+        np.testing.assert_allclose(target, _expected(hv.Curve, 'y', 1.0, 3.0))
+
+    def test_includes_error_whiskers_within_window(self):
+        plotter = _line_plotter('points')
+        key = _key()
+        data = _line(
+            [2.0, 5.0, 100.0],
+            x=[10.0, 20.0, 30.0],
+            variances=[1.0, 4.0, 1.0],
+        )
+        plotter.compute({PRIMARY: {key: data}})
+
+        target = plotter.get_y_profile(key).target((0.0, 25.0))
+
+        np.testing.assert_allclose(target, _expected(hv.Scatter, 'y', 1.0, 7.0))
+
+    def test_log_y_skips_nonpositive_values(self):
+        plotter = _line_plotter('points', logy=True)
+        key = _key()
+        data = _line([0.0, 2.0, 8.0, 100.0], x=[10.0, 20.0, 30.0, 40.0])
+        plotter.compute({PRIMARY: {key: data}})
+
+        target = plotter.get_y_profile(key).target((0.0, 35.0))
+
+        np.testing.assert_allclose(
+            target, _expected(hv.Scatter, 'y', 2.0, 8.0, log=True)
+        )
+
+    def test_datetime_window_in_epoch_ns(self):
+        plotter = _line_plotter('points')
+        key = _key()
+        t = np.array([1, 2, 3], dtype='datetime64[s]')
+        data = sc.DataArray(
+            sc.array(dims=['x'], values=[1.0, 2.0, 100.0], unit='counts'),
+            coords={'x': sc.array(dims=['x'], values=t, unit='s')},
+        )
+        plotter.compute({PRIMARY: {key: data}})
+
+        target = plotter.get_y_profile(key).target((0.5e9, 2.5e9))
+
+        np.testing.assert_allclose(target, _expected(hv.Scatter, 'y', 1.0, 2.0))
+
+    def test_overlay_unions_slices_within_window(self):
+        params = PlotParams1d()
+        params.line.mode = 'points'
+        plotter = Overlay1DPlotter.from_params(params)
+        key = _key()
+        values = np.array([[1.0, 2.0, 100.0], [-1.0, 3.0, 50.0]])
+        data = sc.DataArray(
+            sc.array(dims=['slice', 'x'], values=values, unit='counts'),
+            coords={
+                'slice': sc.arange('slice', 2, dtype='float64'),
+                'x': sc.array(dims=['x'], values=[10.0, 20.0, 30.0], unit='m'),
+            },
+        )
+        plotter.compute({PRIMARY: {key: data}})
+
+        target = plotter.get_y_profile(key).target((0.0, 25.0))
+
+        np.testing.assert_allclose(target, _expected(hv.Scatter, 'y', -1.0, 3.0))
+
+    def test_image_has_no_profile(self):
+        plotter = ImagePlotter.from_params(PlotParams2d())
+        key = _key()
+        data = sc.DataArray(
+            sc.array(dims=['y', 'x'], values=np.ones((2, 3)), unit='counts')
+        )
+        plotter.compute({PRIMARY: {key: data}})
+
+        assert plotter.get_y_profile(key) is None
+
+
 class TestImagePlotterRangeTargets:
     def test_autoscale_axes_declared(self):
         assert ImagePlotter.AUTOSCALE_AXES == frozenset({'x', 'y', 'c'})
@@ -446,6 +603,9 @@ class TestCorrelationHistogramRangeTargets:
         # Delegation: same instance the renderer would return.
         renderer_targets = plotter._renderer.get_range_targets(src_key)
         assert plotter.get_range_targets(src_key) == renderer_targets
+        renderer_profile = plotter._renderer.get_y_profile(src_key)
+        assert renderer_profile is not None
+        assert plotter.get_y_profile(src_key) is renderer_profile
 
     def test_2d_targets_delegated_to_renderer(self):
         params = CorrelationHistogram2dParams(

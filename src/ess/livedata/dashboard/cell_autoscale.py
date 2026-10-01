@@ -18,6 +18,15 @@ owns alone (``Plotter.applies_ranges``), so it would otherwise stay at Bokeh's
 default of (0, 1). The color axis has no pan/zoom to preserve and is written
 on every render while its toggle is active.
 
+The y-range of a 1-D plot is fitted to the values within the figure's visible
+x-range rather than to all data (see :class:`~.plots.YProfile`), so a zoom onto
+a small feature is not flattened by a peak outside the view. The fit therefore
+depends on each figure's x-range, and is redone when the user pans or zooms,
+which changes no data: Bokeh's ``RangesUpdate`` event, sent once at the end of
+each pan or zoom, applies the y toggle to that figure. With the y toggle active
+this also refits the y-range a box zoom selected to the values within its
+x-range.
+
 The controller removes Bokeh's own reset tool, which returns to the view the
 figure was created with -- stale on a live plot -- and gives Fit the reset
 tool's icon. Fit writes the current data extent to the axes the controller
@@ -41,7 +50,7 @@ from __future__ import annotations
 from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any
-from weakref import WeakKeyDictionary, WeakSet
+from weakref import WeakKeyDictionary, WeakMethod, WeakSet
 
 import structlog
 
@@ -201,24 +210,45 @@ class CellAutoscaleController:
         # HoloViews plots that rendered into this cell's figures, so Fit and a
         # toggle switched on can write through their current handles at once.
         self._plots: WeakSet = WeakSet()
+        # Subscribed to each figure's RangesUpdate. Holds the controller weakly:
+        # Bokeh has no way to unsubscribe, and a figure that outlives the cell
+        # would otherwise keep the controller and its plotters' data alive.
+        on_ranges_update = WeakMethod(self._on_ranges_update)
+
+        def ranges_update_callback(event: Any) -> None:
+            if (method := on_ranges_update()) is not None:
+                method(event)
+
+        self._ranges_update_callback = ranges_update_callback
 
     @property
     def axes(self) -> frozenset[Axis]:
         """Axes for which this controller exposes a toggle."""
         return self._axes
 
-    def get_target(self, axis: Axis) -> tuple[float, float] | None:
+    def get_target(
+        self, axis: Axis, *, x_window: tuple[float, float] | None = None
+    ) -> tuple[float, float] | None:
         """Union of per-plotter ``(lo, hi)`` targets for ``axis``.
 
         Skips plotters that do not expose ``axis`` and plotters with no
         computed targets yet. Returns ``None`` when no plotter contributes.
+
+        With ``x_window``, the ``y`` target of data with a
+        :class:`~.plots.YProfile` is fitted to the values within the window.
         """
         result: tuple[float, float] | None = None
         for plotter in self._plotters:
             if axis not in plotter.autoscale_axes:
                 continue
-            for _key, targets in plotter.iter_range_targets():
+            for key, targets in plotter.iter_range_targets():
                 target = targets.get(axis)
+                if (
+                    axis == 'y'
+                    and x_window is not None
+                    and (profile := plotter.get_y_profile(key)) is not None
+                ):
+                    target = profile.target(x_window)
                 if target is None:
                     continue
                 result = _union(result, target)
@@ -296,6 +326,8 @@ class CellAutoscaleController:
         tools = self._figure_tools.get(figure)
         if tools is None:
             tools = self._figure_tools[figure] = self._create_tools(figure)
+            if 'y' in self._range_axes:
+                figure.on_event('rangesupdate', self._ranges_update_callback)
         elif any(tool is tools.fit for tool in toolbar.tools):
             return
         # Tools are set via assignment to keep Bokeh's property setter
@@ -375,28 +407,9 @@ class CellAutoscaleController:
         written on every render: HoloViews re-derives the color mapper from
         the data each time, and ``_apply_clim`` is what makes it keep ours.
         """
+        # x first: the y target depends on the x-range.
         for axis in self._range_axes:
-            handle = RangeHandles.axis_range(plot, axis)
-            if handle is None:
-                continue
-            written = self._written[axis]
-            if not (fit or self._active[axis] or handle not in written):
-                continue
-            target = self.get_target(axis)
-            if target is None or (not fit and written.get(handle) == target):
-                continue
-            # Write the exact (padded) data extent whenever it moved -- there
-            # is no hysteresis here. For live data whose min/max drifts every
-            # tick (typically the value axis of a 1-D plot) this means one
-            # small range patch per update and some range "breathing", and any
-            # pan/zoom on that axis is undone on the next update. That is
-            # intentional: an active autoscale toggle is meant to track the
-            # data, and pan/zoom is kept by turning the toggle off. If the
-            # visual jitter proves problematic in practice, introduce a
-            # grow/shrink threshold here so the range only moves once the
-            # extent leaves a deadband.
-            RangeHandles.write(plot, axis, *target)
-            written[handle] = target
+            self._apply_range(plot, axis, fit=fit)
         if 'c' not in self._axes:
             return
         if (fit or self._active['c']) and (target := self.get_target('c')) is not None:
@@ -404,6 +417,44 @@ class CellAutoscaleController:
         if self._clim is not None:
             RangeHandles.write(plot, 'c', *self._clim)
             self._apply_clim(plot, self._clim)
+
+    def _apply_range(self, plot: Any, axis: Axis, *, fit: bool) -> None:
+        """Write the current target to ``plot``'s x/y range if due.
+
+        See :meth:`_apply_targets` for when it is due.
+        """
+        handle = RangeHandles.axis_range(plot, axis)
+        if handle is None:
+            return
+        written = self._written[axis]
+        if not (fit or self._active[axis] or handle not in written):
+            return
+        x_window = self._x_window(plot) if axis == 'y' else None
+        target = self.get_target(axis, x_window=x_window)
+        if target is None or (not fit and written.get(handle) == target):
+            return
+        # Write the exact (padded) data extent whenever it moved -- there
+        # is no hysteresis here. For live data whose min/max drifts every
+        # tick (typically the value axis of a 1-D plot) this means one
+        # small range patch per update and some range "breathing", and any
+        # pan/zoom on that axis is undone on the next update. That is
+        # intentional: an active autoscale toggle is meant to track the
+        # data, and pan/zoom is kept by turning the toggle off. If the
+        # visual jitter proves problematic in practice, introduce a
+        # grow/shrink threshold here so the range only moves once the
+        # extent leaves a deadband.
+        RangeHandles.write(plot, axis, *target)
+        written[handle] = target
+
+    def _x_window(self, plot: Any) -> tuple[float, float] | None:
+        """The x-range ``plot`` shows, or ``None`` before the controller set it.
+
+        Until then the range holds Bokeh's default, not a view of the data.
+        """
+        handle = RangeHandles.axis_range(plot, 'x')
+        if handle is None or handle not in self._written.get('x', ()):
+            return None
+        return RangeHandles.read(plot, 'x')
 
     @staticmethod
     def _apply_clim(plot: Any, clim: tuple[float, float]) -> None:
@@ -437,6 +488,18 @@ class CellAutoscaleController:
         with batched_update():
             for plot in list(self._plots):
                 self._apply_targets(plot, fit=fit)
+
+    def _on_ranges_update(self, event: Any) -> None:
+        """Refit the y-range of the figure the user panned or zoomed, if active.
+
+        ``event`` is Bokeh's ``RangesUpdate``, for the figure ``event.model``.
+        """
+        if not self._active['y']:
+            return
+        with batched_update():
+            for plot in list(self._plots):
+                if plot.state is event.model:
+                    self._apply_range(plot, 'y', fit=False)
 
     def _on_fit_active_change(self, attr: str, old: bool, new: bool) -> None:
         """Bokeh server-side handler for the Fit tool's ``active`` property.

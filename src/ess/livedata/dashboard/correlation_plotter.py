@@ -36,6 +36,7 @@ from .plots import (
     PresenterBase,
     TimeBounds,
     TitleResolver,
+    YProfile,
     ensure_span,
     is_degenerate_span,
 )
@@ -336,6 +337,10 @@ class CorrelationHistogramPlotter:
     def iter_range_targets(self) -> Iterator[tuple[DataKey, RangeTargets]]:
         """Delegate per-key target iteration to the inner renderer."""
         return self._renderer.iter_range_targets()
+
+    def get_y_profile(self, data_key: DataKey) -> YProfile | None:
+        """Delegate y-profile lookup to the inner renderer."""
+        return self._renderer.get_y_profile(data_key)
 
     def create_presenter(self) -> PresenterBase:
         """Create a presenter owned by this plotter.

@@ -185,25 +185,107 @@ def _finite_min_max(
     return float(finite.min()), float(finite.max())
 
 
-def _value_extent_with_errors(
-    data: sc.DataArray, *, show_errors: bool, log: bool
-) -> tuple[float, float] | None:
-    """Finite (min, max) of the y values, widened to the error whiskers.
+def _as_float(values: np.ndarray) -> np.ndarray:
+    """``values`` as floats, datetimes as epoch nanoseconds.
 
-    When error bars / bands are shown they extend the rendered y-range to
-    ``value ± stddev`` (see ``HvConverter1d.error_bars`` / ``spread``), so the
-    extent must include those whiskers or autoscale would clip them. Mirrors
-    the range HoloViews itself derives for an ``ErrorBars`` / ``Spread``
-    element. Returns ``None`` when no value qualifies (see
-    :func:`_finite_min_max`).
+    The units of the range targets (see :func:`_finite_min_max`).
     """
-    values = data.values
-    if show_errors and data.variances is not None:
-        std = np.sqrt(data.variances)
-        values = np.concatenate(
-            [values.ravel(), (values - std).ravel(), (values + std).ravel()]
+    if np.issubdtype(values.dtype, np.datetime64):
+        values = values.astype('datetime64[ns]').astype('int64')
+    return values.astype('float64', copy=False)
+
+
+@dataclass(frozen=True)
+class YProfile:
+    """The y-extent of each drawn value of 1-D data, with the x-span it covers.
+
+    Lets the y-range be fitted to the values within a visible x-window rather
+    than to all data (#1333). A value is within the window if its x-span
+    overlaps it. The x-span is the bin for a histogram and the point for points.
+    On a line it reaches to the neighbouring points: a segment crossing the
+    window's edge is drawn up to the edge, and the y-range must cover it. The
+    y-extent of a value includes its error whiskers when errors
+    are shown, since they extend the rendered y-range to ``value ± stddev`` (see
+    ``HvConverter1d.error_bars`` / ``spread``). Values that cannot be drawn --
+    non-finite, or non-positive on a log axis -- are left out.
+
+    Bounds are floats in the units of the range targets: epoch nanoseconds on a
+    datetime axis.
+    """
+
+    x_lo: np.ndarray
+    x_hi: np.ndarray
+    y_lo: np.ndarray
+    y_hi: np.ndarray
+    pad: float
+    """Fraction of the span HoloViews pads the y-axis by (see :func:`_pad_range`)."""
+    log: bool
+
+    @classmethod
+    def from_data(
+        cls,
+        data: sc.DataArray,
+        dim: str,
+        mode: str,
+        *,
+        show_errors: bool,
+        pad: float,
+        log: bool,
+    ) -> YProfile:
+        """Profile of ``data`` as drawn along ``dim`` in ``mode``.
+
+        ``dim`` has bin edges in histogram mode and points otherwise (see
+        :func:`_resolve_line1d_mode`).
+        """
+        values = data.values
+        candidates = [values]
+        if show_errors and data.variances is not None:
+            std = np.sqrt(data.variances)
+            candidates += [values - std, values + std]
+        y = np.stack(candidates)
+        valid = np.isfinite(y)
+        if log:
+            valid &= y > 0
+        y_lo = np.where(valid, y, np.inf).min(axis=0)
+        y_hi = np.where(valid, y, -np.inf).max(axis=0)
+        coord = data.coords[dim]
+        if mode == 'histogram':
+            bounds = [coord[dim, :-1], coord[dim, 1:]]
+        elif mode == 'line':
+            before = sc.concat([coord[dim, :1], coord[dim, :-1]], dim)
+            after = sc.concat([coord[dim, 1:], coord[dim, -1:]], dim)
+            bounds = [before, coord, after]
+        else:
+            bounds = [coord]
+        x = [_as_float(sc.broadcast(b, sizes=data.sizes).values) for b in bounds]
+        x_lo, x_hi = np.minimum.reduce(x), np.maximum.reduce(x)
+        drawn = np.isfinite(y_lo) & np.isfinite(x_lo) & np.isfinite(x_hi)
+        return cls(
+            x_lo=x_lo[drawn],
+            x_hi=x_hi[drawn],
+            y_lo=y_lo[drawn],
+            y_hi=y_hi[drawn],
+            pad=pad,
+            log=log,
         )
-    return _finite_min_max(values, log=log)
+
+    def target(
+        self, x_window: tuple[float, float] | None = None
+    ) -> tuple[float, float] | None:
+        """Padded y-range of the values overlapping ``x_window``, or of all values.
+
+        Returns ``None`` when no value lies in the window.
+        """
+        y_lo, y_hi = self.y_lo, self.y_hi
+        if x_window is not None:
+            lo, hi = x_window
+            visible = (self.x_hi >= lo) & (self.x_lo <= hi)
+            y_lo, y_hi = y_lo[visible], y_hi[visible]
+        if y_lo.size == 0:
+            return None
+        return _pad_range(
+            float(y_lo.min()), float(y_hi.max()), pad=self.pad, log=self.log
+        )
 
 
 def _normalize_to_rate(da: sc.DataArray) -> sc.DataArray:
@@ -585,6 +667,9 @@ class Plotter:
         self._range_targets: dict[DataKey, RangeTargets] = {}
         # Filled by plot() during compute(), then published as _range_targets.
         self._pending_range_targets: dict[DataKey, RangeTargets] = {}
+        # Published and filled like the range targets, by 1-D plotters only.
+        self._y_profiles: dict[DataKey, YProfile] = {}
+        self._pending_y_profiles: dict[DataKey, YProfile] = {}
         self._presenters: weakref.WeakSet[PresenterBase] = weakref.WeakSet()
         self.layout_params = layout_params or LayoutParams()
         aspect_params = aspect_params or PlotAspect()
@@ -794,11 +879,13 @@ class Plotter:
             data = {key: _normalize_to_rate(da) for key, da in data.items()}
 
         self._pending_range_targets = {}
+        self._pending_y_profiles = {}
         resolver = title_resolver or TitleResolver()
         try:
             result = self._build_result(data, resolver, **kwargs)
         except Exception as e:
             self._pending_range_targets = {}
+            self._pending_y_profiles = {}
             result = self._error_placeholder(f"Error: {e}")
 
         # Time bounds drive the cell titlebar's freshness indicator; they are
@@ -807,6 +894,7 @@ class Plotter:
         # of the data that was received.
         self._time_bounds = _compute_time_bounds(data)
         self._range_targets = self._pending_range_targets
+        self._y_profiles = self._pending_y_profiles
         self._set_cached_state(result.opts(*self._frame_opts()))
 
     def _build_result(
@@ -979,6 +1067,13 @@ class Plotter:
         ``AUTOSCALE_AXES`` is empty.
         """
         return iter(self._range_targets.items())
+
+    def get_y_profile(self, data_key: DataKey) -> YProfile | None:
+        """:class:`YProfile` computed at the last ``compute()``, for 1-D plotters.
+
+        ``None`` for plotters whose y-axis is not a value axis, e.g. images.
+        """
+        return self._y_profiles.get(data_key)
 
     def style_opts(self) -> list[hv.Options]:
         """Static HoloViews opts, declared once and applied to each computed frame.
@@ -1167,6 +1262,41 @@ def _resolve_line1d_mode(
     return actual_mode, data
 
 
+def _line1d_range_targets(
+    data: sc.DataArray,
+    plot_data: sc.DataArray,
+    mode: str,
+    *,
+    logx: bool,
+    logy: bool,
+    errors: str,
+) -> tuple[RangeTargets, YProfile]:
+    """Range targets and :class:`YProfile` of 1-D line data along its last dim.
+
+    ``data`` carries the bin edges given by :func:`_with_index_edges`, which set
+    the x target; ``plot_data`` is ``data`` as drawn in ``mode`` (see
+    :func:`_resolve_line1d_mode`), which sets the y-profile.
+    """
+    xpad, ypad, _ = _hv_axis_padding(_LINE1D_ELEMENT[mode])
+    dim = data.dims[-1]
+    targets: RangeTargets = {}
+    coord = data.coords[dim]
+    coord_extent = _finite_min_max(coord.values, log=logx)
+    if coord_extent is not None:
+        targets['x'] = _pad_range(
+            *coord_extent,
+            pad=xpad,
+            log=logx,
+            datetime=coord.dtype == sc.DType.datetime64,
+        )
+    profile = YProfile.from_data(
+        plot_data, dim, mode, show_errors=errors != 'none', pad=ypad, log=logy
+    )
+    if (y_target := profile.target()) is not None:
+        targets['y'] = y_target
+    return targets, profile
+
+
 class LinePlotter(Plotter):
     """Plotter for 1D plots from scipp DataArrays.
 
@@ -1313,30 +1443,6 @@ class LinePlotter(Plotter):
         period_ns = int(self._downsampling.fine_period_seconds * 1e9)
         return (latest_ns - self._last_compute_data_time_ns) < period_ns
 
-    def _compute_line_range_targets(
-        self, data: sc.DataArray, mode: str
-    ) -> RangeTargets:
-        """Per-axis ``(lo, hi)`` targets for the given 1-D data."""
-        xpad, ypad, _ = _hv_axis_padding(_LINE1D_ELEMENT[mode])
-        targets: RangeTargets = {}
-        dim = data.dim
-        if dim in data.coords:
-            coord = data.coords[dim]
-            coord_extent = _finite_min_max(coord.values, log=self._logx)
-            if coord_extent is not None:
-                targets['x'] = _pad_range(
-                    *coord_extent,
-                    pad=xpad,
-                    log=self._logx,
-                    datetime=coord.dtype == sc.DType.datetime64,
-                )
-        value_extent = _value_extent_with_errors(
-            data, show_errors=self._errors != 'none', log=self._logy
-        )
-        if value_extent is not None:
-            targets['y'] = _pad_range(*value_extent, pad=ypad, log=self._logy)
-        return targets
-
     def plot(
         self,
         data: sc.DataArray,
@@ -1351,7 +1457,9 @@ class LinePlotter(Plotter):
         """Create a 1D plot from a scipp DataArray."""
         data = _with_index_edges(data, data.dim)
         mode, da = _resolve_line1d_mode(self._mode, data)
-        targets = self._compute_line_range_targets(data, mode)
+        targets, self._pending_y_profiles[data_key] = _line1d_range_targets(
+            data, da, mode, logx=self._logx, logy=self._logy, errors=self._errors
+        )
         if targets:
             self._pending_range_targets[data_key] = targets
         converter = HvConverter1d(
@@ -1654,30 +1762,6 @@ class Overlay1DPlotter(Plotter):
             errors=params.line.errors,
         )
 
-    def _compute_overlay_range_targets(
-        self, data: sc.DataArray, mode: str
-    ) -> RangeTargets:
-        """Union x/y targets across all slices of the 2-D overlay data."""
-        xpad, ypad, _ = _hv_axis_padding(_LINE1D_ELEMENT[mode])
-        targets: RangeTargets = {}
-        plot_dim = data.dims[1]
-        if plot_dim in data.coords:
-            coord = data.coords[plot_dim]
-            coord_extent = _finite_min_max(coord.values, log=self._logx)
-            if coord_extent is not None:
-                targets['x'] = _pad_range(
-                    *coord_extent,
-                    pad=xpad,
-                    log=self._logx,
-                    datetime=coord.dtype == sc.DType.datetime64,
-                )
-        value_extent = _value_extent_with_errors(
-            data, show_errors=self._errors != 'none', log=self._logy
-        )
-        if value_extent is not None:
-            targets['y'] = _pad_range(*value_extent, pad=ypad, log=self._logy)
-        return targets
-
     def plot(
         self,
         data: sc.DataArray,
@@ -1707,7 +1791,14 @@ class Overlay1DPlotter(Plotter):
         actual_mode, plot_data = _resolve_line1d_mode(
             self._mode, data, dim=data.dims[1]
         )
-        targets = self._compute_overlay_range_targets(data, actual_mode)
+        targets, self._pending_y_profiles[data_key] = _line1d_range_targets(
+            data,
+            plot_data,
+            actual_mode,
+            logx=self._logx,
+            logy=self._logy,
+            errors=self._errors,
+        )
         if targets:
             self._pending_range_targets[data_key] = targets
 

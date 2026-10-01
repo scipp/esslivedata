@@ -13,8 +13,10 @@ from __future__ import annotations
 
 import gc
 import weakref
+from types import SimpleNamespace
 from typing import Any
 
+import numpy as np
 import pytest
 
 from ess.livedata.config.workflow_spec import DataKey, WorkflowId
@@ -22,6 +24,7 @@ from ess.livedata.dashboard.cell_autoscale import (
     CellAutoscaleController,
     build_controller_from_layers,
 )
+from ess.livedata.dashboard.plots import YProfile
 from ess.livedata.dashboard.range_hook import Axis
 
 
@@ -37,19 +40,25 @@ class _FakePlotter:
     """Stand-in for a real :class:`Plotter`.
 
     Implements the minimum surface used by :class:`CellAutoscaleController`:
-    the ``autoscale_axes`` property and ``iter_range_targets()``.
+    the ``autoscale_axes`` property, ``iter_range_targets()`` and
+    ``get_y_profile()``.
     """
 
     def __init__(
         self,
         axes: frozenset[Axis],
         targets_by_key: dict[DataKey, dict[Axis, tuple[float, float]]] | None = None,
+        profiles_by_key: dict[DataKey, YProfile] | None = None,
     ) -> None:
         self.autoscale_axes = axes
         self._targets = targets_by_key or {}
+        self._profiles = profiles_by_key or {}
 
     def iter_range_targets(self):
         return iter(self._targets.items())
+
+    def get_y_profile(self, data_key: DataKey) -> YProfile | None:
+        return self._profiles.get(data_key)
 
 
 class _RaisingPlotter(_FakePlotter):
@@ -92,6 +101,10 @@ class _StubFigState:
         self.x_range = Range1d()
         self.y_range = Range1d()
         self.document = None
+        self.event_callbacks: dict[str, list[Any]] = {}
+
+    def on_event(self, event: str, *callbacks: Any) -> None:
+        self.event_callbacks.setdefault(event, []).extend(callbacks)
 
 
 class _StubSubPlot:
@@ -148,6 +161,13 @@ def _click_toggle(plot: _StubPlot, axis: Axis, active: bool = False) -> None:
 def _click_fit(plot: _StubPlot) -> None:
     """Simulate the user clicking the plot's Fit button."""
     _tool(plot, _FIT).active = True
+
+
+def _end_pan_or_zoom(plot: _StubPlot) -> None:
+    """Simulate the ``RangesUpdate`` Bokeh sends at the end of a pan or zoom."""
+    event = SimpleNamespace(model=plot.state)
+    for callback in plot.state.event_callbacks.get('rangesupdate', []):
+        callback(event)
 
 
 def _make_plot_all_handles() -> tuple[
@@ -369,6 +389,103 @@ class TestAutoscaleOnChange:
         hook(plot, None)
 
         assert (c.low, c.high) == (0.0, 10.0)
+
+
+def _peak_profile() -> YProfile:
+    """Flat values at x = 0..4 next to a peak at x = 8, unpadded."""
+    x = np.array([0.0, 1.0, 2.0, 3.0, 4.0, 8.0])
+    y = np.array([1.0, 2.0, 1.0, 3.0, 2.0, 100.0])
+    return YProfile(x_lo=x, x_hi=x, y_lo=y, y_hi=y, pad=0.0, log=False)
+
+
+class TestYFitsVisibleX:
+    """The y-range of 1-D data is fitted to the values within the x-range."""
+
+    @pytest.fixture
+    def rendered(self) -> tuple[Any, _StubPlot, _StubRange, _StubRange]:
+        profile = _peak_profile()
+        plotter = _FakePlotter(
+            frozenset({'x', 'y'}),
+            {_key(): {'x': (0.0, 8.0), 'y': profile.target()}},
+            {_key(): profile},
+        )
+        hook = CellAutoscaleController([plotter]).make_hook()
+        plot, x, y, _c = _make_plot_all_handles()
+        hook(plot, None)
+        return hook, plot, x, y
+
+    def test_first_render_fits_all_values(self, rendered) -> None:
+        _hook, _plot, _x, y = rendered
+
+        assert (y.start, y.end) == (1.0, 100.0)
+
+    def test_render_fits_values_within_zoomed_x(self, rendered) -> None:
+        hook, plot, x, y = rendered
+        x.start, x.end = 0.0, 4.0  # user zooms in, away from the peak
+
+        hook(plot, None)
+
+        assert (x.start, x.end) == (0.0, 4.0)
+        assert (y.start, y.end) == (1.0, 3.0)
+
+    def test_end_of_pan_refits_without_a_render(self, rendered) -> None:
+        _hook, plot, x, y = rendered
+        x.start, x.end = 2.5, 4.5
+
+        _end_pan_or_zoom(plot)
+
+        assert (y.start, y.end) == (2.0, 3.0)
+
+    def test_end_of_pan_keeps_y_with_toggle_off(self, rendered) -> None:
+        _hook, plot, x, y = rendered
+        _click_toggle(plot, 'y', active=False)
+        x.start, x.end = 0.0, 4.0
+
+        _end_pan_or_zoom(plot)
+
+        assert (y.start, y.end) == (1.0, 100.0)
+
+    def test_y_zoom_kept_while_x_unchanged(self, rendered) -> None:
+        hook, plot, _x, y = rendered
+        y.start, y.end = 10.0, 20.0  # user zooms y only
+
+        _end_pan_or_zoom(plot)
+        hook(plot, None)
+
+        assert (y.start, y.end) == (10.0, 20.0)
+
+    def test_window_without_values_keeps_y(self, rendered) -> None:
+        _hook, plot, x, y = rendered
+        x.start, x.end = 5.0, 7.0
+
+        _end_pan_or_zoom(plot)
+
+        assert (y.start, y.end) == (1.0, 100.0)
+
+    def test_fit_fits_all_values(self, rendered) -> None:
+        _hook, plot, x, y = rendered
+        x.start, x.end = 0.0, 4.0
+        _end_pan_or_zoom(plot)
+
+        _click_fit(plot)
+
+        assert (x.start, x.end) == (0.0, 8.0)
+        assert (y.start, y.end) == (1.0, 100.0)
+
+    def test_figure_does_not_keep_disposed_controller_alive(self) -> None:
+        """Bokeh cannot unsubscribe from ``RangesUpdate``; the subscription
+        must not keep the controller and its plotters alive."""
+        controller = CellAutoscaleController([_FakePlotter(frozenset({'x', 'y'}))])
+        plot, *_ = _make_plot_all_handles()
+        controller.make_hook()(plot, None)
+
+        controller.dispose()
+        ref = weakref.ref(controller)
+        del controller
+        gc.collect()
+
+        assert ref() is None
+        _end_pan_or_zoom(plot)  # a dead controller's subscription is a no-op
 
 
 class TestClimFreeze:
