@@ -45,6 +45,7 @@ class FakePlotter:
     """
 
     AUTOSCALE_AXES: ClassVar[frozenset[Axis]] = frozenset({'x', 'y'})
+    FITS_Y_TO_VISIBLE_X: ClassVar[bool] = False
 
     def __init__(
         self,
@@ -106,7 +107,7 @@ class FakePlotter:
         for p in self._presenters:
             p._mark_dirty()
 
-    def iter_range_targets(self) -> Iterator[tuple[Any, Any]]:
+    def iter_range_targets(self, *, x_window: Any = None) -> Iterator[tuple[Any, Any]]:
         return iter(())
 
 

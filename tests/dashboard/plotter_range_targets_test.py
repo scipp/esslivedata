@@ -224,8 +224,15 @@ def _line_plotter(mode: str, *, logy: bool = False) -> LinePlotter:
     return LinePlotter.from_params(params)
 
 
-class TestYProfile:
+class TestYFitsVisibleX:
     """The y target of a 1-D plot fitted to the values within an x-window."""
+
+    def test_flag_declared_by_1d_plotters_only(self):
+        assert LinePlotter.FITS_Y_TO_VISIBLE_X
+        assert Overlay1DPlotter.FITS_Y_TO_VISIBLE_X
+        assert CorrelationHistogram1dPlotter.FITS_Y_TO_VISIBLE_X
+        assert not ImagePlotter.FITS_Y_TO_VISIBLE_X
+        assert not CorrelationHistogram2dPlotter.FITS_Y_TO_VISIBLE_X
 
     def test_fits_values_within_window(self):
         plotter = _line_plotter('points')
@@ -233,26 +240,36 @@ class TestYProfile:
         data = _line([1.0, 2.0, 100.0, 3.0], x=[10.0, 20.0, 30.0, 40.0])
         plotter.compute({PRIMARY: {key: data}})
 
-        target = plotter.get_y_profile(key).target((5.0, 25.0))
+        target = plotter.get_range_targets(key, x_window=(5.0, 25.0))['y']
 
         np.testing.assert_allclose(target, _expected(hv.Scatter, 'y', 1.0, 2.0))
 
-    def test_without_window_matches_range_target(self):
+    def test_window_leaves_x_target_unchanged(self):
         plotter = _line_plotter('points')
         key = _key()
         data = _line([1.0, 2.0, 100.0, 3.0], x=[10.0, 20.0, 30.0, 40.0])
         plotter.compute({PRIMARY: {key: data}})
 
-        target = plotter.get_y_profile(key).target()
+        targets = plotter.get_range_targets(key, x_window=(5.0, 25.0))
 
-        assert target == plotter.get_range_targets(key)['y']
+        assert targets['x'] == plotter.get_range_targets(key)['x']
+
+    def test_iter_range_targets_fits_to_window(self):
+        plotter = _line_plotter('points')
+        key = _key()
+        data = _line([1.0, 2.0, 100.0, 3.0], x=[10.0, 20.0, 30.0, 40.0])
+        plotter.compute({PRIMARY: {key: data}})
+
+        items = dict(plotter.iter_range_targets(x_window=(5.0, 25.0)))
+
+        assert items == {key: plotter.get_range_targets(key, x_window=(5.0, 25.0))}
 
     def test_window_without_values_gives_none(self):
         plotter = _line_plotter('points')
         key = _key()
         plotter.compute({PRIMARY: {key: _line([1.0, 2.0], x=[10.0, 20.0])}})
 
-        assert plotter.get_y_profile(key).target((12.0, 18.0)) is None
+        assert 'y' not in plotter.get_range_targets(key, x_window=(12.0, 18.0))
 
     def test_histogram_includes_partially_visible_bins(self):
         plotter = _line_plotter('histogram')
@@ -260,7 +277,7 @@ class TestYProfile:
         data = _line([1.0, 2.0, 100.0], x=[0.0, 10.0, 20.0, 30.0])
         plotter.compute({PRIMARY: {key: data}})
 
-        target = plotter.get_y_profile(key).target((5.0, 15.0))
+        target = plotter.get_range_targets(key, x_window=(5.0, 15.0))['y']
 
         np.testing.assert_allclose(target, _expected(hv.Histogram, 'y', 1.0, 2.0))
 
@@ -271,7 +288,7 @@ class TestYProfile:
         plotter.compute({PRIMARY: {key: data}})
 
         # Midpoints 5, 15, 25: the window reaches into the third bin, not its point.
-        target = plotter.get_y_profile(key).target((0.0, 22.0))
+        target = plotter.get_range_targets(key, x_window=(0.0, 22.0))['y']
 
         np.testing.assert_allclose(target, _expected(hv.Scatter, 'y', 1.0, 2.0))
 
@@ -282,7 +299,7 @@ class TestYProfile:
         plotter.compute({PRIMARY: {key: data}})
 
         # The segments 0-1 and 3-4 are drawn up to the window's edges.
-        target = plotter.get_y_profile(key).target((0.5, 3.5))
+        target = plotter.get_range_targets(key, x_window=(0.5, 3.5))['y']
 
         np.testing.assert_allclose(target, _expected(hv.Curve, 'y', 1.0, 100.0))
 
@@ -292,7 +309,7 @@ class TestYProfile:
         data = _line([100.0, 1.0, 2.0, 3.0, 50.0], x=[0.0, 1.0, 2.0, 3.0, 4.0])
         plotter.compute({PRIMARY: {key: data}})
 
-        target = plotter.get_y_profile(key).target((1.5, 2.5))
+        target = plotter.get_range_targets(key, x_window=(1.5, 2.5))['y']
 
         np.testing.assert_allclose(target, _expected(hv.Curve, 'y', 1.0, 3.0))
 
@@ -306,7 +323,7 @@ class TestYProfile:
         )
         plotter.compute({PRIMARY: {key: data}})
 
-        target = plotter.get_y_profile(key).target((0.0, 25.0))
+        target = plotter.get_range_targets(key, x_window=(0.0, 25.0))['y']
 
         np.testing.assert_allclose(target, _expected(hv.Scatter, 'y', 1.0, 7.0))
 
@@ -316,7 +333,7 @@ class TestYProfile:
         data = _line([0.0, 2.0, 8.0, 100.0], x=[10.0, 20.0, 30.0, 40.0])
         plotter.compute({PRIMARY: {key: data}})
 
-        target = plotter.get_y_profile(key).target((0.0, 35.0))
+        target = plotter.get_range_targets(key, x_window=(0.0, 35.0))['y']
 
         np.testing.assert_allclose(
             target, _expected(hv.Scatter, 'y', 2.0, 8.0, log=True)
@@ -332,7 +349,7 @@ class TestYProfile:
         )
         plotter.compute({PRIMARY: {key: data}})
 
-        target = plotter.get_y_profile(key).target((0.5e9, 2.5e9))
+        target = plotter.get_range_targets(key, x_window=(0.5e9, 2.5e9))['y']
 
         np.testing.assert_allclose(target, _expected(hv.Scatter, 'y', 1.0, 2.0))
 
@@ -351,11 +368,35 @@ class TestYProfile:
         )
         plotter.compute({PRIMARY: {key: data}})
 
-        target = plotter.get_y_profile(key).target((0.0, 25.0))
+        target = plotter.get_range_targets(key, x_window=(0.0, 25.0))['y']
 
         np.testing.assert_allclose(target, _expected(hv.Scatter, 'y', -1.0, 3.0))
 
-    def test_image_has_no_profile(self):
+    def test_line_nan_x_hides_only_its_own_point(self):
+        plotter = _line_plotter('line')
+        key = _key()
+        data = _line([1.0, 500.0, 2.0, 3.0], x=[0.0, np.nan, 2.0, 3.0])
+        plotter.compute({PRIMARY: {key: data}})
+
+        target = plotter.get_range_targets(key, x_window=(-0.5, 2.5))['y']
+
+        np.testing.assert_allclose(target, _expected(hv.Curve, 'y', 1.0, 3.0))
+
+    def test_nat_x_is_not_drawn(self):
+        plotter = _line_plotter('line')
+        key = _key()
+        t = np.array(['NaT', 1, 2, 3], dtype='datetime64[s]')
+        data = sc.DataArray(
+            sc.array(dims=['x'], values=[500.0, 100.0, 1.0, 2.0], unit='counts'),
+            coords={'x': sc.array(dims=['x'], values=t, unit='s')},
+        )
+        plotter.compute({PRIMARY: {key: data}})
+
+        target = plotter.get_range_targets(key, x_window=(0.5e9, 1.5e9))['y']
+
+        np.testing.assert_allclose(target, _expected(hv.Curve, 'y', 1.0, 100.0))
+
+    def test_image_ignores_window(self):
         plotter = ImagePlotter.from_params(PlotParams2d())
         key = _key()
         data = sc.DataArray(
@@ -363,7 +404,9 @@ class TestYProfile:
         )
         plotter.compute({PRIMARY: {key: data}})
 
-        assert plotter.get_y_profile(key) is None
+        windowed = plotter.get_range_targets(key, x_window=(0.0, 0.5))
+
+        assert windowed == plotter.get_range_targets(key)
 
 
 class TestImagePlotterRangeTargets:
@@ -603,9 +646,11 @@ class TestCorrelationHistogramRangeTargets:
         # Delegation: same instance the renderer would return.
         renderer_targets = plotter._renderer.get_range_targets(src_key)
         assert plotter.get_range_targets(src_key) == renderer_targets
-        renderer_profile = plotter._renderer.get_y_profile(src_key)
-        assert renderer_profile is not None
-        assert plotter.get_y_profile(src_key) is renderer_profile
+        # The window is delegated too: the first of four bins excludes the rest.
+        full = plotter.get_range_targets(src_key)['y']
+        lo, hi = plotter.get_range_targets(src_key)['x']
+        window = (lo, lo + (hi - lo) / 8)
+        assert plotter.get_range_targets(src_key, x_window=window)['y'] != full
 
     def test_2d_targets_delegated_to_renderer(self):
         params = CorrelationHistogram2dParams(

@@ -332,8 +332,7 @@ class SlicerPlotter(Plotter):
             _, _, cpad = _hv_axis_padding(hv.Image)
             padded = _pad_range(*clim, pad=cpad, log=use_log_scale)
             range_targets = {key: {'c': padded} for key in data}
-        # One assignment: see ``Plotter._range_targets``.
-        self._range_targets = range_targets
+        self._publish_range_targets(range_targets)
         # Pre-prepare 3D data (dtype conversion + log masking)
         prepared_data = {
             k: self._prepare_2d_image_data(v, use_log_scale) for k, v in data.items()
