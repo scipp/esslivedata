@@ -7,7 +7,7 @@ handles and writes ``(lo, hi)`` onto them. Handles are read from
 ``plot.handles`` on every render rather than cached: HoloViews swaps the Bokeh
 figure on kdim changes and Layout transitions, which would leave a cached
 handle pointing at a detached model. Mirrors the per-render lookup in
-``flatten_plotter._make_hover_hook``.
+``image_hover.make_hover_hook``.
 """
 
 from __future__ import annotations
