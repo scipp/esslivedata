@@ -26,6 +26,7 @@ from ess.livedata.core.timestamp import Timestamp
 
 from .data_roles import PRIMARY
 from .frame_aspect import make_frame_aspect_opts
+from .image_hover import index_axis_hover_spec, make_hover_hook
 from .plot_params import (
     CombineMode,
     LayoutParams,
@@ -1654,15 +1655,22 @@ class ImagePlotter(Plotter):
         # base_opts are declared once in style_opts(); only the data-dependent clim
         # guard (log scale with all-NaN data) must be set per element here.
         if use_log_scale and (clim := self._get_log_scale_clim(plot_data)) is not None:
-            return histogram.opts(clim=clim)
-        return histogram
+            histogram = histogram.opts(clim=clim)
+        # ``hooks`` is a single option, and style opts are applied after plot():
+        # the sizing hooks would replace each element's hover hook, so plot()
+        # declares them next to it instead.
+        hooks = list(self._sizing_opts.get('hooks', ()))
+        if (spec := index_axis_hover_spec(histogram, plot_data)) is not None:
+            hooks.append(make_hover_hook(*spec))
+        return histogram.opts(hooks=hooks) if hooks else histogram
 
     def _image_opts(self) -> dict[str, Any]:
-        """Opts that :meth:`style_opts` declares on every Image/QuadMesh element.
-
-        Subclasses that declare per-element ``hooks`` remove ``hooks`` here.
-        """
-        return {**self._base_opts, **self._sizing_opts}
+        """Opts that :meth:`style_opts` declares on every Image/QuadMesh element."""
+        return {
+            k: v
+            for k, v in {**self._base_opts, **self._sizing_opts}.items()
+            if k != 'hooks'
+        }
 
     def style_opts(self) -> list[hv.Options]:
         return [
