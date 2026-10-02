@@ -262,6 +262,7 @@ class FlattenPlotter(ImagePlotter):
 
         tooltips, formatter_args = self._build_hover_spec(data, x_names, y_names)
         hover_hook = make_hover_hook(tooltips, formatter_args)
+        # Replaces the hooks of ImagePlotter.plot, including its own hover hook.
         return image.opts(hooks=[*self._sizing_opts.get('hooks', ()), hover_hook])
 
     def _build_hover_spec(

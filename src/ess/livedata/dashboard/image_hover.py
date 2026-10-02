@@ -28,7 +28,7 @@ def c_order_strides(sizes: tuple[int, ...]) -> list[int]:
 
 # JS body of each axis's CustomJSHover, with args from axis_hover_formatter_args.
 # Tooltip rows reference the formatter via ``${field}{dim_name}``. The code
-# either does a binary search (single non-flattened dim with physical coords)
+# either picks the nearest value (single non-flattened dim with a coord)
 # or splits the flat integer cursor index via stride math (flattened multi-dim
 # axis, where the image always carries integer indices).
 AXIS_HOVER_FORMATTER_JS = """
@@ -38,16 +38,15 @@ const vals = values_by_dim[k];
 if (names.length === 1) {
     // Single non-flattened dim: value is in image coordinate space
     // (physical units or integer indices depending on the coord).
-    if (vals.length === 0) return String(Math.round(value));
-    // Binary search for the nearest coordinate value.
-    let lo = 0, hi = vals.length - 1;
-    while (lo < hi) {
-        const mid = lo + ((hi - lo + 1) >> 1);
-        if (vals[mid] <= value) lo = mid; else hi = mid - 1;
+    if (vals.length === 0) {
+        return String(Math.min(Math.max(Math.round(value), 0), sizes[k] - 1));
     }
-    if (lo + 1 < vals.length &&
-            Math.abs(vals[lo + 1] - value) < Math.abs(vals[lo] - value)) lo++;
-    return String(vals[lo]);
+    // Nearest coordinate value. Linear, since coords need not be sorted.
+    let best = 0;
+    for (let j = 1; j < vals.length; j++) {
+        if (Math.abs(vals[j] - value) < Math.abs(vals[best] - value)) best = j;
+    }
+    return String(vals[best]);
 }
 // Flattened multi-dim axis: the image always carries integer indices
 // (0..N-1), so value is the flat integer position.
@@ -85,25 +84,32 @@ def axis_hover_formatter_args(
 def make_hover_hook(
     tooltips: list[tuple[str, str]], formatter_args: dict[str, dict[str, list]]
 ) -> Callable[[Any, hv.Element], None]:
-    """HoloViews hook replacing the default HoverTool with a custom one.
+    """HoloViews hook giving the element's renderer a custom HoverTool.
 
     The hook creates the HoverTool and its formatters itself, so each session's
-    figure gets its own models (see :meth:`Plotter.style_opts`). Idempotent
-    across re-renders.
+    figure gets its own models (see :meth:`Plotter.style_opts`). The tool is
+    scoped to the element's own renderer, so overlaid layers keep their hover.
+    Idempotent across re-renders: the arguments of the first render stay.
     """
 
     def hook(plot: Any, _element: hv.Element) -> None:
         if plot.handles.get('image_hover_installed'):
             return
         fig = plot.handles['plot']
-        fig.toolbar.tools = [
-            t for t in fig.toolbar.tools if not isinstance(t, HoverTool)
-        ]
+        renderer = plot.handles['glyph_renderer']
+        # HoloViews merges the default hovers of overlaid images into one tool.
+        for tool in [t for t in fig.toolbar.tools if isinstance(t, HoverTool)]:
+            if isinstance(tool.renderers, list) and renderer in tool.renderers:
+                tool.renderers = [r for r in tool.renderers if r is not renderer]
+                if not tool.renderers:
+                    fig.toolbar.tools = [t for t in fig.toolbar.tools if t is not tool]
         formatters = {
             field: CustomJSHover(args=args, code=AXIS_HOVER_FORMATTER_JS)
             for field, args in formatter_args.items()
         }
-        fig.add_tools(HoverTool(tooltips=tooltips, formatters=formatters))
+        fig.add_tools(
+            HoverTool(tooltips=tooltips, formatters=formatters, renderers=[renderer])
+        )
         plot.handles['image_hover_installed'] = True
 
     return hook
@@ -122,14 +128,17 @@ def is_index_axis(data: sc.DataArray, dim: str) -> bool:
 
 
 def index_axis_hover_spec(
-    image: hv.Image | hv.QuadMesh, data: sc.DataArray
+    image: hv.Element, data: sc.DataArray
 ) -> tuple[list[tuple[str, str]], dict[str, dict[str, list]]] | None:
     """Tooltips and formatter args for a 2-D ``image`` of ``data``.
 
     Index axes are formatted by the nearest index. Other axes keep the cursor
     position. Returns ``None`` if neither axis is an index axis, in which case
-    the default hover is kept.
+    the default hover is kept. A ``QuadMesh`` also keeps it: that hover shows exact
+    cell-centre coords.
     """
+    if not isinstance(image, hv.Image):
+        return None
     tooltips: list[tuple[str, str]] = []
     formatter_args: dict[str, dict[str, list]] = {}
     for field, kdim, dim in zip(

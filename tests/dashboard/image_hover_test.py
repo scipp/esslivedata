@@ -88,3 +88,25 @@ def test_fixed_aspect_keeps_hover_and_sizing_hooks() -> None:
     plot = _render(plots.ImagePlotter.from_params(params), _image())
     assert 'change:inner_width' in plot.state.js_property_callbacks
     assert set(_hover(plot).formatters) == {'$x', '$y'}
+
+
+def test_non_uniform_integer_coord_keeps_default_quadmesh_hover() -> None:
+    data = _image(x=sc.array(dims=['x'], values=[0, 1, 2, 5], unit=None))
+    plot = _render(plots.ImagePlotter.from_params(PlotParams2d()), data)
+    assert not _hover(plot).formatters
+    assert '@image' not in [template for _, template in _hover(plot).tooltips]
+
+
+def test_overlaid_images_each_get_their_own_hover() -> None:
+    plotter = plots.ImagePlotter.from_params(PlotParams2d())
+    first = _image(x=sc.arange('x', 0, 4, unit=None))
+    second = _image(x=sc.arange('x', 10, 14, unit=None))
+    overlay = plotter.plot(first, DATA_KEY) * plotter.plot(second, DATA_KEY)
+    fig = BokehRenderer.instance().get_plot(overlay).state
+    hovers = [t for t in fig.toolbar.tools if isinstance(t, HoverTool)]
+    assert len(hovers) == 2
+    assert all(len(h.renderers) == 1 for h in hovers)
+    assert {tuple(h.formatters['$x'].args['values_by_dim'][0]) for h in hovers} == {
+        (0.0, 1.0, 2.0, 3.0),
+        (10.0, 11.0, 12.0, 13.0),
+    }
