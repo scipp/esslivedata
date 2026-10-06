@@ -46,12 +46,15 @@ from ess.reduce.nexus.types import (
 from ess.reduce.nexus.workflow import to_disk_choppers
 from ess.reduce.unwrap import GenericUnwrapWorkflow
 from ess.reduce.unwrap.lut import (
+    ActiveDiskChoppers,
     ChopperFrameSequence,
     DistanceResolution,
+    FrameCompatibleDiskChoppers,
     PulsePeriod,
     PulseStride,
     TimeResolution,
     _estimate_wavelength_by_polygon_centers,
+    close_non_synced_disk_choppers,
     make_wavelength_lut_from_polygons,
 )
 
@@ -130,6 +133,58 @@ def make_chopper_setpoint_keys(chopper: str) -> ChopperSetpointKeys:
 def _latest(container: sc.DataArray) -> sc.Variable:
     """Latest sample of a cumulative NXlog context value."""
     return container['time', -1].data
+
+
+def close_non_synced_disk_choppers_and_log(
+    choppers: DiskChoppers[AnyRun],
+    active: ActiveDiskChoppers[AnyRun],
+    pulse_period: PulsePeriod,
+    pulse_stride: PulseStride[AnyRun],
+) -> FrameCompatibleDiskChoppers[AnyRun]:
+    """essreduce's :func:`~ess.reduce.unwrap.lut.close_non_synced_disk_choppers`,
+    logging every chopper that essreduce closed or dropped.
+
+    essreduce drops a stopped chopper, i.e. treats it as open, and replaces a
+    chopper not in sync with the frame (``pulse_stride`` source pulses) with
+    one that has no slits. A chopper out of sync transmits a different band on
+    every pulse, so no single table describes it. Closing it publishes a table
+    that lets nothing through from that distance on. Consumers then replace
+    their table and publish no counts for neutrons whose wavelength cannot be
+    assigned, instead of reducing with the table they held from before the
+    choppers moved. Neutrons do pass such a chopper; closing it states what we
+    know, not what the beam does.
+
+    A closed table looks like a quiet beam on the plots, so the log is where
+    the cause is named. The bands output shows the cut as an all-NaN row at the
+    chopper's distance. Whether a parked disc really sits open is not knowable
+    from its speed (#1312), so stopped choppers are logged as well.
+
+    The affected choppers are found by comparing input and output rather than
+    by repeating essreduce's conditions: a chopper missing from ``active`` was
+    stopped, one that lost its slits was closed.
+    """
+    compatible = close_non_synced_disk_choppers(active, pulse_period, pulse_stride)
+    stopped = [name for name in choppers if name not in active]
+    closed = {
+        name: chopper.frequency.to(unit='Hz').value
+        for name, chopper in active.items()
+        if compatible[name].slit_begin.size == 0 < chopper.slit_begin.size
+    }
+    pulse_frequency_hz = (1.0 / pulse_period.to(unit='s')).value
+    if stopped:
+        logger.warning(
+            'choppers_stopped',
+            choppers=stopped,
+            pulse_frequency_hz=pulse_frequency_hz,
+        )
+    if closed:
+        logger.warning(
+            'choppers_out_of_phase_with_source',
+            choppers=closed,
+            pulse_frequency_hz=pulse_frequency_hz,
+            pulse_stride=int(pulse_stride),
+        )
+    return compatible
 
 
 def build_disk_choppers_provider(
@@ -346,6 +401,7 @@ def _build_pipeline(params: WavelengthLutParams) -> sciline.Pipeline:
     # Per-component diagnostic evaluated at exact chopper distances, sidestepping
     # the table's distance resolution. Reuses the analytical ChopperFrameSequence.
     wf.insert(make_wavelength_bands_from_frames)
+    wf.insert(close_non_synced_disk_choppers_and_log)
     return wf
 
 

@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Any
 
 import h5py
 import numpy as np
@@ -12,11 +13,18 @@ import pydantic
 import pytest
 import scipp as sc
 import scippnexus as snx
+from ess.reduce.unwrap.lut import (
+    get_active_choppers,
+    guess_pulse_stride_from_choppers,
+)
 from scipp.testing import assert_allclose, assert_identical
+from scippneutron.chopper import DiskChopper
+from structlog.testing import capture_logs
 
 from ess.livedata.config.chopper import delay_setpoint_stream, speed_setpoint_stream
 from ess.livedata.kafka.scipp_da00_compat import da00_to_scipp, scipp_to_da00
 from ess.livedata.workflows.wavelength_lut_workflow import (
+    close_non_synced_disk_choppers_and_log,
     create_wavelength_lut_workflow,
     make_chopper_setpoint_keys,
 )
@@ -304,6 +312,68 @@ def two_chopper_geometry(tmp_path: Path) -> Path:
     return path
 
 
+def _disk_chopper(frequency: float) -> DiskChopper:
+    return DiskChopper(
+        frequency=sc.scalar(frequency, unit='Hz'),
+        beam_position=sc.scalar(0.0, unit='deg'),
+        phase=sc.scalar(0.0, unit='deg'),
+        axle_position=sc.vector([0.0, 0.0, 10.0], unit='m'),
+        slit_begin=sc.array(dims=['slit'], values=[0.0], unit='deg'),
+        slit_end=sc.array(dims=['slit'], values=[27.6], unit='deg'),
+        slit_height=sc.array(dims=['slit'], values=[0.1], unit='m'),
+        radius=sc.scalar(0.35, unit='m'),
+    )
+
+
+class TestCloseNonSyncedDiskChoppersAndLog:
+    """essreduce closes or drops these choppers; the log is what names them."""
+
+    PULSE_PERIOD = sc.scalar(1 / 14, unit='s')
+
+    def _logged(self, choppers: dict[str, DiskChopper]) -> dict[str, Any]:
+        # The inputs essreduce's own providers compute in the workflow.
+        active = get_active_choppers(choppers)
+        stride = guess_pulse_stride_from_choppers(active, self.PULSE_PERIOD)
+        with capture_logs() as captured:
+            close_non_synced_disk_choppers_and_log(
+                choppers, active, self.PULSE_PERIOD, stride
+            )
+        return {entry['event']: entry['choppers'] for entry in captured}
+
+    @pytest.mark.parametrize('frequency', [14.0, -14.0, 7.0, 28.0, 14 / 3])
+    def test_chopper_in_sync_is_not_reported(self, frequency: float) -> None:
+        # A whole number of turns per pulse, or of pulses per turn. Sign is the
+        # direction of rotation and says nothing about phase.
+        assert self._logged({'ch': _disk_chopper(frequency)}) == {}
+
+    @pytest.mark.parametrize('frequency', [5.0, -5.0, 20.0])
+    def test_chopper_out_of_sync_is_reported(self, frequency: float) -> None:
+        logged = self._logged({'ch': _disk_chopper(frequency)})
+
+        assert logged == {'choppers_out_of_phase_with_source': {'ch': frequency}}
+
+    def test_stopped_chopper_is_reported(self) -> None:
+        logged = self._logged({'parked': _disk_chopper(0.0)})
+
+        assert logged == {'choppers_stopped': ['parked']}
+
+    def test_only_the_offending_choppers_are_named(self) -> None:
+        # 7 Hz sets a stride of 2. The 5 Hz chopper must not raise it to
+        # round(14 / 5) = 3, at which the 7 Hz chopper would be closed too.
+        logged = self._logged(
+            {
+                'locked': _disk_chopper(-7.0),
+                'loose': _disk_chopper(-5.0),
+                'parked': _disk_chopper(0.0),
+            }
+        )
+
+        assert logged == {
+            'choppers_stopped': ['parked'],
+            'choppers_out_of_phase_with_source': {'loose': -5.0},
+        }
+
+
 class TestMultiChopperWorkflow:
     def test_all_choppers_locked_produces_table(
         self, two_chopper_geometry: Path
@@ -319,6 +389,29 @@ class TestMultiChopperWorkflow:
         assert table.dims == ('distance', 'event_time_offset')
         assert table.unit == sc.units.angstrom
         assert np.isfinite(table.values).any()
+
+    def test_out_of_phase_chopper_yields_a_table_that_lets_nothing_through(
+        self, two_chopper_geometry: Path
+    ) -> None:
+        # 5 Hz cannot be in sync with a 14 Hz source; see
+        # close_non_synced_disk_choppers_and_log for why the table blocks
+        # instead of the job raising.
+        table = _run_chopper_lut(
+            two_chopper_geometry,
+            ['chopper1', 'chopper2'],
+            {'chopper1': (-14.0, 0.0), 'chopper2': (-5.0, 0.0)},
+        )
+
+        locked = _run_chopper_lut(
+            two_chopper_geometry,
+            ['chopper1', 'chopper2'],
+            {'chopper1': (-14.0, 0.0), 'chopper2': (-14.0, 0.0)},
+        )
+
+        # Rows upstream of the choppers carry the source band either way; it is
+        # the beam past the closed chopper that is gone, so compare the far end.
+        assert np.isfinite(locked['distance', -1].values).any()
+        assert not np.isfinite(table['distance', -1].values).any()
 
     def test_delay_setpoint_changes_geometry(self, two_chopper_geometry: Path) -> None:
         names = ['chopper1', 'chopper2']
