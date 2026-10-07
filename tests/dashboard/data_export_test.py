@@ -3,6 +3,7 @@
 import io
 from datetime import UTC, datetime
 
+import h5py
 import pydantic
 import pytest
 import scipp as sc
@@ -22,11 +23,13 @@ from ess.livedata.config.workflow_spec import (
 )
 from ess.livedata.dashboard.data_export import (
     CurrentValueExportParams,
+    ExportedValue,
     ExportError,
     ExportFormat,
     ExportRequest,
     HistoryExportParams,
     TimeseriesRetention,
+    ValueParams,
     collect_export,
     export_filename,
     timeseries_keys,
@@ -35,7 +38,6 @@ from ess.livedata.dashboard.data_export import (
 from ess.livedata.dashboard.data_roles import PRIMARY, X_AXIS, Y_AXIS
 from ess.livedata.dashboard.data_service import DataService
 from ess.livedata.dashboard.plot_orchestrator import DataSourceConfig
-from ess.livedata.dashboard.plot_params import TimeWindowMode, TimeWindowParams
 
 MONITOR = WorkflowId(instrument='test', name='monitor', version=1)
 MOTION = WorkflowId(instrument='test', name='motion', version=1)
@@ -95,7 +97,7 @@ def _spec(workflow_id: WorkflowId, outputs, source_names: list[str]) -> Workflow
 def registry() -> dict[WorkflowId, WorkflowSpec]:
     return {
         MONITOR: _spec(MONITOR, MonitorOutputs, ['monitor_1', 'monitor_2']),
-        MOTION: _spec(MOTION, MotionOutputs, ['motor_x', 'motor_y']),
+        MOTION: _spec(MOTION, MotionOutputs, ['motor_x', 'motor_y', 'slit/blade']),
     }
 
 
@@ -150,14 +152,14 @@ def _history_request(
     return ExportRequest(data_sources=data_sources, params=HistoryExportParams())
 
 
-def _current_request(time_window: TimeWindowParams) -> ExportRequest:
+def _current_request(value: ExportedValue) -> ExportRequest:
     return ExportRequest(
         data_sources={
             PRIMARY: DataSourceConfig(
                 workflow_id=MONITOR, source_names=['monitor_1'], view_name='spectrum'
             )
         },
-        params=CurrentValueExportParams(time_window=time_window),
+        params=CurrentValueExportParams(value=ValueParams(value=value)),
     )
 
 
@@ -169,6 +171,8 @@ def test_timeseries_keys_are_the_per_update_fields_of_0d_series(registry) -> Non
         _key(MOTION, 'motor_y', 'position'),
         _key(MOTION, 'motor_x', 'speed'),
         _key(MOTION, 'motor_y', 'speed'),
+        _key(MOTION, 'slit/blade', 'position'),
+        _key(MOTION, 'slit/blade', 'speed'),
     }
 
 
@@ -200,8 +204,8 @@ class TestHistoryExport:
         )['monitor_1'].data
 
         sc.testing.assert_identical(exported.coords['time'], _datetimes(11, 12))
-        sc.testing.assert_identical(exported.coords['start_time'], _datetimes(10)[0])
-        sc.testing.assert_identical(exported.coords['end_time'], _datetimes(12)[0])
+        # Each update keeps its own window start, as needed to compute rates.
+        sc.testing.assert_identical(exported.coords['start_time'], _datetimes(10, 11))
 
     def test_sources_without_data_are_left_out(self, data_service, registry) -> None:
         data_service[_key(MONITOR, 'monitor_1', 'counts')] = _window(
@@ -263,7 +267,7 @@ class TestCorrelatedHistoryExport:
         )
 
     def test_raises_if_axis_has_no_data(self, data_service, registry, counts) -> None:
-        with pytest.raises(ExportError, match='correlation axis'):
+        with pytest.raises(ExportError, match='correlation axis motor_x'):
             collect_export(
                 _history_request('monitor_1', x_axis='motor_x'), data_service, registry
             )
@@ -297,7 +301,7 @@ class TestCurrentValueExport:
         self, data_service, registry, spectra
     ) -> None:
         items = collect_export(
-            _current_request(TimeWindowParams(mode=TimeWindowMode.since_start)),
+            _current_request(ExportedValue.since_start),
             data_service,
             registry,
         )
@@ -308,11 +312,11 @@ class TestCurrentValueExport:
             sc.full(dims=['tof'], shape=[2], value=10.0, unit='counts'),
         )
 
-    def test_window_exports_the_latest_update(
+    def test_latest_update_exports_the_per_update_field(
         self, data_service, registry, spectra
     ) -> None:
         item = collect_export(
-            _current_request(TimeWindowParams(mode=TimeWindowMode.window)),
+            _current_request(ExportedValue.latest_update),
             data_service,
             registry,
         )['monitor_1']
@@ -372,4 +376,50 @@ def test_export_filename_is_descriptive_and_timestamped() -> None:
         created=datetime(2026, 10, 7, 14, 30, 5, tzinfo=UTC),
     )
 
-    assert name == 'DREAM_Counts_Monitor-1_20261007T143005.nxs'
+    assert name == 'DREAM_Counts_Monitor-1_20261007T143005Z.nxs'
+
+
+class TestSourceNamesWithSlash:
+    """f144 sources are often named like PV paths, e.g. ``slit_set_2/blade``."""
+
+    @pytest.fixture
+    def items(self, data_service, registry) -> dict:
+        counts = _key(MONITOR, 'monitor_1', 'counts')
+        data_service[_key(MOTION, 'slit/blade', 'position')] = _sample(1.0, at=0)
+        data_service[counts] = _window(1.0, start=0, end=1)
+        data_service[counts] = _window(2.0, start=1, end=2)
+        return collect_export(
+            _history_request('monitor_1', x_axis='slit/blade'), data_service, registry
+        )
+
+    def test_names_replace_the_slash(self, items) -> None:
+        assert set(items) == {'monitor_1', 'slit_blade'}
+        assert 'slit_blade' in items['monitor_1'].data.coords
+
+    def test_file_loads_as_nxdata_with_the_original_name_recorded(self, items) -> None:
+        content = write_export(items, file_format=ExportFormat.nexus, title='t')
+
+        sc.testing.assert_identical(
+            snx.load(io.BytesIO(content))['entry']['monitor_1'],
+            items['monitor_1'].data,
+        )
+        with h5py.File(io.BytesIO(content), 'r') as f:
+            assert f['entry/slit_blade'].attrs['source_name'] == 'slit/blade'
+
+
+def test_axis_equal_to_the_data_raises(data_service, registry) -> None:
+    data_service[_key(MOTION, 'motor_x', 'position')] = _sample(1.0, at=0)
+    request = ExportRequest(
+        data_sources={
+            PRIMARY: DataSourceConfig(
+                workflow_id=MOTION, source_names=['motor_x'], view_name='position'
+            ),
+            X_AXIS: DataSourceConfig(
+                workflow_id=MOTION, source_names=['motor_x'], view_name='position'
+            ),
+        },
+        params=HistoryExportParams(),
+    )
+
+    with pytest.raises(ExportError, match='must differ'):
+        collect_export(request, data_service, registry)

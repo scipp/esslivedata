@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import html
 import io
+import sys
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
@@ -49,7 +50,7 @@ from ..data_export import (
 from ..data_roles import PRIMARY, X_AXIS, Y_AXIS
 from ..data_service import DataService
 from ..plot_orchestrator import DataSourceConfig
-from ..plotting_controller import hidden_window_fields, since_start_available
+from ..plotting_controller import hidden_window_fields
 from .configuration_widget import ConfigurationPanel
 from .plot_config_modal import (
     OutputSelection,
@@ -87,7 +88,10 @@ _KIND_DESCRIPTIONS = {
         'Every update of the output still buffered by the dashboard, optionally '
         'with the values of other time series at the time of each update.'
     ),
-    _CURRENT: 'The latest value of the output, or an aggregate over a time window.',
+    _CURRENT: (
+        'The latest update of the output, or its value accumulated since the run '
+        'started.'
+    ),
 }
 
 
@@ -330,18 +334,6 @@ class ExportConfigurationStep(WizardStep[ExportTypeSelection | None, ExportReque
 
     def _on_collected(self, sources: list[str], params: ExportParams) -> None:
         selection = self._selection
-        if (
-            isinstance(params, CurrentValueExportParams)
-            and params.windowing() == 'since_start'
-            and not since_start_available(
-                self._workflow_registry[selection.workflow_id], selection.view_name
-            )
-        ):
-            # Raised into ConfigurationPanel, which shows it in the form.
-            raise ValueError(
-                "'Since run start' is not available for this output: it has no "
-                "cumulative stream. Choose 'Latest update'."
-            )
         self._request = ExportRequest(
             data_sources={
                 PRIMARY: DataSourceConfig(
@@ -397,28 +389,31 @@ class ExportPreviewStep(WizardStep[ExportRequest | None, None]):
             items = collect_export(
                 input_data, self._data_service, self._workflow_registry
             )
-        except (ExportError, ValueError) as error:
-            # ValueError: the window params are invalid for the selected output.
+        except ExportError as error:
             self._show_message(str(error))
             return
-        created = datetime.now().astimezone()
-        filename = self._filename(input_data, created)
-        file_format = input_data.params.file.format
-        content = write_export(
-            items, file_format=file_format, title=filename.rsplit('.', 1)[0]
-        )
         summary = pn.pane.HTML(_summary_html(items), sizing_mode='stretch_width')
-        size = f'{len(content) / 1e6:.2f} MB'
-        if len(content) > MAX_EXPORT_BYTES:
-            self._content.objects = [
-                summary,
-                self._message(
-                    f'The file would be {size}, more than the '
-                    f'{MAX_EXPORT_BYTES / 1e6:.0f} MB the dashboard can send. '
-                    'Select fewer sources.'
-                ),
-            ]
+        # Checked before writing too, so an oversized export costs no write.
+        size = sum(sys.getsizeof(item.data) for item in items.values())
+        if size > MAX_EXPORT_BYTES:
+            self._content.objects = [summary, self._too_large(size)]
             return
+        created = datetime.now(tz=UTC)
+        filename = self._filename(input_data, created)
+        try:
+            content = write_export(
+                items,
+                file_format=input_data.params.file.format,
+                title=filename.rsplit('.', 1)[0],
+            )
+        except ValueError as error:
+            # Data the format cannot hold, e.g. binned data in NeXus.
+            self._content.objects = [summary, self._message(str(error))]
+            return
+        if len(content) > MAX_EXPORT_BYTES:
+            self._content.objects = [summary, self._too_large(len(content))]
+            return
+        size = f'{len(content) / 1e6:.2f} MB'
         download = pn.widgets.FileDownload(
             file=io.BytesIO(content),
             filename=filename,
@@ -445,6 +440,13 @@ class ExportPreviewStep(WizardStep[ExportRequest | None, None]):
             output_title=view.title if view is not None else primary.view_name,
             file_format=request.params.file.format,
             created=created,
+        )
+
+    def _too_large(self, size: int) -> pn.pane.Alert:
+        return self._message(
+            f'The file would be {size / 1e6:.0f} MB, more than the '
+            f'{MAX_EXPORT_BYTES / 1e6:.0f} MB the dashboard can send. '
+            'Select fewer sources.'
         )
 
     def _show_message(self, text: str) -> None:

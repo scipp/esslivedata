@@ -156,3 +156,15 @@ def test_coord_named_like_signal_raises() -> None:
     da = sc.DataArray(sc.arange('x', 2.0), coords={'data': sc.arange('x', 2.0)})
     with pytest.raises(ValueError, match='clash'):
         write_nexus({'a': da}, title='t')
+
+
+def test_group_name_with_slash_raises() -> None:
+    with pytest.raises(ValueError, match="must not contain '/'"):
+        write_nexus({'a/b': CASES['bin_edges']}, title='t')
+
+
+def test_coord_name_with_slash_raises() -> None:
+    da = CASES['bin_edges']
+    da = da.assign_coords({'a/b': da.coords['x']})
+    with pytest.raises(ValueError, match="must not contain '/'"):
+        write_nexus({'a': da}, title='t')

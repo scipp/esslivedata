@@ -35,7 +35,7 @@ as boolean coords.
 from __future__ import annotations
 
 import io
-from collections.abc import Mapping
+from collections.abc import Iterable, Mapping
 
 import h5py
 import numpy as np
@@ -74,8 +74,8 @@ def write_nexus(
     Raises
     ------
     ValueError
-        If a DataArray is binned, or a coord or mask name clashes with the
-        signal fields.
+        If a DataArray is binned, a name contains ``/`` (the HDF5 path
+        separator), or a coord or mask name clashes with the signal fields.
     """
     group_attrs = group_attrs or {}
     buffer = io.BytesIO()
@@ -85,6 +85,7 @@ def write_nexus(
         entry['title'] = title
         entry['program_name'] = 'ess.livedata'
         entry['program_name'].attrs['version'] = __version__
+        _check_names(data)
         for name, da in data.items():
             group = entry.create_group(name)
             _write_nxdata(group, da)
@@ -96,6 +97,7 @@ def _write_nxdata(group: h5py.Group, da: sc.DataArray) -> None:
     if da.bins is not None:
         raise ValueError('Binned data cannot be written to NXdata.')
     fields = {**da.coords, **da.masks}
+    _check_names(fields)
     if clash := {_SIGNAL, _ERRORS} & fields.keys():
         raise ValueError(f'Coord or mask names clash with NXdata signal: {clash}')
 
@@ -111,6 +113,11 @@ def _write_nxdata(group: h5py.Group, da: sc.DataArray) -> None:
         _write_field(group, name, var)
         if name not in axes and var.ndim > 0 and set(var.dims) <= set(axes):
             group.attrs[f'{name}_indices'] = [da.dims.index(dim) for dim in var.dims]
+
+
+def _check_names(names: Iterable[str]) -> None:
+    if invalid := [name for name in names if '/' in name]:
+        raise ValueError(f"Names must not contain '/': {invalid}")
 
 
 def _is_axis(da: sc.DataArray, name: str) -> bool:

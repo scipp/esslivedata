@@ -23,6 +23,7 @@ from ess.livedata.config.workflow_spec import (
 )
 from ess.livedata.dashboard.data_export import (
     CurrentValueExportParams,
+    ExportedValue,
     ExportRequest,
     HistoryExportParams,
     TimeseriesRetention,
@@ -31,7 +32,6 @@ from ess.livedata.dashboard.data_export import (
 from ess.livedata.dashboard.data_roles import PRIMARY, X_AXIS
 from ess.livedata.dashboard.data_service import DataService
 from ess.livedata.dashboard.plot_orchestrator import DataSourceConfig
-from ess.livedata.dashboard.plot_params import TimeWindowMode, TimeWindowParams
 from ess.livedata.dashboard.widgets.data_export_modal import (
     DataExportLauncher,
     ExportConfigurationStep,
@@ -283,38 +283,34 @@ class TestExportConfigurationStep:
         assert request.data_sources[X_AXIS] == axis
         assert request.data_sources[PRIMARY].view_name == 'counts'
 
-    def test_current_value_request_holds_the_default_window(self, step) -> None:
+    def test_current_value_defaults_to_the_latest_update(self, step) -> None:
         step.on_enter(_selection(CurrentValueExportParams, 'spectrum'))
 
         request = step.commit()
 
         assert request.params == CurrentValueExportParams()
 
-    def test_since_start_without_a_cumulative_field_is_refused(self, step) -> None:
+    def test_value_choice_is_hidden_without_a_cumulative_field(self, step) -> None:
         step.on_enter(_selection(CurrentValueExportParams, 'profile'))
-        [mode] = [
-            w
-            for w in step.render_content().select(pn.widgets.Select)
-            if w.name == 'Mode'
-        ]
-        mode.value = TimeWindowMode.since_start
 
-        assert step.commit() is None
+        assert _value_selectors(step) == []
 
-    def test_since_start_is_accepted_with_a_cumulative_field(self, step) -> None:
+    def test_since_start_can_be_chosen_with_a_cumulative_field(self, step) -> None:
         step.on_enter(_selection(CurrentValueExportParams, 'spectrum'))
-        [mode] = [
-            w
-            for w in step.render_content().select(pn.widgets.Select)
-            if w.name == 'Mode'
-        ]
-        mode.value = TimeWindowMode.since_start
+        [value] = _value_selectors(step)
+        value.value = ExportedValue.since_start
 
         request = step.commit()
 
-        assert request.params.time_window == TimeWindowParams(
-            mode=TimeWindowMode.since_start
-        )
+        assert request.params.windowing() == 'since_start'
+
+
+def _value_selectors(step: ExportConfigurationStep) -> list[pn.widgets.Select]:
+    return [
+        w
+        for w in step.render_content().select(pn.widgets.Select)
+        if w.name == 'Value' and w.visible
+    ]
 
 
 class TestExportPreviewStep:
