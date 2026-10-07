@@ -1,6 +1,7 @@
 # SPDX-License-Identifier: BSD-3-Clause
 # Copyright (c) 2025 Scipp contributors (https://github.com/scipp)
-from collections.abc import Sequence
+import time
+from collections.abc import Callable, Sequence
 from dataclasses import replace
 from typing import Any, Protocol
 
@@ -21,6 +22,7 @@ from streaming_data_types import (
 from streaming_data_types.fbschemas.eventdata_ev44 import Event44Message
 
 from ess.livedata.core.job import JobStatus, ServiceStatus
+from ess.livedata.core.log_throttle import LogThrottle
 from ess.livedata.core.timestamp import Timestamp
 
 from ..config.acknowledgement import CommandAcknowledgement
@@ -113,7 +115,8 @@ class IgnoredMessageError(Exception):
 
     Used for schemas that are known to share a topic with data we consume but
     that we deliberately ignore (e.g. EPICS ``al00`` alarm and ``ep01``
-    connection-status messages on forwarder log topics). Distinct from
+    connection-status messages on forwarder log topics, or ``tdct``
+    top-dead-center timestamps on chopper topics). Distinct from
     ``WrongSchemaException``, which signals a genuinely unexpected schema worth
     a warning.
     """
@@ -588,6 +591,7 @@ class AdaptingMessageSource[T, U](MessageSource[U]):
         adapter: MessageAdapter[T, U],
         raise_on_error: bool = False,
         stream_counter: StreamCounter | None = None,
+        clock: Callable[[], float] = time.monotonic,
     ):
         """
         Parameters
@@ -601,11 +605,17 @@ class AdaptingMessageSource[T, U](MessageSource[U]):
             they will be logged and the message will be skipped.
         stream_counter
             Optional counter for recording per-stream message counts.
+        clock
+            Monotonic seconds, for rate limiting unknown-schema warnings.
         """
         self._source = source
         self._adapter = adapter
         self._raise_on_error = raise_on_error
         self._stream_counter = stream_counter
+        self._clock = clock
+        # Keyed by topic, not by schema: the set of subscribed topics bounds
+        # the dict, while schema ids come from the payload.
+        self._unknown_schema_throttles: dict[str | None, LogThrottle] = {}
 
     def get_messages(self) -> Sequence[U]:
         raw_messages = self._source.get_messages()
@@ -614,18 +624,26 @@ class AdaptingMessageSource[T, U](MessageSource[U]):
             try:
                 adapted.append(self._adapter.adapt(msg))
             except IgnoredMessageError:
-                # Expected-but-unused schema (e.g. al00/ep01); drop silently.
+                # Expected-but-unused schema (e.g. al00/ep01/tdct); drop silently.
                 continue
             except UnmappedStreamError:
                 # Already recorded in the stream counter by get_stream_id.
                 if self._raise_on_error:
                     raise
             except streaming_data_types.exceptions.WrongSchemaException as e:
-                logger.warning(
-                    'Skipping message with unknown schema',
-                    topic=msg.topic() if hasattr(msg, 'topic') else None,
-                    detail=str(e),
+                # A stream we do not handle arrives at its full message rate,
+                # so an unthrottled warning floods the journal.
+                topic = msg.topic() if hasattr(msg, 'topic') else None
+                throttle = self._unknown_schema_throttles.setdefault(
+                    topic, LogThrottle()
                 )
+                if (suppressed := throttle.take(self._clock())) is not None:
+                    logger.warning(
+                        'Skipping message with unknown schema',
+                        topic=topic,
+                        detail=str(e),
+                        suppressed_reports=suppressed,
+                    )
                 self._record_error(msg)
                 if self._raise_on_error:
                     raise

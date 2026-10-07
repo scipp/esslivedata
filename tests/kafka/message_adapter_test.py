@@ -1070,9 +1070,11 @@ class TestErrorHandling:
             def get_messages(self):
                 return [FakeKafkaMessage(value=b"xxxxal00", topic="logs")]
 
+        stream_counter = StreamCounter()
         source = AdaptingMessageSource(
             source=IgnoringSource(),
             adapter=RouteBySchemaAdapter(routes={'al00': NullAdapter()}),
+            stream_counter=stream_counter,
         )
 
         with capture_logs() as captured:
@@ -1080,6 +1082,53 @@ class TestErrorHandling:
 
         assert messages == []
         assert captured == []
+        assert stream_counter.drain(window_seconds=30.0).streams == ()
+
+    def test_unknown_schema_warning_is_rate_limited_per_topic(self):
+        """Repeats on a topic are suppressed for a cooldown, then counted."""
+        from structlog.testing import capture_logs
+
+        batch: list[KafkaMessage] = []
+
+        class Source(MessageSource[KafkaMessage]):
+            def get_messages(self):
+                return batch
+
+        now = 0.0
+        stream_counter = StreamCounter()
+        source = AdaptingMessageSource(
+            source=Source(),
+            adapter=RouteBySchemaAdapter(routes={'f144': NullAdapter()}),
+            stream_counter=stream_counter,
+            clock=lambda: now,
+        )
+
+        def warnings_for(messages: list[KafkaMessage]) -> list[dict]:
+            batch[:] = messages
+            with capture_logs() as captured:
+                source.get_messages()
+            return [log for log in captured if log['log_level'] == 'warning']
+
+        unknown_a = FakeKafkaMessage(value=b"xxxxzzzz", topic="a")
+        unknown_b = FakeKafkaMessage(value=b"xxxxzzzz", topic="b")
+
+        first = warnings_for([unknown_a, unknown_a, unknown_b, unknown_a])
+        assert [(w['topic'], w['suppressed_reports']) for w in first] == [
+            ("a", 0),
+            ("b", 0),
+        ]
+
+        now = 59.0
+        assert warnings_for([unknown_a]) == []
+
+        now = 61.0
+        later = warnings_for([unknown_a])
+        assert [(w['topic'], w['suppressed_reports']) for w in later] == [("a", 3)]
+
+        # Throttling the log does not hide the messages from stream stats.
+        stats = stream_counter.drain(window_seconds=30.0)
+        counts = {(s.topic, s.source_name): s.count for s in stats.streams}
+        assert counts == {("a", "<error>"): 5, ("b", "<error>"): 1}
 
     def test_unknown_schema_warning_includes_topic_and_schema(self):
         """The unknown-schema warning names the topic and the offending schema."""
