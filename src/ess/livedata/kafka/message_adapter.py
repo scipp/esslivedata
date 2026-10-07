@@ -606,16 +606,16 @@ class AdaptingMessageSource[T, U](MessageSource[U]):
         stream_counter
             Optional counter for recording per-stream message counts.
         clock
-            Monotonic seconds, for rate limiting unknown-schema warnings.
+            Monotonic seconds, for rate limiting adaptation-failure logs.
         """
         self._source = source
         self._adapter = adapter
         self._raise_on_error = raise_on_error
         self._stream_counter = stream_counter
         self._clock = clock
-        # Keyed by topic, not by schema: the set of subscribed topics bounds
-        # the dict, while schema ids come from the payload.
-        self._unknown_schema_throttles: dict[str | None, LogThrottle] = {}
+        # Keyed by failure kind and topic, not by schema or error text: the set
+        # of subscribed topics bounds the dict, while those come from the payload.
+        self._log_throttles: dict[tuple[str, str | None], LogThrottle] = {}
 
     def get_messages(self) -> Sequence[U]:
         raw_messages = self._source.get_messages()
@@ -631,13 +631,8 @@ class AdaptingMessageSource[T, U](MessageSource[U]):
                 if self._raise_on_error:
                     raise
             except streaming_data_types.exceptions.WrongSchemaException as e:
-                # A stream we do not handle arrives at its full message rate,
-                # so an unthrottled warning floods the journal.
                 topic = msg.topic() if hasattr(msg, 'topic') else None
-                throttle = self._unknown_schema_throttles.setdefault(
-                    topic, LogThrottle()
-                )
-                if (suppressed := throttle.take(self._clock())) is not None:
+                if (suppressed := self._take_log('schema', topic)) is not None:
                     logger.warning(
                         'Skipping message with unknown schema',
                         topic=topic,
@@ -648,11 +643,27 @@ class AdaptingMessageSource[T, U](MessageSource[U]):
                 if self._raise_on_error:
                     raise
             except Exception as e:
-                logger.exception('Error adapting message %s: %s', msg, e)
+                topic = msg.topic() if hasattr(msg, 'topic') else None
+                if (suppressed := self._take_log('error', topic)) is not None:
+                    logger.exception(
+                        'Error adapting message',
+                        topic=topic,
+                        error=str(e),
+                        suppressed_reports=suppressed,
+                    )
                 self._record_error(msg)
                 if self._raise_on_error:
                     raise
         return adapted
+
+    def _take_log(self, kind: str, topic: str | None) -> int | None:
+        """Rate-limit a failure log per kind and topic.
+
+        A failing stream fails at its full message rate, so an unthrottled log
+        line per message floods the journal.
+        """
+        throttle = self._log_throttles.setdefault((kind, topic), LogThrottle())
+        return throttle.take(self._clock())
 
     def _record_error(self, msg: T) -> None:
         """Record an adaptation error in the stream counter if available."""

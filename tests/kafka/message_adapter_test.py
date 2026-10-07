@@ -1130,6 +1130,48 @@ class TestErrorHandling:
         counts = {(s.topic, s.source_name): s.count for s in stats.streams}
         assert counts == {("a", "<error>"): 5, ("b", "<error>"): 1}
 
+    def test_adaptation_error_log_is_rate_limited_per_topic(self):
+        """Decode failures are throttled like unknown schemas, independently."""
+        from structlog.testing import capture_logs
+
+        batch: list[KafkaMessage] = []
+
+        class Source(MessageSource[KafkaMessage]):
+            def get_messages(self):
+                return batch
+
+        class FailingAdapter:
+            def adapt(self, message):
+                if message.value() == b"schema":
+                    raise WrongSchemaException()
+                raise ValueError("corrupt payload")
+
+        now = 0.0
+        source = AdaptingMessageSource(
+            source=Source(), adapter=FailingAdapter(), clock=lambda: now
+        )
+
+        def logs_for(messages: list[KafkaMessage]) -> list[tuple[str, str, int]]:
+            batch[:] = messages
+            with capture_logs() as captured:
+                source.get_messages()
+            return [
+                (log['log_level'], log['topic'], log['suppressed_reports'])
+                for log in captured
+            ]
+
+        corrupt_a = FakeKafkaMessage(value=b"corrupt", topic="a")
+        corrupt_b = FakeKafkaMessage(value=b"corrupt", topic="b")
+        schema_a = FakeKafkaMessage(value=b"schema", topic="a")
+
+        assert logs_for([corrupt_a, corrupt_a, schema_a, corrupt_b]) == [
+            ("error", "a", 0),
+            ("warning", "a", 0),
+            ("error", "b", 0),
+        ]
+        now = 61.0
+        assert logs_for([corrupt_a]) == [("error", "a", 1)]
+
     def test_unknown_schema_warning_includes_topic_and_schema(self):
         """The unknown-schema warning names the topic and the offending schema."""
         from structlog.testing import capture_logs
