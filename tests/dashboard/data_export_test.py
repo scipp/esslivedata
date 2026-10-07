@@ -23,13 +23,11 @@ from ess.livedata.config.workflow_spec import (
 )
 from ess.livedata.dashboard.data_export import (
     CurrentValueExportParams,
-    ExportedValue,
     ExportError,
     ExportFormat,
     ExportRequest,
     HistoryExportParams,
     TimeseriesRetention,
-    ValueParams,
     collect_export,
     export_filename,
     timeseries_keys,
@@ -37,7 +35,14 @@ from ess.livedata.dashboard.data_export import (
 )
 from ess.livedata.dashboard.data_roles import PRIMARY, X_AXIS, Y_AXIS
 from ess.livedata.dashboard.data_service import DataService
+from ess.livedata.dashboard.data_subscriber import DataSubscriber
+from ess.livedata.dashboard.extractors import WindowAggregatingExtractor
 from ess.livedata.dashboard.plot_orchestrator import DataSourceConfig
+from ess.livedata.dashboard.plot_params import (
+    TimeWindowMode,
+    TimeWindowParams,
+    WindowAggregation,
+)
 
 MONITOR = WorkflowId(instrument='test', name='monitor', version=1)
 MOTION = WorkflowId(instrument='test', name='motion', version=1)
@@ -53,6 +58,7 @@ class MonitorOutputs(WorkflowOutputsBase):
         OutputView(
             name='spectrum', title='Spectrum', fields=('spectrum_total', 'spectrum')
         ),
+        OutputView(name='events', title='Events', fields=('events_total',)),
     )
 
     counts_total: CumulativeOutput = pydantic.Field(
@@ -65,6 +71,9 @@ class MonitorOutputs(WorkflowOutputsBase):
         default_factory=lambda: sc.DataArray(sc.zeros(dims=['tof'], shape=[0]))
     )
     spectrum: WindowOutput = pydantic.Field(
+        default_factory=lambda: sc.DataArray(sc.zeros(dims=['tof'], shape=[0]))
+    )
+    events_total: CumulativeOutput = pydantic.Field(
         default_factory=lambda: sc.DataArray(sc.zeros(dims=['tof'], shape=[0]))
     )
 
@@ -152,14 +161,22 @@ def _history_request(
     return ExportRequest(data_sources=data_sources, params=HistoryExportParams())
 
 
-def _current_request(value: ExportedValue) -> ExportRequest:
+def _current_request(
+    time_window: TimeWindowParams, *, view_name: str = 'spectrum'
+) -> ExportRequest:
     return ExportRequest(
         data_sources={
             PRIMARY: DataSourceConfig(
-                workflow_id=MONITOR, source_names=['monitor_1'], view_name='spectrum'
+                workflow_id=MONITOR, source_names=['monitor_1'], view_name=view_name
             )
         },
-        params=CurrentValueExportParams(value=ValueParams(value=value)),
+        params=CurrentValueExportParams(time_window=time_window),
+    )
+
+
+def _window_of(seconds: float) -> TimeWindowParams:
+    return TimeWindowParams(
+        window_duration_seconds=seconds, aggregation=WindowAggregation.nansum
     )
 
 
@@ -301,7 +318,7 @@ class TestCurrentValueExport:
         self, data_service, registry, spectra
     ) -> None:
         items = collect_export(
-            _current_request(ExportedValue.since_start),
+            _current_request(TimeWindowParams(mode=TimeWindowMode.since_start)),
             data_service,
             registry,
         )
@@ -316,7 +333,7 @@ class TestCurrentValueExport:
         self, data_service, registry, spectra
     ) -> None:
         item = collect_export(
-            _current_request(ExportedValue.latest_update),
+            _current_request(TimeWindowParams()),
             data_service,
             registry,
         )['monitor_1']
@@ -324,6 +341,90 @@ class TestCurrentValueExport:
         assert item.key.output_name == 'spectrum'
         assert item.data.dims == ('tof',)
         sc.testing.assert_identical(item.data.coords['end_time'], _datetimes(2)[0])
+
+
+class TestWindowAggregatedExport:
+    """A window is served only from updates the buffer still holds."""
+
+    @staticmethod
+    def _feed_spectra(data_service, count: int) -> None:
+        key = _key(MONITOR, 'monitor_1', 'spectrum')
+        for i in range(count):
+            data_service[key] = sc.DataArray(
+                sc.full(dims=['tof'], shape=[2], value=float(i), unit='counts'),
+                coords={'time': _ns(i + 1), 'start_time': _ns(i)},
+            )
+
+    @pytest.fixture
+    def plotted_with_window(self, data_service) -> None:
+        """A plot aggregating 10 s, which makes the spectra be buffered."""
+        key = _key(MONITOR, 'monitor_1', 'spectrum')
+        data_service.register_subscriber(
+            DataSubscriber(
+                {PRIMARY: [key]},
+                {key: WindowAggregatingExtractor(window_duration_seconds=10)},
+                on_update=lambda: None,
+            )
+        )
+        self._feed_spectra(data_service, 6)
+
+    def test_aggregates_the_updates_in_the_window(
+        self, data_service, registry, plotted_with_window
+    ) -> None:
+        exported = collect_export(
+            _current_request(_window_of(3)), data_service, registry
+        )['monitor_1'].data
+
+        # The last three updates hold the values 3, 4 and 5.
+        sc.testing.assert_identical(
+            exported.data, sc.full(dims=['tof'], shape=[2], value=12.0, unit='counts')
+        )
+        sc.testing.assert_identical(exported.coords['start_time'], _datetimes(3)[0])
+        sc.testing.assert_identical(exported.coords['end_time'], _datetimes(6)[0])
+
+    def test_window_longer_than_the_buffer_raises(
+        self, data_service, registry, plotted_with_window
+    ) -> None:
+        with pytest.raises(ExportError, match='Only 6 s are buffered for monitor_1'):
+            collect_export(_current_request(_window_of(30)), data_service, registry)
+
+    def test_window_over_an_unplotted_output_raises(
+        self, data_service, registry
+    ) -> None:
+        self._feed_spectra(data_service, 6)
+
+        with pytest.raises(ExportError, match='Only the latest update'):
+            collect_export(_current_request(_window_of(3)), data_service, registry)
+
+    def test_time_series_are_aggregated_without_a_plot(
+        self, data_service, registry
+    ) -> None:
+        key = _key(MONITOR, 'monitor_1', 'counts')
+        for i in range(4):
+            data_service[key] = _window(float(i), start=i, end=i + 1)
+
+        exported = collect_export(
+            _current_request(_window_of(2), view_name='counts'),
+            data_service,
+            registry,
+        )['monitor_1'].data
+
+        assert exported.value == 5.0
+
+    def test_window_over_a_cumulative_output_raises(
+        self, data_service, registry
+    ) -> None:
+        data_service[_key(MONITOR, 'monitor_1', 'events_total')] = sc.DataArray(
+            sc.ones(dims=['tof'], shape=[2], unit='counts'),
+            coords={'time': _ns(1), 'start_time': _ns(0)},
+        )
+
+        with pytest.raises(ExportError, match='accumulated since the run started'):
+            collect_export(
+                _current_request(_window_of(3), view_name='events'),
+                data_service,
+                registry,
+            )
 
 
 def test_names_carry_the_output_when_a_source_appears_twice(

@@ -50,7 +50,7 @@ from ..data_export import (
 from ..data_roles import PRIMARY, X_AXIS, Y_AXIS
 from ..data_service import DataService
 from ..plot_orchestrator import DataSourceConfig
-from ..plotting_controller import hidden_window_fields
+from ..plotting_controller import hidden_window_fields, since_start_available
 from .configuration_widget import ConfigurationPanel
 from .plot_config_modal import (
     OutputSelection,
@@ -89,8 +89,9 @@ _KIND_DESCRIPTIONS = {
         'with the values of other time series at the time of each update.'
     ),
     _CURRENT: (
-        'The latest update of the output, or its value accumulated since the run '
-        'started.'
+        'The value of the output as a plot would show it: since the run started, '
+        'the latest update, or updates over a time window aggregated. A window '
+        'must not reach back further than the dashboard buffers.'
     ),
 }
 
@@ -334,6 +335,18 @@ class ExportConfigurationStep(WizardStep[ExportTypeSelection | None, ExportReque
 
     def _on_collected(self, sources: list[str], params: ExportParams) -> None:
         selection = self._selection
+        if (
+            isinstance(params, CurrentValueExportParams)
+            and params.windowing() == 'since_start'
+            and not since_start_available(
+                self._workflow_registry[selection.workflow_id], selection.view_name
+            )
+        ):
+            # Raised into ConfigurationPanel, which shows it in the form.
+            raise ValueError(
+                "'Since run start' is not available for this output: it has no "
+                "cumulative stream. Choose window mode."
+            )
         self._request = ExportRequest(
             data_sources={
                 PRIMARY: DataSourceConfig(
