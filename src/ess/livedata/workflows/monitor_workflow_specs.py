@@ -5,7 +5,8 @@
 from __future__ import annotations
 
 import abc
-from typing import ClassVar
+from collections.abc import Callable
+from typing import Any, ClassVar
 
 import pydantic
 import scipp as sc
@@ -42,7 +43,7 @@ class MonitorDataParamsBase(pydantic.BaseModel, abc.ABC):
 
     Subclasses expose the edges and range filter for the coordinate mode they
     offer, narrowing :attr:`coordinate_mode` to the modes they support. This
-    lets a single workflow factory (:func:`create_monitor_workflow_factory`)
+    lets a single workflow factory (:func:`make_monitor_workflow_factory`)
     serve every monitor spec regardless of which coordinate modes it offers.
     """
 
@@ -307,23 +308,31 @@ def register_monitor_workflow_specs(
     )
 
 
-def create_monitor_workflow_factory(source_name: str, params: MonitorDataParamsBase):
+def make_monitor_workflow_factory(instrument: Instrument) -> Callable[..., Any]:
     """
-    Factory function for monitor workflow from monitor data parameters.
+    Return the shared monitor workflow factory for ``instrument``.
 
-    Wraps :func:`create_monitor_workflow`, unpacking the params. It serves any
-    spec whose params subclass :class:`MonitorDataParamsBase`, including the
-    TOA-only restricted variant. Instruments needing TOF lookup tables for
-    wavelength mode (DREAM, LOKI) provide their own factory instead.
+    The factory wraps :func:`create_monitor_workflow`, unpacking the params. It
+    serves any spec whose params subclass :class:`MonitorDataParamsBase`,
+    including the TOA-only restricted variant. In wavelength mode it passes the
+    instrument's geometry file, which the monitor needs for ``Ltotal``; TOA mode
+    loads no file. DREAM provides its own factory, since it reads a different
+    geometry file.
 
-    Defined here so the params type hint can be properly resolved by the
-    workflow factory registration system.
+    The returned function is defined here so its params type hint can be
+    resolved by the workflow factory registration system.
     """
-    from .monitor_workflow import create_monitor_workflow
 
-    return create_monitor_workflow(
-        source_name=source_name,
-        edges=params.get_active_edges(),
-        range_filter=params.get_active_range(),
-        coordinate_mode=params.get_coordinate_mode(),
-    )
+    def factory(source_name: str, params: MonitorDataParamsBase) -> Any:
+        from .monitor_workflow import create_monitor_workflow
+
+        mode = params.get_coordinate_mode()
+        return create_monitor_workflow(
+            source_name=source_name,
+            edges=params.get_active_edges(),
+            range_filter=params.get_active_range(),
+            coordinate_mode=mode,
+            geometry_filename=instrument.nexus_file if mode == 'wavelength' else None,
+        )
+
+    return factory

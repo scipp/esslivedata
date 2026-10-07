@@ -128,23 +128,6 @@ def setup_factories(instrument: Instrument) -> None:
 
     specs.xy_projection_handle.attach_factory()(_xy_projection.make_workflow)
 
-    from ess.livedata.workflows.monitor_workflow import create_monitor_workflow
-    from ess.livedata.workflows.monitor_workflow_specs import MonitorDataParams
-
-    @specs.monitor_handle.attach_factory()
-    def _monitor_workflow_factory(source_name: str, params: MonitorDataParams):
-        """Factory for LOKI monitor workflow with lookup table support."""
-        mode = params.coordinate_mode.mode
-        geometry_filename = _nexus_geometry_filename if mode == 'wavelength' else None
-
-        return create_monitor_workflow(
-            source_name=source_name,
-            edges=params.get_active_edges(),
-            range_filter=params.get_active_range(),
-            coordinate_mode=mode,
-            geometry_filename=geometry_filename,
-        )
-
     # --- Providers for current_run transmission mode ---
     # Map SampleRun monitors to TransmissionRun[SampleRun] so the standard
     # transmission_fraction provider can use them as if they came from a

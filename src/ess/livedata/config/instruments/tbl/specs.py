@@ -18,7 +18,6 @@ from ess.livedata.workflows.detector_view_specs import (
     SpectrumViewSpec,
 )
 from ess.livedata.workflows.monitor_workflow_specs import (
-    TOAOnlyMonitorDataParams,
     register_monitor_workflow_specs,
 )
 
@@ -71,9 +70,10 @@ instrument = Instrument(
 
 instrument_registry.register(instrument)
 
-register_monitor_workflow_specs(
-    instrument, monitor_names, params=TOAOnlyMonitorDataParams
-)
+# Wavelength mode takes detector and monitor positions from the geometry file.
+# The detector positions there are approximate (no NICOS device reports them
+# yet), so wavelengths are approximate too.
+register_monitor_workflow_specs(instrument, monitor_names)
 
 instrument.configure_detector_downsampling(
     'timepix3_detector',
@@ -94,6 +94,8 @@ instrument.add_logical_view(
     ),
     source_names=['timepix3_detector'],
     transform=name_image_dims,
+    # No wavelength mode: the geometry file holds positions for the full panel
+    # resolution, not for the downsampled grid the events are ingested at.
     roi_support=True,
     device_outputs=DETECTOR_VIEW_DEVICES,
 )
@@ -103,6 +105,7 @@ instrument.add_logical_view(
     title='Multiblade Detector',
     description='Counts folded into blade, wire, and strip dimensions',
     source_names=['multiblade_detector'],
+    wavelength=True,
     transform=get_multiblade_view,
     # ROI geometries are rectangles and polygons on a 2D screen; this view is 3D.
     roi_support=False,
@@ -120,6 +123,7 @@ instrument.add_logical_view(
     title='He3 Detector',
     description='Combined view of both detector banks with tube and pixel axes',
     source_names=['he3_detector_bank0', 'he3_detector_bank1'],
+    wavelength=True,
     transform=get_he3_detector_view,
     roi_support=True,
     spectrum_view=SpectrumViewSpec(
@@ -135,6 +139,7 @@ instrument.add_logical_view(
     title='NGEM Detector',
     description='2D detector counts view',
     source_names=['ngem_detector'],
+    wavelength=True,
     transform=identity,
     reduction_dim='dim_0',
     roi_support=True,
