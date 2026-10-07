@@ -185,7 +185,7 @@ def _inject_axis_source_titles(
     return params.model_copy(update={'bins': new_bins})
 
 
-def _build_timeseries_options(
+def build_timeseries_options(
     available_timeseries: list[tuple[WorkflowId, str, str]],
     workflow_registry: Mapping[WorkflowId, WorkflowSpec],
     instrument_config: Instrument | None,
@@ -269,6 +269,8 @@ class WorkflowAndOutputSelectionStep(WizardStep[None, OutputSelection]):
         self,
         workflow_registry: Mapping[WorkflowId, WorkflowSpec],
         initial_config: PlotConfig | None = None,
+        *,
+        include_static_overlay: bool = True,
     ) -> None:
         """
         Initialize workflow and output selection step.
@@ -279,10 +281,14 @@ class WorkflowAndOutputSelectionStep(WizardStep[None, OutputSelection]):
             Registry of available workflows and their specifications.
         initial_config
             Optional initial configuration for edit mode.
+        include_static_overlay
+            Whether to offer the synthetic "Static Overlay" group, which has
+            no data and makes sense only for plots.
         """
         super().__init__()
         self._workflow_registry = dict(workflow_registry)
         self._initial_config = initial_config
+        self._include_static_overlay = include_static_overlay
         self._selected_group: str | None = None
         self._selected_workflow_id: WorkflowId | None = None
         self._selected_view: str | None = None
@@ -398,7 +404,8 @@ class WorkflowAndOutputSelectionStep(WizardStep[None, OutputSelection]):
             for name, title in sorted(groups.items(), key=lambda item: item[0])
         }
         # Add synthetic "Static Overlay" group for geometric overlays
-        options["Static Overlay"] = STATIC_OVERLAY_GROUP
+        if self._include_static_overlay:
+            options["Static Overlay"] = STATIC_OVERLAY_GROUP
 
         return pn.widgets.RadioButtonGroup(
             label='Group',
@@ -948,7 +955,7 @@ class PlotterSelectionStep(WizardStep[OutputSelection | None, PlotterSelection])
             )
             return
 
-        options = _build_timeseries_options(
+        options = build_timeseries_options(
             available_timeseries,
             self._workflow_registry,
             self._instrument_config,

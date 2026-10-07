@@ -20,6 +20,7 @@ from ess.livedata.config.workflow_spec import DataKey
 from .active_job_registry import ActiveJobRegistry
 from .command_service import CommandService
 from .config_store import ConfigStoreManager
+from .data_export import TimeseriesRetention, timeseries_keys
 from .data_service import DataService
 from .frame_clock import FrameClock
 from .job_orchestrator import JobOrchestrator
@@ -125,6 +126,13 @@ class DashboardServices:
         # Setup all services
         self._setup_data_infrastructure()
         self._setup_workflow_management()
+        # Time series keep their history whether or not they are plotted, so it
+        # can be exported and correlated from the start of the buffer.
+        self.data_service.register_subscriber(
+            TimeseriesRetention(
+                timeseries_keys(self.job_orchestrator.get_workflow_registry())
+            )
+        )
         self._setup_plot_orchestrator()
 
         logger.info("DashboardServices initialized for %s", instrument)

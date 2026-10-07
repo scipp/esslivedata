@@ -4,6 +4,7 @@ import argparse
 import os
 import threading
 import urllib.request
+from collections.abc import Sequence
 from urllib.error import URLError
 from urllib.request import urlopen
 
@@ -210,7 +211,11 @@ class ReductionApp(DashboardBase):
         )
 
     def create_main_content(
-        self, session_updater: SessionUpdater, *, phone: bool
+        self,
+        session_updater: SessionUpdater,
+        *,
+        phone: bool,
+        overlays: Sequence[pn.viewable.Viewable],
     ) -> pn.viewable.Viewable:
         """Create the main content area with plot grid tabs."""
         workflow_status_widget = WorkflowStatusListWidget(
@@ -238,6 +243,7 @@ class ReductionApp(DashboardBase):
             session_updater=session_updater,
             theme=self._theme,
             phone=phone,
+            overlays=overlays,
         )
 
         # PlotGridTabs registers its own two-tier teardown on the session

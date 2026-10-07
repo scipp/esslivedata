@@ -110,7 +110,7 @@ class LatestValueExtractor(UpdateExtractor):
 class FullHistoryExtractor(UpdateExtractor):
     """Extracts the complete buffer history."""
 
-    def __init__(self, concat_dim: str = 'time') -> None:
+    def __init__(self, concat_dim: str = 'time', *, local_time: bool = True) -> None:
         """
         Initialize full history extractor.
 
@@ -118,8 +118,13 @@ class FullHistoryExtractor(UpdateExtractor):
         ----------
         concat_dim:
             The time dimension name.
+        local_time:
+            Convert the time coord to datetime64 shifted into the local timezone,
+            for display. If False, the buffered coord is returned as is
+            (nanoseconds since the Unix epoch, UTC).
         """
         self._concat_dim = concat_dim
+        self._local_time = local_time
         self._time_origin: sc.Variable | None = None
 
     def get_required_timespan(self) -> float:
@@ -130,7 +135,9 @@ class FullHistoryExtractor(UpdateExtractor):
         """Extract all data from the buffer, converting time to datetime64."""
         # Capture bounds before the timezone shift, which rewrites `time`.
         bounds = _extract_time_bounds_as_scalars(data)
-        return self._to_local_datetime(data).assign_coords(**bounds)
+        if self._local_time:
+            data = self._to_local_datetime(data)
+        return data.assign_coords(**bounds)
 
     def _to_local_datetime(self, data: sc.DataArray) -> sc.DataArray:
         """Convert int64 time coordinate to datetime64 in local time.
