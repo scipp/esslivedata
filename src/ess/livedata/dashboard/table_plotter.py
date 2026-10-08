@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: BSD-3-Clause
 # Copyright (c) 2025 Scipp contributors (https://github.com/scipp)
-"""Plotter rendering 0D scalar data as a table."""
+"""Plotter rendering 0D scalar data or 1D data as a table."""
 
 from __future__ import annotations
 
@@ -16,7 +16,7 @@ from holoviews.plotting.bokeh.tabular import TablePlot
 from ess.livedata.config.workflow_spec import DataKey
 
 from .plot_params import PlotParamsTable, TableNotation
-from .plots import Plotter, TitleResolver
+from .plots import Plotter, TitleResolver, _check_entry_limit
 from .range_hook import Axis
 
 # Bokeh renders the table in 12px Helvetica/Arial. Seven pixels per character is
@@ -74,9 +74,10 @@ hv.Store.register({hv.Table: _FormattedTablePlot}, 'bokeh')
 
 
 class TablePlotter(Plotter):
-    """Plotter rendering 0D scalar data as a table.
+    """Plotter rendering 0D scalar data or 1D data as a table.
 
-    Each source name becomes a row, with a single value column. Unlike most
+    Each source name becomes a row, with a single value column. 1D data gives one
+    row per position along its dimension, labeled by its coord value. Unlike most
     plotters this composes all datasets into a single ``hv.Table`` rather than
     overlaying per-dataset elements: HoloViews tables cannot be meaningfully
     overlaid (an overlay renders as separate stacked widgets).
@@ -94,11 +95,13 @@ class TablePlotter(Plotter):
         *,
         notation: TableNotation = TableNotation.auto,
         precision: int = 3,
+        max_entries: int = 20,
         **kwargs: Any,
     ) -> None:
         super().__init__(**kwargs)
         self._notation = notation
         self._precision = precision
+        self._max_entries = max_entries
 
     @classmethod
     def from_params(cls, params: PlotParamsTable):
@@ -108,6 +111,7 @@ class TablePlotter(Plotter):
             normalize_to_rate=params.rate.normalize_to_rate,
             notation=params.format.notation,
             precision=params.format.precision,
+            max_entries=params.limit.max_entries,
         )
 
     def _error_placeholder(self, message: str) -> hv.Element:
@@ -124,6 +128,8 @@ class TablePlotter(Plotter):
     ) -> hv.Element:
         """Build a table: one row per source, sharing a value column.
 
+        1D data gives one row per position along its dimension instead, with a
+        column of the dim's coord values; all datasets must have the same dims.
         All datasets reaching a single layer carry the same ``output_name`` (the
         layer's primary view), so the table has a single value column. Rows may
         nonetheless carry different units (e.g. device data forwarded by the
@@ -136,31 +142,57 @@ class TablePlotter(Plotter):
                 text_align='center', text_baseline='middle', **self._sizing_opts
             )
 
+        all_dims = {da.dims for da in data.values()}
+        if len(all_dims) > 1:
+            raise ValueError(f"Expected the same dims for all sources, got {all_dims}")
+        (dims,) = all_dims
+        if len(dims) > 1:
+            raise ValueError(f"Expected 0D or 1D data, got {len(dims)}D")
+        dim = dims[0] if dims else None
+
         rows: list[str] = []
+        entries: list[str] = []
         values: list[float] = []
         units: list[str] = []
         output_name = 'values'
         label: str | None = None
         for data_key, da in data.items():
-            if da.ndim != 0:
-                raise ValueError(f"Expected 0D data, got {da.ndim}D")
             output_name = data_key.output_name or 'values'
             label = resolver.get_axis_label(data_key.output_name) or output_name
-            rows.append(resolver.source(data_key.source_name))
-            units.append('' if da.unit is None else str(da.unit))
-            value = float(da.value)
-            if self._notation is TableNotation.decimal and self._precision < 0:
-                # Negative precision rounds the magnitude (e.g. -3 -> thousands);
-                # numbro format strings cannot express this, so round the value.
-                value = float(np.round(value, self._precision))
-            values.append(value)
+            if dim is None:
+                da_entries, da_values = [''], [float(da.value)]
+            else:
+                _check_entry_limit(dim, da.sizes[dim], self._max_entries)
+                coord = (
+                    da.coords[dim].values
+                    if dim in da.coords
+                    else np.arange(da.sizes[dim])
+                )
+                if coord.size == 0:
+                    # Keeps the source visible while it has no entries.
+                    da_entries, da_values = [f'no {dim}'], [np.nan]
+                else:
+                    # Strings, so the value formatter leaves the labels alone.
+                    da_entries, da_values = [str(v) for v in coord], list(da.values)
+            rows += [resolver.source(data_key.source_name)] * len(da_entries)
+            entries += da_entries
+            values += da_values
+            units += ['' if da.unit is None else str(da.unit)] * len(da_entries)
+        if self._notation is TableNotation.decimal and self._precision < 0:
+            # Negative precision rounds the magnitude (e.g. -3 -> thousands);
+            # numbro format strings cannot express this, so round the values.
+            values = list(np.round(values, self._precision))
 
         kdims = [hv.Dimension('source', label='Source')]
+        columns: dict[str, list] = {'source': rows}
+        if dim is not None:
+            kdims.append(hv.Dimension(dim, label=resolver.dim(dim)))
+            columns[dim] = entries
         if len(set(units)) > 1:
             value_dim = hv.Dimension(output_name, label=label)
             unit_dim = hv.Dimension('unit', label='Unit')
             return hv.Table(
-                {'source': rows, value_dim.name: values, unit_dim.name: units},
+                {**columns, value_dim.name: values, unit_dim.name: units},
                 kdims=kdims,
                 vdims=[value_dim, unit_dim],
             )
@@ -168,7 +200,7 @@ class TablePlotter(Plotter):
         unit = next(iter(units)) or None
         value_dim = hv.Dimension(output_name, label=label, unit=unit)
         return hv.Table(
-            {'source': rows, value_dim.name: values},
+            {**columns, value_dim.name: values},
             kdims=kdims,
             vdims=[value_dim],
         )

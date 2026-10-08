@@ -330,8 +330,13 @@ def _register_all_plotters() -> None:
     plotter_registry.register_plotter(
         name='table',
         title='Table',
-        description='Display 0D scalar values as a table, one row per source.',
-        data_requirements=DataRequirements(min_dims=0, max_dims=0),
+        description=(
+            'Display 0D scalar values as a table, one row per source. For 1D data, '
+            'display one row per position along its dimension, labeled by its '
+            'coordinate value. Data with more entries than the limit in the plot '
+            'settings is not drawn.'
+        ),
+        data_requirements=DataRequirements(min_dims=0, max_dims=1),
         factory=TablePlotter.from_params,
     )
 

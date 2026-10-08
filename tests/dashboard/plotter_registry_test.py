@@ -243,11 +243,12 @@ def test_session_test_covers_every_plotter() -> None:
 
 
 class TestPerEntryPlotters:
-    def test_1d_data_is_offered_bars_and_a_history_that_needs_full_history(self):
+    def test_1d_data_is_offered_bars_table_and_a_full_history_plot(self):
         compatible = plotter_registry.get_compatible_plotters(
             {_key('det'): _roi_values()}
         )
         assert compatible['bars'].data_requirements.required_extractor is None
+        assert compatible['table'].data_requirements.required_extractor is None
         assert (
             compatible['timeseries_overlay'].data_requirements.required_extractor
             is FullHistoryExtractor

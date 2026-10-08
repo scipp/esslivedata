@@ -40,6 +40,7 @@ from ess.livedata.dashboard.plot_params import (
     PlotParamsBars,
     PlotParamsOverlay1d,
     PlotParamsOverlay1dTimeseries,
+    PlotParamsTable,
     PlotScale,
     PlotScaleParams2d,
     RateNormalizationParams,
@@ -50,6 +51,7 @@ from ess.livedata.dashboard.slicer_plotter import (
     SlicerPresenter,
     SlicerState,
 )
+from ess.livedata.dashboard.table_plotter import TablePlotter
 from ess.livedata.dashboard.temporal_buffers import TemporalBuffer
 
 hv.extension('bokeh')
@@ -2064,11 +2066,52 @@ class TestTablePlotter:
         assert isinstance(by_field['unit'], StringFormatter)
         assert not isinstance(by_field['unit'], ScientificFormatter)
 
-    def test_rejects_non_scalar_data(self, table_plotter):
+    def test_rejects_2d_data(self, table_plotter):
         key = self._key('bank0', 'counts')
-        data_1d = sc.DataArray(sc.array(dims=['x'], values=[1.0, 2.0, 3.0]))
-        table_plotter.compute({'primary': {key: data_1d}})
+        data_2d = sc.DataArray(sc.zeros(dims=['y', 'x'], shape=[2, 3]))
+        table_plotter.compute({'primary': {key: data_2d}})
         # Errors are surfaced in-band as a Text element, matching other plotters.
+        assert isinstance(table_plotter.get_cached_state(), hv.Text)
+
+    def test_1d_data_gives_a_row_per_source_and_entry(self, table_plotter):
+        data = {
+            self._key('bank0', 'counts'): _per_roi([0, 3], values=[1.0, 2.0]),
+            self._key('bank1', 'counts'): _per_roi([0], values=[3.0]),
+        }
+        table_plotter.compute({'primary': data})
+        result = table_plotter.get_cached_state()
+        assert [d.name for d in result.kdims] == ['source', 'roi']
+        assert list(result.data['source']) == ['bank0', 'bank0', 'bank1']
+        assert list(result.data['roi']) == ['0', '3', '0']
+        assert list(result.data['counts']) == [1.0, 2.0, 3.0]
+        assert result.vdims[0].unit == 'counts'
+
+    def test_1d_data_without_entries_keeps_a_row_for_the_source(self, table_plotter):
+        key = self._key('bank0', 'counts')
+        table_plotter.compute({'primary': {key: _per_roi([], values=[])}})
+        result = table_plotter.get_cached_state()
+        assert list(result.data['source']) == ['bank0']
+        assert list(result.data['roi']) == ['no roi']
+        assert np.isnan(result.data['counts'][0])
+
+    def test_1d_entry_labels_keep_string_formatter(self, table_plotter):
+        from bokeh.models import DataTable, ScientificFormatter, StringFormatter
+
+        fig = present_figure(
+            table_plotter, {self._key('bank0', 'counts'): _per_roi([0, 3])}
+        )
+        table = next(m for m in fig.references() if isinstance(m, DataTable))
+        by_field = {c.field: c.formatter for c in table.columns}
+        assert isinstance(by_field['counts'], ScientificFormatter)
+        assert isinstance(by_field['roi'], StringFormatter)
+        assert not isinstance(by_field['roi'], ScientificFormatter)
+
+    def test_rejects_sources_with_different_dims(self, table_plotter):
+        data = {
+            self._key('bank0', 'counts'): _per_roi([0]),
+            self._key('bank1', 'counts'): sc.DataArray(sc.scalar(1.0, unit='counts')),
+        }
+        table_plotter.compute({'primary': data})
         assert isinstance(table_plotter.get_cached_state(), hv.Text)
 
     def test_empty_data_shows_no_data(self, table_plotter):
@@ -2794,7 +2837,7 @@ class TestEntryLimit:
         )
 
     @pytest.fixture(
-        params=['bars', 'spectra', 'history'],
+        params=['bars', 'table', 'spectra', 'history'],
     )
     def case(self, request, limit):
         """A plotter with ``limit`` and a function making data of n entries."""
@@ -2803,6 +2846,11 @@ class TestEntryLimit:
             case 'bars':
                 plotter = plots.BarsPlotter.from_params(
                     PlotParamsBars.model_validate(limit_params)
+                )
+                return plotter, lambda n: _per_roi(list(range(n)))
+            case 'table':
+                plotter = TablePlotter.from_params(
+                    PlotParamsTable.model_validate(limit_params)
                 )
                 return plotter, lambda n: _per_roi(list(range(n)))
             case 'spectra':

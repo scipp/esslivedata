@@ -663,9 +663,13 @@ class TableFormatParams(pydantic.BaseModel):
 
 
 class PlotParamsTable(RateMixin, TimeWindowMixin, PlotParamsBase):
-    """Parameters for tabular display of 0D scalar data."""
+    """Parameters for tabular display of 0D scalar data or 1D data."""
 
     format: TableFormatParams = pydantic.Field(
         default_factory=TableFormatParams,
         description="Number formatting for table value columns.",
+    )
+    limit: EntryLimitParams = pydantic.Field(
+        default_factory=EntryLimitParams,
+        description="Limit on the number of rows per source of 1D data.",
     )
