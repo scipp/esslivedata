@@ -189,13 +189,39 @@ class EstiaReflectometryReductionOutputs(WorkflowOutputsBase):
 
 streams = name_streams(filter_authorized_streams(PARSED_STREAMS))
 
+#: The geometry artifact carries two hand repairs of the run file:
+#:
+#: - The run file places the ``NXsource`` at the origin, which is the sample
+#:   position, and labels it ``probe='proton'``. The artifact moves it to the
+#:   moderator position relative to the sample that essestia's McStas loader
+#:   uses (35.05 m upstream), and sets ``probe='neutron'``. Without this every
+#:   distance from the source is wrong, e.g., the chopper would sit 24 m instead
+#:   of 11 m from it.
+#: - The run file places ``beam_monitor`` 34 m *downstream* of the sample. Read
+#:   as 34 m upstream it would sit inside the target monolith, so the 34 m is
+#:   taken as measured from the moderator, in a frame with the origin at the
+#:   source. The artifact chains it onto the source at that distance along the
+#:   beam, 1.05 m before the sample. The configured monitor is named ``cbm1``,
+#:   not ``beam_monitor``, so no table covers it yet.
+#:
+#: The detector arm rotates about the sample, which leaves the flight path to
+#: every pixel unchanged, but the lookup-table range derivation refuses live
+#: rotations. The range is therefore declared; it is what the repaired artifact
+#: gives at any arm angle, and agrees with the McStas geometry the reduction
+#: workflow uses to within 4 mm.
 instrument = Instrument(
     name='estia',
     detector_names=detector_names,
     monitors=['cbm1'],
+    choppers=['bwc'],
+    declared_ltotal={
+        'multiblade_detector': sc.array(
+            dims=['ltotal'], values=[39.057, 39.188], unit='m'
+        )
+    },
     streams=streams,
     source_metadata={
-        'detector_rotation/value': SourceMetadata(
+        'detector_arm_rotation/value': SourceMetadata(
             title='Detector Rotation',
             description='Multiblade detector bank rotation angle.',
         ),

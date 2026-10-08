@@ -146,6 +146,12 @@ class Instrument:
     #: lookup-table ranges. Which components ride an axis is derived from their
     #: ``depends_on`` chains, not restated here.
     axis_ranges: dict[str, AxisRange] = field(default_factory=dict)
+    #: Flight path at which a component's consumers look up the wavelength
+    #: table, declared instead of derived from the geometry artifact. Needed
+    #: where the derivation refuses a component whose flight path is known
+    #: anyway, e.g., a detector on an arm rotating about the sample. Overrides
+    #: the derived range for that component.
+    declared_ltotal: dict[str, sc.Variable] = field(default_factory=dict)
     #: Components the lookup-table workflow can actually place, filled in when
     #: its factory is attached. Empty until then, and for chopperless
     #: instruments.
@@ -1086,6 +1092,7 @@ class Instrument:
                 detectors=self.detector_names,
                 monitors=self.monitors,
                 axis_ranges=self.axis_ranges,
+                declared_ltotal=self.declared_ltotal,
             )
             # Before setup_factories: a consuming spec neither declares nor
             # inherits anything here, it just inserts a provider taking the key.

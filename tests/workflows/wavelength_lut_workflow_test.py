@@ -384,6 +384,31 @@ class TestMultiChopperWorkflow:
         assert table.dims == ('distance', 'event_time_offset')
         assert np.isfinite(table.values).any()
 
+    def test_file_phase_log_does_not_override_streamed_delay(
+        self, two_chopper_geometry: Path, tmp_path: Path
+    ) -> None:
+        # ESTIA's writer stores the in-phase status flag as the chopper's
+        # ``phase``. DiskChopper.from_nexus would take a ``phase`` field over the
+        # delay, so the streamed delay setpoint must win regardless.
+        path = tmp_path / 'phase_log.nxs'
+        _write_chopper_nexus(path, ['chopper1', 'chopper2'])
+        with h5py.File(path, 'a') as f:
+            for name in ('chopper1', 'chopper2'):
+                grp = f[f'/entry/instrument/{name}'].create_group('phase')
+                grp.attrs['NX_class'] = 'NXlog'
+                grp.create_dataset('time', shape=(0,), dtype='int64').attrs['units'] = (
+                    'ns'
+                )
+                grp.create_dataset('value', shape=(0,), dtype='float64')
+        setpoints = {'chopper1': (-14.0, 0.0), 'chopper2': (-14.0, 1_000_000.0)}
+
+        with_phase = _run_chopper_lut(path, ['chopper1', 'chopper2'], setpoints)
+        without = _run_chopper_lut(
+            two_chopper_geometry, ['chopper1', 'chopper2'], setpoints
+        )
+
+        np.testing.assert_allclose(with_phase.values, without.values)
+
     def test_missing_chopper_in_artifact_raises(self, tmp_path: Path) -> None:
         # A configured chopper absent from the geometry artifact is not validated
         # at factory time; it surfaces as a KeyError when the table is computed.

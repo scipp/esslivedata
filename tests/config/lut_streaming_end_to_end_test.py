@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: BSD-3-Clause
 # Copyright (c) 2025 Scipp contributors (https://github.com/scipp)
-"""End-to-end test of the streamed wavelength lookup table on DREAM.
+"""End-to-end test of the streamed wavelength lookup table on real instruments.
 
 Runs the real chain with real specs: the lookup-table job computes the detector
 and monitor tables, they are extracted as context messages, serialized to da00,
@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import uuid
 
+import numpy as np
 import pytest
 import scipp as sc
 
@@ -102,8 +103,13 @@ def _create_job(
     )
 
 
-def _run_lut_job(instrument: Instrument):
-    """Run the lookup-table job once and return its result."""
+def _run_lut_job(instrument: Instrument, *, delay_ns: float = 0.0):
+    """Run the lookup-table job once and return its result.
+
+    Every chopper runs at 14 Hz with the same delay. With the default of zero,
+    DREAM's tables are all NaN; tests asserting finite wavelengths pick a
+    ``delay_ns`` that transmits.
+    """
     job = _create_job(instrument, 'wavelength_lut', CHOPPER_CASCADE_SOURCE)
     aux = {}
     for chopper in instrument.choppers:
@@ -111,7 +117,7 @@ def _run_lut_job(instrument: Instrument):
             14.0, instrument.streams[speed_setpoint_stream(chopper)].units
         )
         aux[delay_setpoint_stream(chopper)] = _nxlog(
-            0.0, instrument.streams[delay_setpoint_stream(chopper)].units
+            delay_ns, instrument.streams[delay_setpoint_stream(chopper)].units
         )
     data = JobData(
         start_time=Timestamp.from_ns(0),
@@ -125,15 +131,18 @@ def _run_lut_job(instrument: Instrument):
     return result
 
 
-@pytest.fixture(scope='module')
-def ingested(dream: Instrument) -> dict[str, sc.DataArray]:
-    """The group tables as they arrive at a consuming service."""
-    result = _run_lut_job(dream)
-    messages = ContextOutputExtractor(registry=dream.workflow_factory).extract([result])
-    serializer = make_default_sink_serializer(instrument='dream')
+def _ingest(
+    instrument: Instrument, *, delay_ns: float = 0.0
+) -> dict[str, sc.DataArray]:
+    """Run the lookup-table job and return its tables as a consumer receives them."""
+    result = _run_lut_job(instrument, delay_ns=delay_ns)
+    messages = ContextOutputExtractor(registry=instrument.workflow_factory).extract(
+        [result]
+    )
+    serializer = make_default_sink_serializer(instrument=instrument.name)
     adapter = (
         RoutingAdapterBuilder(
-            stream_mapping=get_stream_mapping(instrument='dream', dev=True)
+            stream_mapping=get_stream_mapping(instrument=instrument.name, dev=True)
         )
         .with_livedata_context_route()
         .build()
@@ -147,6 +156,12 @@ def ingested(dream: Instrument) -> dict[str, sc.DataArray]:
         assert received.stream.kind == StreamKind.LIVEDATA_CONTEXT
         out[received.stream.name] = received.value
     return out
+
+
+@pytest.fixture(scope='module')
+def ingested(dream: Instrument) -> dict[str, sc.DataArray]:
+    """The group tables as they arrive at a consuming service."""
+    return _ingest(dream)
 
 
 def test_publishes_one_table_per_group(ingested: dict[str, sc.DataArray]) -> None:
@@ -378,3 +393,71 @@ class TestLokiMotionAndRoles:
         defaults = {inp.default for inp in aux_sources.inputs.values()}
 
         assert defaults <= loki.lut_components
+
+
+@pytest.fixture(scope='module')
+def estia() -> Instrument:
+    get_config('estia')
+    instrument = instrument_registry['estia']
+    instrument.load_factories()
+    return instrument
+
+
+class TestEstiaReflectometry:
+    """ESTIA's detector table is placed by a declared flight path, and its
+    reflectometry reduction takes geometry from a McStas file rather than from
+    the artifact the table is built from. The two must still meet."""
+
+    def test_publishes_a_detector_table_only(self, estia: Instrument) -> None:
+        # The configured monitor ``cbm1`` is not a group in the artifact.
+        assert set(_ingest(estia)) == {DETECTOR_STREAM}
+
+    def test_reduction_consumes_the_streamed_table(self, estia: Instrument) -> None:
+        # At a 30 ms delay the band chopper passes about 3 to 10 angstrom to the
+        # detector, so every event below gets a wavelength.
+        table = _ingest(estia, delay_ns=30_000_000.0)[DETECTOR_STREAM]
+        params_model = _params_model(estia, 'reflectometry_reduction')
+        job = _create_job(
+            estia, 'reflectometry_reduction', 'multiblade_detector', params_model()
+        )
+
+        assert job.gating_streams == {DETECTOR_STREAM}
+
+        # Events on every pixel: most fall outside the default divergence limits.
+        rng = np.random.default_rng(seed=1)
+        n_events = 2000
+        events = sc.DataArray(
+            data=sc.ones(sizes={'event': n_events}, dtype='float32', unit='counts'),
+            coords={
+                'event_time_offset': sc.array(
+                    dims=['event'], values=rng.uniform(1e7, 6e7, n_events), unit='ns'
+                ),
+                'event_id': sc.array(
+                    dims=['event'],
+                    values=rng.integers(98305, 196609, n_events),
+                    unit=None,
+                ),
+            },
+        )
+        sizes = sc.array(dims=['event_time_zero'], values=[n_events], unit=None)
+        binned = sc.DataArray(
+            sc.bins(begin=sc.cumsum(sizes, mode='exclusive'), dim='event', data=events),
+            # After the factory's placeholder proton-charge sample at 1 ns; events
+            # before it would be normalized to zero.
+            coords={
+                'event_time_zero': sc.epoch(unit='ns')
+                + sc.array(dims=['event_time_zero'], values=[10**9], unit='ns')
+            },
+        )
+        data = JobData(
+            start_time=Timestamp.from_ns(0),
+            end_time=Timestamp.from_ns(1),
+            primary_data={'multiblade_detector': binned},
+            aux_data={DETECTOR_STREAM: table},
+        )
+
+        reply, result = job.process(data, finalize=True)
+
+        assert not reply.has_error, reply.error_message
+        assert result.error_message is None, result.error_message
+        assert result.data['i_of_wavelength'].sum().value > 0
