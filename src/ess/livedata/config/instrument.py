@@ -95,6 +95,7 @@ class LogicalViewConfig:
     output_ndim: int | None = None
     reduction_dim: str | list[str] | None = None
     spectrum_view: SpectrumViewSpec | None = None
+    wavelength: bool = False
 
 
 class InstrumentRegistry(UserDict[str, 'Instrument']):
@@ -861,6 +862,7 @@ class Instrument:
         reduction_dim: str | list[str] | None = None,
         spectrum_view: SpectrumViewSpec | None = None,
         device_outputs: dict[str, str] | None = None,
+        wavelength: bool = False,
     ) -> SpecHandle:
         """
         Register a logical detector view.
@@ -885,6 +887,12 @@ class Instrument:
             Dimension(s) to sum over after applying transform. If specified,
             enables proper ROI support by tracking which input pixels contribute
             to each output pixel.
+        wavelength:
+            Offer wavelength mode in addition to TOA. The view then takes its
+            pixels, and their positions, from the instrument's geometry file
+            instead of the configured ``detector_number``: wavelength needs
+            ``Ltotal`` per pixel to index the lookup table with. The positions
+            are used as the file states them.
 
         Returns
         -------
@@ -892,11 +900,12 @@ class Instrument:
             Handle for the registered spec.
         """
         from ess.livedata.workflows.detector_view_specs import (
+            DetectorViewParams,
             TOAOnlyDetectorViewParams,
             make_detector_view_params,
         )
 
-        # Logical views are TOA-only: they run on ``InstrumentDetectorSource``,
+        # Without ``wavelength`` a view runs on ``InstrumentDetectorSource``,
         # which carries no geometry, so there is no Ltotal to index a wavelength
         # lookup table with. Offering the mode would fail at job start.
         handle = self.register_detector_view(
@@ -910,7 +919,8 @@ class Instrument:
             output_ndim=output_ndim,
             spectrum_view=spectrum_view,
             params=make_detector_view_params(
-                spectrum_view=spectrum_view, base=TOAOnlyDetectorViewParams
+                spectrum_view=spectrum_view,
+                base=DetectorViewParams if wavelength else TOAOnlyDetectorViewParams,
             ),
             device_outputs=device_outputs,
         )
@@ -926,6 +936,7 @@ class Instrument:
                 output_ndim=output_ndim,
                 reduction_dim=reduction_dim,
                 spectrum_view=spectrum_view,
+                wavelength=wavelength,
             )
         )
         return handle
@@ -1049,6 +1060,7 @@ class Instrument:
             from ess.livedata.workflows.detector_view import (
                 DetectorViewFactory,
                 InstrumentDetectorSource,
+                NeXusDetectorSource,
             )
             from ess.livedata.workflows.detector_view import (
                 LogicalViewConfig as ScilineLogicalViewConfig,
@@ -1063,7 +1075,11 @@ class Instrument:
                     spectrum_view=config.spectrum_view,
                 )
                 factory = DetectorViewFactory(
-                    data_source=InstrumentDetectorSource(self),
+                    data_source=(
+                        NeXusDetectorSource(self.nexus_file)
+                        if config.wavelength
+                        else InstrumentDetectorSource(self)
+                    ),
                     view_config=view_config,
                 )
                 handle.attach_factory()(factory.make_workflow)
@@ -1122,25 +1138,24 @@ class Instrument:
         """Attach the shared monitor workflow factory where none was provided.
 
         Monitor specs are parameterized by a :class:`MonitorDataParamsBase`
-        model and otherwise share a single factory. Instruments needing TOF
-        lookup tables for wavelength mode (DREAM, LOKI) attach their own in
-        ``setup_factories``; this fills in the default for the rest. Done in
+        model and otherwise share a single factory. An instrument needing a
+        different one can attach its own in ``setup_factories``; this fills in
+        the default for the rest. Done in
         this backend-only factory phase rather than at spec registration so the
         dashboard, which imports specs but never calls ``load_factories``, holds
         no factory references.
         """
         from ess.livedata.workflows.monitor_workflow_specs import (
             MonitorDataParamsBase,
-            create_monitor_workflow_factory,
+            make_monitor_workflow_factory,
         )
 
+        factory = make_monitor_workflow_factory(self)
         for reg in list(self.workflow_factory.registrations()):
             if reg.factory is None and issubclass(
                 reg.spec.params, MonitorDataParamsBase
             ):
-                self.workflow_factory.attach_factory(reg.spec.get_id())(
-                    create_monitor_workflow_factory
-                )
+                self.workflow_factory.attach_factory(reg.spec.get_id())(factory)
 
     def validate(self) -> None:
         """Check registration-time invariants across all bindings and specs.

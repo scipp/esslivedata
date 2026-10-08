@@ -18,7 +18,6 @@ from ess.livedata.workflows.detector_view_specs import (
     SpectrumViewSpec,
 )
 from ess.livedata.workflows.monitor_workflow_specs import (
-    TOAOnlyMonitorDataParams,
     register_monitor_workflow_specs,
 )
 
@@ -71,8 +70,39 @@ instrument = Instrument(
 
 instrument_registry.register(instrument)
 
+#: Positions along the beam relative to the sample, in metres, as the geometry
+#: file states them. Wavelength mode computes flight paths from these, but they
+#: are unverified and mostly look like placeholders (no NICOS device reports
+#: them yet, see #1356). The view descriptions show them to the user; a test
+#: keeps this in sync with the geometry file.
+GEOMETRY_FILE_Z_POSITIONS = {
+    'source': -30.0,
+    'monitor_1': -14.8,
+    'he3_detector_bank0': 1.0,
+    'he3_detector_bank1': 2.0,
+    'multiblade_detector': 1.0,
+    'ngem_detector': -1.0,
+}
+
+
+def _unverified_positions_warning(source_names: list[str]) -> str:
+    positions = ', '.join(
+        f'{instrument.source_metadata[name].title} at '
+        f'{GEOMETRY_FILE_Z_POSITIONS[name]:+.1f} m'
+        for name in source_names
+    )
+    return (
+        '<b>Warning:</b> wavelength mode uses unverified positions from the'
+        f' geometry file: {positions}, source at'
+        f" {GEOMETRY_FILE_Z_POSITIONS['source']:+.1f} m. Positions are along"
+        ' the beam relative to the sample. Treat wavelengths as approximate.'
+    )
+
+
 register_monitor_workflow_specs(
-    instrument, monitor_names, params=TOAOnlyMonitorDataParams
+    instrument,
+    monitor_names,
+    extra_description=_unverified_positions_warning(monitor_names),
 )
 
 instrument.configure_detector_downsampling(
@@ -94,6 +124,8 @@ instrument.add_logical_view(
     ),
     source_names=['timepix3_detector'],
     transform=name_image_dims,
+    # No wavelength mode: the geometry file holds positions for the full panel
+    # resolution, not for the downsampled grid the events are ingested at.
     roi_support=True,
     device_outputs=DETECTOR_VIEW_DEVICES,
 )
@@ -101,8 +133,12 @@ instrument.add_logical_view(
 instrument.add_logical_view(
     name='multiblade_detector_view',
     title='Multiblade Detector',
-    description='Counts folded into blade, wire, and strip dimensions',
+    description=(
+        'Counts folded into blade, wire, and strip dimensions<br><br>'
+        + _unverified_positions_warning(['multiblade_detector'])
+    ),
     source_names=['multiblade_detector'],
+    wavelength=True,
     transform=get_multiblade_view,
     # ROI geometries are rectangles and polygons on a 2D screen; this view is 3D.
     roi_support=False,
@@ -118,8 +154,12 @@ instrument.add_logical_view(
 instrument.add_logical_view(
     name='he3_detector_view',
     title='He3 Detector',
-    description='Combined view of both detector banks with tube and pixel axes',
+    description=(
+        'Combined view of both detector banks with tube and pixel axes<br><br>'
+        + _unverified_positions_warning(['he3_detector_bank0', 'he3_detector_bank1'])
+    ),
     source_names=['he3_detector_bank0', 'he3_detector_bank1'],
+    wavelength=True,
     transform=get_he3_detector_view,
     roi_support=True,
     spectrum_view=SpectrumViewSpec(
@@ -133,8 +173,12 @@ instrument.add_logical_view(
 instrument.add_logical_view(
     name='ngem_detector_view',
     title='NGEM Detector',
-    description='2D detector counts view',
+    description=(
+        '2D detector counts view<br><br>'
+        + _unverified_positions_warning(['ngem_detector'])
+    ),
     source_names=['ngem_detector'],
+    wavelength=True,
     transform=identity,
     reduction_dim='dim_0',
     roi_support=True,
