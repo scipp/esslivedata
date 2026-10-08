@@ -54,7 +54,7 @@ essdiffraction==26.6.1
     # via -r basetest.in
 esspolarization==25.10.0
     # via essreflectometry
-essreduce==26.9.0
+essreduce==26.10.0
     # via
     #   essdiffraction
     #   esspolarization
