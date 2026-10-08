@@ -72,6 +72,10 @@ def test_can_configure_and_stop_workflow_with_detector(
     service.step()
     # Config ack lands on response_messages, not the data sink
     assert len(sink.messages) == 0
+    if instrument == 'dream':
+        # Powder reduction gates on the detector lookup table.
+        app.publish_lookup_tables()
+        service.step()
 
     app.publish_events(size=2000, time=2)
     service.step()
@@ -122,6 +126,9 @@ def test_dream_powder_reduction_produces_tof_output(
         identifier=workflow_id, job_id=_job_id(source_name)
     )
     app.publish_config_message(workflow_config)
+    service.step()
+    # Powder reduction gates on the detector lookup table.
+    app.publish_lookup_tables()
     service.step()
 
     app.publish_events(size=2000, time=2)

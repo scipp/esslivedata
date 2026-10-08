@@ -122,14 +122,6 @@ def test_workflow_roundtrip(instrument_name: str, workflow_id: WorkflowId):
     3. WorkflowConfig can be created using from_params helper
     4. Backend can instantiate workflow from config (JobFactory)
     """
-    # Skip known workflows that require data files not available in CI
-    if str(workflow_id) == "dream/powder_reduction_with_vanadium/1":
-        pytest.skip(
-            "Workflow requires vanadium data file "
-            "(268227_00024779_Vana_inc_BC_offset_240_deg_wlgth.hdf) "
-            "not available in test environment"
-        )
-
     instrument = instrument_registry[instrument_name]
     workflow_factory = instrument.workflow_factory
 

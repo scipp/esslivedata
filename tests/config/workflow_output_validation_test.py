@@ -131,10 +131,6 @@ def test_workflow_outputs_match_declared_model(
     3. Runs the workflow to produce actual output
     4. Validates that each output matches its declared template
     """
-    # Skip workflows that require external data files
-    if str(workflow_id) == "dream/powder_reduction_with_vanadium/1":
-        pytest.skip("Requires vanadium data file not available in test environment")
-
     instrument = instrument_registry[instrument_name]
     spec = instrument.workflow_factory[workflow_id]
     service = instrument.workflow_factory.get_service(workflow_id)
@@ -156,6 +152,10 @@ def test_workflow_outputs_match_declared_model(
     )
     app.publish_config_message(workflow_config)
     app.service.step()
+    if service == 'data_reduction':
+        # Reductions converting to wavelength gate on the lookup tables.
+        app.publish_lookup_tables()
+        app.service.step()
 
     # Publish fake events to trigger workflow execution; different services
     # consume different message types.

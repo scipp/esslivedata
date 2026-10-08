@@ -94,7 +94,8 @@ class TOAOnlyMonitorDataParams(_MonitorTOAFields, MonitorDataParamsBase):
     """
     Monitor data parameters restricted to TOA mode only.
 
-    Use this for instruments that don't have TOF lookup tables available.
+    Use this where wavelength mode cannot work: it needs each monitor's flight
+    path, taken from the instrument's geometry file.
     """
 
     coordinate_mode: TOAOnlyCoordinateModeSettings = pydantic.Field(
@@ -266,9 +267,8 @@ def register_monitor_workflow_specs(
         If empty, returns None without registering.
     params
         Parameter model class for the workflow, a MonitorDataParamsBase
-        subclass. Defaults to MonitorDataParams. Instruments can provide the
-        restricted TOAOnlyMonitorDataParams or a subclass with additional fields
-        (e.g., for instrument-specific configuration like chopper mode selection).
+        subclass. Defaults to MonitorDataParams. Instruments whose monitors
+        cannot offer wavelength mode provide TOAOnlyMonitorDataParams.
     aux_sources
         Optional auxiliary source specification for position or other dynamic data
         streams. Instruments with movable monitors can provide an AuxSources spec

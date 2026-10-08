@@ -61,7 +61,8 @@ instrument = Instrument(
 
 instrument_registry.register(instrument)
 
-# Register monitor workflow spec (TOA-only, no TOF lookup tables)
+# TOA-only. Wavelength mode needs a flight path, which the geometry file does
+# not give for these monitors (#1346).
 register_monitor_workflow_specs(
     instrument, ['monitor1', 'monitor2'], params=TOAOnlyMonitorDataParams
 )

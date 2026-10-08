@@ -36,6 +36,7 @@ def setup_factories(instrument: Instrument) -> None:
         GeometricViewConfig,
         NeXusDetectorSource,
     )
+    from ess.livedata.workflows.lut_context import detector_lookup_table
     from ess.livedata.workflows.stream_processor_workflow import (
         StreamProcessorWorkflow,
     )
@@ -148,6 +149,9 @@ def setup_factories(instrument: Instrument) -> None:
     ](False)
 
     _reduction_workflow[Filename[SampleRun]] = instrument.nexus_file
+    # The sample run converts with the streamed detector table. With proton-charge
+    # normalization no output converts the cave monitor, so it needs no table.
+    _reduction_workflow.insert(detector_lookup_table)
 
     def _configure_powder_workflow(
         source_name: str,
@@ -158,9 +162,6 @@ def setup_factories(instrument: Instrument) -> None:
         wf = _reduction_workflow.copy()
         wf[NeXusName[NXdetector]] = source_name
         wf[NeXusName[powder.types.CaveMonitor]] = aux_source_names['cave_monitor']
-        wf[dream.InstrumentConfiguration] = getattr(
-            dream.InstrumentConfiguration, params.instrument_configuration.value
-        )
         wmin = params.wavelength_range.get_start()
         wmax = params.wavelength_range.get_stop()
         wf[powder.types.WavelengthMask] = lambda w: (w < wmin) | (w > wmax)
@@ -203,7 +204,6 @@ def setup_factories(instrument: Instrument) -> None:
             accumulators=_powder_accumulators,
         )
 
-    @specs.powder_reduction_with_vanadium_handle.attach_factory()
     def _powder_workflow_with_vanadium_factory(
         source_name: str,
         params: PowderWorkflowParams,
@@ -213,6 +213,11 @@ def setup_factories(instrument: Instrument) -> None:
         wf = _configure_powder_workflow(source_name, params, aux_source_names)
         wf[Filename[VanadiumRun]] = (
             '268227_00024779_Vana_inc_BC_offset_240_deg_wlgth.hdf'
+        )
+        # The vanadium run is a file recorded at fixed chopper settings, so it
+        # converts with the file table for those settings, not the streamed one.
+        wf[dream.InstrumentConfiguration] = (
+            dream.InstrumentConfiguration.high_flux_BC240
         )
         return StreamProcessorWorkflow(
             wf,
@@ -226,4 +231,9 @@ def setup_factories(instrument: Instrument) -> None:
                 'i_of_tof': powder.types.IntensityTof,
             },
             accumulators=_powder_accumulators,
+        )
+
+    if specs.powder_reduction_with_vanadium_handle is not None:
+        specs.powder_reduction_with_vanadium_handle.attach_factory()(
+            _powder_workflow_with_vanadium_factory
         )

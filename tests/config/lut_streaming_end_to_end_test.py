@@ -35,6 +35,12 @@ from ess.livedata.core.timestamp import Timestamp
 from ess.livedata.kafka.message_adapter import FakeKafkaMessage
 from ess.livedata.kafka.routes import RoutingAdapterBuilder
 from ess.livedata.kafka.sink_serializers import make_default_sink_serializer
+from ess.livedata.parameter_models import (
+    DspacingEdges,
+    DspacingUnit,
+    WavelengthRange,
+    WavelengthUnit,
+)
 from ess.livedata.preprocessors.detector_data import get_nexus_geometry_filename
 from ess.livedata.workflows.detector_view_specs import CoordinateModeSettings
 from ess.livedata.workflows.lut_blocks import block_ranges, select_block
@@ -419,6 +425,51 @@ def test_wavelength_detector_view_counts_only_events_with_a_wavelength(
 
     assert not reply.has_error, reply.error_message
     assert 0 < result.data['counts_total'].value < 200
+
+
+_POWDER_AUX = {'cave_monitor': 'monitor_cave'}
+
+
+def test_powder_reduction_gates_on_the_detector_table(dream: Instrument) -> None:
+    """Powder has no time-of-arrival mode to fall back to, so every job waits
+    for the table. Normalization is by proton charge, so no output converts the
+    cave monitor and the monitor table is not requested."""
+    job = _create_job(dream, 'powder_reduction', DETECTOR, aux_source_names=_POWDER_AUX)
+
+    assert job.gating_streams == {DETECTOR_STREAM}
+
+
+def test_powder_reduction_consumes_the_streamed_table(
+    dream: Instrument, ingested: dict[str, sc.DataArray]
+) -> None:
+    params_model = _params_model(dream, 'powder_reduction')
+    # The test phasing transmits wavelengths outside the default range, so open
+    # the wavelength and d-spacing ranges to see every converted event.
+    params = params_model(
+        wavelength_range=WavelengthRange(
+            start=0.01, stop=50.0, unit=WavelengthUnit.ANGSTROM
+        ),
+        dspacing_edges=DspacingEdges(
+            start=0.01, stop=100.0, num_bins=100, unit=DspacingUnit.ANGSTROM
+        ),
+    )
+    job = _create_job(
+        dream, 'powder_reduction', DETECTOR, params, aux_source_names=_POWDER_AUX
+    )
+    data = JobData(
+        start_time=Timestamp.from_ns(0),
+        end_time=Timestamp.from_ns(1),
+        primary_data={DETECTOR: _detector_events_across_one_frame(count=200)},
+        aux_data={
+            'monitor_cave': _events_across_one_frame(),
+            DETECTOR_STREAM: ingested[DETECTOR_STREAM],
+        },
+    )
+    reply, result = job.process(data, finalize=True)
+
+    assert not reply.has_error, reply.error_message
+    assert result.error_message is None, result.error_message
+    assert result.data['focussed_data_dspacing'].sum().value > 0
 
 
 def test_chopper_out_of_phase_empties_the_consumer(dream: Instrument) -> None:

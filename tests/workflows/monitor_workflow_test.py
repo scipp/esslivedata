@@ -634,10 +634,8 @@ class TestDreamMonitorWorkflowFactory:
 
     @pytest.fixture
     def dream_params_wavelength_mode(self):
-        """Create DreamMonitorDataParams with wavelength mode enabled."""
-        from ess.livedata.config.instruments.dream.specs import DreamMonitorDataParams
-
-        return DreamMonitorDataParams(
+        """Create MonitorDataParams with wavelength mode enabled."""
+        return MonitorDataParams(
             coordinate_mode=CoordinateModeSettings(mode='wavelength'),
         )
 

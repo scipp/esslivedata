@@ -4,8 +4,6 @@
 DREAM instrument spec registration.
 """
 
-from enum import StrEnum
-
 import pydantic
 import scipp as sc
 
@@ -23,9 +21,7 @@ from ess.livedata.config.workflow_spec import (
     AuxSources,
     WorkflowOutputsBase,
 )
-from ess.livedata.workflows.detector_view_specs import DetectorViewParams
 from ess.livedata.workflows.monitor_workflow_specs import (
-    MonitorDataParams,
     register_monitor_workflow_specs,
 )
 
@@ -40,59 +36,6 @@ detector_names = [
     'high_resolution_detector',
     'sans_detector',
 ]
-
-
-# Pydantic models for DREAM instrument configuration
-# (defined early for use in Instrument)
-class InstrumentConfigurationEnum(StrEnum):
-    """
-    Chopper configuration options for DREAM.
-
-    Mirrors ess.dream.InstrumentConfiguration enum for UI generation.
-    """
-
-    high_flux_BC215 = 'high_flux_BC215'
-    high_flux_BC240 = 'high_flux_BC240'
-    high_resolution = 'high_resolution'
-
-
-class InstrumentConfiguration(pydantic.BaseModel):
-    """
-    Instrument configuration for DREAM.
-    """
-
-    value: InstrumentConfigurationEnum = pydantic.Field(
-        default=InstrumentConfigurationEnum.high_flux_BC240,
-        description='Chopper settings determining TOA to TOF conversion.',
-    )
-
-    @pydantic.model_validator(mode="after")
-    def check_high_resolution_not_implemented(self):
-        if self.value == InstrumentConfigurationEnum.high_resolution:
-            raise pydantic.ValidationError.from_exception_data(
-                "ValidationError",
-                [
-                    {
-                        "type": "value_error",
-                        "loc": ("value",),
-                        "input": self.value,
-                        "ctx": {
-                            "error": "The 'high_resolution' setting is not available."
-                        },
-                    }
-                ],
-            )
-        return self
-
-
-class DreamMonitorDataParams(MonitorDataParams):
-    """DREAM-specific monitor parameters with chopper settings."""
-
-    instrument_configuration: InstrumentConfiguration = pydantic.Field(
-        title="Instrument Configuration",
-        description="Chopper configuration for TOF mode lookup table selection.",
-        default_factory=InstrumentConfiguration,
-    )
 
 
 # Create instrument
@@ -137,10 +80,7 @@ instrument = Instrument(
 # Register instrument
 instrument_registry.register(instrument)
 
-# Register monitor workflow spec with DREAM-specific params for TOF mode support
-monitor_handle = register_monitor_workflow_specs(
-    instrument, monitor_names, params=DreamMonitorDataParams
-)
+monitor_handle = register_monitor_workflow_specs(instrument, monitor_names)
 
 # Register logical detector views
 instrument.add_logical_view(
@@ -176,19 +116,9 @@ strip_view_handle = instrument.add_logical_view(
 )
 
 
-class DreamDetectorViewParams(DetectorViewParams):
-    """DREAM-specific detector view parameters with chopper settings."""
-
-    instrument_configuration: InstrumentConfiguration = pydantic.Field(
-        title="Instrument Configuration",
-        description="Chopper configuration for TOF mode lookup table selection.",
-        default_factory=InstrumentConfiguration,
-    )
-
-
-# Register detector projection spec with DreamDetectorViewParams for TOF mode.
-# Replaces both the legacy DetectorProjection and the Sciline detector view
-# registrations. Which projection each bank uses is declared once, on the
+# Register detector projection spec. Replaces both the legacy
+# DetectorProjection and the Sciline detector view registrations. Which
+# projection each bank uses is declared once, on the
 # ``GeometricViewConfig`` entries in ``factories.py``.
 projection_handle = instrument.register_detector_view(
     name='detector_projection',
@@ -198,7 +128,6 @@ projection_handle = instrument.register_detector_view(
         'Uses the appropriate projection for each detector.'
     ),
     source_names=detector_names,
-    params=DreamDetectorViewParams,
     # The projection carries the NICOS devices, not the logical views.
     device_outputs=DETECTOR_VIEW_DEVICES,
 )
@@ -242,11 +171,6 @@ class PowderWorkflowParams(pydantic.BaseModel):
         default=parameter_models.WavelengthRange(
             start=1.1, stop=4.5, unit=parameter_models.WavelengthUnit.ANGSTROM
         ),
-    )
-    instrument_configuration: InstrumentConfiguration = pydantic.Field(
-        title='Instrument configuration',
-        description='Chopper settings determining TOA to TOF conversion.',
-        default=InstrumentConfiguration(),
     )
 
 
@@ -340,13 +264,23 @@ powder_reduction_handle = instrument.register_spec(
     params=PowderWorkflowParams,
 )
 
-powder_reduction_with_vanadium_handle = instrument.register_spec(
-    name='powder_reduction_with_vanadium',
-    version=1,
-    title='Powder reduction (with vanadium)',
-    description='Powder reduction with vanadium normalization.',
-    source_names=_powder_detector_names,
-    aux_sources=dream_aux_sources,
-    outputs=PowderReductionWithVanadiumOutputs,
-    params=PowderWorkflowParams,
+#: The vanadium-normalized reduction is not offered for now. It reads a
+#: hard-coded vanadium file, and it is unresolved whether a vanadium run has to
+#: be measured at the sample's chopper settings, which decides the lookup table
+#: that converts it. Spec and factory are kept so it can be re-enabled.
+_VANADIUM_REDUCTION_ENABLED = False
+
+powder_reduction_with_vanadium_handle = (
+    instrument.register_spec(
+        name='powder_reduction_with_vanadium',
+        version=1,
+        title='Powder reduction (with vanadium)',
+        description='Powder reduction with vanadium normalization.',
+        source_names=_powder_detector_names,
+        aux_sources=dream_aux_sources,
+        outputs=PowderReductionWithVanadiumOutputs,
+        params=PowderWorkflowParams,
+    )
+    if _VANADIUM_REDUCTION_ENABLED
+    else None
 )
