@@ -139,9 +139,6 @@ class DetectorViewFactory:
         bins = params.get_active_edges()
         histogram_slice = params.get_active_range()
 
-        # Get pixel weighting setting from params
-        use_pixel_weighting = params.pixel_weighting.enabled
-
         # Create base workflow with appropriate mode
         workflow = create_base_workflow(
             bins=bins,
@@ -163,8 +160,7 @@ class DetectorViewFactory:
         # Configure detector data source (EmptyDetector)
         self._data_source.configure_workflow(workflow, source_name)
 
-        # Set pixel weighting configuration
-        workflow[UsePixelWeighting] = use_pixel_weighting
+        workflow[UsePixelWeighting] = params.pixel_weighting.enabled
 
         # Add projection based on config type
         config = self._get_config(source_name)

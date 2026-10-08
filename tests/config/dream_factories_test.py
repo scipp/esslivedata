@@ -9,6 +9,7 @@ import pytest
 import scipp as sc
 
 from ess.livedata.config.instruments.dream import specs
+from ess.livedata.config.models import PixelWeighting
 from ess.livedata.config.workflow_spec import JobId, WorkflowConfig
 from ess.livedata.core.timestamp import Timestamp
 from ess.livedata.workflows.workflow_factory import SpecHandle
@@ -63,7 +64,10 @@ def test_logical_view_counts_every_event(
             identifier=handle.workflow_id,
             job_id=JobId(source_name=source_name, job_number=uuid.uuid4()),
         ),
-        params=factory[handle.workflow_id].params(),
+        # Unweighted, so that the image holds raw counts and sums to the events.
+        params=factory[handle.workflow_id].params(
+            pixel_weighting=PixelWeighting(enabled=False)
+        ),
     )
     workflow.accumulate(
         {source_name: _events(source_name, size=1000)},

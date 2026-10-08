@@ -62,7 +62,6 @@ from .types import (
     LogicalTransform,
     ProjectionType,
     ReductionDim,
-    UsePixelWeighting,
 )
 
 
@@ -77,7 +76,8 @@ def create_base_workflow(
     Create the base detector view workflow.
 
     This creates the core workflow with all providers. The Projector param
-    must be set separately via add_geometric_projection or add_logical_projection.
+    must be set separately via add_geometric_projection or add_logical_projection,
+    and UsePixelWeighting by the caller.
 
     Parameters
     ----------
@@ -116,7 +116,6 @@ def create_base_workflow(
 
     # Add pixel weighting provider
     workflow.insert(compute_pixel_weights)
-    workflow[UsePixelWeighting] = False  # Default: disabled
 
     # Add histogram and downstream providers (generic providers for both modes).
     # detector_geometry stamps the move-detection coord; file-less sources override

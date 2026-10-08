@@ -92,11 +92,20 @@ class DetectorViewParamsBase(pydantic.BaseModel, abc.ABC):
     )
     pixel_weighting: models.PixelWeighting = pydantic.Field(
         title="Pixel Weighting",
-        description="Whether to apply pixel weighting based on the number of pixels "
-        "contributing to each screen pixel.",
-        default=models.PixelWeighting(
-            enabled=False, method=models.WeightingMethod.PIXEL_NUMBER
+        description=(
+            "Divide each image pixel by the number of detector pixels that map to "
+            "it, so that the image shows counts per detector pixel. In geometric "
+            "projections (xy-plane, cylinder) this number varies across the image: "
+            "without weighting, image pixels with more detector pixels look "
+            "brighter, so the image shows pixel density as well as count rate. "
+            "With weighting, image pixels that no detector pixel maps to, such as "
+            "gaps between detector modules, have no value (NaN) and show as blank "
+            "instead of as zero counts. In logical views every image pixel has the "
+            "same number of detector pixels, so weighting has no effect, or divides "
+            "the whole image by a constant if the view sums over detector "
+            "dimensions."
         ),
+        default_factory=models.PixelWeighting,
     )
 
     @abc.abstractmethod
@@ -305,7 +314,8 @@ _BASE_DETECTOR_VIEWS: tuple[OutputView, ...] = (
         fields=('cumulative', 'current'),
         description=(
             'Detector image. With "since run start" shows accumulated counts; '
-            'with "latest update" or a window, shows recent counts.'
+            'with "latest update" or a window, shows recent counts. With pixel '
+            'weighting, counts are per detector pixel.'
         ),
         params=(
             'coordinate_mode',

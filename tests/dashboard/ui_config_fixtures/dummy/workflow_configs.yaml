@@ -35,7 +35,7 @@ dummy/panel_0_layers/1:
         coordinate_mode:
           mode: toa
         pixel_weighting:
-          enabled: false
+          enabled: true
           method: pixel_number
         toa_edges:
           num_bins: 100
@@ -69,7 +69,7 @@ dummy/panel_0_xy/1:
         coordinate_mode:
           mode: toa
         pixel_weighting:
-          enabled: false
+          enabled: true
           method: pixel_number
         toa_edges:
           num_bins: 100

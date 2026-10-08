@@ -45,6 +45,10 @@ def _get_workflow_from_registry(
     raise ValueError(f"Namespace {namespace} not found in specs")
 
 
+# Pixel weighting off, so that image sums equal the number of published events.
+_UNWEIGHTED = {'pixel_weighting': {'enabled': False}}
+
+
 def make_detector_app(instrument: str) -> LivedataApp:
     builder = make_detector_service_builder(instrument=instrument)
     return LivedataApp.from_service_builder(builder)
@@ -76,7 +80,9 @@ def test_can_configure_and_stop_detector_workflow(
 
     source_name = detector_source_name[instrument]
     workflow_config = workflow_spec.WorkflowConfig(
-        identifier=workflow_id, job_id=_job_id(source_name)
+        identifier=workflow_id,
+        job_id=_job_id(source_name),
+        params=_UNWEIGHTED,
     )
     # Trigger workflow start
     app.publish_config_message(workflow_config)
@@ -150,7 +156,9 @@ def test_loki_cumulative_resets_when_detector_carriage_moves() -> None:
 
     source_name = 'loki_detector_0'
     workflow_config = workflow_spec.WorkflowConfig(
-        identifier=workflow_id, job_id=_job_id(source_name)
+        identifier=workflow_id,
+        job_id=_job_id(source_name),
+        params=_UNWEIGHTED,
     )
     app.publish_config_message(workflow_config)
     service.step()
