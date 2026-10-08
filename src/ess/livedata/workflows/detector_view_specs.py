@@ -95,15 +95,15 @@ class DetectorViewParamsBase(pydantic.BaseModel, abc.ABC):
         description=(
             "Divide each image pixel by the number of detector pixels that map to "
             "it, so that the image shows counts per detector pixel. In geometric "
-            "projections (xy-plane, cylinder) this number varies across the image: "
-            "without weighting, image pixels with more detector pixels look "
-            "brighter, so the image shows pixel density as well as count rate. "
-            "With weighting, image pixels that no detector pixel maps to, such as "
-            "gaps between detector modules, have no value (NaN) and show as blank "
-            "instead of as zero counts. In logical views every image pixel has the "
-            "same number of detector pixels, so weighting has no effect, or divides "
-            "the whole image by a constant if the view sums over detector "
-            "dimensions."
+            "projections (xy-plane, cylinder) this number varies across the image "
+            "and is averaged over the position noise, so it can be fractional at "
+            "module edges. Without weighting, the image shows pixel density as "
+            "well as count rate. Image pixels that no detector pixel maps to, such "
+            "as gaps between detector modules, have no value (NaN). In logical "
+            "views every image pixel has the same number of detector pixels, so "
+            "weighting has no effect or divides the whole image by a constant. ROI "
+            "outputs stay summed counts. To show them per detector pixel, use "
+            "'Per Detector Pixel' in the plot settings."
         ),
         default_factory=models.PixelWeighting,
     )

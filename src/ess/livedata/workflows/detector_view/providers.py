@@ -278,7 +278,7 @@ def detector_image(
     histogram_slice:
         Optional (low, high) range for slicing. If None, sum over full range.
     weights:
-        Number of detector pixels per screen pixel.
+        Number of detector pixels per image pixel.
     use_weighting:
         Whether to divide the image by ``weights``, giving counts per detector
         pixel. Screen pixels without detector pixels then become 0/0 = NaN.

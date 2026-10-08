@@ -28,7 +28,7 @@ class WeightingMethod(StrEnum):
 
 
 class PixelWeighting(BaseModel):
-    """Division of a detector image by a weight per image pixel."""
+    """Divides a detector image by a weight per image pixel."""
 
     enabled: bool = Field(
         default=True,
