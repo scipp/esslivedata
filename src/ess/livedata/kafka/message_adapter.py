@@ -1,6 +1,7 @@
 # SPDX-License-Identifier: BSD-3-Clause
 # Copyright (c) 2025 Scipp contributors (https://github.com/scipp)
-from collections.abc import Sequence
+import time
+from collections.abc import Callable, Sequence
 from dataclasses import replace
 from typing import Any, Protocol
 
@@ -21,6 +22,7 @@ from streaming_data_types import (
 from streaming_data_types.fbschemas.eventdata_ev44 import Event44Message
 
 from ess.livedata.core.job import JobStatus, ServiceStatus
+from ess.livedata.core.log_throttle import LogThrottle
 from ess.livedata.core.timestamp import Timestamp
 
 from ..config.acknowledgement import CommandAcknowledgement
@@ -113,7 +115,8 @@ class IgnoredMessageError(Exception):
 
     Used for schemas that are known to share a topic with data we consume but
     that we deliberately ignore (e.g. EPICS ``al00`` alarm and ``ep01``
-    connection-status messages on forwarder log topics). Distinct from
+    connection-status messages on forwarder log topics, or ``tdct``
+    top-dead-center timestamps on chopper topics). Distinct from
     ``WrongSchemaException``, which signals a genuinely unexpected schema worth
     a warning.
     """
@@ -588,6 +591,7 @@ class AdaptingMessageSource[T, U](MessageSource[U]):
         adapter: MessageAdapter[T, U],
         raise_on_error: bool = False,
         stream_counter: StreamCounter | None = None,
+        clock: Callable[[], float] = time.monotonic,
     ):
         """
         Parameters
@@ -601,11 +605,17 @@ class AdaptingMessageSource[T, U](MessageSource[U]):
             they will be logged and the message will be skipped.
         stream_counter
             Optional counter for recording per-stream message counts.
+        clock
+            Monotonic seconds, for rate limiting adaptation-failure logs.
         """
         self._source = source
         self._adapter = adapter
         self._raise_on_error = raise_on_error
         self._stream_counter = stream_counter
+        self._clock = clock
+        # Keyed by failure kind and topic, not by schema or error text: the set
+        # of subscribed topics bounds the dict, while those come from the payload.
+        self._log_throttles: dict[tuple[str, str | None], LogThrottle] = {}
 
     def get_messages(self) -> Sequence[U]:
         raw_messages = self._source.get_messages()
@@ -614,27 +624,46 @@ class AdaptingMessageSource[T, U](MessageSource[U]):
             try:
                 adapted.append(self._adapter.adapt(msg))
             except IgnoredMessageError:
-                # Expected-but-unused schema (e.g. al00/ep01); drop silently.
+                # Expected-but-unused schema (e.g. al00/ep01/tdct); drop silently.
                 continue
             except UnmappedStreamError:
                 # Already recorded in the stream counter by get_stream_id.
                 if self._raise_on_error:
                     raise
             except streaming_data_types.exceptions.WrongSchemaException as e:
-                logger.warning(
-                    'Skipping message with unknown schema',
-                    topic=msg.topic() if hasattr(msg, 'topic') else None,
-                    detail=str(e),
-                )
+                topic = msg.topic() if hasattr(msg, 'topic') else None
+                if (suppressed := self._take_log('schema', topic)) is not None:
+                    logger.warning(
+                        'Skipping message with unknown schema',
+                        topic=topic,
+                        detail=str(e),
+                        suppressed_reports=suppressed,
+                    )
                 self._record_error(msg)
                 if self._raise_on_error:
                     raise
             except Exception as e:
-                logger.exception('Error adapting message %s: %s', msg, e)
+                topic = msg.topic() if hasattr(msg, 'topic') else None
+                if (suppressed := self._take_log('error', topic)) is not None:
+                    logger.exception(
+                        'Error adapting message',
+                        topic=topic,
+                        error=str(e),
+                        suppressed_reports=suppressed,
+                    )
                 self._record_error(msg)
                 if self._raise_on_error:
                     raise
         return adapted
+
+    def _take_log(self, kind: str, topic: str | None) -> int | None:
+        """Rate-limit a failure log per kind and topic.
+
+        A failing stream fails at its full message rate, so an unthrottled log
+        line per message floods the journal.
+        """
+        throttle = self._log_throttles.setdefault((kind, topic), LogThrottle())
+        return throttle.take(self._clock())
 
     def _record_error(self, msg: T) -> None:
         """Record an adaptation error in the stream counter if available."""

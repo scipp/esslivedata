@@ -98,8 +98,8 @@ class TestWithRoutesFromMapping:
         )
         assert "log" in adapter._routes
 
-    @pytest.mark.parametrize('schema', ['al00', 'ep01'])
-    def test_log_route_drops_status_schemas(
+    @pytest.mark.parametrize('schema', ['al00', 'ep01', 'tdct'])
+    def test_log_route_drops_unused_schemas(
         self, infra_kwargs: dict, schema: str
     ) -> None:
         mapping = StreamMapping(

@@ -104,8 +104,9 @@ class RoutingAdapterBuilder:
         """Adds the logdata route.
 
         Forwarder log topics carry f144 numeric data interleaved with al00
-        (alarm) and ep01 (connection-status) messages for the same PVs. We
-        consume only f144 and silently drop the status schemas.
+        (alarm) and ep01 (connection-status) messages for the same PVs. Chopper
+        topics additionally carry tdct (top-dead-center timestamps). We consume
+        only f144 and silently drop the others.
         """
         adapter = RouteBySchemaAdapter(
             routes={
@@ -118,6 +119,7 @@ class RoutingAdapterBuilder:
                 ),
                 'al00': NullAdapter(),
                 'ep01': NullAdapter(),
+                'tdct': NullAdapter(),
             }
         )
         for topic in self._stream_mapping.log_topics:
