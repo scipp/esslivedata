@@ -23,6 +23,7 @@ import scipp as sc
 
 from .. import parameter_models
 from ..config import models
+from ..config.roi_names import DETECTOR_PIXELS_COORD
 from ..config.workflow_spec import (
     CumulativeOutput,
     OutputView,
@@ -270,7 +271,7 @@ def _make_roi_coords() -> dict[str, sc.Variable]:
     """Create the empty coords shared by all per-ROI outputs."""
     return {
         'roi': sc.array(dims=['roi'], values=[], unit=None),
-        'detector_pixels': sc.array(dims=['roi'], values=[], dtype='float64'),
+        DETECTOR_PIXELS_COORD: sc.array(dims=['roi'], values=[], dtype='float64'),
     }
 
 

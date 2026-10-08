@@ -37,7 +37,7 @@ import structlog
 
 from ..config.acknowledgement import AcknowledgementResponse, CommandAcknowledgement
 from ..config.instruments import get_config
-from ..config.roi_names import get_roi_mapper, roi_stream_name
+from ..config.roi_names import DETECTOR_PIXELS_COORD, get_roi_mapper, roi_stream_name
 from ..config.workflow_spec import (
     JobId,
     ResultKey,
@@ -215,10 +215,10 @@ def expand_per_roi(
     ]
     values = np.stack(rows) if rows else np.zeros((0, *trailing))
     coords = {'roi': sc.array(dims=['roi'], values=list(variants), dtype='int32')}
-    if 'detector_pixels' in template.coords:
+    if DETECTOR_PIXELS_COORD in template.coords:
         # Fixed per ROI geometry, like the real count, so it stays constant
         # across updates while the ROI is unchanged.
-        coords['detector_pixels'] = sc.array(
+        coords[DETECTOR_PIXELS_COORD] = sc.array(
             dims=['roi'], values=[10.0 + 90.0 * v for v in variants.values()]
         )
     if (time := template.coords.get('time')) is not None and time.ndim == 0:

@@ -3,8 +3,8 @@
 """
 ROI stream naming and configuration.
 
-This module provides centralized naming conventions for ROI-related streams,
-ensuring consistency between backend preprocessors and frontend components.
+This module provides centralized naming conventions for ROI-related streams
+and outputs, ensuring consistency between backend preprocessors and frontend components.
 """
 
 from dataclasses import dataclass
@@ -14,6 +14,13 @@ from .models import PolygonROI, RectangleROI
 from .workflow_spec import WorkflowId
 
 ROIGeometryType = Literal["rectangle", "polygon"]
+
+DETECTOR_PIXELS_COORD = "detector_pixels"
+"""Coord on per-ROI detector-view outputs: number of detector pixels in each ROI.
+
+Dims ``(roi,)``, float64. Dividing an ROI output by it gives counts per detector
+pixel.
+"""
 
 
 def roi_stream_name(

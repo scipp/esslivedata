@@ -11,9 +11,11 @@ structure to allow implementation flexibility.
 from __future__ import annotations
 
 import numpy as np
+import pytest
 import scipp as sc
 
 from ess.livedata.config.models import Interval, PolygonROI, RectangleROI
+from ess.livedata.workflows.detector_view.projectors import GeometricProjector
 from ess.livedata.workflows.detector_view.roi import (
     precompute_roi_polygon_masks,
     precompute_roi_rectangle_bounds,
@@ -23,6 +25,7 @@ from ess.livedata.workflows.detector_view.roi import (
 )
 from ess.livedata.workflows.detector_view.types import (
     PixelWeights,
+    ROIDetectorPixels,
     ROIPolygonMasks,
     ROIPolygonRequest,
     ROIRectangleBounds,
@@ -74,23 +77,30 @@ def extract_roi_spectra(
 
     bounds = precompute_roi_rectangle_bounds(screen_metadata, rect_req)
     masks = precompute_roi_polygon_masks(screen_metadata, poly_req)
-    weights = make_weights(histogram.sizes['y'], histogram.sizes['x'])
-    pixels = roi_detector_pixels(histogram, weights, bounds, masks)
+    pixels = roi_detector_pixels(make_weights(histogram), bounds, masks)
     return roi_spectra(histogram, pixels, bounds, masks)
 
 
-def make_weights(
-    y_size: int = 10, x_size: int = 10, value: float = 1.0
-) -> PixelWeights:
-    """Create pixel weights with the same number of detector pixels everywhere."""
+def make_weights(histogram: sc.DataArray, value: float = 1.0) -> PixelWeights:
+    """Create pixel weights with the same number of detector pixels everywhere.
+
+    The weights cover the image of ``histogram`` and carry its image coords, as
+    the weights of a geometric projection carry the histogram's bin edges.
+    """
+    image_dims = histogram.dims[:2]
     return PixelWeights(
         sc.DataArray(
             sc.full(
-                sizes={'y': y_size, 'x': x_size},
+                sizes={dim: histogram.sizes[dim] for dim in image_dims},
                 value=value,
                 unit='dimensionless',
                 dtype='float32',
-            )
+            ),
+            coords={
+                dim: coord
+                for dim, coord in histogram.coords.items()
+                if dim in image_dims
+            },
         )
     )
 
@@ -476,9 +486,9 @@ class TestROICounts:
         metadata = make_screen_metadata_from_edges()
         histogram = make_uniform_histogram(value=2)
         bounds, masks = self.make_bounds_and_masks(metadata)
-        weights = make_weights(value=2.0)  # two detector pixels per screen pixel
+        weights = make_weights(histogram, value=2.0)  # two per image pixel
 
-        pixels = roi_detector_pixels(histogram, weights, bounds, masks)
+        pixels = roi_detector_pixels(weights, bounds, masks)
         spectra = roi_spectra(histogram, pixels, bounds, masks)
         counts = roi_counts_in_range(spectra, None)
 
@@ -495,15 +505,15 @@ class TestROICounts:
         bounds, masks = self.make_bounds_and_masks(metadata)
         # Column x=3 has no detector pixels, column x=4 has two. Both ROIs cover
         # column 3; the rectangle also covers column 4.
-        weights = make_weights()
-        weights.values[:, 3] = 0.0
-        weights.values[:, 4] = 2.0
         # Uniform rate of 5 counts per detector pixel and tof bin
         histogram = make_uniform_histogram(value=5)
+        weights = make_weights(histogram)
+        weights.values[:, 3] = 0.0
+        weights.values[:, 4] = 2.0
         histogram.values *= weights.values.astype(int)[:, :, np.newaxis]
         weighted_image = histogram.sum('tof') / weights
 
-        pixels = roi_detector_pixels(histogram, weights, bounds, masks)
+        pixels = roi_detector_pixels(weights, bounds, masks)
         counts = roi_counts_in_range(
             roi_spectra(histogram, pixels, bounds, masks), None
         )
@@ -518,7 +528,7 @@ class TestROICounts:
         metadata = make_screen_metadata_from_edges()
         histogram = make_uniform_histogram()
         bounds, masks = self.make_bounds_and_masks(metadata)
-        pixels = roi_detector_pixels(histogram, make_weights(), bounds, masks)
+        pixels = roi_detector_pixels(make_weights(histogram), bounds, masks)
         spectra = roi_spectra(histogram, pixels, bounds, masks)
 
         # tof bins are 10000 ns wide; keep the first two
@@ -532,17 +542,18 @@ class TestROICounts:
         histogram = make_uniform_histogram()
         bounds, masks = ROIRectangleBounds({}), ROIPolygonMasks({})
 
-        pixels = roi_detector_pixels(histogram, make_weights(), bounds, masks)
+        pixels = roi_detector_pixels(make_weights(histogram), bounds, masks)
         counts = roi_counts_in_range(
             roi_spectra(histogram, pixels, bounds, masks), None
         )
 
         assert pixels.sizes == {'roi': 0}
+        assert pixels.dtype == 'float64'
         assert counts.sizes == {'roi': 0}
         assert counts.coords['detector_pixels'].sizes == {'roi': 0}
         assert counts.coords['detector_pixels'].unit == 'dimensionless'
 
-    def test_roi_outside_the_screen_has_no_detector_pixels(self):
+    def test_roi_outside_the_image_has_no_detector_pixels(self):
         metadata = make_screen_metadata_from_edges()
         histogram = make_uniform_histogram()
         outside = RectangleROI(
@@ -555,6 +566,94 @@ class TestROICounts:
         )
         masks = ROIPolygonMasks({})
 
-        pixels = roi_detector_pixels(histogram, make_weights(), bounds, masks)
+        pixels = roi_detector_pixels(make_weights(histogram), bounds, masks)
 
         assert pixels.values.tolist() == [0]
+
+    def test_spectra_reject_detector_pixels_for_other_rois(self):
+        metadata = make_screen_metadata_from_edges()
+        histogram = make_uniform_histogram()
+        bounds, masks = self.make_bounds_and_masks(metadata)
+        pixels = roi_detector_pixels(make_weights(histogram), bounds, masks)
+        other_rois = ROIDetectorPixels(
+            pixels.assign_coords(roi=pixels.coords['roi'] + 1)
+        )
+
+        with pytest.raises(ValueError, match='disagree on the ROIs'):
+            roi_spectra(histogram, other_rois, bounds, masks)
+
+
+class TestDetectorPixelsOnGeometricProjection:
+    """Detector pixel count per ROI from the weights of a geometric projector.
+
+    The image is one row of six 1 m wide image pixels. Two position-noise
+    replicas place the detector pixels as follows (x in m, y = 0.5 m):
+
+    ============  =========  =========  ===============================
+    pixel         replica 0  replica 1  image pixel (replica 0, 1)
+    ============  =========  =========  ===============================
+    0             0.5        0.5        0, 0
+    1             1.5        1.5        1, 1
+    2             0.9        1.1        0, 1
+    3             4.5        4.5        4, 4
+    4             5.5        5.5        5, 5
+    5             10.0       10.0       off the image
+    6             5.9        6.1        5, off the image
+    ============  =========  =========  ===============================
+
+    Image pixels 2 and 3 form a gap without detector pixels.
+    """
+
+    @pytest.fixture
+    def projector(self) -> GeometricProjector:
+        x = sc.array(
+            dims=['replica', 'detector_number'],
+            values=[
+                [0.5, 1.5, 0.9, 4.5, 5.5, 10.0, 5.9],
+                [0.5, 1.5, 1.1, 4.5, 5.5, 10.0, 6.1],
+            ],
+            unit='m',
+        )
+        coords = sc.DataGroup(y=sc.full_like(x, 0.5), x=x)
+        edges = sc.DataGroup(
+            y=sc.linspace('y', 0.0, 1.0, 2, unit='m'),
+            x=sc.linspace('x', 0.0, 6.0, 7, unit='m'),
+        )
+        return GeometricProjector(coords, edges)
+
+    @staticmethod
+    def count(projector: GeometricProjector, *x_ranges: tuple[float, float]):
+        rectangles = {
+            idx: RectangleROI(
+                x=Interval(min=low, max=high, unit='m'),
+                y=Interval(min=0.0, max=1.0, unit='m'),
+            )
+            for idx, (low, high) in enumerate(x_ranges)
+        }
+        bounds = precompute_roi_rectangle_bounds(
+            projector.screen_metadata,
+            ROIRectangleRequest(RectangleROI.to_concatenated_data_array(rectangles)),
+        )
+        weights = PixelWeights(projector.compute_weights())
+        return roi_detector_pixels(weights, bounds, ROIPolygonMasks({}))
+
+    def test_full_image_counts_detector_pixels_on_the_image(self, projector):
+        pixels = self.count(projector, (0.0, 6.0))
+
+        # 6 pixels of replica 0 and 5 of replica 1 land on the image
+        assert pixels.values.tolist() == [5.5]
+        assert pixels.dtype == 'float64'
+        assert pixels.unit == 'dimensionless'
+
+    def test_small_roi_can_count_a_fraction_of_a_detector_pixel(self, projector):
+        pixels = self.count(projector, (0.0, 1.0), (5.0, 6.0))
+
+        # Pixel 2 is in image pixel 0 in one replica, pixel 6 in image pixel 5
+        assert pixels.values.tolist() == [1.5, 1.5]
+
+    def test_image_pixels_in_a_gap_count_nothing(self, projector):
+        pixels = self.count(projector, (2.0, 4.0), (1.0, 5.0), (1.0, 2.0), (4.0, 5.0))
+
+        gap, across_gap, left_of_gap, right_of_gap = pixels.values.tolist()
+        assert gap == 0.0
+        assert across_gap == left_of_gap + right_of_gap == 2.5
