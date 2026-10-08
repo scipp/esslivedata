@@ -267,11 +267,24 @@ monitors = [
 streams = name_streams(filter_authorized_streams(PARSED_STREAMS))
 
 # Create instrument
+#: The 2026-10-06 geometry artifact carries two hand repairs of the run file:
+#:
+#: - The ``NXsource`` sits at the moderator position but is labelled
+#:   ``name='accelerator'``, ``probe='proton'``, which the lookup-table workflow
+#:   refuses as the beamline source. The artifact sets ``probe='neutron'``.
+#: - ``normalization_monitor`` and ``elastic_monitor`` point their
+#:   ``depends_on`` at their own, absent, ``transformations``; the writer put
+#:   them on the ``<name>_da00`` / ``<name>_backup`` siblings. The artifact
+#:   copies them onto the monitors.
 instrument = Instrument(
     name='bifrost',
     detector_names=['unified_detector'],
     monitors=monitors,
     choppers=BIFROST_CHOPPERS,
+    # The indirect-geometry reduction converts at the sample, so it looks up the
+    # detector table at the primary flight path L1 (moderator to sample, 162.0 m
+    # in the geometry artifact), not at the full Ltotal to the pixels.
+    declared_ltotal={'unified_detector': sc.scalar(162.0, unit='m')},
     streams=streams,
 )
 

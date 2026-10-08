@@ -149,8 +149,10 @@ class Instrument:
     #: Flight path at which a component's consumers look up the wavelength
     #: table, declared instead of derived from the geometry artifact. Needed
     #: where the derivation refuses a component whose flight path is known
-    #: anyway, e.g., a detector on an arm rotating about the sample. Overrides
-    #: the derived range for that component.
+    #: anyway, e.g., a detector on an arm rotating about the sample, or where
+    #: the consumer looks up at a different distance, e.g., an indirect-geometry
+    #: spectrometer at the primary flight path ``L1``. Overrides the derived
+    #: range for that component.
     declared_ltotal: dict[str, sc.Variable] = field(default_factory=dict)
     #: Components the lookup-table workflow can actually place, filled in when
     #: its factory is attached. Empty until then, and for chopperless

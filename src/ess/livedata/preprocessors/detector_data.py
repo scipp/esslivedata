@@ -101,6 +101,7 @@ _registry = {
     'geometry-loki-2026-05-08.nxs': 'md5:4edc75ba015e7916dfc23e8d78f9cca6',
     'geometry-bifrost-2025-01-01.nxs': 'md5:ae3caa99dd56de9495b9321eea4e4fef',
     'geometry-bifrost-2026-06-08.nxs': 'md5:31d0aa10243e29a14aac0655454ff205',
+    'geometry-bifrost-2026-10-06.nxs': 'md5:0966114edd40077901ec3f910576386f',
     'geometry-odin-2025-09-25.nxs': 'md5:5615a6203813b4ab84a191f7478ceb3c',
     'geometry-odin-2026-09-04.nxs': 'md5:741f310859d93dc38e1839517aebf639',
     'geometry-tbl-2025-12-03.nxs': 'md5:040a70659155eb386245755455ee3e62',
