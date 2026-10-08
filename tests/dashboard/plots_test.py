@@ -3781,7 +3781,9 @@ class TestDetectorPixelNormalization:
 
         plotter.compute({PRIMARY: {data_key: totals}})
 
-        np.testing.assert_allclose(single_layer(plotter).dimension_values(1), [1, 2])
+        line = single_layer(plotter)
+        np.testing.assert_allclose(line.dimension_values(1), [1, 2])
+        assert line.vdims[0].unit == 'counts per detector pixel'
 
     def test_combines_with_rate_to_counts_per_second_per_pixel(self, data_key):
         plotter = plots.Overlay1DPlotter.from_params(_per_pixel_params(rate=True))
@@ -3793,7 +3795,7 @@ class TestDetectorPixelNormalization:
         curves = _curves_by_label(plotter)
         np.testing.assert_allclose(curves['roi=0'].dimension_values(1), [0.5, 1.0])
         np.testing.assert_allclose(curves['roi=1'].dimension_values(1), [1.0, 2.0])
-        assert curves['roi=0'].vdims[0].unit == 'counts/s'
+        assert curves['roi=0'].vdims[0].unit == 'counts/s per detector pixel'
 
     def test_roi_without_detector_pixels_shows_no_value(self, data_key):
         plotter = plots.Overlay1DPlotter.from_params(_per_pixel_params())
@@ -3815,6 +3817,7 @@ class TestDetectorPixelNormalization:
 
         curves = _curves_by_label(plotter)
         np.testing.assert_allclose(curves['roi=1'].dimension_values(1), [3.0, 6.0])
+        assert curves['roi=1'].vdims[0].unit == 'counts'
 
     def test_missing_coord_shows_error_instead_of_unnormalized_data(self, data_key):
         data = _roi_spectra([[4.0, 8.0], [3.0, 6.0]], [4.0, 1.5])

@@ -29,11 +29,15 @@ def coord_to_dimension(var: sc.Variable, *, dim_label: DimLabel = None) -> hv.Di
 
 
 def create_value_dimension(
-    data: sc.DataArray, *, value_label: str = ''
+    data: sc.DataArray, *, value_label: str = '', unit_suffix: str = ''
 ) -> hv.Dimension:
-    """Create a Holoviews Dimension for the values."""
+    """Create a Holoviews Dimension for the values.
+
+    ``unit_suffix`` is appended to the unit label, for normalizations that scipp
+    cannot express as a unit (e.g. per detector pixel).
+    """
     label = value_label or data.name or 'values'
-    unit = str(data.unit) if data.unit is not None else None
+    unit = f'{data.unit}{unit_suffix}' if data.unit is not None else None
     return hv.Dimension('values', label=label, unit=unit)
 
 
@@ -66,6 +70,9 @@ class HvConverter1d:
         or ``'values'``.
     dim_label:
         Optional callback resolving the coord/dim name to a display label.
+    unit_suffix:
+        Appended to the unit label of the values, see
+        :func:`create_value_dimension`.
     """
 
     def __init__(
@@ -74,13 +81,18 @@ class HvConverter1d:
         *,
         value_label: str = '',
         dim_label: DimLabel = None,
+        unit_suffix: str = '',
     ) -> None:
         self._data = _ensure_coords(data)
         dim = self._data.dim
         self._has_edges = dim in self._data.coords and self._data.coords.is_edges(dim)
         coord = self._data.coords[dim]
         self._kdims = [coord_to_dimension(coord, dim_label=dim_label)]
-        self._vdims = [create_value_dimension(self._data, value_label=value_label)]
+        self._vdims = [
+            create_value_dimension(
+                self._data, value_label=value_label, unit_suffix=unit_suffix
+            )
+        ]
 
     @property
     def has_edges(self) -> bool:

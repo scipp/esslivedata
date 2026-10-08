@@ -722,6 +722,11 @@ class Plotter:
             start_time/end_time coordinates before plotting.
         """
         self._normalize_per_detector_pixel = normalize_per_detector_pixel
+        # scipp has no unit for a detector pixel, so the normalization shows only
+        # in the unit label of the values.
+        self._unit_suffix = (
+            ' per detector pixel' if normalize_per_detector_pixel else ''
+        )
         self._normalize_to_rate = normalize_to_rate
         self._legend_position = legend_position
         self._cached_state: Any | None = None
@@ -1624,7 +1629,10 @@ class LinePlotter(Plotter):
         if targets:
             self._pending_range_targets[data_key] = targets
         converter = HvConverter1d(
-            da, value_label=output_display_name, dim_label=dim_label
+            da,
+            value_label=output_display_name,
+            dim_label=dim_label,
+            unit_suffix=self._unit_suffix,
         )
         base_method = getattr(converter, _LINE1D_BASE_METHOD[mode])
         base = base_method(label=label)
@@ -1643,6 +1651,7 @@ class LinePlotter(Plotter):
                     da.assign_coords({da.dim: sc.midpoints(da.coords[da.dim])}),
                     value_label=output_display_name,
                     dim_label=dim_label,
+                    unit_suffix=self._unit_suffix,
                 )
             error_method = getattr(converter, _LINE1D_ERROR_METHOD[self._errors])
             error = error_method(label=label).opts(color=color)
@@ -2026,7 +2035,10 @@ class Overlay1DPlotter(LinePlotter):
             color = slice_colors[i]
             curve_label = f"{slice_dim}={coord_val}" if label_slices else ''
             converter = HvConverter1d(
-                slice_data, value_label=output_display_name, dim_label=dim_label
+                slice_data,
+                value_label=output_display_name,
+                dim_label=dim_label,
+                unit_suffix=self._unit_suffix,
             )
             base_method = getattr(converter, _LINE1D_BASE_METHOD[actual_mode])
             base = base_method(label=curve_label).opts(color=color)
@@ -2042,7 +2054,10 @@ class Overlay1DPlotter(LinePlotter):
                         }
                     )
                     converter = HvConverter1d(
-                        mid, value_label=output_display_name, dim_label=dim_label
+                        mid,
+                        value_label=output_display_name,
+                        dim_label=dim_label,
+                        unit_suffix=self._unit_suffix,
                     )
                 error_method = getattr(converter, _LINE1D_ERROR_METHOD[self._errors])
                 error_el = error_method(label=curve_label).opts(color=color)
