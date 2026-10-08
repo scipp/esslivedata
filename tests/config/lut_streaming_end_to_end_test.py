@@ -20,6 +20,7 @@ import uuid
 import numpy as np
 import pytest
 import scipp as sc
+import scippnexus as snx
 
 from ess.livedata.config.chopper import delay_setpoint_stream, speed_setpoint_stream
 from ess.livedata.config.instrument import Instrument, instrument_registry
@@ -461,3 +462,46 @@ class TestEstiaReflectometry:
         assert not reply.has_error, reply.error_message
         assert result.error_message is None, result.error_message
         assert result.data['i_of_wavelength'].sum().value > 0
+
+
+@pytest.fixture(scope='module')
+def bifrost() -> Instrument:
+    get_config('bifrost')
+    instrument = instrument_registry['bifrost']
+    instrument.load_factories()
+    return instrument
+
+
+class TestBifrostQMaps:
+    """BIFROST's indirect-geometry reduction looks the detector table up at the
+    primary flight path L1, which the instrument declares, and takes its own
+    geometry from a McStas file rather than from the artifact."""
+
+    def test_detector_table_covers_the_q_cut_primary_flight_path(
+        self, bifrost: Instrument
+    ) -> None:
+        from ess.bifrost.data import simulated_elastic_incoherent_with_phonon
+        from ess.bifrost.live import BifrostQCutWorkflow
+        from ess.reduce.nexus.types import Filename, Position, SampleRun
+
+        workflow = BifrostQCutWorkflow()
+        workflow[Filename[SampleRun]] = simulated_elastic_incoherent_with_phonon()
+        source, sample = workflow.compute(
+            (Position[snx.NXsource, SampleRun], Position[snx.NXsample, SampleRun])
+        ).values()
+        l1 = sc.norm(sample - source)
+
+        block = select_block(_ingest(bifrost)[DETECTOR_STREAM], l1)
+
+        assert block.sizes['distance'] > 1
+
+    @pytest.mark.parametrize('name', ['qmap', 'elastic_qmap', 'elastic_qmap_custom'])
+    def test_q_maps_gate_on_the_detector_table_only(
+        self, bifrost: Instrument, name: str
+    ) -> None:
+        # No monitor table: the Q-maps do not normalize by a monitor.
+        params = _params_model(bifrost, name)()
+        job = _create_job(bifrost, name, 'unified_detector', params)
+
+        luts = {s for s in job.gating_streams if s.startswith('wavelength_lut/')}
+        assert luts == {DETECTOR_STREAM}

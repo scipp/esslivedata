@@ -270,6 +270,9 @@ def test_bifrost_qmap_gate_drops_then_resumes_on_rotation_context(
     app.publish_config_message(workflow_config)
     service.step()
     sink.messages.clear()
+    # The Q-maps also gate on the detector lookup table. Publishing it
+    # up front leaves the rotation streams as the gate under test.
+    app.publish_lookup_tables()
 
     # Events arrive before any rotation context — gate drops them. No crash,
     # no output.
@@ -337,6 +340,9 @@ def test_bifrost_qmap_context_arriving_on_separate_ticks_is_not_lost(
     app.publish_config_message(workflow_config)
     service.step()
     sink.messages.clear()
+    # The Q-maps also gate on the detector lookup table. Publishing it
+    # up front leaves the rotation streams as the gate under test.
+    app.publish_lookup_tables()
 
     def _publish_rotation(device: str, time: int) -> None:
         # The device synthesizer emits on the parent device name only once all

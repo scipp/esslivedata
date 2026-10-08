@@ -460,11 +460,12 @@ def _set_source_position(
     """Set the chopper-cascade source reference, shifted by ``offset``.
 
     essreduce would take the reference from the file's unique ``NXsource``.
-    BIFROST instead labels the moderator ``NXmoderator`` and reserves
-    ``NXsource`` for accelerator metadata sitting at the origin, so essreduce
-    would measure flight distance from the accelerator and reject the upstream
-    choppers as lying behind the source. The reference is therefore the
-    ``NXmoderator`` position when present, else the ``NXsource`` (e.g. LOKI).
+    BIFROST's artifacts before 2026-10-06 instead label the moderator
+    ``NXmoderator`` and reserve ``NXsource`` for accelerator metadata sitting
+    at the origin, so essreduce would measure flight distance from the
+    accelerator and reject the upstream choppers as lying behind the source.
+    The reference is therefore the ``NXmoderator`` position when present, else
+    the ``NXsource`` (e.g. LOKI).
 
     ``offset`` is a beam-aligned displacement added to that reference; it is
     zero by default, in which case this reproduces the position essreduce would

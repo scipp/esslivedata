@@ -34,10 +34,7 @@ def setup_factories(instrument: Instrument) -> None:
     # Lazy imports
     import sciline
     import scippnexus as snx
-    from ess.bifrost.data import (
-        lookup_table_simulation,
-        simulated_elastic_incoherent_with_phonon,
-    )
+    from ess.bifrost.data import simulated_elastic_incoherent_with_phonon
     from ess.bifrost.live import (
         BifrostQCutWorkflow,
         CutAxis,
@@ -48,21 +45,24 @@ def setup_factories(instrument: Instrument) -> None:
     from ess.reduce.nexus.types import (
         Filename,
         NeXusData,
+        Position,
         SampleRun,
     )
-    from ess.reduce.uncertainty import UncertaintyBroadcastMode
-    from ess.reduce.unwrap import LookupTableFilename
+    from ess.reduce.unwrap import LookupTable
     from ess.reduce.unwrap.types import LookupTableRelativeErrorThreshold
     from ess.spectroscopy.types import (
+        IncidentEnergyDetector,
         InstrumentAngle,
+        NormalizedIncidentEnergyDetector,
         PreopenNeXusFile,
-        ProtonCharge,
         SampleAngle,
     )
     from scippnexus import NXdetector
 
     from ess.livedata.preprocessors.accumulation_mode import Cumulative, Current
     from ess.livedata.preprocessors.accumulators import make_no_copy_accumulator_pair
+    from ess.livedata.workflows.lut_blocks import unpack_block
+    from ess.livedata.workflows.lut_context import DetectorLutContext
     from ess.livedata.workflows.stream_processor_workflow import (
         StreamProcessorWorkflow,
     )
@@ -116,6 +116,33 @@ def setup_factories(instrument: Instrument) -> None:
             ),
         )
 
+    def _detector_lookup_table_at_sample(
+        wire: DetectorLutContext,
+        source_position: Position[snx.NXsource, SampleRun],
+        sample_position: Position[snx.NXsample, SampleRun],
+    ) -> LookupTable[SampleRun, NXdetector]:
+        """Select the streamed detector table's block at the primary flight path.
+
+        The indirect-geometry reduction converts time of arrival to wavelength at
+        the sample and looks the table up at ``L1``, not at the per-pixel
+        ``Ltotal`` the generic
+        :func:`~ess.livedata.workflows.lut_context.detector_lookup_table` selects
+        by. The instrument declares the block at the same distance.
+        """
+        l1 = sc.norm(sample_position - source_position)
+        return LookupTable[SampleRun, NXdetector](**unpack_block(wire, l1))
+
+    def _unnormalized(
+        detector: IncidentEnergyDetector[SampleRun],
+    ) -> NormalizedIncidentEnergyDetector[SampleRun]:
+        """Pass the detector events on without monitor normalization.
+
+        Upstream normalizes by ``normalization_monitor`` and proton charge, but
+        neither is streamed into these workflows, so both would come from the
+        McStas file: live counts divided by a simulated incident spectrum.
+        """
+        return NormalizedIncidentEnergyDetector[SampleRun](detector)
+
     # Q-map workflow factories
     @cache
     def _init_q_cut_workflow() -> sciline.Pipeline:
@@ -123,22 +150,14 @@ def setup_factories(instrument: Instrument) -> None:
         fname = simulated_elastic_incoherent_with_phonon()
         with snx.File(fname) as f:
             detector_names = list(f['entry/instrument'][snx.NXdetector])
-            monitor_names = list(f['entry/instrument'][snx.NXmonitor])
         workflow = BifrostQCutWorkflow(detector_names)
         workflow[Filename[SampleRun]] = fname
-        workflow[LookupTableFilename] = lookup_table_simulation()
+        workflow.insert(_detector_lookup_table_at_sample)
+        workflow.insert(_unnormalized)
         # BifrostQCutWorkflow looks up the detector threshold under the hardcoded
-        # key 'detector' (NeXusDetectorName('detector')); monitors are looked up
-        # by their actual NeXus component name.
-        workflow[LookupTableRelativeErrorThreshold] = {
-            'detector': float('inf'),
-            **{name: float('inf') for name in monitor_names},
-        }
+        # key 'detector' (NeXusDetectorName('detector')).
+        workflow[LookupTableRelativeErrorThreshold] = {'detector': float('inf')}
         workflow[PreopenNeXusFile] = PreopenNeXusFile(True)
-        # ProtonCharge is not used in streaming normalization, set to 1. Revisit once
-        # there is a established stream for this.
-        workflow[ProtonCharge[SampleRun]] = sc.scalar(1.0, unit='pC')
-        workflow[UncertaintyBroadcastMode] = UncertaintyBroadcastMode.drop
         return workflow
 
     def _get_q_cut_workflow() -> sciline.Pipeline:
