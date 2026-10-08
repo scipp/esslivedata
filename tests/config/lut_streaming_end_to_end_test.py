@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import uuid
 
+import numpy as np
 import pytest
 import scipp as sc
 from structlog.testing import capture_logs
@@ -162,11 +163,16 @@ def _detector_events_across_one_frame(count: int = 200) -> sc.DataArray:
     return binned
 
 
-def _run_lut_job(instrument: Instrument, speeds: dict[str, float] | None = None):
+def _run_lut_job(
+    instrument: Instrument,
+    speeds: dict[str, float] | None = None,
+    delays: dict[str, float] = _TRANSMITTING_DELAYS_NS,
+):
     """Run the lookup-table job once and return its result.
 
     ``speeds`` overrides individual chopper rotation-speed setpoints; the rest
-    run at the source frequency.
+    run at the source frequency. ``delays`` gives chopper delays in
+    nanoseconds; the rest are zero.
     """
     speeds = speeds or {}
     job = _create_job(instrument, 'wavelength_lut', CHOPPER_CASCADE_SOURCE)
@@ -177,7 +183,7 @@ def _run_lut_job(instrument: Instrument, speeds: dict[str, float] | None = None)
             instrument.streams[speed_setpoint_stream(chopper)].units,
         )
         aux[delay_setpoint_stream(chopper)] = _nxlog(
-            _TRANSMITTING_DELAYS_NS.get(chopper, 0.0),
+            delays.get(chopper, 0.0),
             instrument.streams[delay_setpoint_stream(chopper)].units,
         )
     data = JobData(
@@ -432,34 +438,60 @@ _DREAM_PROD_SPEEDS = {
     'T0_chopper': 0.0,
 }
 
+#: A phasing that transmits at ``_DREAM_PROD_SPEEDS`` once the overlap chopper
+#: is brought into sync at 7 Hz, found by the same scan as
+#: ``_TRANSMITTING_DELAYS_NS``. ``_TRANSMITTING_DELAYS_NS`` itself blocks the
+#: beam at these speeds, so a test using it would empty the table whatever the
+#: overlap chopper did.
+_DREAM_PROD_TRANSMITTING_DELAYS_NS = {
+    'pulse_shaping_chopper2': 45_600_000.0,
+    'overlap_chopper': 32_000_000.0,
+    'band_chopper': 46_000_000.0,
+}
+
 
 def test_dream_prod_setpoints_empty_the_consumer(dream: Instrument) -> None:
     """DREAM's PROD failure at the setpoints actually observed (#1309).
 
     essreduce treats the parked T0 chopper as open, so it is the overlap
-    chopper that empties the table. Both are named in the log: whether a parked
-    disc really sits open is not knowable from its speed (#1312). The
-    pulse-shaping choppers are not named: they set the pulse stride to 2, at
-    which they are in sync.
+    chopper that empties the table: in sync at 7 Hz the same cascade
+    transmits. Both are named in the log: whether a parked disc really sits
+    open is not knowable from its speed (#1312). The pulse-shaping choppers are
+    not named: they set the pulse stride to 2, at which they are in sync.
 
     Consumed by a detector view rather than a monitor job: the pulse-shaping
     choppers at 7 Hz make the pulse stride 2, and a wavelength-mode monitor job
     cannot convert at a stride above one because its events do not carry
     ``event_time_zero``.
     """
+    in_sync = _ingest(
+        dream,
+        _run_lut_job(
+            dream,
+            speeds={**_DREAM_PROD_SPEEDS, 'overlap_chopper': 7.0},
+            delays=_DREAM_PROD_TRANSMITTING_DELAYS_NS,
+        ),
+    )
+    assert np.isfinite(in_sync[DETECTOR_STREAM].values).any()
+
     with capture_logs() as captured:
-        result = _run_lut_job(dream, speeds=_DREAM_PROD_SPEEDS)
+        result = _run_lut_job(
+            dream,
+            speeds=_DREAM_PROD_SPEEDS,
+            delays=_DREAM_PROD_TRANSMITTING_DELAYS_NS,
+        )
     logged = {
         entry['event']: entry['choppers']
         for entry in captured
         if entry['event'].startswith('choppers_')
     }
     assert logged == {
-        'choppers_out_of_phase_with_source': {'overlap_chopper': 5.0},
+        'choppers_out_of_sync_with_frame': {'overlap_chopper': 5.0},
         'choppers_stopped': ['T0_chopper'],
     }
 
     table = _ingest(dream, result)
+    assert not np.isfinite(table[DETECTOR_STREAM].values).any()
     reply, result = _run_wavelength_detector_view(dream, table[DETECTOR_STREAM])
 
     assert not reply.has_error, reply.error_message

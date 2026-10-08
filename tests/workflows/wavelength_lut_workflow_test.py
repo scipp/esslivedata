@@ -350,7 +350,7 @@ class TestCloseNonSyncedDiskChoppersAndLog:
     def test_chopper_out_of_sync_is_reported(self, frequency: float) -> None:
         logged = self._logged({'ch': _disk_chopper(frequency)})
 
-        assert logged == {'choppers_out_of_phase_with_source': {'ch': frequency}}
+        assert logged == {'choppers_out_of_sync_with_frame': {'ch': frequency}}
 
     def test_stopped_chopper_is_reported(self) -> None:
         logged = self._logged({'parked': _disk_chopper(0.0)})
@@ -370,7 +370,7 @@ class TestCloseNonSyncedDiskChoppersAndLog:
 
         assert logged == {
             'choppers_stopped': ['parked'],
-            'choppers_out_of_phase_with_source': {'loose': -5.0},
+            'choppers_out_of_sync_with_frame': {'loose': -5.0},
         }
 
 

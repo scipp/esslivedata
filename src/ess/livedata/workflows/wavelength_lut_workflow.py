@@ -179,7 +179,7 @@ def close_non_synced_disk_choppers_and_log(
         )
     if closed:
         logger.warning(
-            'choppers_out_of_phase_with_source',
+            'choppers_out_of_sync_with_frame',
             choppers=closed,
             pulse_frequency_hz=pulse_frequency_hz,
             pulse_stride=int(pulse_stride),
