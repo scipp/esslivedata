@@ -299,7 +299,8 @@ class ROISpectra(
 ):
     """ROI spectra parametrized by accumulation mode.
 
-    Spectra for ROIs with dims (roi, spectral_dim).
+    Spectra for ROIs with dims (roi, spectral_dim), with the number of detector
+    pixels in each ROI as the ``detector_pixels`` coord.
 
     - ROISpectra[Cumulative]: Extracted from cumulative histogram
     - ROISpectra[Window]: Extracted from current window histogram
@@ -312,17 +313,8 @@ class ROICountsInRange(
 ):
     """Counts summed over each ROI and over the active range filter.
 
-    Parametrized by accumulation mode. Dims (roi,).
-    """
-
-
-class ROICountsPerPixelInRange(
-    sciline.Scope[AccumulationMode, sc.DataArray],
-    sc.DataArray,  # type: ignore[misc]
-):
-    """Counts averaged over the detector pixels of each ROI, summed over the range.
-
-    Parametrized by accumulation mode. Dims (roi,).
+    Parametrized by accumulation mode. Dims (roi,), with the ``detector_pixels``
+    coord of the ROI spectra.
     """
 
 

@@ -215,6 +215,12 @@ def expand_per_roi(
     ]
     values = np.stack(rows) if rows else np.zeros((0, *trailing))
     coords = {'roi': sc.array(dims=['roi'], values=list(variants), dtype='int32')}
+    if 'detector_pixels' in template.coords:
+        # Fixed per ROI geometry, like the real count, so it stays constant
+        # across updates while the ROI is unchanged.
+        coords['detector_pixels'] = sc.array(
+            dims=['roi'], values=[10.0 + 90.0 * v for v in variants.values()]
+        )
     if (time := template.coords.get('time')) is not None and time.ndim == 0:
         coords['time'] = sc.scalar(timestamp_ns, unit=time.unit, dtype=time.dtype)
     data = sc.array(dims=template.dims, values=values, unit=template.unit)

@@ -82,7 +82,6 @@ class TestIntegrationWithStreamProcessor:
             'counts_in_toa_range',
             'roi_spectra_current',
             'roi_counts_in_range_current',
-            'roi_counts_per_pixel_in_range_current',
         ):
             coords = result[key].coords
             assert coords['start_time'].value == 1000, key
@@ -96,7 +95,6 @@ class TestIntegrationWithStreamProcessor:
             'cumulative',
             'roi_spectra_cumulative',
             'roi_counts_in_range_cumulative',
-            'roi_counts_per_pixel_in_range_cumulative',
             'counts_total_cumulative',
             'counts_in_toa_range_cumulative',
         ):
@@ -257,7 +255,7 @@ class TestROISpectraIntegration:
         # Cumulative should be ~2x current (two batches)
         assert cumulative_sum > current_sum
 
-    def test_roi_counts_and_counts_per_pixel(self):
+    def test_roi_outputs_carry_detector_pixels(self):
         factory = make_test_factory(y_size=4, x_size=4)
         workflow = factory.make_workflow('detector', params=make_test_params())
         workflow.build(context_keys=ROI_CONTEXT_KEYS)
@@ -281,14 +279,14 @@ class TestROISpectraIntegration:
         for mode in ('cumulative', 'current'):
             spectra = result[f'roi_spectra_{mode}']
             counts = result[f'roi_counts_in_range_{mode}']
-            per_pixel = result[f'roi_counts_per_pixel_in_range_{mode}']
             assert counts.dims == ('roi',)
             assert counts.coords['roi'].values.tolist() == [3]
             assert counts.values[0] == spectra.sum().value
-            assert per_pixel.values[0] == pytest.approx(counts.values[0] / 4)
+            assert counts.coords['detector_pixels'].values.tolist() == [4.0]
+            assert spectra.coords['detector_pixels'].values.tolist() == [4.0]
 
     @pytest.mark.parametrize('pixel_weighting', [False, True])
-    def test_roi_counts_per_pixel_match_pixel_weighted_image_with_reduction(
+    def test_counts_per_detector_pixel_match_pixel_weighted_image_with_reduction(
         self, pixel_weighting: bool
     ):
         # 4 detector pixels are summed into each pixel of the 2x2 image.
@@ -323,9 +321,8 @@ class TestROISpectraIntegration:
 
         # 2 image pixels of 4 detector pixels with 10 events each
         assert result['roi_counts_in_range_cumulative'].values.tolist() == [80]
-        assert result['roi_counts_per_pixel_in_range_cumulative'].values.tolist() == [
-            10.0
-        ]
+        counts = result['roi_counts_in_range_cumulative']
+        assert (counts / counts.coords['detector_pixels']).values.tolist() == [10.0]
         image_value = 10.0 if pixel_weighting else 40.0
         assert result['cumulative'].values.tolist() == [[image_value] * 2] * 2
 

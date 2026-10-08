@@ -48,7 +48,6 @@ from .roi import (
     precompute_roi_polygon_masks,
     precompute_roi_rectangle_bounds,
     roi_counts_in_range,
-    roi_counts_per_pixel_in_range,
     roi_detector_pixels,
     roi_polygon_readback,
     roi_rectangle_readback,
@@ -133,7 +132,6 @@ def create_base_workflow(
     workflow.insert(roi_spectra)
     workflow.insert(roi_counts_in_range)
     workflow.insert(roi_detector_pixels)
-    workflow.insert(roi_counts_per_pixel_in_range)
     workflow.insert(roi_rectangle_readback)
     workflow.insert(roi_polygon_readback)
     workflow.insert(precompute_roi_rectangle_bounds)

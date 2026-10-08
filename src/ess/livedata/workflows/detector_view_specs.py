@@ -266,11 +266,18 @@ def _make_0d_template() -> sc.DataArray:
     return _make_nd_template(0)
 
 
+def _make_roi_coords() -> dict[str, sc.Variable]:
+    """Create the empty coords shared by all per-ROI outputs."""
+    return {
+        'roi': sc.array(dims=['roi'], values=[], unit=None),
+        'detector_pixels': sc.array(dims=['roi'], values=[], dtype='float64'),
+    }
+
+
 def _make_roi_scalars_template() -> sc.DataArray:
     """Create an empty template for one scalar per ROI."""
     return sc.DataArray(
-        sc.zeros(dims=['roi'], shape=[0], unit='counts'),
-        coords={'roi': sc.array(dims=['roi'], values=[], unit=None)},
+        sc.zeros(dims=['roi'], shape=[0], unit='counts'), coords=_make_roi_coords()
     )
 
 
@@ -278,8 +285,16 @@ def _make_roi_spectra_template() -> sc.DataArray:
     """Create an empty template for stacked per-ROI spectra."""
     return sc.DataArray(
         sc.zeros(dims=['roi', 'time_of_arrival'], shape=[0, 0], unit='counts'),
-        coords={'roi': sc.array(dims=['roi'], values=[], unit=None)},
+        coords=_make_roi_coords(),
     )
+
+
+_DETECTOR_PIXELS_NOTE = (
+    ' Each ROI carries its number of detector pixels, so plots can show counts '
+    'per detector pixel. Image pixels without a detector pixel behind them do not '
+    'count. For detectors downsampled at ingest, a detector pixel is a pixel of the '
+    'downsampled image.'
+)
 
 
 _BASE_DETECTOR_VIEWS: tuple[OutputView, ...] = (
@@ -377,7 +392,7 @@ class DetectorViewOutputs(DetectorViewOutputsBase):
             name='roi_spectra',
             title='ROI spectra',
             fields=('roi_spectra_cumulative', 'roi_spectra_current'),
-            description='Histogram for each active ROI region.',
+            description='Histogram for each active ROI region.' + _DETECTOR_PIXELS_NOTE,
             params=('coordinate_mode', 'toa_edges', 'wavelength_edges'),
         ),
         OutputView(
@@ -387,23 +402,7 @@ class DetectorViewOutputs(DetectorViewOutputsBase):
             description=(
                 'Counts summed over each ROI and over the range filter, one value '
                 'per ROI. Unlike the ROI spectra, this respects the range filter.'
-            ),
-            params=('coordinate_mode', 'toa_range', 'wavelength_range'),
-        ),
-        OutputView(
-            name='roi_counts_per_pixel_in_range',
-            title='ROI counts per pixel in range',
-            fields=(
-                'roi_counts_per_pixel_in_range_cumulative',
-                'roi_counts_per_pixel_in_range_current',
-            ),
-            description=(
-                'ROI total in range divided by the number of detector pixels inside '
-                'the ROI, one value per ROI. Where the count rate is uniform, this '
-                'equals the value of the image with pixel weighting enabled. Image '
-                'pixels without a detector pixel behind them do not count. For '
-                'detectors downsampled at ingest, a detector pixel is a pixel of the '
-                'downsampled image. An ROI without detector pixels gives NaN.'
+                + _DETECTOR_PIXELS_NOTE
             ),
             params=('coordinate_mode', 'toa_range', 'wavelength_range'),
         ),
@@ -453,23 +452,6 @@ class DetectorViewOutputs(DetectorViewOutputsBase):
         description=(
             'Counts summed over each ROI and over the range filter '
             'for the latest update interval only. Resets each update interval.'
-        ),
-        default_factory=_make_roi_scalars_template,
-    )
-    roi_counts_per_pixel_in_range_cumulative: CumulativeOutput = pydantic.Field(
-        title='ROI counts per pixel in range',
-        description=(
-            'ROI total in range divided by the number of detector pixels inside '
-            'the ROI, accumulated since the start of the run.'
-        ),
-        default_factory=_make_roi_scalars_template,
-    )
-    roi_counts_per_pixel_in_range_current: WindowOutput = pydantic.Field(
-        title='ROI counts per pixel in range update',
-        description=(
-            'ROI total in range divided by the number of detector pixels inside '
-            'the ROI, for the latest update interval only. Resets each update '
-            'interval.'
         ),
         default_factory=_make_roi_scalars_template,
     )

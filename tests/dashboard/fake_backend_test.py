@@ -499,6 +499,16 @@ class TestROILoopback:
         counts = session.results()['roi_counts_in_range_current']
         assert counts.dims == ('roi',)
         assert counts.coords['roi'].values.tolist() == [1, 3]
+        assert counts.coords['detector_pixels'].dims == ('roi',)
+
+    def test_detector_pixels_stay_constant_while_rois_are_unchanged(
+        self, session: _DetectorSession
+    ) -> None:
+        session.publish({0: _rectangle(0.0, 0.0), 1: _rectangle(20.0, 20.0)})
+        first = session.results()['roi_spectra_current'].coords['detector_pixels']
+        second = session.results()['roi_spectra_current'].coords['detector_pixels']
+        assert sc.identical(first, second)
+        assert (first.values > 0).all()
 
     def test_roi_dim_follows_published_rois(self, session: _DetectorSession) -> None:
         session.publish({0: _rectangle(0.0, 0.0), 1: _rectangle(20.0, 20.0)})

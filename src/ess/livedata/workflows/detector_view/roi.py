@@ -22,7 +22,6 @@ from .types import (
     HistogramSlice,
     PixelWeights,
     ROICountsInRange,
-    ROICountsPerPixelInRange,
     ROIDetectorPixels,
     ROIPolygonMasks,
     ROIPolygonReadback,
@@ -192,18 +191,13 @@ def _compute_polygon_mask(
     return sc.array(dims=[y_dim, x_dim], values=~inside_2d)
 
 
-def roi_spectra(
-    histogram: AccumulatedHistogram[AccumulationMode],
+def _extract_roi_spectra(
+    histogram: sc.DataArray,
     rectangle_bounds: ROIRectangleBounds,
     polygon_masks: ROIPolygonMasks,
-) -> ROISpectra[AccumulationMode]:
+) -> sc.DataArray:
     """
-    Extract ROI spectra from histogram using precomputed ROI data.
-
-    This generic provider works for both accumulation modes:
-
-    - ROISpectra[Cumulative]: Extracted from cumulative histogram
-    - ROISpectra[Current]: Extracted from current window histogram
+    Sum a histogram over each ROI, keeping the spectral dimension.
 
     Parameters
     ----------
@@ -254,26 +248,64 @@ def roi_spectra(
 
     # Build output DataArray
     if not spectra:
-        # Return empty DataArray with correct structure
-        return ROISpectra[AccumulationMode](
-            sc.DataArray(
-                data=sc.zeros(
-                    dims=['roi', spectral_dim],
-                    shape=[0, n_spectral],
-                    unit='counts',
-                    dtype='int64',
-                ),
-                coords={
-                    'roi': sc.array(dims=['roi'], values=[], dtype='int32'),
-                    spectral_dim: spectral_coord,
-                },
-            )
+        # Return empty DataArray with correct structure. Unit and dtype are those of
+        # a sum over the histogram, since scipp promotes integer sums.
+        summed = histogram.data[y_dim, 0:0].sum()
+        return sc.DataArray(
+            data=sc.zeros(
+                dims=['roi', spectral_dim],
+                shape=[0, n_spectral],
+                unit=summed.unit,
+                dtype=summed.dtype,
+            ),
+            coords={
+                'roi': sc.array(dims=['roi'], values=[], dtype='int32'),
+                spectral_dim: spectral_coord,
+            },
         )
 
     # Stack spectra along roi dimension
     stacked = sc.concat(spectra, dim='roi')
     stacked.coords['roi'] = sc.array(dims=['roi'], values=roi_indices, dtype='int32')
-    return ROISpectra[AccumulationMode](stacked)
+    return stacked
+
+
+def roi_spectra(
+    histogram: AccumulatedHistogram[AccumulationMode],
+    detector_pixels: ROIDetectorPixels,
+    rectangle_bounds: ROIRectangleBounds,
+    polygon_masks: ROIPolygonMasks,
+) -> ROISpectra[AccumulationMode]:
+    """
+    Extract ROI spectra from histogram using precomputed ROI data.
+
+    This generic provider works for both accumulation modes:
+
+    - ROISpectra[Cumulative]: Extracted from cumulative histogram
+    - ROISpectra[Current]: Extracted from current window histogram
+
+    The spectra carry the number of detector pixels in each ROI as the
+    ``detector_pixels`` coord, so they can be shown as counts per detector pixel.
+
+    Parameters
+    ----------
+    histogram:
+        Histogram with screen dims and spectral dim.
+    detector_pixels:
+        Number of detector pixels per ROI.
+    rectangle_bounds:
+        Precomputed bounds for rectangle ROIs.
+    polygon_masks:
+        Precomputed masks for polygon ROIs.
+
+    Returns
+    -------
+    :
+        ROI spectra with dims (roi, spectral).
+    """
+    spectra = _extract_roi_spectra(histogram, rectangle_bounds, polygon_masks)
+    spectra.coords['detector_pixels'] = detector_pixels.data
+    return ROISpectra[AccumulationMode](spectra)
 
 
 def roi_detector_pixels(
@@ -313,8 +345,10 @@ def roi_detector_pixels(
     weights_with_spectral_dim = sc.DataArray(
         sc.broadcast(weights.data, sizes=first_bin.sizes), coords=first_bin.coords
     )
-    counts = roi_spectra(weights_with_spectral_dim, rectangle_bounds, polygon_masks)
-    return ROIDetectorPixels(counts.sum(spectral_dim))
+    counts = _extract_roi_spectra(
+        weights_with_spectral_dim, rectangle_bounds, polygon_masks
+    )
+    return ROIDetectorPixels(counts.sum(spectral_dim).to(dtype='float64'))
 
 
 def roi_counts_in_range(
@@ -336,35 +370,11 @@ def roi_counts_in_range(
     Returns
     -------
     :
-        Counts per ROI with dims (roi,).
+        Counts per ROI with dims (roi,), with the ``detector_pixels`` coord of the
+        spectra.
     """
     in_range = slice_spectral_range(spectra, histogram_slice)
     return ROICountsInRange[AccumulationMode](in_range.sum(spectra.dims[-1]))
-
-
-def roi_counts_per_pixel_in_range(
-    counts: ROICountsInRange[AccumulationMode],
-    detector_pixels: ROIDetectorPixels,
-) -> ROICountsPerPixelInRange[AccumulationMode]:
-    """
-    Average the counts in range over the detector pixels of each ROI.
-
-    For a region of uniform count rate this equals the value the pixel-weighted
-    detector image shows there.
-
-    Parameters
-    ----------
-    counts:
-        Counts in range per ROI.
-    detector_pixels:
-        Number of detector pixels per ROI. An ROI without detector pixels yields NaN.
-
-    Returns
-    -------
-    :
-        Counts per pixel for each ROI with dims (roi,).
-    """
-    return ROICountsPerPixelInRange[AccumulationMode](counts / detector_pixels.data)
 
 
 def _get_coord_units_from_screen_metadata(

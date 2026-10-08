@@ -18,7 +18,6 @@ from ess.livedata.workflows.detector_view.roi import (
     precompute_roi_polygon_masks,
     precompute_roi_rectangle_bounds,
     roi_counts_in_range,
-    roi_counts_per_pixel_in_range,
     roi_detector_pixels,
     roi_spectra,
 )
@@ -75,7 +74,25 @@ def extract_roi_spectra(
 
     bounds = precompute_roi_rectangle_bounds(screen_metadata, rect_req)
     masks = precompute_roi_polygon_masks(screen_metadata, poly_req)
-    return roi_spectra(histogram, bounds, masks)
+    weights = make_weights(histogram.sizes['y'], histogram.sizes['x'])
+    pixels = roi_detector_pixels(histogram, weights, bounds, masks)
+    return roi_spectra(histogram, pixels, bounds, masks)
+
+
+def make_weights(
+    y_size: int = 10, x_size: int = 10, value: float = 1.0
+) -> PixelWeights:
+    """Create pixel weights with the same number of detector pixels everywhere."""
+    return PixelWeights(
+        sc.DataArray(
+            sc.full(
+                sizes={'y': y_size, 'x': x_size},
+                value=value,
+                unit='dimensionless',
+                dtype='float32',
+            )
+        )
+    )
 
 
 def make_screen_metadata_from_edges(
@@ -432,7 +449,7 @@ class TestEmptyROIRequests:
 
 
 class TestROICounts:
-    """Tests for the per-ROI scalars derived from the ROI spectra."""
+    """Tests for the detector pixel count and the per-ROI totals."""
 
     @staticmethod
     def make_bounds_and_masks(metadata: ScreenMetadata):
@@ -455,44 +472,30 @@ class TestROICounts:
         )
         return bounds, masks
 
-    @staticmethod
-    def make_weights(value: float = 1.0) -> PixelWeights:
-        return PixelWeights(
-            sc.DataArray(
-                sc.full(
-                    sizes={'y': 10, 'x': 10},
-                    value=value,
-                    unit='dimensionless',
-                    dtype='float32',
-                )
-            )
-        )
-
-    def test_counts_per_pixel_divides_by_detector_pixels_in_roi(self):
+    def test_spectra_and_totals_carry_detector_pixels_in_roi(self):
         metadata = make_screen_metadata_from_edges()
         histogram = make_uniform_histogram(value=2)
         bounds, masks = self.make_bounds_and_masks(metadata)
-        weights = self.make_weights(2.0)  # two detector pixels per screen pixel
+        weights = make_weights(value=2.0)  # two detector pixels per screen pixel
 
         pixels = roi_detector_pixels(histogram, weights, bounds, masks)
-        spectra = roi_spectra(histogram, bounds, masks)
+        spectra = roi_spectra(histogram, pixels, bounds, masks)
         counts = roi_counts_in_range(spectra, None)
-        per_pixel = roi_counts_per_pixel_in_range(counts, pixels)
 
         assert pixels.dims == ('roi',)
         # 3x2 rectangle and 4x4 polygon, two detector pixels each
         assert pixels.values.tolist() == [12, 32]
+        assert sc.identical(spectra.coords['detector_pixels'], pixels.data)
+        assert sc.identical(counts.coords['detector_pixels'], pixels.data)
         assert counts.values.tolist() == [6 * 2 * 3, 16 * 2 * 3]
-        # 2 counts x 3 tof bins per screen pixel, shared by two detector pixels
-        assert per_pixel.values.tolist() == [3.0, 3.0]
-        assert per_pixel.coords['roi'].values.tolist() == [0, 1]
+        assert counts.coords['roi'].values.tolist() == [0, 1]
 
-    def test_counts_per_pixel_matches_pixel_weighted_image_across_gaps(self):
+    def test_counts_per_detector_pixel_match_pixel_weighted_image_across_gaps(self):
         metadata = make_screen_metadata_from_edges()
         bounds, masks = self.make_bounds_and_masks(metadata)
         # Column x=3 has no detector pixels, column x=4 has two. Both ROIs cover
         # column 3; the rectangle also covers column 4.
-        weights = self.make_weights()
+        weights = make_weights()
         weights.values[:, 3] = 0.0
         weights.values[:, 4] = 2.0
         # Uniform rate of 5 counts per detector pixel and tof bin
@@ -501,8 +504,10 @@ class TestROICounts:
         weighted_image = histogram.sum('tof') / weights
 
         pixels = roi_detector_pixels(histogram, weights, bounds, masks)
-        counts = roi_counts_in_range(roi_spectra(histogram, bounds, masks), None)
-        per_pixel = roi_counts_per_pixel_in_range(counts, pixels)
+        counts = roi_counts_in_range(
+            roi_spectra(histogram, pixels, bounds, masks), None
+        )
+        per_pixel = counts / counts.coords['detector_pixels']
 
         assert pixels.values.tolist() == [2 * (1 + 0 + 2), 4 * (3 + 0)]
         assert per_pixel.values.tolist() == [15.0, 15.0]
@@ -513,7 +518,8 @@ class TestROICounts:
         metadata = make_screen_metadata_from_edges()
         histogram = make_uniform_histogram()
         bounds, masks = self.make_bounds_and_masks(metadata)
-        spectra = roi_spectra(histogram, bounds, masks)
+        pixels = roi_detector_pixels(histogram, make_weights(), bounds, masks)
+        spectra = roi_spectra(histogram, pixels, bounds, masks)
 
         # tof bins are 10000 ns wide; keep the first two
         low = sc.scalar(0, unit='ns')
@@ -526,13 +532,17 @@ class TestROICounts:
         histogram = make_uniform_histogram()
         bounds, masks = ROIRectangleBounds({}), ROIPolygonMasks({})
 
-        pixels = roi_detector_pixels(histogram, self.make_weights(), bounds, masks)
-        counts = roi_counts_in_range(roi_spectra(histogram, bounds, masks), None)
+        pixels = roi_detector_pixels(histogram, make_weights(), bounds, masks)
+        counts = roi_counts_in_range(
+            roi_spectra(histogram, pixels, bounds, masks), None
+        )
 
         assert pixels.sizes == {'roi': 0}
-        assert roi_counts_per_pixel_in_range(counts, pixels).sizes == {'roi': 0}
+        assert counts.sizes == {'roi': 0}
+        assert counts.coords['detector_pixels'].sizes == {'roi': 0}
+        assert counts.coords['detector_pixels'].unit == 'dimensionless'
 
-    def test_roi_outside_the_screen_has_no_pixels_and_gives_nan_per_pixel(self):
+    def test_roi_outside_the_screen_has_no_detector_pixels(self):
         metadata = make_screen_metadata_from_edges()
         histogram = make_uniform_histogram()
         outside = RectangleROI(
@@ -545,9 +555,6 @@ class TestROICounts:
         )
         masks = ROIPolygonMasks({})
 
-        pixels = roi_detector_pixels(histogram, self.make_weights(), bounds, masks)
-        counts = roi_counts_in_range(roi_spectra(histogram, bounds, masks), None)
-        per_pixel = roi_counts_per_pixel_in_range(counts, pixels)
+        pixels = roi_detector_pixels(histogram, make_weights(), bounds, masks)
 
         assert pixels.values.tolist() == [0]
-        assert np.isnan(per_pixel.values[0])
