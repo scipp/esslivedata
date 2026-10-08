@@ -722,11 +722,6 @@ class Plotter:
             start_time/end_time coordinates before plotting.
         """
         self._normalize_per_detector_pixel = normalize_per_detector_pixel
-        # scipp has no unit for a detector pixel, so the normalization shows only
-        # in the unit label of the values.
-        self._unit_suffix = (
-            ' per detector pixel' if normalize_per_detector_pixel else ''
-        )
         self._normalize_to_rate = normalize_to_rate
         self._legend_position = legend_position
         self._cached_state: Any | None = None
@@ -964,6 +959,15 @@ class Plotter:
             self._pending_range_targets, self._pending_y_extents
         )
         self._set_cached_state(result.opts(*self._frame_opts()))
+
+    @property
+    def _unit_suffix(self) -> str:
+        """Suffix for the unit label of the values.
+
+        scipp has no unit for a detector pixel, so the per-detector-pixel
+        normalization shows only in the unit label.
+        """
+        return ' per detector pixel' if self._normalize_per_detector_pixel else ''
 
     def _normalize(
         self, data: dict[DataKey, sc.DataArray]
@@ -1840,6 +1844,7 @@ class BarsPlotter(Plotter):
             horizontal=params.orientation.horizontal,
             layout_params=params.layout,
             aspect_params=params.plot_aspect,
+            normalize_per_detector_pixel=params.detector_pixels.per_detector_pixel,
             normalize_to_rate=params.rate.normalize_to_rate,
         )
 
@@ -1875,7 +1880,7 @@ class BarsPlotter(Plotter):
             raise ValueError(f"Expected 0D or 1D data, got {data.ndim}D")
 
         bar_label = source_display_name or data_key.source_name
-        unit = str(data.unit) if data.unit is not None else None
+        unit = f'{data.unit}{self._unit_suffix}' if data.unit is not None else None
         vdim_label = output_display_name or data_key.output_name or 'values'
         vdim = hv.Dimension(
             data_key.output_name or 'values', label=vdim_label, unit=unit
@@ -1966,7 +1971,11 @@ class Overlay1DPlotter(LinePlotter):
     @classmethod
     def from_timeseries_params(cls, params: PlotParamsTimeseriesOverlay) -> Self:
         """Create Overlay1DPlotter for the history of 1D data, one curve per entry."""
-        return super().from_timeseries_params(params, time_as_x=True)
+        return super().from_timeseries_params(
+            params,
+            time_as_x=True,
+            normalize_per_detector_pixel=params.detector_pixels.per_detector_pixel,
+        )
 
     def plot(
         self,

@@ -3819,6 +3819,57 @@ class TestDetectorPixelNormalization:
         np.testing.assert_allclose(curves['roi=1'].dimension_values(1), [3.0, 6.0])
         assert curves['roi=1'].vdims[0].unit == 'counts'
 
+    def test_bars_divide_each_roi_by_its_own_pixel_count(self, data_key):
+        totals = _roi_spectra([[4.0, 0.0], [3.0, 0.0]], [4.0, 1.5])['toa', 0]
+        plotter = plots.BarsPlotter.from_params(
+            PlotParamsBars(
+                detector_pixels=DetectorPixelNormalizationParams(
+                    per_detector_pixel=True
+                )
+            )
+        )
+
+        plotter.compute({PRIMARY: {data_key: totals}})
+
+        (bars,) = plotter.get_cached_state().traverse(lambda el: el, [hv.Bars])
+        np.testing.assert_allclose(bars.dimension_values(2), [1.0, 2.0])
+        assert bars.vdims[0].unit == 'counts per detector pixel'
+
+    def test_table_divides_each_roi_by_its_own_pixel_count(self, data_key):
+        totals = _roi_spectra([[4.0, 0.0], [3.0, 0.0]], [4.0, 1.5])['toa', 0]
+        plotter = TablePlotter.from_params(
+            PlotParamsTable(
+                detector_pixels=DetectorPixelNormalizationParams(
+                    per_detector_pixel=True
+                )
+            )
+        )
+
+        plotter.compute({PRIMARY: {data_key: totals}})
+
+        (table,) = plotter.get_cached_state().traverse(lambda el: el, [hv.Table])
+        np.testing.assert_allclose(table.dimension_values(table.vdims[0]), [1, 2])
+        assert table.vdims[0].unit == 'counts per detector pixel'
+
+    def test_timeseries_overlay_divides_each_roi_by_its_own_pixel_count(self, data_key):
+        history = TestOverlay1DPlotterHistory.history(rois=(0, 1), n=2)
+        history.coords['detector_pixels'] = sc.array(dims=['roi'], values=[1.0, 2.0])
+        plotter = plots.Overlay1DPlotter.from_timeseries_params(
+            PlotParamsTimeseriesOverlay(
+                detector_pixels=DetectorPixelNormalizationParams(
+                    per_detector_pixel=True
+                )
+            )
+        )
+
+        plotter.compute({PRIMARY: {data_key: history}})
+
+        curves = _curves_by_label(plotter)
+        # history values are [[1, 2], [3, 4]] along (time, roi)
+        np.testing.assert_allclose(curves['roi=0'].dimension_values(1), [1.0, 3.0])
+        np.testing.assert_allclose(curves['roi=1'].dimension_values(1), [1.0, 2.0])
+        assert curves['roi=0'].vdims[0].unit == 'counts per detector pixel'
+
     def test_missing_coord_shows_error_instead_of_unnormalized_data(self, data_key):
         data = _roi_spectra([[4.0, 8.0], [3.0, 6.0]], [4.0, 1.5])
         plotter = plots.Overlay1DPlotter.from_params(_per_pixel_params())

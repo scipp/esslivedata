@@ -24,7 +24,7 @@ from ess.livedata.dashboard.data_service import DataService
 from ess.livedata.dashboard.plot_params import (
     PlotDisplayParams1d,
     PlotParams1d,
-    PlotParamsBars,
+    PlotParams2d,
     PlotParamsTimeseries,
 )
 from ess.livedata.dashboard.plotting_controller import (
@@ -644,7 +644,7 @@ class TestHiddenDetectorPixelFields:
 
     def test_nothing_to_hide_for_params_without_the_option(self) -> None:
         template = _roi_spectra_template(detector_pixels=False)
-        assert hidden_detector_pixel_fields(PlotParamsBars, template) == frozenset()
+        assert hidden_detector_pixel_fields(PlotParams2d, template) == frozenset()
 
 
 class TestSinceStartAvailable:
