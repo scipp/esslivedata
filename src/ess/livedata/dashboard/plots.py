@@ -1708,8 +1708,8 @@ class ImagePlotter(Plotter):
 class BarsPlotter(Plotter):
     """Plotter for bar charts of 0D scalar data or 1D data with one value per slice.
 
-    1D data (e.g., counts per ROI) gives one bar per position along its dimension,
-    grouped by source and colored like the slices of :class:`Overlay1DPlotter`.
+    1D data gives one bar per position along its dimension, grouped by source and
+    colored like the slices of :class:`Overlay1DPlotter`.
     """
 
     AUTOSCALE_AXES: ClassVar[frozenset[Axis]] = frozenset()
@@ -1795,22 +1795,21 @@ class BarsPlotter(Plotter):
             if dim in data.coords
             else np.arange(data.sizes[dim])
         )
-        kdims = ['source', dim]
         if coord.size == 0:
             # The first frame fixes the axis type, and a categorical axis needs
             # a category.
-            return hv.Bars(
-                [(bar_label, f'no {dim}', np.nan, self._colors[0])],
-                kdims=kdims,
-                vdims=[vdim, 'color'],
-            ).opts(color='color', hover_tooltips=[*kdims, vdim.name])
+            entries, values, colors = [f'no {dim}'], [np.nan], self._colors[:1]
+        else:
+            entries = [f'{dim}={v}' for v in coord]
+            values, colors = data.values, _slice_colors(coord, self._colors)
+        kdims = ['source', dim]
+        # Static opts are declared once in style_opts(). These two stay per
+        # element: only 1D bars carry a 'color' column, since an explicit color on
+        # 0D bars would override HoloViews' color cycle, which tells sources and
+        # layers sharing a cell apart. The tooltips leave out that column and name
+        # the vdim, which is named after the output.
         return hv.Bars(
-            (
-                [bar_label] * coord.size,
-                [f'{dim}={v}' for v in coord],
-                data.values,
-                _slice_colors(coord, self._colors),
-            ),
+            ([bar_label] * len(entries), entries, values, colors),
             kdims=kdims,
             vdims=[vdim, 'color'],
         ).opts(color='color', hover_tooltips=[*kdims, vdim.name])

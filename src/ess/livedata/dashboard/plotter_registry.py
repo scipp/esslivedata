@@ -296,11 +296,11 @@ def _register_all_plotters() -> None:
         factory=LinePlotter.from_params,
     )
 
-    # Uses from_timeseries_params (no window/rate config) because FullHistoryExtractor
-    # collapses start_time/end_time to the full buffer range. Rate normalization
-    # would divide every point by the total buffer duration, giving wrong results.
-    # The dedicated factory adds time-based downsampling + update throttling
-    # (issue #940).
+    # Timeseries plotters are built with from_timeseries_params, whose params have
+    # no window or rate options: FullHistoryExtractor collapses start_time/end_time
+    # to the span of the whole buffer, so rate normalization would divide every
+    # point by that span instead of by its own interval. The factory also adds
+    # time-based downsampling and update throttling (issue #940).
     plotter_registry.register_plotter(
         name='timeseries',
         title='Timeseries',
@@ -317,10 +317,11 @@ def _register_all_plotters() -> None:
         name='bars',
         title='Bars',
         description=(
-            'Plot 0D scalar values as bars, one per source. For 1D data (e.g., '
-            'counts per ROI), plot one bar per position along its dimension, '
-            'grouped by source and colored like the ROI spectra. Data with more '
-            'entries than the limit in the plot settings is not drawn.'
+            'Plot 0D scalar values as bars, one per source. For 1D data, plot one '
+            'bar per position along its dimension, grouped by source. With an '
+            'integer coordinate, each coordinate value has a fixed color, the same '
+            'as in Overlay 1D and Timeseries Overlay. Data with more entries than '
+            'the limit in the plot settings is not drawn.'
         ),
         data_requirements=DataRequirements(min_dims=0, max_dims=1),
         factory=BarsPlotter.from_params,
@@ -368,25 +369,26 @@ def _register_all_plotters() -> None:
         name='overlay_1d',
         title='Overlay 1D',
         description=(
-            'Slice 2D data along the first dimension and overlay as 1D curves. '
-            'Useful for visualizing multiple spectra from a single 2D array '
-            '(e.g., ROI spectra stacked along a roi dimension). Data with more '
-            'slices than the limit in the plot settings is not drawn.'
+            'Slice 2D data along the first dimension and overlay as 1D curves, '
+            'one per position. Useful for visualizing multiple spectra from a '
+            'single 2D array. With an integer coordinate, each coordinate value '
+            'has a fixed color. Data with more slices than the limit in the plot '
+            'settings is not drawn.'
         ),
         data_requirements=DataRequirements(min_dims=2, max_dims=2),
         factory=Overlay1DPlotter.from_params,
     )
 
-    # Like 'timeseries', this uses from_timeseries_params: the full history is
-    # downsampled at the plotter, and rate normalization would be wrong.
+    # A timeseries plotter: see the comment above 'timeseries' for why it is built
+    # with from_timeseries_params.
     plotter_registry.register_plotter(
-        name='timeseries_per_entry',
-        title='Timeseries per entry',
+        name='timeseries_overlay',
+        title='Timeseries Overlay',
         description=(
             'Plot the temporal evolution of 1D data as one line per position along '
-            'its dimension (e.g., one per ROI), colored like the ROI spectra. '
-            'Data with more entries than the limit in the plot settings is not '
-            'drawn.'
+            'its dimension. With an integer coordinate, each coordinate value has '
+            'a fixed color, the same as in Overlay 1D and Bars. Data with more '
+            'entries than the limit in the plot settings is not drawn.'
         ),
         data_requirements=DataRequirements(
             min_dims=1,

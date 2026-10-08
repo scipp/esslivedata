@@ -9,7 +9,14 @@ import pydantic
 import pytest
 import scipp as sc
 from bokeh.document import Document
-from bokeh.models import DatetimeAxis, FactorRange, GlyphRenderer, Plot, Whisker
+from bokeh.models import (
+    DatetimeAxis,
+    FactorRange,
+    GlyphRenderer,
+    HoverTool,
+    Plot,
+    Whisker,
+)
 from holoviews.plotting.bokeh import BokehRenderer
 
 from ess.livedata.config.workflow_spec import DataKey, WorkflowId
@@ -1945,6 +1952,16 @@ class TestBarsPlotter:
         result = bars_plotter.plot(scalar_data, data_key)
         render_to_bokeh(result)
 
+    def test_layers_sharing_a_cell_get_distinct_colors(self, scalar_data):
+        layers = []
+        for source in ['source1', 'source2']:
+            plotter = plots.BarsPlotter.from_params(PlotParamsBars())
+            plotter.compute({PRIMARY: {make_data_key(source): scalar_data}})
+            layers.append(plotter.get_cached_state())
+        fig = render_to_bokeh(hv.Overlay(layers)).state
+        colors = {gr.glyph.fill_color for gr in fig.select({'type': GlyphRenderer})}
+        assert len(colors) == 2
+
 
 class TestTablePlotter:
     """Tests for TablePlotter with 0D data."""
@@ -2714,6 +2731,15 @@ class TestBarsPlotterPerRoi:
         colors = hv.Cycle.default_cycles["default_colors"]
         assert list(bars.dimension_values('roi')) == ['roi=0', 'roi=3', 'roi=5']
         assert list(bars.dimension_values('color')) == [colors[0], colors[3], colors[5]]
+
+    def test_tooltips_show_the_value_but_not_the_color(self, plotter, data_key):
+        fig, _ = _render(plotter, {data_key: _per_roi([0, 3])}, data_key)
+        (hover,) = fig.select({'type': HoverTool})
+        assert [name for name, _ in hover.tooltips] == [
+            'source',
+            'roi',
+            'test_result (counts)',
+        ]
 
     def test_rendered_axis_is_categorical_with_the_bars(self, plotter, data_key):
         fig, _ = _render(plotter, {data_key: _per_roi([0, 3])}, data_key)

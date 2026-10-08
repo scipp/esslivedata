@@ -566,9 +566,9 @@ class EntryLimitParams(pydantic.BaseModel):
     max_entries: int = pydantic.Field(
         default=20,
         description=(
-            "Maximum number of entries (e.g., ROIs) drawn per source, one curve or "
-            "bar each. A source with more entries is not drawn, since too many "
-            "make the plot - and the rest of the dashboard - sluggish."
+            "Maximum number of entries drawn per source, one curve or bar each. A "
+            "source with more entries is not drawn, since too many make the plot "
+            "- and the rest of the dashboard - sluggish."
         ),
         title="Max Entries",
         ge=1,
