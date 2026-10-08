@@ -113,7 +113,7 @@ def _create_job(
 #: each chopper's delay over one rotation in beam order and keeping what
 #: maximised transmission downstream; re-run that scan if regenerating the
 #: geometry artifact moves a chopper and these stop working.
-_TRANSMITTING_DELAYS_NS = {
+_DREAM_TRANSMITTING_DELAYS_NS = {
     'pulse_shaping_chopper2': 45_600_000.0,
     'overlap_chopper': 17_200_000.0,
 }
@@ -165,8 +165,9 @@ def _detector_events_across_one_frame(count: int = 200) -> sc.DataArray:
 
 def _run_lut_job(
     instrument: Instrument,
+    *,
+    delays: dict[str, float],
     speeds: dict[str, float] | None = None,
-    delays: dict[str, float] = _TRANSMITTING_DELAYS_NS,
 ):
     """Run the lookup-table job once and return its result.
 
@@ -241,7 +242,7 @@ def _ingest(instrument: Instrument, result) -> dict[str, sc.DataArray]:
 @pytest.fixture(scope='module')
 def ingested(dream: Instrument) -> dict[str, sc.DataArray]:
     """The group tables as they arrive at a consuming service."""
-    return _ingest(dream, _run_lut_job(dream))
+    return _ingest(dream, _run_lut_job(dream, delays=_DREAM_TRANSMITTING_DELAYS_NS))
 
 
 def test_publishes_one_table_per_group(ingested: dict[str, sc.DataArray]) -> None:
@@ -434,7 +435,14 @@ def test_chopper_out_of_phase_empties_the_consumer(dream: Instrument) -> None:
     with no counts: the same result as an opening too narrow to catch any
     neutrons.
     """
-    table = _ingest(dream, _run_lut_job(dream, speeds={'overlap_chopper': 5.0}))
+    table = _ingest(
+        dream,
+        _run_lut_job(
+            dream,
+            speeds={'overlap_chopper': 5.0},
+            delays=_DREAM_TRANSMITTING_DELAYS_NS,
+        ),
+    )
 
     reply, result = _run_wavelength_monitor_job(dream, table[MONITOR_STREAM])
 
@@ -456,9 +464,9 @@ _DREAM_PROD_SPEEDS = {
 
 #: A phasing that transmits at ``_DREAM_PROD_SPEEDS`` once the overlap chopper
 #: is brought into sync at 7 Hz, found by the same scan as
-#: ``_TRANSMITTING_DELAYS_NS``. ``_TRANSMITTING_DELAYS_NS`` itself blocks the
-#: beam at these speeds, so a test using it would empty the table whatever the
-#: overlap chopper did.
+#: ``_DREAM_TRANSMITTING_DELAYS_NS``. That phasing itself blocks the beam at
+#: these speeds, so a test using it would empty the table whatever the overlap
+#: chopper did.
 _DREAM_PROD_TRANSMITTING_DELAYS_NS = {
     'pulse_shaping_chopper2': 45_600_000.0,
     'overlap_chopper': 32_000_000.0,
@@ -620,7 +628,9 @@ def tbl() -> Instrument:
 
 @pytest.fixture(scope='module')
 def tbl_tables(tbl: Instrument) -> dict[str, sc.DataArray]:
-    return _ingest(tbl, _run_lut_job(tbl))
+    # Zero delay on both bandwidth choppers transmits, which the non-empty
+    # results asserted below rely on.
+    return _ingest(tbl, _run_lut_job(tbl, delays={}))
 
 
 class TestTblWavelengthViews:
