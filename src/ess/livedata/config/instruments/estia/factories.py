@@ -29,7 +29,6 @@ def setup_factories(instrument: Instrument) -> None:
         CoordTransformationGraph,
         CorrectionsToApply,
         Filename,
-        LookupTableFilename,
         LookupTableRelativeErrorThreshold,
         NeXusDetectorName,
         ProtonCharge,
@@ -43,6 +42,7 @@ def setup_factories(instrument: Instrument) -> None:
     )
     from scippnexus import NXdetector
 
+    from ess.livedata.workflows.lut_context import detector_lookup_table
     from ess.livedata.workflows.stream_processor_workflow import (
         StreamProcessorWorkflow,
     )
@@ -60,7 +60,7 @@ def setup_factories(instrument: Instrument) -> None:
             'Ni/Ti-multilayer'
         )[0]
         wf[NeXusDetectorName] = source_name
-        wf[LookupTableFilename] = estia_data.estia_wavelength_lookup_table()
+        wf.insert(detector_lookup_table)
         wf[LookupTableRelativeErrorThreshold] = {source_name: float('inf')}
         wf[WavelengthBins] = params.wavelength_edges.get_edges().to(unit='angstrom')
         wf[QBins] = params.q_edges.get_edges().to(unit='1/angstrom')

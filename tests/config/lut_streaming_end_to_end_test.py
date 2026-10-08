@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: BSD-3-Clause
 # Copyright (c) 2025 Scipp contributors (https://github.com/scipp)
-"""End-to-end test of the streamed wavelength lookup table on DREAM.
+"""End-to-end test of the streamed wavelength lookup table on real instruments.
 
 Runs the real chain with real specs: the lookup-table job computes the detector
 and monitor tables, they are extracted as context messages, serialized to da00,
@@ -616,6 +616,107 @@ class TestLokiMotionAndRoles:
         defaults = {inp.default for inp in aux_sources.inputs.values()}
 
         assert defaults <= loki.lut_components
+
+
+@pytest.fixture(scope='module')
+def estia() -> Instrument:
+    get_config('estia')
+    instrument = instrument_registry['estia']
+    instrument.load_factories()
+    return instrument
+
+
+class TestEstiaReflectometry:
+    """ESTIA's detector table is placed by a declared flight path, and its
+    reflectometry reduction takes geometry from a McStas file rather than from
+    the artifact the table is built from. The two must still meet."""
+
+    def test_publishes_detector_and_monitor_tables(self, estia: Instrument) -> None:
+        assert set(_ingest(estia, _run_lut_job(estia, delays={}))) == {
+            DETECTOR_STREAM,
+            MONITOR_STREAM,
+        }
+
+    def test_reduction_consumes_the_streamed_table(self, estia: Instrument) -> None:
+        # At a 30 ms delay the band chopper passes about 3 to 10 angstrom to the
+        # detector, so every event below gets a wavelength.
+        delays = {'bwc': 30_000_000.0}
+        table = _ingest(estia, _run_lut_job(estia, delays=delays))[DETECTOR_STREAM]
+        params_model = _params_model(estia, 'reflectometry_reduction')
+        job = _create_job(
+            estia, 'reflectometry_reduction', 'multiblade_detector', params_model()
+        )
+
+        assert job.gating_streams == {DETECTOR_STREAM}
+
+        # Events on every pixel: most fall outside the default divergence limits.
+        rng = np.random.default_rng(seed=1)
+        n_events = 2000
+        events = sc.DataArray(
+            data=sc.ones(sizes={'event': n_events}, dtype='float32', unit='counts'),
+            coords={
+                'event_time_offset': sc.array(
+                    dims=['event'], values=rng.uniform(1e7, 6e7, n_events), unit='ns'
+                ),
+                'event_id': sc.array(
+                    dims=['event'],
+                    values=rng.integers(98305, 196609, n_events),
+                    unit=None,
+                ),
+            },
+        )
+        sizes = sc.array(dims=['event_time_zero'], values=[n_events], unit=None)
+        binned = sc.DataArray(
+            sc.bins(begin=sc.cumsum(sizes, mode='exclusive'), dim='event', data=events),
+            # After the factory's placeholder proton-charge sample at 1 ns; events
+            # before it would be normalized to zero.
+            coords={
+                'event_time_zero': sc.epoch(unit='ns')
+                + sc.array(dims=['event_time_zero'], values=[10**9], unit='ns')
+            },
+        )
+        data = JobData(
+            start_time=Timestamp.from_ns(0),
+            end_time=Timestamp.from_ns(1),
+            primary_data={'multiblade_detector': binned},
+            aux_data={DETECTOR_STREAM: table},
+        )
+
+        reply, result = job.process(data, finalize=True)
+
+        assert not reply.has_error, reply.error_message
+        assert result.error_message is None, result.error_message
+        assert result.data['i_of_wavelength'].sum().value > 0
+
+    def test_monitor_reduces_to_wavelength(self, estia: Instrument) -> None:
+        tables = _ingest(estia, _run_lut_job(estia, delays={'bwc': 30_000_000.0}))
+        params_model = _params_model(estia, 'monitor_histogram')
+        job = _create_job(
+            estia,
+            'monitor_histogram',
+            'beam_monitor',
+            params_model(coordinate_mode=CoordinateModeSettings(mode='wavelength')),
+        )
+        assert job.gating_streams == {MONITOR_STREAM}
+
+        frame_time = sc.linspace('frame_time', 0, 71_000_000, num=1001, unit='ns')
+        histogram = sc.DataArray(
+            sc.ones(sizes={'frame_time': 1000}, unit='counts'),
+            coords={'frame_time': frame_time},
+        )
+        data = JobData(
+            start_time=Timestamp.from_ns(0),
+            end_time=Timestamp.from_ns(1),
+            primary_data={'beam_monitor': histogram},
+            aux_data={MONITOR_STREAM: tables[MONITOR_STREAM]},
+        )
+        reply, result = job.process(data, finalize=True)
+
+        assert not reply.has_error, reply.error_message
+        assert result.error_message is None, result.error_message
+        cumulative = result.data['cumulative']
+        assert 'wavelength' in cumulative.coords
+        assert cumulative.sum().value > 0
 
 
 @pytest.fixture(scope='module')

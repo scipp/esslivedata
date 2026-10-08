@@ -62,7 +62,11 @@ from ..config.chopper import delay_setpoint_stream, speed_setpoint_stream
 from ..config.stream import AxisRange
 from .dynamic_transforms import synthesise_provider
 from .lut_blocks import Range, one_block, pack_blocks
-from .lut_ranges import LtotalRangeError, component_ltotal_range
+from .lut_ranges import (
+    LtotalRangeError,
+    component_ltotal_range,
+    padded_ltotal_range,
+)
 from .stream_processor_workflow import StreamProcessorWorkflow
 from .wavelength_lut_workflow_specs import (
     CHOPPER_CASCADE_SOURCE,
@@ -227,6 +231,11 @@ def build_disk_choppers_provider(
             merged = sc.DataGroup(dict(raw_choppers[name]))
             merged['rotation_speed_setpoint'] = latest[name, 'speed']
             merged['delay'] = latest[name, 'delay']
+            # ``DiskChopper.from_nexus`` prefers a ``phase`` field over the delay
+            # it would otherwise derive the phase from, so a file-loaded one
+            # would override the streamed setpoint. ESTIA's writer stores the
+            # in-phase status flag (``InPhs_R``) under that name.
+            merged.pop('phase', None)
             patched[name] = merged
         return to_disk_choppers(RawChoppers[AnyRun](sc.DataGroup(patched)))
 
@@ -534,6 +543,7 @@ def attach_wavelength_lut_factory(
     detectors: Sequence[str],
     monitors: Sequence[str],
     axis_ranges: Mapping[str, AxisRange],
+    declared_ltotal: Mapping[str, sc.Variable],
 ) -> frozenset[str]:
     """Bind per-chopper setpoint context and attach the LUT factory.
 
@@ -548,9 +558,10 @@ def attach_wavelength_lut_factory(
     here enforces that invariant by construction rather than leaving each
     instrument's ``factories.py`` to wire matching keys by hand.
 
-    Each component's flight-path range is derived from the geometry artifact.
-    A component whose range cannot be derived -- one riding a live f144-driven
-    axis with no declared :class:`AxisRange` -- is left without a table.
+    Each component's flight-path range is derived from the geometry artifact,
+    unless ``declared_ltotal`` states it. A component whose range cannot be
+    derived -- one riding a live f144-driven axis with no declared
+    :class:`AxisRange` -- is left without a table.
 
     Returns
     -------
@@ -560,10 +571,18 @@ def attach_wavelength_lut_factory(
         every job that could have selected it.
     """
     detector_ranges = _derive_ltotal_ranges(
-        nexus_filename, detectors, is_monitor=False, axis_ranges=axis_ranges
+        nexus_filename,
+        detectors,
+        is_monitor=False,
+        axis_ranges=axis_ranges,
+        declared_ltotal=declared_ltotal,
     )
     monitor_ranges = _derive_ltotal_ranges(
-        nexus_filename, monitors, is_monitor=True, axis_ranges=axis_ranges
+        nexus_filename,
+        monitors,
+        is_monitor=True,
+        axis_ranges=axis_ranges,
+        declared_ltotal=declared_ltotal,
     )
     setpoint_keys = {
         chopper: make_chopper_setpoint_keys(chopper) for chopper in choppers
@@ -595,10 +614,14 @@ def _derive_ltotal_ranges(
     *,
     is_monitor: bool,
     axis_ranges: Mapping[str, AxisRange],
+    declared_ltotal: Mapping[str, sc.Variable],
 ) -> dict[str, Range]:
     """Derive a group's ranges, skipping components the artifact cannot place."""
     ranges: dict[str, Range] = {}
     for name in components:
+        if (ltotal := declared_ltotal.get(name)) is not None:
+            ranges[name] = padded_ltotal_range(ltotal)
+            continue
         try:
             ranges[name] = component_ltotal_range(
                 nexus_filename, name, is_monitor=is_monitor, axis_ranges=axis_ranges

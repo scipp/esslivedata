@@ -78,7 +78,10 @@ transform keeps supplying the direction of travel. Which components ride an axis
 derived from the `depends_on` chain. Translations are bracketed by evaluating the geometry
 at the corners of the box the bounds span; rotations are refused, since `Ltotal` is not
 monotonic in an angle, and the first instrument with a live rotation has to design for it
-deliberately (`workflows/lut_ranges.py`).
+deliberately (`workflows/lut_ranges.py`). ESTIA was that instrument: its detector arm
+rotates about the sample, which leaves every pixel's `Ltotal` unchanged, so it declares the
+detector's flight path instead (`Instrument.declared_ltotal`). A declaration replaces the
+derivation for that component, and the end-to-end test checks it against the consumer.
 
 A component nobody can place gets no block. A job on such a source gates like any other
 and then fails at its first recompute, reporting its flight path against the table's

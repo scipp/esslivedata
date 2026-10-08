@@ -19,7 +19,6 @@ from ess.livedata.config.device_contract import DETECTOR_VIEW_DEVICES
 from ess.livedata.config.workflow_spec import WorkflowOutputsBase
 from ess.livedata.workflows.detector_view_specs import SpectrumViewSpec
 from ess.livedata.workflows.monitor_workflow_specs import (
-    TOAOnlyMonitorDataParams,
     register_monitor_workflow_specs,
 )
 
@@ -189,13 +188,43 @@ class EstiaReflectometryReductionOutputs(WorkflowOutputsBase):
 
 streams = name_streams(filter_authorized_streams(PARSED_STREAMS))
 
+#: Named as in the geometry file; the Kafka source is ``cbm1`` (see
+#: ``make_common_stream_mapping_inputs`` in ``streams.py``).
+monitor_names = ['beam_monitor']
+
+#: The geometry artifact carries two hand repairs of the run file:
+#:
+#: - The run file places the ``NXsource`` at the origin, which is the sample
+#:   position, and labels it ``probe='proton'``. The artifact moves it to the
+#:   moderator position relative to the sample that essestia's McStas loader
+#:   uses (35.05 m upstream), and sets ``probe='neutron'``. Without this every
+#:   distance from the source is wrong, e.g., the chopper would sit 24 m instead
+#:   of 11 m from it.
+#: - The run file places ``beam_monitor`` 34 m *downstream* of the sample. Read
+#:   as 34 m upstream it would sit inside the target monolith, so the 34 m is
+#:   taken as measured from the moderator, in a frame with the origin at the
+#:   source. The artifact chains it onto the source at that distance along the
+#:   beam, 1.05 m before the sample.
+#:
+#: The detector arm rotates about the sample, which leaves the flight path to
+#: every pixel unchanged, but the lookup-table range derivation refuses live
+#: rotations. The range is therefore declared; the table pads it by 1%, at least
+#: 0.1 m. The declared range is what the repaired artifact gives at any arm
+#: angle, and agrees with the McStas geometry the reduction
+#: workflow uses to within 4 mm.
 instrument = Instrument(
     name='estia',
     detector_names=detector_names,
-    monitors=['cbm1'],
+    monitors=monitor_names,
+    choppers=['bwc'],
+    declared_ltotal={
+        'multiblade_detector': sc.array(
+            dims=['ltotal'], values=[39.057, 39.188], unit='m'
+        )
+    },
     streams=streams,
     source_metadata={
-        'detector_rotation/value': SourceMetadata(
+        'detector_arm_rotation/value': SourceMetadata(
             title='Detector Rotation',
             description='Multiblade detector bank rotation angle.',
         ),
@@ -206,8 +235,12 @@ instrument_registry.register(instrument)
 
 register_monitor_workflow_specs(
     instrument,
-    instrument.monitors,
-    params=TOAOnlyMonitorDataParams,
+    monitor_names,
+    extra_description=(
+        '<b>Warning:</b> wavelength mode uses the monitor position from the'
+        ' geometry file, 34 m from the moderator, which is unconfirmed.'
+        ' Treat wavelengths as approximate.'
+    ),
 )
 
 

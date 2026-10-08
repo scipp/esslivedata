@@ -207,6 +207,12 @@ def component_ltotal_range(
             f"Cannot derive the flight-path range of {component!r} from "
             f"{nexus_filename}: {exc}"
         ) from exc
+    return padded_ltotal_range(ltotal)
+
+
+def padded_ltotal_range(ltotal: sc.Variable) -> tuple[sc.Variable, sc.Variable]:
+    """The padded ``(start, stop)`` a block covering ``ltotal`` must span."""
+    ltotal = ltotal.to(unit='m')
     start, stop = ltotal.min(), ltotal.max()
     pad = sc.max(sc.concat([(stop - start) * _RELATIVE_PAD, _MINIMUM_PAD], 'pad'))
     return start - pad, stop + pad

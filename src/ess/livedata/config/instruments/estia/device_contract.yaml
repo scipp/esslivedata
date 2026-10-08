@@ -4,13 +4,13 @@
 # GENERATED -- do not edit. NICOS derived-device list for estia.
 # Regenerate: python -m ess.livedata.config.device_contract
 devices:
-- device_name: cbm1_counts_total
+- device_name: beam_monitor_counts_total
   workflow_id: estia/monitor_histogram/1
-  source_name: cbm1
+  source_name: beam_monitor
   output_name: counts_total_cumulative
-- device_name: cbm1_histogram
+- device_name: beam_monitor_histogram
   workflow_id: estia/monitor_histogram/1
-  source_name: cbm1
+  source_name: beam_monitor
   output_name: cumulative
 - device_name: multiblade_detector_counts_total
   workflow_id: estia/estia_multiblade_detector_view/1
