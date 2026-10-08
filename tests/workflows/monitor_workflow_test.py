@@ -687,7 +687,7 @@ class TestMonitorWorkflowWavelengthModeHistogramInput:
             get_nexus_geometry_filename,
         )
 
-        return get_nexus_geometry_filename('dream-no-shape')
+        return get_nexus_geometry_filename('dream')
 
     @pytest.fixture
     def lookup_table_filename(self):
@@ -815,7 +815,7 @@ class TestMonitorMotion:
             get_nexus_geometry_filename,
         )
 
-        return str(get_nexus_geometry_filename('dream-no-shape'))
+        return str(get_nexus_geometry_filename('dream'))
 
     @pytest.fixture
     def lookup_table_filename(self):

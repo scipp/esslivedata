@@ -31,7 +31,6 @@ def setup_factories(instrument: Instrument) -> None:
     from scippnexus import NXdetector
 
     from ess import dream, powder
-    from ess.livedata.preprocessors.detector_data import get_nexus_geometry_filename
     from ess.livedata.workflows.detector_view import (
         DetectorViewFactory,
         GeometricViewConfig,
@@ -46,7 +45,7 @@ def setup_factories(instrument: Instrument) -> None:
     # Pixel noise is shared across all detectors.
     _pixel_noise = sc.scalar(4.0, unit='mm')
     _detector_view_factory = DetectorViewFactory(
-        data_source=NeXusDetectorSource(get_nexus_geometry_filename('dream-no-shape')),
+        data_source=NeXusDetectorSource(instrument.nexus_file),
         view_config={
             'mantle_detector': GeometricViewConfig(
                 projection_type='cylinder_mantle_z',
@@ -148,11 +147,7 @@ def setup_factories(instrument: Instrument) -> None:
         SampleRun
     ](False)
 
-    # dream-no-shape is a much smaller file without pixel_shape, which is not needed
-    # for data reduction.
-    _reduction_workflow[Filename[SampleRun]] = get_nexus_geometry_filename(
-        'dream-no-shape'
-    )
+    _reduction_workflow[Filename[SampleRun]] = instrument.nexus_file
 
     def _configure_powder_workflow(
         source_name: str,

@@ -33,7 +33,7 @@ def geometry() -> dict[str, sc.DataArray]:
     The positions are lab-frame (``depends_on`` is ``.``) with the beam along +z.
     """
     banks = {}
-    with h5py.File(get_nexus_geometry_filename('dream-no-shape')) as f:
+    with h5py.File(get_nexus_geometry_filename('dream')) as f:
         for bank in BANKS:
             group = f['entry/instrument'][bank]
             assert group['x_pixel_offset'].attrs['units'] == 'mm'
