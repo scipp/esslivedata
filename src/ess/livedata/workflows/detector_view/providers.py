@@ -243,6 +243,20 @@ def accumulated_histogram(
     return AccumulatedHistogram[AccumulationMode](data)
 
 
+def slice_spectral_range(
+    data: sc.DataArray, histogram_slice: HistogramSlice
+) -> sc.DataArray:
+    """Restrict ``data`` to the active range filter along its last dimension.
+
+    Every output that reports counts "in range" goes through this function, so
+    they all select the same spectral bins. ``None`` selects everything.
+    """
+    if histogram_slice is None:
+        return data
+    low, high = histogram_slice
+    return data[data.dims[-1], low:high]
+
+
 def detector_image(
     histogram: AccumulatedHistogram[AccumulationMode],
     histogram_slice: HistogramSlice,
@@ -273,13 +287,7 @@ def detector_image(
     :
         2D detector image, published as float32.
     """
-    spectral_dim = histogram.dims[-1]
-    if histogram_slice is not None:
-        low, high = histogram_slice
-        sliced = histogram[spectral_dim, low:high]
-    else:
-        sliced = histogram
-    image = sliced.sum(spectral_dim)
+    image = slice_spectral_range(histogram, histogram_slice).sum(histogram.dims[-1])
 
     if use_weighting:
         image = image / weights
@@ -361,12 +369,6 @@ def counts_in_range(
     :
         Counts in range as 0D scalar.
     """
-    spectral_dim = histogram.dims[-1]
-
-    if histogram_slice is not None:
-        low, high = histogram_slice
-        sliced = histogram[spectral_dim, low:high]
-    else:
-        sliced = histogram
-
-    return CountsInRange[AccumulationMode](sliced.sum())
+    return CountsInRange[AccumulationMode](
+        slice_spectral_range(histogram, histogram_slice).sum()
+    )

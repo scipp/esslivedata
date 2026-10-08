@@ -40,8 +40,8 @@ from .types import (
     DetectorImage,
     GeometricViewConfig,
     LogicalViewConfig,
-    ROICountsPerPixel,
-    ROIIntegratedCounts,
+    ROICountsInRange,
+    ROICountsPerPixelInRange,
     ROIPolygonReadback,
     ROIPolygonRequest,
     ROIRectangleReadback,
@@ -231,10 +231,14 @@ class DetectorViewFactory:
                 {
                     'roi_spectra_cumulative': ROISpectra[Cumulative],
                     'roi_spectra_current': ROISpectra[Current],
-                    'roi_counts_cumulative': ROIIntegratedCounts[Cumulative],
-                    'roi_counts_current': ROIIntegratedCounts[Current],
-                    'roi_counts_per_pixel_cumulative': ROICountsPerPixel[Cumulative],
-                    'roi_counts_per_pixel_current': ROICountsPerPixel[Current],
+                    'roi_counts_in_range_cumulative': ROICountsInRange[Cumulative],
+                    'roi_counts_in_range_current': ROICountsInRange[Current],
+                    'roi_counts_per_pixel_in_range_cumulative': (
+                        ROICountsPerPixelInRange[Cumulative]
+                    ),
+                    'roi_counts_per_pixel_in_range_current': (
+                        ROICountsPerPixelInRange[Current]
+                    ),
                     'roi_rectangle': ROIRectangleReadback,
                     'roi_polygon': ROIPolygonReadback,
                 }

@@ -17,13 +17,15 @@ from ess.livedata.config.models import Interval, PolygonROI, RectangleROI
 from ess.livedata.workflows.detector_view.roi import (
     precompute_roi_polygon_masks,
     precompute_roi_rectangle_bounds,
-    roi_counts_per_pixel,
-    roi_integrated_counts,
+    roi_counts_in_range,
+    roi_counts_per_pixel_in_range,
     roi_pixel_counts,
     roi_spectra,
 )
 from ess.livedata.workflows.detector_view.types import (
+    ROIPolygonMasks,
     ROIPolygonRequest,
+    ROIRectangleBounds,
     ROIRectangleRequest,
     ScreenMetadata,
 )
@@ -459,8 +461,8 @@ class TestROICounts:
 
         pixels = roi_pixel_counts(histogram, bounds, masks)
         spectra = roi_spectra(histogram, bounds, masks)
-        counts = roi_integrated_counts(spectra, None)
-        per_pixel = roi_counts_per_pixel(counts, pixels)
+        counts = roi_counts_in_range(spectra, None)
+        per_pixel = roi_counts_per_pixel_in_range(counts, pixels)
 
         assert pixels.dims == ('roi',)
         assert pixels.values.tolist() == [6, 16]  # 3x2 rectangle, 4x4 polygon
@@ -477,7 +479,7 @@ class TestROICounts:
         # tof bins are 10000 ns wide; keep the first two
         low = sc.scalar(0, unit='ns')
         high = sc.scalar(20000, unit='ns')
-        counts = roi_integrated_counts(spectra, (low, high))
+        counts = roi_counts_in_range(spectra, (low, high))
 
         assert counts.values.tolist() == [6 * 2, 16 * 2]
 
@@ -485,10 +487,30 @@ class TestROICounts:
         metadata = make_screen_metadata_from_edges()
         histogram = make_uniform_histogram()
         bounds, masks = self.make_bounds_and_masks(metadata)
-        bounds, masks = type(bounds)({}), type(masks)({})
+        bounds, masks = ROIRectangleBounds({}), ROIPolygonMasks({})
 
         pixels = roi_pixel_counts(histogram, bounds, masks)
-        counts = roi_integrated_counts(roi_spectra(histogram, bounds, masks), None)
+        counts = roi_counts_in_range(roi_spectra(histogram, bounds, masks), None)
 
         assert pixels.sizes == {'roi': 0}
-        assert roi_counts_per_pixel(counts, pixels).sizes == {'roi': 0}
+        assert roi_counts_per_pixel_in_range(counts, pixels).sizes == {'roi': 0}
+
+    def test_roi_outside_the_screen_has_no_pixels_and_gives_nan_per_pixel(self):
+        metadata = make_screen_metadata_from_edges()
+        histogram = make_uniform_histogram()
+        outside = RectangleROI(
+            x=Interval(min=20.0, max=30.0, unit='m'),
+            y=Interval(min=20.0, max=30.0, unit='m'),
+        )
+        bounds = precompute_roi_rectangle_bounds(
+            metadata,
+            ROIRectangleRequest(RectangleROI.to_concatenated_data_array({0: outside})),
+        )
+        masks = ROIPolygonMasks({})
+
+        pixels = roi_pixel_counts(histogram, bounds, masks)
+        counts = roi_counts_in_range(roi_spectra(histogram, bounds, masks), None)
+        per_pixel = roi_counts_per_pixel_in_range(counts, pixels)
+
+        assert pixels.values.tolist() == [0]
+        assert np.isnan(per_pixel.values[0])

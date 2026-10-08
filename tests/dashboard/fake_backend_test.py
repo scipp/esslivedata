@@ -489,6 +489,17 @@ class TestROILoopback:
         assert spectra.sizes['time_of_arrival'] == 64
         assert len(results['roi_rectangle']) == 0
 
+    def test_per_roi_scalars_follow_published_rois(
+        self, session: _DetectorSession
+    ) -> None:
+        results = session.results()
+        assert results['roi_counts_in_range_cumulative'].sizes == {'roi': 0}
+
+        session.publish({1: _rectangle(0.0, 0.0), 3: _rectangle(20.0, 20.0)})
+        counts = session.results()['roi_counts_in_range_current']
+        assert counts.dims == ('roi',)
+        assert counts.coords['roi'].values.tolist() == [1, 3]
+
     def test_roi_dim_follows_published_rois(self, session: _DetectorSession) -> None:
         session.publish({0: _rectangle(0.0, 0.0), 1: _rectangle(20.0, 20.0)})
         assert session.results()['roi_spectra_cumulative'].sizes['roi'] == 2

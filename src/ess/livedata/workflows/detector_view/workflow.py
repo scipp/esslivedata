@@ -47,8 +47,8 @@ from .providers import (
 from .roi import (
     precompute_roi_polygon_masks,
     precompute_roi_rectangle_bounds,
-    roi_counts_per_pixel,
-    roi_integrated_counts,
+    roi_counts_in_range,
+    roi_counts_per_pixel_in_range,
     roi_pixel_counts,
     roi_polygon_readback,
     roi_rectangle_readback,
@@ -131,9 +131,9 @@ def create_base_workflow(
 
     # Add ROI providers (generic provider for both modes)
     workflow.insert(roi_spectra)
-    workflow.insert(roi_integrated_counts)
+    workflow.insert(roi_counts_in_range)
     workflow.insert(roi_pixel_counts)
-    workflow.insert(roi_counts_per_pixel)
+    workflow.insert(roi_counts_per_pixel_in_range)
     workflow.insert(roi_rectangle_readback)
     workflow.insert(roi_polygon_readback)
     workflow.insert(precompute_roi_rectangle_bounds)

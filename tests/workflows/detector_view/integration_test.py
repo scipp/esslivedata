@@ -18,10 +18,12 @@ from ess.livedata.config.roi_names import roi_stream_name
 from ess.livedata.config.workflow_spec import JobId, WorkflowId
 from ess.livedata.core.job import Job, JobData
 from ess.livedata.core.timestamp import Timestamp
+from ess.livedata.parameter_models import TimeUnit, TOARange
 from ess.livedata.workflows.detector_view.types import (
     ROIPolygonRequest,
     ROIRectangleRequest,
 )
+from ess.livedata.workflows.detector_view_specs import DetectorViewParams
 
 from .utils import (
     ROI_CONTEXT_DEFAULTS,
@@ -73,6 +75,8 @@ class TestIntegrationWithStreamProcessor:
             'counts_total',
             'counts_in_toa_range',
             'roi_spectra_current',
+            'roi_counts_in_range_current',
+            'roi_counts_per_pixel_in_range_current',
         ):
             coords = result[key].coords
             assert coords['start_time'].value == 1000, key
@@ -85,6 +89,8 @@ class TestIntegrationWithStreamProcessor:
         for key in (
             'cumulative',
             'roi_spectra_cumulative',
+            'roi_counts_in_range_cumulative',
+            'roi_counts_per_pixel_in_range_cumulative',
             'counts_total_cumulative',
             'counts_in_toa_range_cumulative',
         ):
@@ -268,12 +274,46 @@ class TestROISpectraIntegration:
 
         for mode in ('cumulative', 'current'):
             spectra = result[f'roi_spectra_{mode}']
-            counts = result[f'roi_counts_{mode}']
-            per_pixel = result[f'roi_counts_per_pixel_{mode}']
+            counts = result[f'roi_counts_in_range_{mode}']
+            per_pixel = result[f'roi_counts_per_pixel_in_range_{mode}']
             assert counts.dims == ('roi',)
             assert counts.coords['roi'].values.tolist() == [3]
             assert counts.values[0] == spectra.sum().value
             assert per_pixel.values[0] == pytest.approx(counts.values[0] / 4)
+
+    def test_roi_counts_in_range_follow_the_range_filter_like_the_image(self):
+        factory = make_test_factory(y_size=4, x_size=4)
+        params = DetectorViewParams(
+            toa_range=TOARange(enabled=True, start=0.0, stop=35.0, unit=TimeUnit.MS)
+        )
+        workflow = factory.make_workflow('detector', params=params)
+        workflow.build(context_keys=ROI_CONTEXT_KEYS)
+        events = make_fake_nexus_detector_data(
+            y_size=4, x_size=4, n_events_per_pixel=100
+        )
+        small = RectangleROI(
+            x=Interval(min=0, max=2, unit=None), y=Interval(min=0, max=2, unit=None)
+        )
+        full = RectangleROI(
+            x=Interval(min=0, max=4, unit=None), y=Interval(min=0, max=4, unit=None)
+        )
+        workflow.accumulate(
+            {
+                **ROI_CONTEXT_DEFAULTS,
+                'detector': RawDetector[SampleRun](events),
+                'roi_rectangle': ROI.to_concatenated_data_array({0: small, 1: full}),
+            },
+            start_time=Timestamp.from_ns(1000),
+            end_time=Timestamp.from_ns(2000),
+        )
+        result = workflow.finalize()
+
+        counts = result['roi_counts_in_range_current']
+        image = result['current']
+        assert counts.values[0] == image['y', 0:2]['x', 0:2].sum().value
+        assert counts.values[1] == result['counts_in_toa_range'].value
+        # The filter removes events, and only the ROI spectra stay unfiltered.
+        assert counts.values[1] < result['roi_spectra_current'].sum().value
 
     def test_roi_change_recomputes_from_accumulated_histogram(self):
         """Test that changing ROI recomputes spectra from full accumulated data."""
@@ -506,7 +546,6 @@ class TestUnitHandling:
         output with the user-specified unit.
         """
         from ess.livedata.parameter_models import TimeUnit, TOAEdges
-        from ess.livedata.workflows.detector_view_specs import DetectorViewParams
 
         # Create params with microsecond TOA edges
         # Events have event_time_offset in nanoseconds (0-71ms = 0-71000 us)

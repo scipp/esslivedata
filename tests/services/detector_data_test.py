@@ -15,11 +15,6 @@ from ess.livedata.core.message import StreamKind
 from ess.livedata.services.detector_data import make_detector_service_builder
 from tests.helpers.livedata_app import LivedataApp
 
-# Messages published per update by a detector view with ROI support:
-# cumulative, current, counts_total (x2), counts_in_toa_range (x2), roi_spectra (x2),
-# roi_counts (x2), roi_counts_per_pixel (x2), roi_rectangle, roi_polygon.
-N_DETECTOR_VIEW_OUTPUTS = 14
-
 
 def _job_id(source: str) -> JobId:
     return JobId(source_name=source, job_number=uuid.uuid4())
@@ -28,6 +23,12 @@ def _job_id(source: str) -> JobId:
 def _data_messages(sink) -> list:
     """Workflow result messages, excluding the NICOS device stream."""
     return [m for m in sink.messages if m.stream.kind == StreamKind.LIVEDATA_DATA]
+
+
+def _n_outputs(instrument: str, name: str | None = None) -> int:
+    """Number of data messages one update publishes: one per declared output."""
+    _, spec = _get_workflow_from_registry(instrument, name=name)
+    return len(spec.outputs.model_fields)
 
 
 def _get_workflow_from_registry(
@@ -96,9 +97,7 @@ def test_can_configure_and_stop_detector_workflow(
         app.publish_log_message(
             source_name='detector_carriage/value', time=1, value=5000.0
         )
-    # Instruments that enable a unified spectrum output add one additional
-    # spectrum_view message.
-    n_out = N_DETECTOR_VIEW_OUTPUTS + (1 if instrument == 'bifrost' else 0)
+    n_out = _n_outputs(instrument, name=name)
     app.publish_events(size=2000, time=2)
     service.step()
     assert len(_data_messages(sink)) == n_out
@@ -178,7 +177,7 @@ def test_loki_cumulative_resets_when_detector_carriage_moves() -> None:
             source_name='detector_carriage/value', time=time, value=position
         )
 
-    n_out = N_DETECTOR_VIEW_OUTPUTS
+    n_out = _n_outputs('loki', name='detector_xy_projection')
 
     # Cycle 1: park, accumulate a first batch.
     prime_carriage(position=5000.0, time=1)
@@ -233,7 +232,7 @@ def test_odin_cumulative_resets_when_the_readout_resolution_changes() -> None:
     )
     service.step()
 
-    n_out = N_DETECTOR_VIEW_OUTPUTS
+    n_out = _n_outputs('odin')
     # Only the first rows of the 4096x4096 panel light up, so the ids seen so
     # far are consistent with a much smaller readout.
     app.publish_events(size=2000, time=2, id_range=(0, 100 * 4096))
@@ -328,8 +327,7 @@ def test_service_can_recover_after_bad_workflow_id_was_set(
     app.publish_events(size=1000, time=5)
     service.step()
     # Service recovered; data only -- the ack is on response_messages
-    # First finalize sends 10 data messages (8 + 2 initial ROI readbacks)
-    assert len(_data_messages(sink)) == N_DETECTOR_VIEW_OUTPUTS
+    assert len(_data_messages(sink)) == _n_outputs('dummy')
 
 
 def test_active_workflow_keeps_running_when_bad_workflow_id_was_set(
@@ -354,7 +352,7 @@ def test_active_workflow_keeps_running_when_bad_workflow_id_was_set(
     # Add events and verify workflow is running
     app.publish_events(size=2000, time=2)
     service.step()
-    assert len(_data_messages(sink)) == N_DETECTOR_VIEW_OUTPUTS
+    assert len(_data_messages(sink)) == _n_outputs('dummy')
     assert _data_messages(sink)[0].value.values.sum() == 2000
 
     # Try to set an invalid workflow ID
@@ -370,9 +368,9 @@ def test_active_workflow_keeps_running_when_bad_workflow_id_was_set(
     app.publish_events(size=3000, time=4)
     service.step()
     # No error ack without message_id, just data messages (two updates)
-    assert len(_data_messages(sink)) == 2 * N_DETECTOR_VIEW_OUTPUTS
+    assert len(_data_messages(sink)) == 2 * _n_outputs('dummy')
     assert (
-        _data_messages(sink)[N_DETECTOR_VIEW_OUTPUTS].value.values.sum() == 5000
+        _data_messages(sink)[_n_outputs('dummy')].value.values.sum() == 5000
     )  # cumulative
 
 
@@ -435,7 +433,7 @@ def test_message_with_unknown_schema_is_ignored(
     with capture_logs() as captured:
         app.step()
 
-    assert len(_data_messages(sink)) == N_DETECTOR_VIEW_OUTPUTS
+    assert len(_data_messages(sink)) == _n_outputs('dummy')
     assert _data_messages(sink)[0].value.values.sum() == 2000
 
     # Check log messages for warnings
@@ -457,7 +455,7 @@ def test_message_that_cannot_be_decoded_is_ignored(
     with capture_logs() as captured:
         app.step()
 
-    assert len(_data_messages(sink)) == N_DETECTOR_VIEW_OUTPUTS
+    assert len(_data_messages(sink)) == _n_outputs('dummy')
     assert _data_messages(sink)[0].value.values.sum() == 2000
 
     # Check log messages for exceptions

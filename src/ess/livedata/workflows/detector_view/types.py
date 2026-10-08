@@ -306,7 +306,7 @@ class ROISpectra(
     """
 
 
-class ROIIntegratedCounts(
+class ROICountsInRange(
     sciline.Scope[AccumulationMode, sc.DataArray],
     sc.DataArray,  # type: ignore[misc]
 ):
@@ -316,7 +316,7 @@ class ROIIntegratedCounts(
     """
 
 
-class ROICountsPerPixel(
+class ROICountsPerPixelInRange(
     sciline.Scope[AccumulationMode, sc.DataArray],
     sc.DataArray,  # type: ignore[misc]
 ):

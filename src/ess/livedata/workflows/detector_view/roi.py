@@ -4,7 +4,7 @@
 ROI (Region of Interest) providers for detector view workflow.
 
 This module provides providers for ROI precomputation, spectra extraction,
-and readback in the detector view workflow.
+per-ROI counts and readback in the detector view workflow.
 """
 
 from __future__ import annotations
@@ -14,13 +14,14 @@ import scipp as sc
 
 from ess.livedata.config import models
 
+from .providers import slice_spectral_range
 from .types import (
     AccumulatedHistogram,
     AccumulationMode,
     Cumulative,
     HistogramSlice,
-    ROICountsPerPixel,
-    ROIIntegratedCounts,
+    ROICountsInRange,
+    ROICountsPerPixelInRange,
     ROIPixelCounts,
     ROIPolygonMasks,
     ROIPolygonReadback,
@@ -283,7 +284,20 @@ def roi_pixel_counts(
     Count the screen pixels inside each ROI.
 
     Runs the ROI extraction on an all-ones image, so the count follows exactly the
-    same pixel selection as the ROI spectra.
+    same pixel selection as the ROI spectra. The histogram is needed for its screen
+    coordinates, which are edges and are not available elsewhere in the graph.
+
+    All screen bins count, including bins no detector pixel maps to; pixel weighting
+    is not taken into account.
+
+    Parameters
+    ----------
+    histogram:
+        Cumulative histogram with screen dims and spectral dim.
+    rectangle_bounds:
+        Precomputed bounds for rectangle ROIs.
+    polygon_masks:
+        Precomputed masks for polygon ROIs.
 
     Returns
     -------
@@ -300,33 +314,51 @@ def roi_pixel_counts(
     return ROIPixelCounts(counts.sum(spectral_dim))
 
 
-def roi_integrated_counts(
+def roi_counts_in_range(
     spectra: ROISpectra[AccumulationMode],
     histogram_slice: HistogramSlice,
-) -> ROIIntegratedCounts[AccumulationMode]:
+) -> ROICountsInRange[AccumulationMode]:
     """
-    Sum the ROI spectra over the spectral dimension.
+    Sum the ROI spectra over the active range filter.
 
-    The sum covers the active range filter, like the detector image.
+    The range filter selects the same spectral bins as for the detector image.
+
+    Parameters
+    ----------
+    spectra:
+        ROI spectra with dims (roi, spectral).
+    histogram_slice:
+        Optional (low, high) range along the spectral dimension.
 
     Returns
     -------
     :
         Counts per ROI with dims (roi,).
     """
-    spectral_dim = spectra.dims[-1]
-    if histogram_slice is not None:
-        low, high = histogram_slice
-        spectra = spectra[spectral_dim, low:high]
-    return ROIIntegratedCounts[AccumulationMode](spectra.sum(spectral_dim))
+    in_range = slice_spectral_range(spectra, histogram_slice)
+    return ROICountsInRange[AccumulationMode](in_range.sum(spectra.dims[-1]))
 
 
-def roi_counts_per_pixel(
-    counts: ROIIntegratedCounts[AccumulationMode],
+def roi_counts_per_pixel_in_range(
+    counts: ROICountsInRange[AccumulationMode],
     pixel_counts: ROIPixelCounts,
-) -> ROICountsPerPixel[AccumulationMode]:
-    """Divide the integrated ROI counts by the number of pixels in each ROI."""
-    return ROICountsPerPixel[AccumulationMode](counts / pixel_counts.data)
+) -> ROICountsPerPixelInRange[AccumulationMode]:
+    """
+    Average the counts in range over the screen pixels of each ROI.
+
+    Parameters
+    ----------
+    counts:
+        Counts in range per ROI.
+    pixel_counts:
+        Number of screen pixels per ROI. An ROI without pixels yields NaN.
+
+    Returns
+    -------
+    :
+        Counts per pixel for each ROI with dims (roi,).
+    """
+    return ROICountsPerPixelInRange[AccumulationMode](counts / pixel_counts.data)
 
 
 def _get_coord_units_from_screen_metadata(

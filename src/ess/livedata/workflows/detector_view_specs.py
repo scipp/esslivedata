@@ -381,25 +381,28 @@ class DetectorViewOutputs(DetectorViewOutputsBase):
             params=('coordinate_mode', 'toa_edges', 'wavelength_edges'),
         ),
         OutputView(
-            name='roi_counts',
-            title='ROI counts',
-            fields=('roi_counts_cumulative', 'roi_counts_current'),
+            name='roi_counts_in_range',
+            title='ROI total in range',
+            fields=('roi_counts_in_range_cumulative', 'roi_counts_in_range_current'),
             description=(
                 'Counts summed over each ROI and over the range filter, one value '
-                'per ROI.'
+                'per ROI. Unlike the ROI spectra, this respects the range filter.'
             ),
             params=('coordinate_mode', 'toa_range', 'wavelength_range'),
         ),
         OutputView(
-            name='roi_counts_per_pixel',
-            title='ROI counts per pixel',
+            name='roi_counts_per_pixel_in_range',
+            title='ROI counts per pixel in range',
             fields=(
-                'roi_counts_per_pixel_cumulative',
-                'roi_counts_per_pixel_current',
+                'roi_counts_per_pixel_in_range_cumulative',
+                'roi_counts_per_pixel_in_range_current',
             ),
             description=(
-                'Counts averaged over the pixels of the displayed image inside '
-                'each ROI and summed over the range filter, one value per ROI.'
+                'ROI total in range divided by the number of pixels of the '
+                'displayed image inside the ROI, one value per ROI. Every pixel of '
+                'the displayed image counts, including those without any detector '
+                'pixel behind them; pixel weighting is not applied. An ROI without '
+                'pixels gives NaN.'
             ),
             params=('coordinate_mode', 'toa_range', 'wavelength_range'),
         ),
@@ -436,37 +439,38 @@ class DetectorViewOutputs(DetectorViewOutputsBase):
     )
 
     # One scalar per ROI (1D: roi)
-    roi_counts_cumulative: CumulativeOutput = pydantic.Field(
-        title='ROI counts',
+    roi_counts_in_range_cumulative: CumulativeOutput = pydantic.Field(
+        title='ROI total in range',
         description=(
             'Counts summed over each ROI and over the range filter, '
             'accumulated since the start of the run.'
         ),
         default_factory=_make_roi_scalars_template,
     )
-    roi_counts_current: WindowOutput = pydantic.Field(
-        title='ROI counts update',
+    roi_counts_in_range_current: WindowOutput = pydantic.Field(
+        title='ROI total in range update',
         description=(
             'Counts summed over each ROI and over the range filter '
             'for the latest update interval only. Resets each update interval.'
         ),
         default_factory=_make_roi_scalars_template,
     )
-    roi_counts_per_pixel_cumulative: CumulativeOutput = pydantic.Field(
-        title='ROI counts per pixel',
+    roi_counts_per_pixel_in_range_cumulative: CumulativeOutput = pydantic.Field(
+        title='ROI counts per pixel in range',
         description=(
-            'Counts averaged over the pixels of the displayed image inside each '
-            'ROI and summed over the range filter, accumulated since the start '
-            'of the run.'
+            'ROI total in range divided by the number of pixels of the displayed '
+            'image inside the ROI (all pixels count, pixel weighting is not '
+            'applied), accumulated since the start of the run.'
         ),
         default_factory=_make_roi_scalars_template,
     )
-    roi_counts_per_pixel_current: WindowOutput = pydantic.Field(
-        title='ROI counts per pixel update',
+    roi_counts_per_pixel_in_range_current: WindowOutput = pydantic.Field(
+        title='ROI counts per pixel in range update',
         description=(
-            'Counts averaged over the pixels of the displayed image inside each '
-            'ROI and summed over the range filter for the latest update interval '
-            'only. Resets each update interval.'
+            'ROI total in range divided by the number of pixels of the displayed '
+            'image inside the ROI (all pixels count, pixel weighting is not '
+            'applied) for the latest update interval only. Resets each update '
+            'interval.'
         ),
         default_factory=_make_roi_scalars_template,
     )
