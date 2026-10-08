@@ -631,9 +631,11 @@ class TestEstiaReflectometry:
     reflectometry reduction takes geometry from a McStas file rather than from
     the artifact the table is built from. The two must still meet."""
 
-    def test_publishes_a_detector_table_only(self, estia: Instrument) -> None:
-        # The configured monitor ``cbm1`` is not a group in the artifact.
-        assert set(_ingest(estia, _run_lut_job(estia))) == {DETECTOR_STREAM}
+    def test_publishes_detector_and_monitor_tables(self, estia: Instrument) -> None:
+        assert set(_ingest(estia, _run_lut_job(estia, delays={}))) == {
+            DETECTOR_STREAM,
+            MONITOR_STREAM,
+        }
 
     def test_reduction_consumes_the_streamed_table(self, estia: Instrument) -> None:
         # At a 30 ms delay the band chopper passes about 3 to 10 angstrom to the
@@ -685,6 +687,36 @@ class TestEstiaReflectometry:
         assert not reply.has_error, reply.error_message
         assert result.error_message is None, result.error_message
         assert result.data['i_of_wavelength'].sum().value > 0
+
+    def test_monitor_reduces_to_wavelength(self, estia: Instrument) -> None:
+        tables = _ingest(estia, _run_lut_job(estia, delays={'bwc': 30_000_000.0}))
+        params_model = _params_model(estia, 'monitor_histogram')
+        job = _create_job(
+            estia,
+            'monitor_histogram',
+            'beam_monitor',
+            params_model(coordinate_mode=CoordinateModeSettings(mode='wavelength')),
+        )
+        assert job.gating_streams == {MONITOR_STREAM}
+
+        frame_time = sc.linspace('frame_time', 0, 71_000_000, num=1001, unit='ns')
+        histogram = sc.DataArray(
+            sc.ones(sizes={'frame_time': 1000}, unit='counts'),
+            coords={'frame_time': frame_time},
+        )
+        data = JobData(
+            start_time=Timestamp.from_ns(0),
+            end_time=Timestamp.from_ns(1),
+            primary_data={'beam_monitor': histogram},
+            aux_data={MONITOR_STREAM: tables[MONITOR_STREAM]},
+        )
+        reply, result = job.process(data, finalize=True)
+
+        assert not reply.has_error, reply.error_message
+        assert result.error_message is None, result.error_message
+        cumulative = result.data['cumulative']
+        assert 'wavelength' in cumulative.coords
+        assert cumulative.sum().value > 0
 
 
 @pytest.fixture(scope='module')
