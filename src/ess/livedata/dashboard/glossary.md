@@ -75,6 +75,10 @@ From coarse to fine: **grid → cell → layer → plotter → presenter → fig
 - **Entry** — one position along the dim that a per-entry plotter (Overlay 1D,
   Timeseries Overlay, Bars or Table of 1D data) draws as one curve, bar or row;
   bounded per source by `MAX_ENTRIES` (`dashboard/plots.py`).
+- **Per Detector Pixel** — plot option (`pixel_normalization`,
+  `DetectorPixelMixin`) dividing per-ROI outputs by their `detector_pixels`
+  coord, before any rate normalization. Offered only for outputs whose template
+  declares the coord. See *detector pixel* in `src/ess/livedata/glossary.md`.
 - **Presenter** — per-session bridge from a plotter's cached state to a
   HoloViews `DynamicMap` via an `hv.streams.Pipe`; carries the dirty flag
   (`dashboard/plots.py`).

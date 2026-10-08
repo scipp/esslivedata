@@ -3741,7 +3741,7 @@ def _roi_spectra(
 
 def _per_pixel_params(*, rate: bool = False) -> PlotParams1d:
     return PlotParams1d(
-        detector_pixels=DetectorPixelNormalizationParams(per_detector_pixel=True),
+        pixel_normalization=DetectorPixelNormalizationParams(per_detector_pixel=True),
         rate=RateNormalizationParams(normalize_to_rate=rate),
     )
 
@@ -3823,7 +3823,7 @@ class TestDetectorPixelNormalization:
         totals = _roi_spectra([[4.0, 0.0], [3.0, 0.0]], [4.0, 1.5])['toa', 0]
         plotter = plots.BarsPlotter.from_params(
             PlotParamsBars(
-                detector_pixels=DetectorPixelNormalizationParams(
+                pixel_normalization=DetectorPixelNormalizationParams(
                     per_detector_pixel=True
                 )
             )
@@ -3839,7 +3839,7 @@ class TestDetectorPixelNormalization:
         totals = _roi_spectra([[4.0, 0.0], [3.0, 0.0]], [4.0, 1.5])['toa', 0]
         plotter = TablePlotter.from_params(
             PlotParamsTable(
-                detector_pixels=DetectorPixelNormalizationParams(
+                pixel_normalization=DetectorPixelNormalizationParams(
                     per_detector_pixel=True
                 )
             )
@@ -3856,7 +3856,7 @@ class TestDetectorPixelNormalization:
         history.coords['detector_pixels'] = sc.array(dims=['roi'], values=[1.0, 2.0])
         plotter = plots.Overlay1DPlotter.from_timeseries_params(
             PlotParamsTimeseriesOverlay(
-                detector_pixels=DetectorPixelNormalizationParams(
+                pixel_normalization=DetectorPixelNormalizationParams(
                     per_detector_pixel=True
                 )
             )

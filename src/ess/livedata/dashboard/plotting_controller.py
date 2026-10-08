@@ -5,7 +5,6 @@ from __future__ import annotations
 from collections.abc import Callable, Mapping
 
 import pydantic
-import scipp as sc
 
 from ess.livedata.config.workflow_spec import (
     DataKey,
@@ -19,13 +18,7 @@ from .extractors import (
     UpdateExtractor,
     WindowAggregatingExtractor,
 )
-from .plot_params import (
-    DETECTOR_PIXELS_COORD,
-    DetectorPixelMixin,
-    TimeWindowMixin,
-    TimeWindowParams,
-    WindowModeMixin,
-)
+from .plot_params import TimeWindowMixin, TimeWindowParams, WindowModeMixin
 from .plotter_registry import (
     OVERLAY_PATTERNS,
     PlotterSpec,
@@ -331,23 +324,6 @@ def hidden_window_fields(
     if not options:
         return frozenset()
     return params_class.hidden_fields(options)
-
-
-def hidden_detector_pixel_fields(
-    params_class: type[pydantic.BaseModel], template: sc.DataArray | None
-) -> frozenset[str]:
-    """Return the per-detector-pixel field if the view's data cannot back it.
-
-    The option divides by the ``detector_pixels`` coord, so it is offered only
-    when the output template declares that coord. Unlike the window fields this is
-    strict for views without a template: an option that silently does nothing, or
-    fails on every update, is worse than one that is absent.
-    """
-    if not issubclass(params_class, DetectorPixelMixin):
-        return frozenset()
-    if template is not None and DETECTOR_PIXELS_COORD in template.coords:
-        return frozenset()
-    return frozenset({'detector_pixels'})
 
 
 def since_start_available(workflow_spec: WorkflowSpec, view_name: str) -> bool:

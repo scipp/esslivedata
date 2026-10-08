@@ -21,6 +21,7 @@ import scipp as sc
 from holoviews.core.util import range_pad
 from holoviews.plotting.util import get_axis_padding
 
+from ess.livedata.config.roi_names import DETECTOR_PIXELS_COORD
 from ess.livedata.config.workflow_spec import DataKey
 from ess.livedata.core.timestamp import Timestamp
 
@@ -28,7 +29,6 @@ from .data_roles import PRIMARY
 from .frame_aspect import make_frame_aspect_opts
 from .image_hover import index_axis_hover_spec, make_hover_hook
 from .plot_params import (
-    DETECTOR_PIXELS_COORD,
     CombineMode,
     LayoutParams,
     LegendPosition,
@@ -1529,7 +1529,7 @@ class LinePlotter(Plotter):
         """Create LinePlotter from PlotParams1d; ``kwargs`` go to the constructor."""
         return cls.from_display_params(
             params,
-            normalize_per_detector_pixel=params.detector_pixels.per_detector_pixel,
+            normalize_per_detector_pixel=params.pixel_normalization.per_detector_pixel,
             normalize_to_rate=params.rate.normalize_to_rate,
             **kwargs,
         )
@@ -1844,7 +1844,7 @@ class BarsPlotter(Plotter):
             horizontal=params.orientation.horizontal,
             layout_params=params.layout,
             aspect_params=params.plot_aspect,
-            normalize_per_detector_pixel=params.detector_pixels.per_detector_pixel,
+            normalize_per_detector_pixel=params.pixel_normalization.per_detector_pixel,
             normalize_to_rate=params.rate.normalize_to_rate,
         )
 
@@ -1974,7 +1974,7 @@ class Overlay1DPlotter(LinePlotter):
         return super().from_timeseries_params(
             params,
             time_as_x=True,
-            normalize_per_detector_pixel=params.detector_pixels.per_detector_pixel,
+            normalize_per_detector_pixel=params.pixel_normalization.per_detector_pixel,
         )
 
     def plot(

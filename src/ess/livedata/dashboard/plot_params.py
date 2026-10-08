@@ -9,7 +9,9 @@ import enum
 from enum import StrEnum
 
 import pydantic
+import scipp as sc
 
+from ..config.roi_names import DETECTOR_PIXELS_COORD
 from ..config.workflow_spec import Windowing
 
 
@@ -346,15 +348,6 @@ class RateNormalizationParams(pydantic.BaseModel):
     )
 
 
-DETECTOR_PIXELS_COORD = 'detector_pixels'
-"""Coord holding the number of detector pixels each value was summed over.
-
-Per-ROI detector-view outputs carry it along their ``roi`` dim. Output templates
-declare it so the config UI offers the per-detector-pixel option only where it
-applies (``plotting_controller.hidden_detector_pixel_fields``).
-"""
-
-
 class DetectorPixelNormalizationParams(pydantic.BaseModel):
     """Parameters for normalizing per-ROI values to one detector pixel."""
 
@@ -363,7 +356,7 @@ class DetectorPixelNormalizationParams(pydantic.BaseModel):
         description="Divide each ROI's values by the number of detector pixels "
         "inside the ROI, so that ROIs of different size can be compared. Combined "
         "with 'Counts Per Second' in the 'Rate' tab, this gives counts per second "
-        "per detector pixel. An ROI without detector pixels shows no value.",
+        "per detector pixel.",
         title="Per Detector Pixel",
     )
 
@@ -457,14 +450,34 @@ class RateMixin(pydantic.BaseModel):
 class DetectorPixelMixin(pydantic.BaseModel):
     """Mixin adding a per-detector-pixel normalization section to plot parameters."""
 
-    detector_pixels: DetectorPixelNormalizationParams = pydantic.Field(
+    pixel_normalization: DetectorPixelNormalizationParams = pydantic.Field(
         default_factory=DetectorPixelNormalizationParams,
         description=(
-            "Applies to the per-ROI outputs of detector views, which record how "
-            "many detector pixels each ROI contains."
+            "A detector pixel is one detector element, not an image pixel. "
+            "Per-ROI outputs of detector views record how many detector pixels "
+            "each ROI contains."
         ),
         title="Detector Pixels",
     )
+
+    @classmethod
+    def hidden_pixel_fields(cls, template: sc.DataArray | None) -> frozenset[str]:
+        """Return this class's fields whose control the output cannot back.
+
+        The option divides by the ``detector_pixels`` coord, so it is offered only
+        when the output template declares that coord. Unlike
+        :meth:`WindowModeMixin.hidden_fields` this is strict for outputs without a
+        template: an option that fails on every update is worse than one that is
+        absent.
+
+        Parameters
+        ----------
+        template:
+            Template of the selected output, None if it has none.
+        """
+        if template is not None and DETECTOR_PIXELS_COORD in template.coords:
+            return frozenset()
+        return frozenset({'pixel_normalization'})
 
 
 class TimeseriesDownsamplingParams(pydantic.BaseModel):

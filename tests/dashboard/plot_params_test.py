@@ -12,6 +12,7 @@ from ess.livedata.dashboard.extractors import (
     WindowAggregatingExtractor,
 )
 from ess.livedata.dashboard.plot_params import (
+    PlotParams1d,
     TimeWindowMode,
     TimeWindowParams,
     WindowAggregation,
@@ -222,3 +223,8 @@ class TestRateNormalizationParams:
 
         assert not hasattr(PlotDisplayParams1d(), 'rate')
         assert not hasattr(PlotDisplayParams2d(), 'rate')
+
+
+class TestDetectorPixelMixin:
+    def test_option_hidden_for_output_without_template(self):
+        assert PlotParams1d.hidden_pixel_fields(None) == {'pixel_normalization'}

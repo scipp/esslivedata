@@ -432,7 +432,7 @@ class TestResolveOutputDisplayHints:
             view_name="roi_spectra",
         ).hidden_fields
 
-        assert ('detector_pixels' in hidden) is not declared
+        assert ('pixel_normalization' in hidden) is not declared
 
     def test_unknown_output_preselects_all(self):
         class Outputs(WorkflowOutputsBase):
