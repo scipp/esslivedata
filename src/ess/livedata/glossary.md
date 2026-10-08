@@ -107,6 +107,23 @@ The naming stack, from the Kafka wire inwards (see ADR 0004 and
   a `ServiceStatus` envelope carrying per-job `JobStatus` entries
   (`core/job.py`). The dashboard adopts running jobs from heartbeats (ADR 0008).
 
+### Detector views
+
+- **Detector pixel** — one detector element as the workflow receives it, i.e.
+  one `detector_number`. For detectors downsampled at ingest
+  (`config/detector_downsampling.py`, e.g. Timepix3) it is a pixel of the
+  downsampled image, not of the physical detector.
+- **Image pixel** — one bin of a detector-view image (`workflows/detector_view/`).
+  Older code says *screen pixel*, *screen bin* or *output pixel*.
+- **Pixel weighting** — dividing each image pixel by the number of detector
+  pixels mapped to it (`PixelWeights`), so the image shows counts per detector
+  pixel. For geometric projections the number is averaged over the
+  position-noise replicas and need not be an integer.
+- **`detector_pixels` coord** — number of detector pixels inside each ROI, with
+  dims `(roi,)`, on the per-ROI outputs of a detector view
+  (`DETECTOR_PIXELS_COORD` in `config/roi_names.py`). The dashboard can divide
+  by it to show counts per detector pixel.
+
 ## Backend
 
 ### Service layer
@@ -219,6 +236,10 @@ The naming stack, from the Kafka wire inwards (see ADR 0004 and
   pydantic field name (`ResolvedDataSource.output_name`, feeding
   `DataKey.output_name`) at layer-setup time — see `dashboard/glossary.md`;
   (2) the MVC sense: a widget rendering state (e.g. `CellWidget`).
+- **pixel** — a *detector pixel* (one `detector_number`) or an *image pixel*
+  (one bin of a detector-view image); see [Detector views](#detector-views).
+  Several detector pixels can map to one image pixel and vice versa. Always
+  qualify.
 - **plot** — informal umbrella over grid/cell/layer/plotter/figure; in precise
   writing name the level, usually *layer*.
 - **frame** — neutron pulse frame (instrument context) vs. the dashboard
