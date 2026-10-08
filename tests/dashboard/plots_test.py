@@ -2460,11 +2460,11 @@ class TestOverlay1DPlotter:
         assert 'row=0' in labels
         assert 'row=1' in labels
 
-    def test_rejects_non_2d_data(self, overlay_plotter, data_key):
-        """Test that Overlay1DPlotter rejects non-2D data."""
-        data_1d = sc.DataArray(sc.array(dims=['x'], values=[1.0, 2.0, 3.0]))
-        with pytest.raises(ValueError, match="Expected 2D data"):
-            overlay_plotter.plot(data_1d, data_key)
+    def test_rejects_3d_data(self, overlay_plotter, data_key):
+        """Test that Overlay1DPlotter rejects data it cannot slice into 1D/0D."""
+        data_3d = sc.DataArray(sc.zeros(dims=['a', 'b', 'c'], shape=[2, 2, 2]))
+        with pytest.raises(ValueError, match="Expected 1D or 2D data"):
+            overlay_plotter.plot(data_3d, data_key)
 
     def test_renders_to_bokeh(self, overlay_plotter, data_2d_with_roi_coord, data_key):
         """Test that overlay can be rendered to Bokeh."""
@@ -2675,6 +2675,78 @@ class TestOverlay1DPlotter:
         result = plotter.plot(data_2d_with_roi_coord, data_key)
         for elem in result:
             assert isinstance(elem, hv.Curve)
+
+
+class TestOverlay1DPlotterOneDimensional:
+    """Overlay1DPlotter with 1D data: one bar per entry along the dim."""
+
+    @pytest.fixture
+    def per_roi_counts(self):
+        return sc.DataArray(
+            sc.array(dims=['roi'], values=[10.0, 20.0, 30.0], unit='counts'),
+            coords={'roi': sc.array(dims=['roi'], values=[0, 3, 5], unit=None)},
+        )
+
+    def test_draws_one_bar_per_roi_colored_by_roi_index(self, per_roi_counts, data_key):
+        plotter = plots.Overlay1DPlotter.from_params(PlotParams1d())
+        bars = plotter.plot(per_roi_counts, data_key)
+        colors = hv.Cycle.default_cycles["default_colors"]
+        assert isinstance(bars, hv.Bars)
+        assert list(bars.dimension_values('roi')) == ['roi=0', 'roi=3', 'roi=5']
+        assert list(bars.dimension_values('color')) == [colors[0], colors[3], colors[5]]
+
+    def test_registered_for_per_roi_data_with_and_without_history(
+        self, per_roi_counts, data_key
+    ):
+        from ess.livedata.dashboard.extractors import FullHistoryExtractor
+        from ess.livedata.dashboard.plotter_registry import plotter_registry
+
+        compatible = plotter_registry.get_compatible_plotters(
+            {data_key: per_roi_counts}
+        )
+        assert 'overlay_1d_values' in compatible
+        timeseries = compatible['overlay_1d_timeseries']
+        assert timeseries.data_requirements.required_extractor is FullHistoryExtractor
+        spectrum = per_roi_counts.rename_dims(roi='toa')
+        assert 'overlay_1d_values' not in plotter_registry.get_compatible_plotters(
+            {data_key: spectrum.drop_coords('roi')}
+        )
+
+    def test_renders_to_bokeh(self, per_roi_counts, data_key):
+        plotter = plots.Overlay1DPlotter.from_params(PlotParams1d())
+        render_to_bokeh(plotter.plot(per_roi_counts, data_key))
+
+
+class TestOverlay1DPlotterHistory:
+    """Overlay1DPlotter with ``(time, roi)`` history: one curve per roi."""
+
+    @pytest.fixture
+    def history(self):
+        time = sc.datetime('2026-01-01T00:00:00', unit='ns') + sc.arange(
+            'time', 4, unit='s'
+        ).to(unit='ns')
+        return sc.DataArray(
+            sc.array(
+                dims=['time', 'roi'],
+                values=[[1.0, 2.0], [2.0, 4.0], [3.0, 6.0], [4.0, 8.0]],
+                unit='counts',
+            ),
+            coords={
+                'time': time,
+                'roi': sc.array(dims=['roi'], values=[1, 4], unit=None),
+            },
+        )
+
+    def test_slices_along_roi_not_time(self, history, data_key):
+        plotter = plots.Overlay1DPlotter.from_params(PlotParams1d())
+        result = plotter.plot(history, data_key)
+        assert [curve.label for curve in result] == ['roi=1', 'roi=4']
+        assert [len(curve) for curve in result] == [4, 4]
+        assert list(result)[-1].dimension_values(1).tolist() == [2.0, 4.0, 6.0, 8.0]
+
+    def test_renders_to_bokeh(self, history, data_key):
+        plotter = plots.Overlay1DPlotter.from_params(PlotParams1d())
+        render_to_bokeh(plotter.plot(history, data_key))
 
 
 class TestOverlay1DPlotterRenderedValues:

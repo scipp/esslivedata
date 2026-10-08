@@ -98,6 +98,24 @@ def _history(n: int = 10) -> sc.DataArray:
     )
 
 
+def _roi_values() -> sc.DataArray:
+    """A per-ROI scalar output, e.g., counts per ROI."""
+    return _array({'roi': 3}).assign_coords(
+        roi=sc.array(dims=['roi'], values=[0, 1, 4], dtype='int32', unit=None)
+    )
+
+
+def _roi_history(n: int = 10) -> sc.DataArray:
+    """Per-ROI output history shaped like the output of FullHistoryExtractor."""
+    time = _history(n).coords['time']
+    return _array({'time': n, 'roi': 3}).assign_coords(
+        time=time,
+        start_time=time[0],
+        end_time=time[-1],
+        roi=sc.array(dims=['roi'], values=[0, 1, 4], dtype='int32', unit=None),
+    )
+
+
 def _primary(*arrays: sc.DataArray) -> RoleData:
     return {PRIMARY: {_key(f'source{i}'): da for i, da in enumerate(arrays)}}
 
@@ -126,6 +144,8 @@ _DATA: dict[str, Callable[[], RoleData]] = {
     'slicer': lambda: _primary(_array({'z': 2, 'y': 3, 'x': 4})),
     'flatten': lambda: _primary(_array({'a': 2, 'b': 3, 'c': 4})),
     'overlay_1d': lambda: _primary(_array({'roi': 2, 'x': 5}, variances=True)),
+    'overlay_1d_values': lambda: _primary(_roi_values(), _roi_values()),
+    'overlay_1d_timeseries': lambda: _primary(_roi_history(), _roi_history()),
     'correlation_histogram_1d': lambda: {
         **_primary(_history()),
         X_AXIS: {_key('axis_x'): _history()},
