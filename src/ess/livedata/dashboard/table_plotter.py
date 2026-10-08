@@ -16,7 +16,7 @@ from holoviews.plotting.bokeh.tabular import TablePlot
 from ess.livedata.config.workflow_spec import DataKey
 
 from .plot_params import PlotParamsTable, TableNotation
-from .plots import Plotter, TitleResolver, check_entry_limit
+from .plots import Plotter, TitleResolver, check_entry_limit, entry_coord_values
 from .range_hook import Axis
 
 # Bokeh renders the table in 12px Helvetica/Arial. Seven pixels per character is
@@ -77,7 +77,8 @@ class TablePlotter(Plotter):
     """Plotter rendering 0D scalar data or 1D data as a table.
 
     Each source name becomes a row, with a single value column. 1D data gives one
-    row per position along its dimension, labeled by its coord value. Unlike most
+    row per entry along its dimension, labeled by its coord value (the bin
+    midpoint for a bin-edge coord). Unlike most
     plotters this composes all datasets into a single ``hv.Table`` rather than
     overlaying per-dataset elements: HoloViews tables cannot be meaningfully
     overlaid (an overlay renders as separate stacked widgets).
@@ -128,7 +129,7 @@ class TablePlotter(Plotter):
     ) -> hv.Element:
         """Build a table: one row per source, sharing a value column.
 
-        1D data gives one row per position along its dimension instead, with a
+        1D data gives one row per entry along its dimension instead, with a
         column of the dim's coord values; all datasets must have the same dims.
         All datasets reaching a single layer carry the same ``output_name`` (the
         layer's primary view), so the table has a single value column. Rows may
@@ -163,11 +164,7 @@ class TablePlotter(Plotter):
                 da_entries, da_values = [''], [float(da.value)]
             else:
                 check_entry_limit(dim, da.sizes[dim], self._max_entries)
-                coord = (
-                    da.coords[dim].values
-                    if dim in da.coords
-                    else np.arange(da.sizes[dim])
-                )
+                coord = entry_coord_values(da, dim)
                 if coord.size == 0:
                     # Keeps the source visible while it has no entries.
                     da_entries, da_values = [f'no {dim}'], [np.nan]

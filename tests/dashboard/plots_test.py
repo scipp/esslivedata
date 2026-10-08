@@ -2106,6 +2106,13 @@ class TestTablePlotter:
         assert isinstance(by_field['roi'], StringFormatter)
         assert not isinstance(by_field['roi'], ScientificFormatter)
 
+    def test_bin_edge_coord_labels_rows_by_midpoint(self, table_plotter):
+        key = self._key('bank0', 'counts')
+        table_plotter.compute({'primary': {key: _with_edges()}})
+        result = table_plotter.get_cached_state()
+        assert list(result.data['x']) == ['1.0', '3.0']
+        assert list(result.data['counts']) == [1.0, 2.0]
+
     def test_rejects_sources_with_different_dims(self, table_plotter):
         data = {
             self._key('bank0', 'counts'): _per_roi([0]),
@@ -2383,6 +2390,29 @@ class TestOverlay1DPlotter:
     def overlay_plotter(self):
         """Create an Overlay1DPlotter instance."""
         return plots.Overlay1DPlotter.from_params(PlotParamsOverlay1d())
+
+    def test_bin_edge_coord_labels_curves_by_midpoint(self, overlay_plotter, data_key):
+        data = sc.DataArray(
+            sc.ones(dims=['x', 'toa'], shape=[2, 3], unit='counts'),
+            coords={'x': sc.array(dims=['x'], values=[0.0, 2.0, 4.0], unit='m')},
+        )
+        result = overlay_plotter.plot(data, data_key)
+        assert [curve.label for curve in result] == ['x=1.0', 'x=3.0']
+
+    def test_time_as_first_dim_is_sliced_like_any_other(
+        self, overlay_plotter, data_key
+    ):
+        """A ToNXlog-style ``(time, x)`` array gives one curve per time."""
+        data = sc.DataArray(
+            sc.array(dims=['time', 'x'], values=[[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]]),
+            coords={
+                'time': sc.array(dims=['time'], values=[0, 1], unit=None),
+                'x': sc.array(dims=['x'], values=[10.0, 20.0, 30.0], unit='m'),
+            },
+        )
+        result = overlay_plotter.plot(data, data_key)
+        assert [curve.label for curve in result] == ['time=0', 'time=1']
+        assert list(result)[-1].dimension_values(1).tolist() == [4.0, 5.0, 6.0]
 
     @pytest.fixture
     def data_2d_with_roi_coord(self):
@@ -2743,7 +2773,7 @@ class TestOverlay1DPlotter:
             assert isinstance(elem, hv.Curve)
 
 
-def _render(plotter, data, key):
+def _render(plotter, data):
     """Compute ``data`` and render it as a session does; returns (figure, pipe)."""
     plotter.compute({PRIMARY: data})
     pipe = hv.streams.Pipe(data=plotter.get_cached_state())
@@ -2776,7 +2806,7 @@ class TestBarsPlotterPerRoi:
         assert list(bars.dimension_values('color')) == [colors[0], colors[3], colors[5]]
 
     def test_tooltips_show_the_value_but_not_the_color(self, plotter, data_key):
-        fig, _ = _render(plotter, {data_key: _per_roi([0, 3])}, data_key)
+        fig, _ = _render(plotter, {data_key: _per_roi([0, 3])})
         (hover,) = fig.select({'type': HoverTool})
         assert [name for name, _ in hover.tooltips] == [
             'source',
@@ -2785,15 +2815,13 @@ class TestBarsPlotterPerRoi:
         ]
 
     def test_rendered_axis_is_categorical_with_the_bars(self, plotter, data_key):
-        fig, _ = _render(plotter, {data_key: _per_roi([0, 3])}, data_key)
+        fig, _ = _render(plotter, {data_key: _per_roi([0, 3])})
         assert isinstance(fig.x_range, FactorRange)
         assert [f[1] for f in fig.x_range.factors] == ['roi=0', 'roi=3']
 
     def test_several_sources_are_groups_of_bars(self, plotter, data_key):
         other = make_data_key('other_source')
-        fig, _ = _render(
-            plotter, {data_key: _per_roi([0, 3]), other: _per_roi([0])}, data_key
-        )
+        fig, _ = _render(plotter, {data_key: _per_roi([0, 3]), other: _per_roi([0])})
         assert fig.x_range.factors == [
             ('test_source', 'roi=0'),
             ('test_source', 'roi=3'),
@@ -2803,7 +2831,7 @@ class TestBarsPlotterPerRoi:
     def test_axis_stays_categorical_when_first_frame_has_no_roi(
         self, plotter, data_key
     ):
-        fig, pipe = _render(plotter, {data_key: _per_roi([], values=[])}, data_key)
+        fig, pipe = _render(plotter, {data_key: _per_roi([], values=[])})
         assert isinstance(fig.x_range, FactorRange)
 
         plotter.compute({PRIMARY: {data_key: _per_roi([0, 3])}})
@@ -2814,6 +2842,30 @@ class TestBarsPlotterPerRoi:
     def test_rejects_2d_data(self, plotter, data_key):
         with pytest.raises(ValueError, match="Expected 0D or 1D data"):
             plotter.plot(sc.zeros(dims=['a', 'b'], shape=[2, 2]), data_key)
+
+    def test_bin_edge_coord_labels_bars_by_midpoint(self, plotter, data_key):
+        fig, _ = _render(plotter, {data_key: _with_edges()})
+        assert [f[1] for f in fig.x_range.factors] == ['x=1.0', 'x=3.0']
+
+    def test_0d_and_1d_sources_give_an_error_frame(self, plotter, data_key):
+        data = {
+            data_key: _per_roi([0, 3]),
+            make_data_key('other_source'): sc.DataArray(sc.scalar(1.0)),
+        }
+        plotter.compute({PRIMARY: data})
+        result = plotter.get_cached_state()
+        assert [t.text for t in result.traverse(specs=[hv.Text])] == [
+            "Error: Cannot draw 0D and 1D data as bars in one plot."
+        ]
+        render_to_bokeh(result)
+
+
+def _with_edges():
+    """1D data with a bin-edge coord, ``x`` edges [0, 2, 4]."""
+    return sc.DataArray(
+        sc.array(dims=['x'], values=[1.0, 2.0], unit='counts'),
+        coords={'x': sc.array(dims=['x'], values=[0.0, 2.0, 4.0], unit='m')},
+    )
 
 
 def _error_texts(plotter, data, data_key):
@@ -2925,6 +2977,11 @@ class TestOverlay1DPlotterHistory:
         assert [len(curve) for curve in result] == [4, 4]
         assert list(result)[-1].dimension_values(1).tolist() == [2.0, 4.0, 6.0, 8.0]
 
+    def test_time_may_be_the_last_dim(self, plotter, data_key):
+        result = plotter.plot(self.history().transpose(), data_key)
+        assert [curve.label for curve in result] == ['roi=1', 'roi=4']
+        assert [len(curve) for curve in result] == [4, 4]
+
     def test_x_range_target_spans_time_not_roi_index(self, plotter, data_key):
         history = self.history()
         plotter.compute({PRIMARY: {data_key: history}})
@@ -2936,11 +2993,11 @@ class TestOverlay1DPlotterHistory:
         assert hi >= times.max()
 
     def test_renders_with_datetime_axis(self, plotter, data_key):
-        fig, _ = _render(plotter, {data_key: self.history()}, data_key)
+        fig, _ = _render(plotter, {data_key: self.history()})
         assert isinstance(fig.xaxis[0], DatetimeAxis)
 
     def test_axis_stays_datetime_when_first_frame_has_no_roi(self, plotter, data_key):
-        fig, pipe = _render(plotter, {data_key: self.history(rois=())}, data_key)
+        fig, pipe = _render(plotter, {data_key: self.history(rois=())})
         assert isinstance(fig.xaxis[0], DatetimeAxis)
 
         # A later update, as the timeseries plotter throttles repeated times.

@@ -7,7 +7,7 @@ from __future__ import annotations
 import weakref
 from collections.abc import Callable, Iterable, Iterator, Sequence
 from dataclasses import dataclass
-from typing import Any, ClassVar
+from typing import Any, ClassVar, Self
 
 import holoviews as hv
 import numpy as np
@@ -1300,11 +1300,28 @@ def check_entry_limit(dim: str, size: int, limit: int) -> None:
         )
 
 
-def _slice_colors(coord_values: np.ndarray, colors: Sequence[str]) -> list[str]:
-    """Color per slice: by integer coord value, else by position.
+def entry_coord_values(da: sc.DataArray, dim: str) -> np.ndarray:
+    """Values labeling the entries of ``da`` along ``dim``, one per entry.
 
-    Integer coords (e.g. ROI indices) give each slice a stable color even when
-    the set of slices changes between updates. For non-integer coords (e.g.
+    These are the values of the coord of ``dim``, its midpoints if it holds bin
+    edges, or the indices ``0..n-1`` if there is no such coord.
+    """
+    if dim not in da.coords:
+        return np.arange(da.sizes[dim])
+    coord = da.coords[dim]
+    if da.coords.is_edges(dim, dim):
+        if da.sizes[dim] == 0:
+            # sc.midpoints requires at least two edges.
+            return coord.values[:0]
+        coord = sc.midpoints(coord, dim=dim)
+    return coord.values
+
+
+def _entry_colors(coord_values: np.ndarray, colors: Sequence[str]) -> list[str]:
+    """Color per entry: by integer coord value, else by position.
+
+    Integer coords (e.g. ROI indices) give each entry a stable color even when
+    the set of entries changes between updates. For non-integer coords (e.g.
     distances in metres) ``int()`` would collapse nearby values onto the same
     color, so the position is used instead.
     """
@@ -1398,7 +1415,8 @@ class LinePlotter(Plotter):
         *,
         mode: str = 'line',
         errors: str = 'bars',
-        **kwargs,
+        downsampling: TimeseriesDownsamplingParams | None = None,
+        **kwargs: Any,
     ):
         """
         Initialize the line plotter.
@@ -1413,6 +1431,9 @@ class LinePlotter(Plotter):
             Rendering mode: 'line', 'points', or 'histogram'.
         errors:
             Error display mode: 'bars', 'band', or 'none'.
+        downsampling:
+            Time-based downsampling and update throttling of a timeseries, or
+            None to draw every update in full.
         **kwargs:
             Additional keyword arguments passed to the base class.
         """
@@ -1427,14 +1448,21 @@ class LinePlotter(Plotter):
             'logy': self._logy,
             **self._make_tick_opts(tick_params),
         }
-        self._downsampling: TimeseriesDownsamplingParams | None = None
+        self._downsampling = downsampling
         self._last_compute_data_time_ns: int | None = None
 
     @classmethod
     def from_display_params(
-        cls, params: PlotDisplayParams1d, *, normalize_to_rate: bool = False
-    ):
-        """Create LinePlotter from display parameters."""
+        cls,
+        params: PlotDisplayParams1d,
+        *,
+        normalize_to_rate: bool = False,
+        **kwargs: Any,
+    ) -> Self:
+        """Create LinePlotter from display parameters.
+
+        ``kwargs`` are passed on to the constructor.
+        """
         return cls(
             layout_params=params.layout,
             legend_position=params.legend.position,
@@ -1444,17 +1472,20 @@ class LinePlotter(Plotter):
             mode=params.line.mode,
             errors=params.line.errors,
             normalize_to_rate=normalize_to_rate,
+            **kwargs,
         )
 
     @classmethod
-    def from_params(cls, params: PlotParams1d):
-        """Create LinePlotter from PlotParams1d."""
+    def from_params(cls, params: PlotParams1d, **kwargs: Any) -> Self:
+        """Create LinePlotter from PlotParams1d; ``kwargs`` go to the constructor."""
         return cls.from_display_params(
-            params, normalize_to_rate=params.rate.normalize_to_rate
+            params, normalize_to_rate=params.rate.normalize_to_rate, **kwargs
         )
 
     @classmethod
-    def from_timeseries_params(cls, params: PlotParamsTimeseries):
+    def from_timeseries_params(
+        cls, params: PlotParamsTimeseries, **kwargs: Any
+    ) -> Self:
         """Create LinePlotter for the timeseries plotter, with downsampling on.
 
         The x-axis is always datetime, so only the y-axis scale is configurable
@@ -1463,8 +1494,10 @@ class LinePlotter(Plotter):
         Downsampling and update throttling live at the plotter rather than at
         the extractor: the subscription still pulls the full-history, and
         per-plot config can change without re-subscribing.
+
+        ``kwargs`` are passed on to the constructor.
         """
-        instance = cls(
+        return cls(
             layout_params=params.layout,
             legend_position=params.legend.position,
             aspect_params=params.plot_aspect,
@@ -1472,9 +1505,9 @@ class LinePlotter(Plotter):
             tick_params=params.ticks,
             mode=params.line.mode,
             errors=params.line.errors,
+            downsampling=params.downsampling,
+            **kwargs,
         )
-        instance._downsampling = params.downsampling
-        return instance
 
     def compute(
         self,
@@ -1706,10 +1739,13 @@ class ImagePlotter(Plotter):
 
 
 class BarsPlotter(Plotter):
-    """Plotter for bar charts of 0D scalar data or 1D data with one value per slice.
+    """Plotter for bar charts of 0D scalar data or 1D data, one bar per entry.
 
-    1D data gives one bar per position along its dimension, grouped by source and
-    colored like the slices of :class:`Overlay1DPlotter`.
+    1D data gives one bar per entry along its dimension, grouped by source and
+    colored like the curves of :class:`Overlay1DPlotter`. Entries are labeled by
+    their coord value, or by the bin midpoint for a bin-edge coord. All datasets
+    of a layer must have the same rank: 0D and 1D bars cannot share a
+    categorical axis.
     """
 
     AUTOSCALE_AXES: ClassVar[frozenset[Axis]] = frozenset()
@@ -1719,7 +1755,7 @@ class BarsPlotter(Plotter):
         *,
         horizontal: bool = False,
         max_entries: int = 20,
-        **kwargs,
+        **kwargs: Any,
     ):
         """
         Initialize the bars plotter.
@@ -1729,7 +1765,8 @@ class BarsPlotter(Plotter):
         horizontal:
             If True, bars are horizontal; if False, bars are vertical.
         max_entries:
-            Largest number of bars drawn per source of 1D data.
+            Largest number of entries drawn per source of 1D data; a source
+            with more gives an error frame.
         **kwargs:
             Additional keyword arguments passed to the base class.
         """
@@ -1759,6 +1796,23 @@ class BarsPlotter(Plotter):
             aspect_params=params.plot_aspect,
             normalize_to_rate=params.rate.normalize_to_rate,
         )
+
+    def _build_result(
+        self,
+        data: dict[DataKey, sc.DataArray],
+        resolver: TitleResolver,
+        **kwargs,
+    ) -> hv.Element:
+        # Bokeh validates the axis factors of 0D bars (source) and 1D bars
+        # (source, entry) together and fails when rendering, so mixed ranks are
+        # rejected here, where the failure becomes an error frame.
+        ranks = sorted({da.ndim for da in data.values()})
+        if len(ranks) > 1:
+            raise ValueError(
+                f"Cannot draw {' and '.join(f'{r}D' for r in ranks)} data as bars "
+                "in one plot."
+            )
+        return super()._build_result(data, resolver, **kwargs)
 
     def plot(
         self,
@@ -1790,18 +1844,14 @@ class BarsPlotter(Plotter):
 
         (dim,) = data.dims
         check_entry_limit(dim, data.sizes[dim], self._max_entries)
-        coord = (
-            data.coords[dim].values
-            if dim in data.coords
-            else np.arange(data.sizes[dim])
-        )
+        coord = entry_coord_values(data, dim)
         if coord.size == 0:
             # The first frame fixes the axis type, and a categorical axis needs
             # a category.
             entries, values, colors = [f'no {dim}'], [np.nan], self._colors[:1]
         else:
             entries = [f'{dim}={v}' for v in coord]
-            values, colors = data.values, _slice_colors(coord, self._colors)
+            values, colors = data.values, _entry_colors(coord, self._colors)
         kdims = ['source', dim]
         # Static opts are declared once in style_opts(). These two stay per
         # element: only 1D bars carry a 'color' column, since an explicit color on
@@ -1825,10 +1875,11 @@ class Overlay1DPlotter(LinePlotter):
     """
     Plotter that slices 2D data along the first dimension and overlays as 1D curves.
 
-    Takes 2D data with dims [slice_dim, plot_dim] and creates an overlay of 1D curves,
-    one for each position along the first dimension. Useful for visualizing multiple
-    spectra (e.g., ROI spectra) from a single 2D array. A history with dims
-    [time, slice_dim] is transposed first, so that it gives one timeseries per slice.
+    Takes 2D data with dims [entry_dim, plot_dim] and creates an overlay of 1D curves,
+    one for each entry along the first dimension. Useful for visualizing multiple
+    spectra (e.g., ROI spectra) from a single 2D array. Created with
+    :meth:`from_timeseries_params`, it takes the history of 1D data instead, with
+    dims [time, entry_dim] in any order, and draws one timeseries per entry.
 
     Colors are assigned by coordinate value when coordinates are integer-like,
     providing stable color identity across updates. For non-integer coordinates
@@ -1836,27 +1887,52 @@ class Overlay1DPlotter(LinePlotter):
     index would collapse closely-spaced coordinates onto the same color.
 
     Supports the same line style options (mode, errors) and timeseries
-    downsampling as LinePlotter. Data with more than ``max_entries`` slices is
+    downsampling as LinePlotter. Data with more than ``max_entries`` entries is
     rejected rather than drawn.
     """
 
-    def __init__(self, *args, max_entries: int = 20, **kwargs):
-        super().__init__(*args, **kwargs)
+    def __init__(
+        self,
+        scale_opts: PlotScaleParams,
+        tick_params: TickParams | None = None,
+        *,
+        max_entries: int = 20,
+        time_as_x: bool = False,
+        **kwargs: Any,
+    ):
+        """
+        Initialize the overlay plotter.
+
+        Parameters
+        ----------
+        scale_opts:
+            Scaling options for axes.
+        tick_params:
+            Tick configuration parameters.
+        max_entries:
+            Largest number of entries (curves) drawn per source; a source with
+            more gives an error frame.
+        time_as_x:
+            If True, the data is a history with a ``time`` dim, which becomes the
+            x-axis of one curve per entry along the other dim.
+        **kwargs:
+            Additional keyword arguments passed to :class:`LinePlotter`.
+        """
+        super().__init__(scale_opts, tick_params, **kwargs)
         self._max_entries = max_entries
+        self._time_as_x = time_as_x
 
     @classmethod
-    def from_params(cls, params: PlotParamsOverlay1d):
+    def from_params(cls, params: PlotParamsOverlay1d) -> Self:
         """Create Overlay1DPlotter from PlotParamsOverlay1d."""
-        instance = super().from_params(params)
-        instance._max_entries = params.limit.max_entries
-        return instance
+        return super().from_params(params, max_entries=params.limit.max_entries)
 
     @classmethod
-    def from_timeseries_params(cls, params: PlotParamsTimeseriesOverlay):
+    def from_timeseries_params(cls, params: PlotParamsTimeseriesOverlay) -> Self:
         """Create Overlay1DPlotter for the history of 1D data, one curve per entry."""
-        instance = super().from_timeseries_params(params)
-        instance._max_entries = params.limit.max_entries
-        return instance
+        return super().from_timeseries_params(
+            params, max_entries=params.limit.max_entries, time_as_x=True
+        )
 
     def plot(
         self,
@@ -1876,9 +1952,9 @@ class Overlay1DPlotter(LinePlotter):
         del kwargs, label  # Unused
         if data.ndim != 2:
             raise ValueError(f"Expected 2D data, got {data.ndim}D")
-        if data.dims[0] == 'time':
-            # The time axis of a history is the x-axis of its curves.
-            data = data.transpose(data.dims[::-1])
+        if self._time_as_x:
+            (entry_dim,) = (dim for dim in data.dims if dim != 'time')
+            data = data.transpose([entry_dim, 'time'])
 
         slice_dim, plot_dim = data.dims
         slice_size = data.sizes[slice_dim]
@@ -1903,12 +1979,8 @@ class Overlay1DPlotter(LinePlotter):
         if targets:
             self._pending_range_targets[data_key] = targets
 
-        # Get coordinate values for labels and colors
-        if slice_dim in data.coords:
-            coord_values = data.coords[slice_dim].values
-        else:
-            coord_values = np.arange(slice_size)
-        slice_colors = _slice_colors(coord_values, self._colors)
+        coord_values = entry_coord_values(data, slice_dim)
+        slice_colors = _entry_colors(coord_values, self._colors)
 
         data = plot_data
         use_histogram = actual_mode == 'histogram'
