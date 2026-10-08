@@ -11,7 +11,7 @@ import scipp as sc
 from ess.livedata.config import Instrument
 
 from . import specs
-from .specs import DreamMonitorDataParams, PowderWorkflowParams
+from .specs import PowderWorkflowParams
 
 
 def setup_factories(instrument: Instrument) -> None:
@@ -31,7 +31,6 @@ def setup_factories(instrument: Instrument) -> None:
     from scippnexus import NXdetector
 
     from ess import dream, powder
-    from ess.livedata.preprocessors.detector_data import get_nexus_geometry_filename
     from ess.livedata.workflows.detector_view import (
         DetectorViewFactory,
         GeometricViewConfig,
@@ -46,7 +45,7 @@ def setup_factories(instrument: Instrument) -> None:
     # Pixel noise is shared across all detectors.
     _pixel_noise = sc.scalar(4.0, unit='mm')
     _detector_view_factory = DetectorViewFactory(
-        data_source=NeXusDetectorSource(get_nexus_geometry_filename('dream-no-shape')),
+        data_source=NeXusDetectorSource(instrument.nexus_file),
         view_config={
             'mantle_detector': GeometricViewConfig(
                 projection_type='cylinder_mantle_z',
@@ -85,27 +84,6 @@ def setup_factories(instrument: Instrument) -> None:
     )
 
     specs.projection_handle.attach_factory()(_detector_view_factory.make_workflow)
-
-    # Monitor workflow factory with DREAM-specific TOF configuration
-    from ess.livedata.workflows.monitor_workflow import create_monitor_workflow
-
-    @specs.monitor_handle.attach_factory()
-    def _monitor_workflow_factory(source_name: str, params: DreamMonitorDataParams):
-        """Factory for DREAM monitor workflow with TOF lookup table support."""
-        mode = params.coordinate_mode.mode
-        geometry_filename = (
-            get_nexus_geometry_filename('dream-no-shape')
-            if mode == 'wavelength'
-            else None
-        )
-
-        return create_monitor_workflow(
-            source_name=source_name,
-            edges=params.get_active_edges(),
-            range_filter=params.get_active_range(),
-            coordinate_mode=mode,
-            geometry_filename=geometry_filename,
-        )
 
     # Powder reduction workflow setup
     # Normalization to monitors is partially broken due to some wavelength-range check
@@ -169,11 +147,7 @@ def setup_factories(instrument: Instrument) -> None:
         SampleRun
     ](False)
 
-    # dream-no-shape is a much smaller file without pixel_shape, which is not needed
-    # for data reduction.
-    _reduction_workflow[Filename[SampleRun]] = get_nexus_geometry_filename(
-        'dream-no-shape'
-    )
+    _reduction_workflow[Filename[SampleRun]] = instrument.nexus_file
 
     def _configure_powder_workflow(
         source_name: str,

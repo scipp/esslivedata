@@ -244,7 +244,7 @@ instrument = Instrument(
 instrument_registry.register(instrument)
 
 # All monitors get the standard TOA histogram.
-monitor_handle = register_monitor_workflow_specs(
+register_monitor_workflow_specs(
     instrument, instrument.monitors, params=MonitorDataParams
 )
 

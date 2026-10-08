@@ -113,7 +113,7 @@ def _create_job(
 #: each chopper's delay over one rotation in beam order and keeping what
 #: maximised transmission downstream; re-run that scan if regenerating the
 #: geometry artifact moves a chopper and these stop working.
-_TRANSMITTING_DELAYS_NS = {
+_DREAM_TRANSMITTING_DELAYS_NS = {
     'pulse_shaping_chopper2': 45_600_000.0,
     'overlap_chopper': 17_200_000.0,
 }
@@ -165,8 +165,9 @@ def _detector_events_across_one_frame(count: int = 200) -> sc.DataArray:
 
 def _run_lut_job(
     instrument: Instrument,
+    *,
+    delays: dict[str, float],
     speeds: dict[str, float] | None = None,
-    delays: dict[str, float] = _TRANSMITTING_DELAYS_NS,
 ):
     """Run the lookup-table job once and return its result.
 
@@ -198,6 +199,22 @@ def _run_lut_job(
     return result
 
 
+def _detector_events(detector_number: sc.Variable) -> sc.DataArray:
+    """One event per pixel, spread over a pulse period, as ToNXevent_data hands
+    them to a detector view."""
+    ids = detector_number.flatten(to='event').copy()
+    n = ids.sizes['event']
+    toa = sc.linspace('event', 0.0, 71e6, num=n, unit='ns')
+    events = sc.DataArray(
+        sc.ones(sizes={'event': n}, dtype='float32', unit='counts'),
+        coords={'event_time_offset': toa, 'event_id': ids},
+    )
+    sizes = sc.array(dims=['event_time_zero'], values=[n], unit=None, dtype='int64')
+    return sc.DataArray(
+        sc.bins(begin=sc.cumsum(sizes, mode='exclusive'), dim='event', data=events)
+    )
+
+
 def _ingest(instrument: Instrument, result) -> dict[str, sc.DataArray]:
     """Put a lookup-table result on the wire and take it off again."""
     messages = ContextOutputExtractor(registry=instrument.workflow_factory).extract(
@@ -225,7 +242,7 @@ def _ingest(instrument: Instrument, result) -> dict[str, sc.DataArray]:
 @pytest.fixture(scope='module')
 def ingested(dream: Instrument) -> dict[str, sc.DataArray]:
     """The group tables as they arrive at a consuming service."""
-    return _ingest(dream, _run_lut_job(dream))
+    return _ingest(dream, _run_lut_job(dream, delays=_DREAM_TRANSMITTING_DELAYS_NS))
 
 
 def test_publishes_one_table_per_group(ingested: dict[str, sc.DataArray]) -> None:
@@ -418,7 +435,14 @@ def test_chopper_out_of_phase_empties_the_consumer(dream: Instrument) -> None:
     with no counts: the same result as an opening too narrow to catch any
     neutrons.
     """
-    table = _ingest(dream, _run_lut_job(dream, speeds={'overlap_chopper': 5.0}))
+    table = _ingest(
+        dream,
+        _run_lut_job(
+            dream,
+            speeds={'overlap_chopper': 5.0},
+            delays=_DREAM_TRANSMITTING_DELAYS_NS,
+        ),
+    )
 
     reply, result = _run_wavelength_monitor_job(dream, table[MONITOR_STREAM])
 
@@ -440,9 +464,9 @@ _DREAM_PROD_SPEEDS = {
 
 #: A phasing that transmits at ``_DREAM_PROD_SPEEDS`` once the overlap chopper
 #: is brought into sync at 7 Hz, found by the same scan as
-#: ``_TRANSMITTING_DELAYS_NS``. ``_TRANSMITTING_DELAYS_NS`` itself blocks the
-#: beam at these speeds, so a test using it would empty the table whatever the
-#: overlap chopper did.
+#: ``_DREAM_TRANSMITTING_DELAYS_NS``. That phasing itself blocks the beam at
+#: these speeds, so a test using it would empty the table whatever the overlap
+#: chopper did.
 _DREAM_PROD_TRANSMITTING_DELAYS_NS = {
     'pulse_shaping_chopper2': 45_600_000.0,
     'overlap_chopper': 32_000_000.0,
@@ -661,3 +685,99 @@ class TestEstiaReflectometry:
         assert not reply.has_error, reply.error_message
         assert result.error_message is None, result.error_message
         assert result.data['i_of_wavelength'].sum().value > 0
+
+
+@pytest.fixture(scope='module')
+def tbl() -> Instrument:
+    get_config('tbl')
+    instrument = instrument_registry['tbl']
+    instrument.load_factories()
+    return instrument
+
+
+@pytest.fixture(scope='module')
+def tbl_tables(tbl: Instrument) -> dict[str, sc.DataArray]:
+    # Zero delay on both bandwidth choppers transmits, which the non-empty
+    # results asserted below rely on.
+    return _ingest(tbl, _run_lut_job(tbl, delays={}))
+
+
+class TestTblWavelengthViews:
+    """TBL's logical views take pixel positions from the geometry file in
+    wavelength mode; ``monitor_1`` is a histogram-mode (da00) monitor."""
+
+    @pytest.mark.parametrize(
+        ('view', 'source_name'),
+        [
+            ('he3_detector_view', 'he3_detector_bank0'),
+            ('he3_detector_view', 'he3_detector_bank1'),
+            ('multiblade_detector_view', 'multiblade_detector'),
+            ('ngem_detector_view', 'ngem_detector'),
+        ],
+    )
+    def test_detector_view_reduces_to_wavelength(
+        self,
+        tbl: Instrument,
+        tbl_tables: dict[str, sc.DataArray],
+        view: str,
+        source_name: str,
+    ) -> None:
+        params_model = _params_model(tbl, view)
+        job = _create_job(
+            tbl,
+            view,
+            source_name,
+            params_model(coordinate_mode=CoordinateModeSettings(mode='wavelength')),
+        )
+        assert DETECTOR_STREAM in job.gating_streams
+
+        data = JobData(
+            start_time=Timestamp.from_ns(0),
+            end_time=Timestamp.from_ns(1),
+            primary_data={
+                source_name: _detector_events(tbl.get_detector_number(source_name))
+            },
+            # The ROI request streams open on their defaults, as the
+            # JobManager delivers them when nothing has been published.
+            aux_data={
+                **tbl.bound_context_defaults(_spec_id(tbl, view), source_name),
+                DETECTOR_STREAM: tbl_tables[DETECTOR_STREAM],
+            },
+        )
+        reply, result = job.process(data, finalize=True)
+
+        assert not reply.has_error, reply.error_message
+        assert result.error_message is None, result.error_message
+        counts = result.data['counts_total_cumulative']
+        assert counts.value > 0
+
+    def test_monitor_reduces_to_wavelength(
+        self, tbl: Instrument, tbl_tables: dict[str, sc.DataArray]
+    ) -> None:
+        params_model = _params_model(tbl, 'monitor_histogram')
+        job = _create_job(
+            tbl,
+            'monitor_histogram',
+            'monitor_1',
+            params_model(coordinate_mode=CoordinateModeSettings(mode='wavelength')),
+        )
+        assert job.gating_streams == {MONITOR_STREAM}
+
+        frame_time = sc.linspace('frame_time', 0, 71_000_000, num=1001, unit='ns')
+        histogram = sc.DataArray(
+            sc.ones(sizes={'frame_time': 1000}, unit='counts'),
+            coords={'frame_time': frame_time},
+        )
+        data = JobData(
+            start_time=Timestamp.from_ns(0),
+            end_time=Timestamp.from_ns(1),
+            primary_data={'monitor_1': histogram},
+            aux_data={MONITOR_STREAM: tbl_tables[MONITOR_STREAM]},
+        )
+        reply, result = job.process(data, finalize=True)
+
+        assert not reply.has_error, reply.error_message
+        assert result.error_message is None, result.error_message
+        cumulative = result.data['cumulative']
+        assert 'wavelength' in cumulative.coords
+        assert cumulative.sum().value > 0

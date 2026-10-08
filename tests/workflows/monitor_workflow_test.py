@@ -628,36 +628,9 @@ class TestRegisterMonitorWorkflowSpecs:
         assert hasattr(workflow, 'accumulate')
 
 
-class TestMonitorWorkflowFactoryCoordinateMode:
-    """Tests for coordinate mode in monitor workflow factory."""
-
-    def test_wavelength_mode_requires_geometry(self):
-        """Test that wavelength mode requires a geometry file.
-
-        The create_monitor_workflow_factory doesn't provide it, so wavelength
-        mode should raise ValueError. Instrument-specific factories (like DREAM)
-        are responsible for supplying it. The lookup table is no longer a file:
-        it arrives as context.
-        """
-        from ess.livedata.workflows.monitor_workflow_specs import (
-            create_monitor_workflow_factory,
-        )
-
-        params = MonitorDataParams(
-            coordinate_mode=CoordinateModeSettings(mode='wavelength'),
-            wavelength_edges=WavelengthEdges(start=0.1, stop=10.0, num_bins=10),
-            wavelength_range=WavelengthRangeFilter(
-                enabled=True, start=1.0, stop=5.0, unit=WavelengthUnit.ANGSTROM
-            ),
-        )
-
-        with pytest.raises(ValueError, match="geometry_filename is required"):
-            create_monitor_workflow_factory('monitor_1', params)
-
-
 @pytest.mark.slow
 class TestDreamMonitorWorkflowFactory:
-    """Tests for DREAM-specific monitor workflow factory validation."""
+    """Tests for the monitor workflow factory attached to DREAM."""
 
     @pytest.fixture
     def dream_params_wavelength_mode(self):
@@ -682,11 +655,10 @@ class TestDreamMonitorWorkflowFactory:
 
         Both monitors fall within the DREAM lookup table range (5-80 m).
         """
-        from ess.livedata.config.instruments.dream.factories import setup_factories
         from ess.livedata.config.instruments.dream.specs import instrument
         from ess.livedata.config.workflow_spec import WorkflowId
 
-        setup_factories(instrument)
+        instrument.load_factories()
         workflow_id = WorkflowId(
             instrument='dream',
             name='monitor_histogram',
@@ -715,7 +687,7 @@ class TestMonitorWorkflowWavelengthModeHistogramInput:
             get_nexus_geometry_filename,
         )
 
-        return get_nexus_geometry_filename('dream-no-shape')
+        return get_nexus_geometry_filename('dream')
 
     @pytest.fixture
     def lookup_table_filename(self):
@@ -843,7 +815,7 @@ class TestMonitorMotion:
             get_nexus_geometry_filename,
         )
 
-        return str(get_nexus_geometry_filename('dream-no-shape'))
+        return str(get_nexus_geometry_filename('dream'))
 
     @pytest.fixture
     def lookup_table_filename(self):
