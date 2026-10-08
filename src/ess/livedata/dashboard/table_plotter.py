@@ -172,8 +172,7 @@ class TablePlotter(Plotter):
             rows += [resolver.source(data_key.source_name)] * len(da_entries)
             entries += da_entries
             values += da_values
-            unit = '' if da.unit is None else f'{da.unit}{self._unit_suffix}'
-            units += [unit] * len(da_entries)
+            units += [self._value_unit(da) or ''] * len(da_entries)
         if self._notation is TableNotation.decimal and self._precision < 0:
             # Negative precision rounds the magnitude (e.g. -3 -> thousands);
             # numbro format strings cannot express this, so round the values.

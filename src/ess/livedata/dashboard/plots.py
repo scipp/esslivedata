@@ -344,7 +344,8 @@ def _normalize_per_detector_pixel(da: sc.DataArray) -> sc.DataArray:
     """Divide data by the number of detector pixels each value was summed over.
 
     The divisor is the ``detector_pixels`` coord, broadcast along its dims (the
-    ``roi`` dim of per-ROI outputs). An ROI without detector pixels gives NaN.
+    ``roi`` dim of per-ROI outputs). An ROI without detector pixels has no counts
+    either, so its values become 0/0 = NaN.
 
     Raises if the coord is missing. The config UI offers the option only for
     outputs whose template declares the coord, so a missing coord means the data
@@ -960,14 +961,17 @@ class Plotter:
         )
         self._set_cached_state(result.opts(*self._frame_opts()))
 
-    @property
-    def _unit_suffix(self) -> str:
-        """Suffix for the unit label of the values.
+    def _value_unit(self, da: sc.DataArray) -> str | None:
+        """Unit label of the plotted values of normalized data ``da``.
 
         scipp has no unit for a detector pixel, so the per-detector-pixel
-        normalization shows only in the unit label.
+        normalization shows only in this label.
         """
-        return ' per detector pixel' if self._normalize_per_detector_pixel else ''
+        if da.unit is None:
+            return None
+        if self._normalize_per_detector_pixel:
+            return f'{da.unit} per detector pixel'
+        return str(da.unit)
 
     def _normalize(
         self, data: dict[DataKey, sc.DataArray]
@@ -1636,7 +1640,7 @@ class LinePlotter(Plotter):
             da,
             value_label=output_display_name,
             dim_label=dim_label,
-            unit_suffix=self._unit_suffix,
+            unit=self._value_unit(da),
         )
         base_method = getattr(converter, _LINE1D_BASE_METHOD[mode])
         base = base_method(label=label)
@@ -1655,7 +1659,7 @@ class LinePlotter(Plotter):
                     da.assign_coords({da.dim: sc.midpoints(da.coords[da.dim])}),
                     value_label=output_display_name,
                     dim_label=dim_label,
-                    unit_suffix=self._unit_suffix,
+                    unit=self._value_unit(da),
                 )
             error_method = getattr(converter, _LINE1D_ERROR_METHOD[self._errors])
             error = error_method(label=label).opts(color=color)
@@ -1880,7 +1884,7 @@ class BarsPlotter(Plotter):
             raise ValueError(f"Expected 0D or 1D data, got {data.ndim}D")
 
         bar_label = source_display_name or data_key.source_name
-        unit = f'{data.unit}{self._unit_suffix}' if data.unit is not None else None
+        unit = self._value_unit(data)
         vdim_label = output_display_name or data_key.output_name or 'values'
         vdim = hv.Dimension(
             data_key.output_name or 'values', label=vdim_label, unit=unit
@@ -2047,7 +2051,7 @@ class Overlay1DPlotter(LinePlotter):
                 slice_data,
                 value_label=output_display_name,
                 dim_label=dim_label,
-                unit_suffix=self._unit_suffix,
+                unit=self._value_unit(slice_data),
             )
             base_method = getattr(converter, _LINE1D_BASE_METHOD[actual_mode])
             base = base_method(label=curve_label).opts(color=color)
@@ -2066,7 +2070,7 @@ class Overlay1DPlotter(LinePlotter):
                         mid,
                         value_label=output_display_name,
                         dim_label=dim_label,
-                        unit_suffix=self._unit_suffix,
+                        unit=self._value_unit(mid),
                     )
                 error_method = getattr(converter, _LINE1D_ERROR_METHOD[self._errors])
                 error_el = error_method(label=curve_label).opts(color=color)
