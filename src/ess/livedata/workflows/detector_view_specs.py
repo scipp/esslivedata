@@ -398,11 +398,12 @@ class DetectorViewOutputs(DetectorViewOutputsBase):
                 'roi_counts_per_pixel_in_range_current',
             ),
             description=(
-                'ROI total in range divided by the number of pixels of the '
-                'displayed image inside the ROI, one value per ROI. Every pixel of '
-                'the displayed image counts, including those without any detector '
-                'pixel behind them; pixel weighting is not applied. An ROI without '
-                'pixels gives NaN.'
+                'ROI total in range divided by the number of detector pixels inside '
+                'the ROI, one value per ROI. Where the count rate is uniform, this '
+                'equals the value of the image with pixel weighting enabled. Image '
+                'pixels without a detector pixel behind them do not count. For '
+                'detectors downsampled at ingest, a detector pixel is a pixel of the '
+                'downsampled image. An ROI without detector pixels gives NaN.'
             ),
             params=('coordinate_mode', 'toa_range', 'wavelength_range'),
         ),
@@ -458,18 +459,16 @@ class DetectorViewOutputs(DetectorViewOutputsBase):
     roi_counts_per_pixel_in_range_cumulative: CumulativeOutput = pydantic.Field(
         title='ROI counts per pixel in range',
         description=(
-            'ROI total in range divided by the number of pixels of the displayed '
-            'image inside the ROI (all pixels count, pixel weighting is not '
-            'applied), accumulated since the start of the run.'
+            'ROI total in range divided by the number of detector pixels inside '
+            'the ROI, accumulated since the start of the run.'
         ),
         default_factory=_make_roi_scalars_template,
     )
     roi_counts_per_pixel_in_range_current: WindowOutput = pydantic.Field(
         title='ROI counts per pixel in range update',
         description=(
-            'ROI total in range divided by the number of pixels of the displayed '
-            'image inside the ROI (all pixels count, pixel weighting is not '
-            'applied) for the latest update interval only. Resets each update '
+            'ROI total in range divided by the number of detector pixels inside '
+            'the ROI, for the latest update interval only. Resets each update '
             'interval.'
         ),
         default_factory=_make_roi_scalars_template,

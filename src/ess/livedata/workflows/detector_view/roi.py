@@ -20,9 +20,10 @@ from .types import (
     AccumulationMode,
     Cumulative,
     HistogramSlice,
+    PixelWeights,
     ROICountsInRange,
     ROICountsPerPixelInRange,
-    ROIPixelCounts,
+    ROIDetectorPixels,
     ROIPolygonMasks,
     ROIPolygonReadback,
     ROIPolygonRequest,
@@ -275,25 +276,28 @@ def roi_spectra(
     return ROISpectra[AccumulationMode](stacked)
 
 
-def roi_pixel_counts(
+def roi_detector_pixels(
     histogram: AccumulatedHistogram[Cumulative],
+    weights: PixelWeights,
     rectangle_bounds: ROIRectangleBounds,
     polygon_masks: ROIPolygonMasks,
-) -> ROIPixelCounts:
+) -> ROIDetectorPixels:
     """
-    Count the screen pixels inside each ROI.
+    Count the detector pixels inside each ROI.
 
-    Runs the ROI extraction on an all-ones image, so the count follows exactly the
-    same pixel selection as the ROI spectra. The histogram is needed for its screen
-    coordinates, which are edges and are not available elsewhere in the graph.
-
-    All screen bins count, including bins no detector pixel maps to; pixel weighting
-    is not taken into account.
+    Sums the pixel weights (detector pixels per screen pixel) with the ROI
+    extraction, so the count follows exactly the same screen-pixel selection as the
+    ROI spectra. Screen pixels without detector pixels contribute nothing. For
+    geometric projections the weights are averaged over the position-noise replicas,
+    so the count need not be an integer. The histogram only provides the spectral
+    dimension that the ROI extraction expects.
 
     Parameters
     ----------
     histogram:
         Cumulative histogram with screen dims and spectral dim.
+    weights:
+        Number of detector pixels per screen pixel.
     rectangle_bounds:
         Precomputed bounds for rectangle ROIs.
     polygon_masks:
@@ -302,16 +306,15 @@ def roi_pixel_counts(
     Returns
     -------
     :
-        Pixel count per ROI with dims (roi,).
+        Detector pixel count per ROI with dims (roi,).
     """
     spectral_dim = histogram.dims[-1]
     first_bin = histogram[spectral_dim, 0:1]
-    ones = sc.DataArray(
-        sc.ones(dims=first_bin.dims, shape=first_bin.shape, unit='dimensionless'),
-        coords=first_bin.coords,
+    weights_with_spectral_dim = sc.DataArray(
+        sc.broadcast(weights.data, sizes=first_bin.sizes), coords=first_bin.coords
     )
-    counts = roi_spectra(ones, rectangle_bounds, polygon_masks)
-    return ROIPixelCounts(counts.sum(spectral_dim))
+    counts = roi_spectra(weights_with_spectral_dim, rectangle_bounds, polygon_masks)
+    return ROIDetectorPixels(counts.sum(spectral_dim))
 
 
 def roi_counts_in_range(
@@ -341,24 +344,27 @@ def roi_counts_in_range(
 
 def roi_counts_per_pixel_in_range(
     counts: ROICountsInRange[AccumulationMode],
-    pixel_counts: ROIPixelCounts,
+    detector_pixels: ROIDetectorPixels,
 ) -> ROICountsPerPixelInRange[AccumulationMode]:
     """
-    Average the counts in range over the screen pixels of each ROI.
+    Average the counts in range over the detector pixels of each ROI.
+
+    For a region of uniform count rate this equals the value the pixel-weighted
+    detector image shows there.
 
     Parameters
     ----------
     counts:
         Counts in range per ROI.
-    pixel_counts:
-        Number of screen pixels per ROI. An ROI without pixels yields NaN.
+    detector_pixels:
+        Number of detector pixels per ROI. An ROI without detector pixels yields NaN.
 
     Returns
     -------
     :
         Counts per pixel for each ROI with dims (roi,).
     """
-    return ROICountsPerPixelInRange[AccumulationMode](counts / pixel_counts.data)
+    return ROICountsPerPixelInRange[AccumulationMode](counts / detector_pixels.data)
 
 
 def _get_coord_units_from_screen_metadata(

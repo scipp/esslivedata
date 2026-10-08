@@ -320,14 +320,14 @@ class ROICountsPerPixelInRange(
     sciline.Scope[AccumulationMode, sc.DataArray],
     sc.DataArray,  # type: ignore[misc]
 ):
-    """Counts averaged over the screen pixels of each ROI, summed over the range.
+    """Counts averaged over the detector pixels of each ROI, summed over the range.
 
     Parametrized by accumulation mode. Dims (roi,).
     """
 
 
-ROIPixelCounts = NewType('ROIPixelCounts', sc.DataArray)
-"""Number of screen pixels inside each ROI, with dims (roi,)."""
+ROIDetectorPixels = NewType('ROIDetectorPixels', sc.DataArray)
+"""Number of detector pixels inside each ROI, with dims (roi,)."""
 
 
 ROIRectangleBounds = NewType('ROIRectangleBounds', dict)

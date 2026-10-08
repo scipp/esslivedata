@@ -289,7 +289,7 @@ class LogicalProjector:
             number of detector pixels per output pixel.
         """
         ones = sc.DataArray(
-            sc.ones(sizes=empty_detector.sizes, dtype='float32', unit=None)
+            sc.ones(sizes=empty_detector.sizes, dtype='float32', unit='dimensionless')
         )
         if self._transform is not None:
             ones = self._transform(ones)

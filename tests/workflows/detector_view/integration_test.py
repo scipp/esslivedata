@@ -6,11 +6,13 @@ import uuid
 
 import numpy as np
 import pytest
+import scipp as sc
 from ess.reduce.nexus.types import RawDetector, SampleRun
 
 from ess.livedata.config.models import (
     ROI,
     Interval,
+    PixelWeighting,
     PolygonROI,
     RectangleROI,
 )
@@ -19,7 +21,10 @@ from ess.livedata.config.workflow_spec import JobId, WorkflowId
 from ess.livedata.core.job import Job, JobData
 from ess.livedata.core.timestamp import Timestamp
 from ess.livedata.parameter_models import TimeUnit, TOARange
+from ess.livedata.workflows.detector_view.data_source import DetectorNumberSource
+from ess.livedata.workflows.detector_view.factory import DetectorViewFactory
 from ess.livedata.workflows.detector_view.types import (
+    LogicalViewConfig,
     ROIPolygonRequest,
     ROIRectangleRequest,
 )
@@ -28,6 +33,7 @@ from ess.livedata.workflows.detector_view_specs import DetectorViewParams
 from .utils import (
     ROI_CONTEXT_DEFAULTS,
     ROI_CONTEXT_KEYS,
+    make_fake_detector_number,
     make_fake_nexus_detector_data,
     make_test_factory,
     make_test_params,
@@ -280,6 +286,48 @@ class TestROISpectraIntegration:
             assert counts.coords['roi'].values.tolist() == [3]
             assert counts.values[0] == spectra.sum().value
             assert per_pixel.values[0] == pytest.approx(counts.values[0] / 4)
+
+    @pytest.mark.parametrize('pixel_weighting', [False, True])
+    def test_roi_counts_per_pixel_match_pixel_weighted_image_with_reduction(
+        self, pixel_weighting: bool
+    ):
+        # 4 detector pixels are summed into each pixel of the 2x2 image.
+        def fold(da: sc.DataArray, source_name: str) -> sc.DataArray:
+            return da.fold(dim='detector_number', sizes={'y': 2, 'x': 2, 'z': 4})
+
+        factory = DetectorViewFactory(
+            data_source=DetectorNumberSource(make_fake_detector_number(4, 4)),
+            view_config=LogicalViewConfig(transform=fold, reduction_dim='z'),
+        )
+        params = DetectorViewParams(
+            pixel_weighting=PixelWeighting(enabled=pixel_weighting)
+        )
+        workflow = factory.make_workflow('detector', params=params)
+        workflow.build(context_keys=ROI_CONTEXT_KEYS)
+        events = make_fake_nexus_detector_data(
+            y_size=4, x_size=4, n_events_per_pixel=10
+        )
+        roi = RectangleROI(
+            x=Interval(min=0, max=1, unit=None), y=Interval(min=0, max=2, unit=None)
+        )
+        workflow.accumulate(
+            {
+                **ROI_CONTEXT_DEFAULTS,
+                'detector': RawDetector[SampleRun](events),
+                'roi_rectangle': ROI.to_concatenated_data_array({0: roi}),
+            },
+            start_time=Timestamp.from_ns(1000),
+            end_time=Timestamp.from_ns(2000),
+        )
+        result = workflow.finalize()
+
+        # 2 image pixels of 4 detector pixels with 10 events each
+        assert result['roi_counts_in_range_cumulative'].values.tolist() == [80]
+        assert result['roi_counts_per_pixel_in_range_cumulative'].values.tolist() == [
+            10.0
+        ]
+        image_value = 10.0 if pixel_weighting else 40.0
+        assert result['cumulative'].values.tolist() == [[image_value] * 2] * 2
 
     def test_roi_counts_in_range_follow_the_range_filter_like_the_image(self):
         factory = make_test_factory(y_size=4, x_size=4)
