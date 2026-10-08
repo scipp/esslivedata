@@ -28,6 +28,7 @@ from .data_roles import PRIMARY
 from .frame_aspect import make_frame_aspect_opts
 from .image_hover import index_axis_hover_spec, make_hover_hook
 from .plot_params import (
+    DETECTOR_PIXELS_COORD,
     CombineMode,
     LayoutParams,
     LegendPosition,
@@ -337,6 +338,26 @@ def _normalize_to_rate(da: sc.DataArray) -> sc.DataArray:
     if duration_s.value <= 0:
         return da
     return da / duration_s
+
+
+def _normalize_per_detector_pixel(da: sc.DataArray) -> sc.DataArray:
+    """Divide data by the number of detector pixels each value was summed over.
+
+    The divisor is the ``detector_pixels`` coord, broadcast along its dims (the
+    ``roi`` dim of per-ROI outputs). An ROI without detector pixels gives NaN.
+
+    Raises if the coord is missing. The config UI offers the option only for
+    outputs whose template declares the coord, so a missing coord means the data
+    does not match its spec; plotting the data unnormalized under a
+    per-detector-pixel setting would mislabel it.
+    """
+    pixels = da.coords.get(DETECTOR_PIXELS_COORD)
+    if pixels is None:
+        raise ValueError(
+            f"'Per Detector Pixel' needs a {DETECTOR_PIXELS_COORD!r} coord, "
+            "which this output does not have."
+        )
+    return da / pixels
 
 
 def _identity(x: str) -> str:
@@ -679,6 +700,7 @@ class Plotter:
         aspect_params: PlotAspect | None = None,
         layout_params: LayoutParams | None = None,
         legend_position: LegendPosition | None = None,
+        normalize_per_detector_pixel: bool = False,
         normalize_to_rate: bool = False,
     ):
         """
@@ -692,10 +714,14 @@ class Plotter:
             Where the legend is drawn relative to the plot frame. None for
             plotters that draw no legend, which leaves the choice to whichever
             layer of the cell does draw one.
+        normalize_per_detector_pixel:
+            If True, divide data by its ``detector_pixels`` coord before plotting,
+            ahead of any rate normalization.
         normalize_to_rate:
             If True, normalize counts data to rate (counts/s) using
             start_time/end_time coordinates before plotting.
         """
+        self._normalize_per_detector_pixel = normalize_per_detector_pixel
         self._normalize_to_rate = normalize_to_rate
         self._legend_position = legend_position
         self._cached_state: Any | None = None
@@ -913,14 +939,12 @@ class Plotter:
             Additional keyword arguments passed to plot().
         """
         data = data.get(PRIMARY, {})
-        if self._normalize_to_rate:
-            data = {key: _normalize_to_rate(da) for key, da in data.items()}
 
         self._pending_range_targets = {}
         self._pending_y_extents = {}
         resolver = title_resolver or TitleResolver()
         try:
-            result = self._build_result(data, resolver, **kwargs)
+            result = self._build_result(self._normalize(data), resolver, **kwargs)
         except Exception as e:
             self._pending_range_targets = {}
             self._pending_y_extents = {}
@@ -936,6 +960,16 @@ class Plotter:
         )
         self._set_cached_state(result.opts(*self._frame_opts()))
 
+    def _normalize(
+        self, data: dict[DataKey, sc.DataArray]
+    ) -> dict[DataKey, sc.DataArray]:
+        """Apply the configured normalizations, per detector pixel before rate."""
+        if self._normalize_per_detector_pixel:
+            data = {key: _normalize_per_detector_pixel(da) for key, da in data.items()}
+        if self._normalize_to_rate:
+            data = {key: _normalize_to_rate(da) for key, da in data.items()}
+        return data
+
     def _build_result(
         self,
         data: dict[DataKey, sc.DataArray],
@@ -950,7 +984,7 @@ class Plotter:
         Parameters
         ----------
         data:
-            Primary-role data, already normalized to rate if configured.
+            Primary-role data, already normalized if configured.
         resolver:
             Resolves source/output names to display titles.
         **kwargs:
@@ -1485,7 +1519,10 @@ class LinePlotter(Plotter):
     def from_params(cls, params: PlotParams1d, **kwargs: Any) -> Self:
         """Create LinePlotter from PlotParams1d; ``kwargs`` go to the constructor."""
         return cls.from_display_params(
-            params, normalize_to_rate=params.rate.normalize_to_rate, **kwargs
+            params,
+            normalize_per_detector_pixel=params.detector_pixels.per_detector_pixel,
+            normalize_to_rate=params.rate.normalize_to_rate,
+            **kwargs,
         )
 
     @classmethod

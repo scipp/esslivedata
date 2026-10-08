@@ -24,6 +24,7 @@ from ess.livedata.dashboard import plots
 from ess.livedata.dashboard.data_roles import PRIMARY
 from ess.livedata.dashboard.extractors import WindowAggregatingExtractor
 from ess.livedata.dashboard.plot_params import (
+    DetectorPixelNormalizationParams,
     ErrorDisplay,
     LegendParams,
     LegendPosition,
@@ -3721,6 +3722,131 @@ class TestRateNormalizationIntegration:
         bars = next(iter(result.values()))
         assert isinstance(bars, hv.Bars)
         assert bars.vdims[0].unit == 'counts/s'
+
+
+def _roi_spectra(
+    counts: list[list[float]], detector_pixels: list[float]
+) -> sc.DataArray:
+    """Per-ROI spectra as a detector view publishes them, over a 2 s window."""
+    return sc.DataArray(
+        sc.array(dims=['roi', 'toa'], values=counts, unit='counts'),
+        coords={
+            'roi': sc.arange('roi', len(counts), unit=None),
+            'toa': sc.array(dims=['toa'], values=[10.0, 20.0], unit='ns'),
+            'detector_pixels': sc.array(dims=['roi'], values=detector_pixels),
+            **_make_time_coords(duration_s=2.0),
+        },
+    )
+
+
+def _per_pixel_params(*, rate: bool = False) -> PlotParams1d:
+    return PlotParams1d(
+        detector_pixels=DetectorPixelNormalizationParams(per_detector_pixel=True),
+        rate=RateNormalizationParams(normalize_to_rate=rate),
+    )
+
+
+def _curves_by_label(plotter) -> dict[str, hv.Curve]:
+    return {
+        curve.label: curve
+        for curve in plotter.get_cached_state().traverse(lambda el: el, [hv.Curve])
+    }
+
+
+class TestDetectorPixelNormalization:
+    """'Per Detector Pixel' divides each ROI by its ``detector_pixels`` coord."""
+
+    @pytest.fixture
+    def data_key(self) -> DataKey:
+        return DataKey(
+            workflow_id=WorkflowId(instrument='i', name='detector_view', version=1),
+            source_name='panel',
+            output_name='roi_spectra_current',
+        )
+
+    def test_overlay_1d_divides_each_roi_by_its_own_pixel_count(self, data_key):
+        plotter = plots.Overlay1DPlotter.from_params(_per_pixel_params())
+
+        plotter.compute(
+            {PRIMARY: {data_key: _roi_spectra([[4.0, 8.0], [3.0, 6.0]], [4.0, 1.5])}}
+        )
+
+        curves = _curves_by_label(plotter)
+        np.testing.assert_allclose(curves['roi=0'].dimension_values(1), [1.0, 2.0])
+        np.testing.assert_allclose(curves['roi=1'].dimension_values(1), [2.0, 4.0])
+
+    def test_lines_divide_each_roi_by_its_own_pixel_count(self, data_key):
+        totals = _roi_spectra([[4.0, 0.0], [3.0, 0.0]], [4.0, 1.5])['toa', 0]
+        plotter = plots.LinePlotter.from_params(_per_pixel_params())
+
+        plotter.compute({PRIMARY: {data_key: totals}})
+
+        np.testing.assert_allclose(single_layer(plotter).dimension_values(1), [1, 2])
+
+    def test_combines_with_rate_to_counts_per_second_per_pixel(self, data_key):
+        plotter = plots.Overlay1DPlotter.from_params(_per_pixel_params(rate=True))
+
+        plotter.compute(
+            {PRIMARY: {data_key: _roi_spectra([[4.0, 8.0], [3.0, 6.0]], [4.0, 1.5])}}
+        )
+
+        curves = _curves_by_label(plotter)
+        np.testing.assert_allclose(curves['roi=0'].dimension_values(1), [0.5, 1.0])
+        np.testing.assert_allclose(curves['roi=1'].dimension_values(1), [1.0, 2.0])
+        assert curves['roi=0'].vdims[0].unit == 'counts/s'
+
+    def test_roi_without_detector_pixels_shows_no_value(self, data_key):
+        plotter = plots.Overlay1DPlotter.from_params(_per_pixel_params())
+
+        plotter.compute(
+            {PRIMARY: {data_key: _roi_spectra([[4.0, 8.0], [0.0, 0.0]], [4.0, 0.0])}}
+        )
+
+        curves = _curves_by_label(plotter)
+        np.testing.assert_allclose(curves['roi=0'].dimension_values(1), [1.0, 2.0])
+        assert np.isnan(curves['roi=1'].dimension_values(1)).all()
+
+    def test_off_by_default(self, data_key):
+        plotter = plots.Overlay1DPlotter.from_params(PlotParams1d())
+
+        plotter.compute(
+            {PRIMARY: {data_key: _roi_spectra([[4.0, 8.0], [3.0, 6.0]], [4.0, 1.5])}}
+        )
+
+        curves = _curves_by_label(plotter)
+        np.testing.assert_allclose(curves['roi=1'].dimension_values(1), [3.0, 6.0])
+
+    def test_missing_coord_shows_error_instead_of_unnormalized_data(self, data_key):
+        data = _roi_spectra([[4.0, 8.0], [3.0, 6.0]], [4.0, 1.5])
+        plotter = plots.Overlay1DPlotter.from_params(_per_pixel_params())
+
+        plotter.compute({PRIMARY: {data_key: data.drop_coords('detector_pixels')}})
+
+        assert not _curves_by_label(plotter)
+        (text,) = plotter.get_cached_state().traverse(lambda el: el, [hv.Text])
+        assert 'detector_pixels' in text.text
+
+    def test_window_aggregation_divides_by_pixels_of_one_frame(self, data_key):
+        """The window sums counts over frames, never the per-ROI pixel count."""
+        buffer = TemporalBuffer()
+        for frame in range(4):
+            opened = 1_000_000_000 + frame * 1_000_000_000
+            data = _roi_spectra([[4.0, 8.0], [3.0, 6.0]], [4.0, 1.5])
+            buffer.add(
+                data.drop_coords('end_time').assign_coords(
+                    start_time=sc.scalar(opened, unit='ns'),
+                    time=sc.scalar(opened + 1_000_000_000, unit='ns'),
+                )
+            )
+        extractor = WindowAggregatingExtractor(window_duration_seconds=4.0)
+        plotter = plots.Overlay1DPlotter.from_params(_per_pixel_params(rate=True))
+
+        plotter.compute({PRIMARY: {data_key: extractor.extract(buffer.get())}})
+
+        # 4 frames over 4 s: the rate per pixel equals one frame's counts per pixel.
+        curves = _curves_by_label(plotter)
+        np.testing.assert_allclose(curves['roi=0'].dimension_values(1), [1.0, 2.0])
+        np.testing.assert_allclose(curves['roi=1'].dimension_values(1), [2.0, 4.0])
 
 
 def _make_timeseries_data_array(n_points: int, period_s: float = 1.0) -> sc.DataArray:

@@ -346,6 +346,28 @@ class RateNormalizationParams(pydantic.BaseModel):
     )
 
 
+DETECTOR_PIXELS_COORD = 'detector_pixels'
+"""Coord holding the number of detector pixels each value was summed over.
+
+Per-ROI detector-view outputs carry it along their ``roi`` dim. Output templates
+declare it so the config UI offers the per-detector-pixel option only where it
+applies (``plotting_controller.hidden_detector_pixel_fields``).
+"""
+
+
+class DetectorPixelNormalizationParams(pydantic.BaseModel):
+    """Parameters for normalizing per-ROI values to one detector pixel."""
+
+    per_detector_pixel: bool = pydantic.Field(
+        default=False,
+        description="Divide each ROI's values by the number of detector pixels "
+        "inside the ROI, so that ROIs of different size can be compared. Combined "
+        "with 'Counts Per Second' in the 'Rate' tab, this gives counts per second "
+        "per detector pixel. An ROI without detector pixels shows no value.",
+        title="Per Detector Pixel",
+    )
+
+
 class WindowModeMixin(pydantic.BaseModel, abc.ABC):
     """Mixin for params selecting which windowing their data is drawn from.
 
@@ -429,6 +451,19 @@ class RateMixin(pydantic.BaseModel):
     rate: RateNormalizationParams = pydantic.Field(
         default_factory=RateNormalizationParams,
         description="Rate normalization options.",
+    )
+
+
+class DetectorPixelMixin(pydantic.BaseModel):
+    """Mixin adding a per-detector-pixel normalization section to plot parameters."""
+
+    detector_pixels: DetectorPixelNormalizationParams = pydantic.Field(
+        default_factory=DetectorPixelNormalizationParams,
+        description=(
+            "Applies to the per-ROI outputs of detector views, which record how "
+            "many detector pixels each ROI contains."
+        ),
+        title="Detector Pixels",
     )
 
 
@@ -549,7 +584,7 @@ class PlotParamsTimeseries(WindowModeMixin, PlotDisplayParams1d):
         return frozenset({'accumulation'})
 
 
-class PlotParams1d(RateMixin, TimeWindowMixin, PlotDisplayParams1d):
+class PlotParams1d(DetectorPixelMixin, RateMixin, TimeWindowMixin, PlotDisplayParams1d):
     """Common parameters for 1D plots with windowing support."""
 
 

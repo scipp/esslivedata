@@ -24,10 +24,12 @@ from ess.livedata.dashboard.data_service import DataService
 from ess.livedata.dashboard.plot_params import (
     PlotDisplayParams1d,
     PlotParams1d,
+    PlotParamsBars,
     PlotParamsTimeseries,
 )
 from ess.livedata.dashboard.plotting_controller import (
     PlottingController,
+    hidden_detector_pixel_fields,
     hidden_window_fields,
     since_start_available,
 )
@@ -612,6 +614,37 @@ class TestHiddenWindowFields:
         assert hidden_window_fields(
             PlotParams1d, self._spec(Outputs), 'result'
         ) == frozenset({'time_window'})
+
+
+def _roi_spectra_template(*, detector_pixels: bool) -> sc.DataArray:
+    coords = {'roi': sc.array(dims=['roi'], values=[], unit=None)}
+    if detector_pixels:
+        coords['detector_pixels'] = sc.array(dims=['roi'], values=[], dtype='float64')
+    return sc.DataArray(
+        sc.zeros(dims=['roi', 'time_of_arrival'], shape=[0, 0], unit='counts'),
+        coords=coords,
+    )
+
+
+class TestHiddenDetectorPixelFields:
+    def test_shown_when_template_declares_the_coord(self) -> None:
+        template = _roi_spectra_template(detector_pixels=True)
+        assert hidden_detector_pixel_fields(PlotParams1d, template) == frozenset()
+
+    def test_hidden_when_template_lacks_the_coord(self) -> None:
+        template = _roi_spectra_template(detector_pixels=False)
+        assert hidden_detector_pixel_fields(PlotParams1d, template) == frozenset(
+            {'detector_pixels'}
+        )
+
+    def test_hidden_without_template(self) -> None:
+        assert hidden_detector_pixel_fields(PlotParams1d, None) == frozenset(
+            {'detector_pixels'}
+        )
+
+    def test_nothing_to_hide_for_params_without_the_option(self) -> None:
+        template = _roi_spectra_template(detector_pixels=False)
+        assert hidden_detector_pixel_fields(PlotParamsBars, template) == frozenset()
 
 
 class TestSinceStartAvailable:

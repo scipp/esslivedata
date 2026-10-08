@@ -124,7 +124,8 @@ def _resolve_output_display_hints(
     """Derive UI hints from the workflow output view.
 
     Inspects the view's backing template once and returns all decisions
-    that depend on its properties (dimensionality, declared stream roles).
+    that depend on its properties (dimensionality, declared stream roles,
+    declared coords).
 
     Parameters
     ----------
@@ -137,7 +138,8 @@ def _resolve_output_display_hints(
         Name of the selected output view.
     params_class:
         Params model of the selected plotter. Which window-mode control it
-        carries decides what the view must back for that control to apply.
+        carries decides what the view must back for that control to apply; its
+        per-detector-pixel option needs the template's ``detector_pixels`` coord.
 
     Returns
     -------
@@ -146,11 +148,16 @@ def _resolve_output_display_hints(
     """
     if is_static:
         return OutputDisplayHints(hidden_fields=frozenset(), preselect_all_sources=True)
-    from ess.livedata.dashboard.plotting_controller import hidden_window_fields
-
-    hidden = hidden_window_fields(params_class, workflow_spec, view_name)
+    from ess.livedata.dashboard.plotting_controller import (
+        hidden_detector_pixel_fields,
+        hidden_window_fields,
+    )
 
     template = workflow_spec.get_output_template(view_name)
+    hidden = hidden_window_fields(
+        params_class, workflow_spec, view_name
+    ) | hidden_detector_pixel_fields(params_class, template)
+
     preselect_all = template is None or template.ndim < 2
 
     return OutputDisplayHints(hidden_fields=hidden, preselect_all_sources=preselect_all)
