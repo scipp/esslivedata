@@ -244,7 +244,7 @@ class DetectorImage(
     """2D detector image parametrized by accumulation mode.
 
     - DetectorImage[Cumulative]: Summed over all accumulated data
-    - DetectorImage[Window]: Current window only (since last finalize)
+    - DetectorImage[Current]: Current window only (since last finalize)
     """
 
 
@@ -303,7 +303,7 @@ class ROISpectra(
     pixels in each ROI as the ``detector_pixels`` coord.
 
     - ROISpectra[Cumulative]: Extracted from cumulative histogram
-    - ROISpectra[Window]: Extracted from current window histogram
+    - ROISpectra[Current]: Extracted from current window histogram
     """
 
 

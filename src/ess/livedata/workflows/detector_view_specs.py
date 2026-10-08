@@ -397,7 +397,7 @@ class DetectorViewOutputs(DetectorViewOutputsBase):
             params=('coordinate_mode', 'toa_edges', 'wavelength_edges'),
         ),
         OutputView(
-            name='roi_counts_in_range',
+            name='roi_total_in_range',
             title='ROI total in range',
             fields=('roi_counts_in_range_cumulative', 'roi_counts_in_range_current'),
             description=(
@@ -449,7 +449,7 @@ class DetectorViewOutputs(DetectorViewOutputsBase):
         default_factory=_make_roi_scalars_template,
     )
     roi_counts_in_range_current: WindowOutput = pydantic.Field(
-        title='ROI total in range update',
+        title='ROI total in range (update)',
         description=(
             'Counts summed over each ROI and over the range filter '
             'for the latest update interval only. Resets each update interval.'
@@ -492,9 +492,7 @@ def make_detector_view_outputs(
         Number of dimensions for spatial outputs (cumulative, current).
         The counts outputs remain 0D scalars. If None, uses 2D default.
     roi_support:
-        Whether to include ROI-related outputs. If False, the returned class
-        will not include roi_spectra_current, roi_spectra_cumulative,
-        roi_rectangle, or roi_polygon fields.
+        Whether to include the ROI outputs.
     spectrum_view:
         Optional spectrum view configuration. When provided, the returned
         class includes an additional ``spectrum_view`` field with a template

@@ -338,6 +338,7 @@ def test_active_workflow_keeps_running_when_bad_workflow_id_was_set(
     sink = app.sink
     service = app.service
     workflow_id, _ = _get_workflow_from_registry('dummy')
+    n_out = _n_outputs('dummy')
 
     # Start a valid workflow first
     workflow_config = workflow_spec.WorkflowConfig(
@@ -352,7 +353,7 @@ def test_active_workflow_keeps_running_when_bad_workflow_id_was_set(
     # Add events and verify workflow is running
     app.publish_events(size=2000, time=2)
     service.step()
-    assert len(_data_messages(sink)) == _n_outputs('dummy')
+    assert len(_data_messages(sink)) == n_out
     assert _data_messages(sink)[0].value.values.sum() == 2000
 
     # Try to set an invalid workflow ID
@@ -368,10 +369,8 @@ def test_active_workflow_keeps_running_when_bad_workflow_id_was_set(
     app.publish_events(size=3000, time=4)
     service.step()
     # No error ack without message_id, just data messages (two updates)
-    assert len(_data_messages(sink)) == 2 * _n_outputs('dummy')
-    assert (
-        _data_messages(sink)[_n_outputs('dummy')].value.values.sum() == 5000
-    )  # cumulative
+    assert len(_data_messages(sink)) == 2 * n_out
+    assert _data_messages(sink)[n_out].value.values.sum() == 5000  # cumulative
 
 
 @pytest.fixture
