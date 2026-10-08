@@ -16,7 +16,7 @@ from holoviews.plotting.bokeh.tabular import TablePlot
 from ess.livedata.config.workflow_spec import DataKey
 
 from .plot_params import PlotParamsTable, TableNotation
-from .plots import Plotter, TitleResolver, _check_entry_limit
+from .plots import Plotter, TitleResolver, check_entry_limit
 from .range_hook import Axis
 
 # Bokeh renders the table in 12px Helvetica/Arial. Seven pixels per character is
@@ -162,7 +162,7 @@ class TablePlotter(Plotter):
             if dim is None:
                 da_entries, da_values = [''], [float(da.value)]
             else:
-                _check_entry_limit(dim, da.sizes[dim], self._max_entries)
+                check_entry_limit(dim, da.sizes[dim], self._max_entries)
                 coord = (
                     da.coords[dim].values
                     if dim in da.coords

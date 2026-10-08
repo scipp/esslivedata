@@ -39,8 +39,8 @@ from ess.livedata.dashboard.plot_params import (
     PlotParams3d,
     PlotParamsBars,
     PlotParamsOverlay1d,
-    PlotParamsOverlay1dTimeseries,
     PlotParamsTable,
+    PlotParamsTimeseriesOverlay,
     PlotScale,
     PlotScaleParams2d,
     RateNormalizationParams,
@@ -2860,7 +2860,7 @@ class TestEntryLimit:
                 return plotter, self.spectra
             case 'history':
                 plotter = plots.Overlay1DPlotter.from_timeseries_params(
-                    PlotParamsOverlay1dTimeseries.model_validate(limit_params)
+                    PlotParamsTimeseriesOverlay.model_validate(limit_params)
                 )
                 # Later times for larger n: the plotter throttles repeated times.
                 return plotter, lambda n: TestOverlay1DPlotterHistory.history(
@@ -2876,7 +2876,7 @@ class TestEntryLimit:
         (text,) = _error_texts(plotter, make(limit + 1), data_key)
         assert text == (
             f"Error: {limit + 1} entries along 'roi'; at most {limit} can be drawn. "
-            "Raise the limit in the plot settings."
+            "Raise 'Max Entries' in the plot settings."
         )
 
     def test_empty_first_frame_then_over_the_limit(self, case, limit, data_key):
@@ -2897,7 +2897,7 @@ class TestOverlay1DPlotterHistory:
     @pytest.fixture
     def plotter(self):
         return plots.Overlay1DPlotter.from_timeseries_params(
-            PlotParamsOverlay1dTimeseries()
+            PlotParamsTimeseriesOverlay()
         )
 
     @staticmethod

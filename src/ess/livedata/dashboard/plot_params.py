@@ -553,9 +553,9 @@ class PlotParams1d(RateMixin, TimeWindowMixin, PlotDisplayParams1d):
     """Common parameters for 1D plots with windowing support."""
 
 
-# Measured with 100-1000 points per curve: building one update of 50 curves takes
-# about 0.3-0.6 s (computing) and 0.5-1.6 s (Bokeh) with error bars, and 100 curves
-# 2-4 s each, which exceeds the 1 s update period and freezes the dashboard.
+# Measured with 100-1000 points per curve, one update of N curves takes 0.3-0.6 s to
+# compute and 0.5-1.6 s to build in Bokeh for N=50, and 0.8-2.2 s and 1.3-3.7 s for
+# N=100. 100 curves thus exceed the 1 s update period and freeze the dashboard.
 # HoloViews also fails outright at 1000 bars (recursion limit).
 MAX_ENTRIES_LIMIT = 50
 
@@ -566,9 +566,9 @@ class EntryLimitParams(pydantic.BaseModel):
     max_entries: int = pydantic.Field(
         default=20,
         description=(
-            "Maximum number of entries drawn per source, one curve or bar each. A "
-            "source with more entries is not drawn, since too many make the plot "
-            "- and the rest of the dashboard - sluggish."
+            "Maximum number of entries drawn per source, one curve, bar or row "
+            "each. A source with more entries is not shown, since too many make "
+            "the plot - and the rest of the dashboard - sluggish."
         ),
         title="Max Entries",
         ge=1,
@@ -576,22 +576,21 @@ class EntryLimitParams(pydantic.BaseModel):
     )
 
 
-class PlotParamsOverlay1d(PlotParams1d):
+class EntryLimitMixin(pydantic.BaseModel):
+    """Mixin adding a limit on the number of entries drawn per source."""
+
+    limit: EntryLimitParams = pydantic.Field(
+        default_factory=EntryLimitParams,
+        description="Limit on the number of entries drawn per source.",
+    )
+
+
+class PlotParamsOverlay1d(EntryLimitMixin, PlotParams1d):
     """Parameters for plots of one curve per entry of 2D data."""
 
-    limit: EntryLimitParams = pydantic.Field(
-        default_factory=EntryLimitParams,
-        description="Limit on the number of curves.",
-    )
 
-
-class PlotParamsOverlay1dTimeseries(PlotParamsTimeseries):
+class PlotParamsTimeseriesOverlay(EntryLimitMixin, PlotParamsTimeseries):
     """Parameters for timeseries plots with one curve per entry."""
-
-    limit: EntryLimitParams = pydantic.Field(
-        default_factory=EntryLimitParams,
-        description="Limit on the number of curves.",
-    )
 
 
 class PlotParams2d(RateMixin, TimeWindowMixin, PlotDisplayParams2d):
@@ -612,16 +611,12 @@ class BarOrientation(pydantic.BaseModel):
     )
 
 
-class PlotParamsBars(RateMixin, TimeWindowMixin, PlotParamsBase):
+class PlotParamsBars(EntryLimitMixin, RateMixin, TimeWindowMixin, PlotParamsBase):
     """Parameters for bar plots of 0D scalar data or 1D data, one bar per entry."""
 
     orientation: BarOrientation = pydantic.Field(
         default_factory=BarOrientation,
         description="Bar orientation options.",
-    )
-    limit: EntryLimitParams = pydantic.Field(
-        default_factory=EntryLimitParams,
-        description="Limit on the number of bars per source of 1D data.",
     )
 
 
@@ -662,14 +657,10 @@ class TableFormatParams(pydantic.BaseModel):
     )
 
 
-class PlotParamsTable(RateMixin, TimeWindowMixin, PlotParamsBase):
+class PlotParamsTable(EntryLimitMixin, RateMixin, TimeWindowMixin, PlotParamsBase):
     """Parameters for tabular display of 0D scalar data or 1D data."""
 
     format: TableFormatParams = pydantic.Field(
         default_factory=TableFormatParams,
         description="Number formatting for table value columns.",
-    )
-    limit: EntryLimitParams = pydantic.Field(
-        default_factory=EntryLimitParams,
-        description="Limit on the number of rows per source of 1D data.",
     )

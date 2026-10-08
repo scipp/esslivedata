@@ -37,8 +37,8 @@ from .plot_params import (
     PlotParams2d,
     PlotParamsBars,
     PlotParamsOverlay1d,
-    PlotParamsOverlay1dTimeseries,
     PlotParamsTimeseries,
+    PlotParamsTimeseriesOverlay,
     PlotScale,
     PlotScaleParams,
     PlotScaleParams2d,
@@ -1291,12 +1291,12 @@ def _line1d_style_opts(
     ]
 
 
-def _check_entry_limit(dim: str, size: int, limit: int) -> None:
+def check_entry_limit(dim: str, size: int, limit: int) -> None:
     """Raise if ``size`` entries along ``dim`` exceed the drawing ``limit``."""
     if size > limit:
         raise ValueError(
             f"{size} entries along '{dim}'; at most {limit} can be drawn. "
-            "Raise the limit in the plot settings."
+            "Raise 'Max Entries' in the plot settings."
         )
 
 
@@ -1789,7 +1789,7 @@ class BarsPlotter(Plotter):
             )
 
         (dim,) = data.dims
-        _check_entry_limit(dim, data.sizes[dim], self._max_entries)
+        check_entry_limit(dim, data.sizes[dim], self._max_entries)
         coord = (
             data.coords[dim].values
             if dim in data.coords
@@ -1852,7 +1852,7 @@ class Overlay1DPlotter(LinePlotter):
         return instance
 
     @classmethod
-    def from_timeseries_params(cls, params: PlotParamsOverlay1dTimeseries):
+    def from_timeseries_params(cls, params: PlotParamsTimeseriesOverlay):
         """Create Overlay1DPlotter for the history of 1D data, one curve per entry."""
         instance = super().from_timeseries_params(params)
         instance._max_entries = params.limit.max_entries
@@ -1882,7 +1882,7 @@ class Overlay1DPlotter(LinePlotter):
 
         slice_dim, plot_dim = data.dims
         slice_size = data.sizes[slice_dim]
-        _check_entry_limit(slice_dim, slice_size, self._max_entries)
+        check_entry_limit(slice_dim, slice_size, self._max_entries)
 
         if slice_size == 0:
             # The first frame fixes the axis type, so the empty frame must carry

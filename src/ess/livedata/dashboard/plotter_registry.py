@@ -318,10 +318,10 @@ def _register_all_plotters() -> None:
         title='Bars',
         description=(
             'Plot 0D scalar values as bars, one per source. For 1D data, plot one '
-            'bar per position along its dimension, grouped by source. With an '
+            'bar per entry along its dimension, grouped by source. With an '
             'integer coordinate, each coordinate value has a fixed color, the same '
-            'as in Overlay 1D and Timeseries Overlay. Data with more entries than '
-            'the limit in the plot settings is not drawn.'
+            'as in Overlay 1D and Timeseries Overlay. A source with more entries '
+            'than "Max Entries" in the plot settings is not shown.'
         ),
         data_requirements=DataRequirements(min_dims=0, max_dims=1),
         factory=BarsPlotter.from_params,
@@ -332,9 +332,9 @@ def _register_all_plotters() -> None:
         title='Table',
         description=(
             'Display 0D scalar values as a table, one row per source. For 1D data, '
-            'display one row per position along its dimension, labeled by its '
-            'coordinate value. Data with more entries than the limit in the plot '
-            'settings is not drawn.'
+            'display one row per entry along its dimension, labeled by its '
+            'coordinate value. A source with more entries than "Max Entries" in '
+            'the plot settings is not shown.'
         ),
         data_requirements=DataRequirements(min_dims=0, max_dims=1),
         factory=TablePlotter.from_params,
@@ -374,11 +374,11 @@ def _register_all_plotters() -> None:
         name='overlay_1d',
         title='Overlay 1D',
         description=(
-            'Slice 2D data along the first dimension and overlay as 1D curves, '
-            'one per position. Useful for visualizing multiple spectra from a '
-            'single 2D array. With an integer coordinate, each coordinate value '
-            'has a fixed color. Data with more slices than the limit in the plot '
-            'settings is not drawn.'
+            'Overlay 2D data as 1D curves, one per entry along the first '
+            'dimension. Useful for visualizing multiple spectra from a single 2D '
+            'array. With an integer coordinate, each coordinate value has a fixed '
+            'color. A source with more entries than "Max Entries" in the plot '
+            'settings is not shown.'
         ),
         data_requirements=DataRequirements(min_dims=2, max_dims=2),
         factory=Overlay1DPlotter.from_params,
@@ -390,10 +390,10 @@ def _register_all_plotters() -> None:
         name='timeseries_overlay',
         title='Timeseries Overlay',
         description=(
-            'Plot the temporal evolution of 1D data as one line per position along '
+            'Plot the temporal evolution of 1D data as one line per entry along '
             'its dimension. With an integer coordinate, each coordinate value has '
-            'a fixed color, the same as in Overlay 1D and Bars. Data with more '
-            'entries than the limit in the plot settings is not drawn.'
+            'a fixed color, the same as in Overlay 1D and Bars. A source with more '
+            'entries than "Max Entries" in the plot settings is not shown.'
         ),
         data_requirements=DataRequirements(
             min_dims=1,
