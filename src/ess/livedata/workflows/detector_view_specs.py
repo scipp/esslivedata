@@ -266,6 +266,14 @@ def _make_0d_template() -> sc.DataArray:
     return _make_nd_template(0)
 
 
+def _make_roi_scalars_template() -> sc.DataArray:
+    """Create an empty template for one scalar per ROI."""
+    return sc.DataArray(
+        sc.zeros(dims=['roi'], shape=[0], unit='counts'),
+        coords={'roi': sc.array(dims=['roi'], values=[], unit=None)},
+    )
+
+
 def _make_roi_spectra_template() -> sc.DataArray:
     """Create an empty template for stacked per-ROI spectra."""
     return sc.DataArray(
@@ -373,6 +381,29 @@ class DetectorViewOutputs(DetectorViewOutputsBase):
             params=('coordinate_mode', 'toa_edges', 'wavelength_edges'),
         ),
         OutputView(
+            name='roi_counts',
+            title='ROI counts',
+            fields=('roi_counts_cumulative', 'roi_counts_current'),
+            description=(
+                'Counts summed over each ROI and over the range filter, one value '
+                'per ROI.'
+            ),
+            params=('coordinate_mode', 'toa_range', 'wavelength_range'),
+        ),
+        OutputView(
+            name='roi_counts_per_pixel',
+            title='ROI counts per pixel',
+            fields=(
+                'roi_counts_per_pixel_cumulative',
+                'roi_counts_per_pixel_current',
+            ),
+            description=(
+                'Counts averaged over the pixels of the displayed image inside '
+                'each ROI and summed over the range filter, one value per ROI.'
+            ),
+            params=('coordinate_mode', 'toa_range', 'wavelength_range'),
+        ),
+        OutputView(
             name='roi_rectangle',
             title='ROI Rectangles (readback)',
             fields=('roi_rectangle',),
@@ -402,6 +433,42 @@ class DetectorViewOutputs(DetectorViewOutputsBase):
             'for the latest update interval only. Resets each update interval.'
         ),
         default_factory=_make_roi_spectra_template,
+    )
+
+    # One scalar per ROI (1D: roi)
+    roi_counts_cumulative: CumulativeOutput = pydantic.Field(
+        title='ROI counts',
+        description=(
+            'Counts summed over each ROI and over the range filter, '
+            'accumulated since the start of the run.'
+        ),
+        default_factory=_make_roi_scalars_template,
+    )
+    roi_counts_current: WindowOutput = pydantic.Field(
+        title='ROI counts update',
+        description=(
+            'Counts summed over each ROI and over the range filter '
+            'for the latest update interval only. Resets each update interval.'
+        ),
+        default_factory=_make_roi_scalars_template,
+    )
+    roi_counts_per_pixel_cumulative: CumulativeOutput = pydantic.Field(
+        title='ROI counts per pixel',
+        description=(
+            'Counts averaged over the pixels of the displayed image inside each '
+            'ROI and summed over the range filter, accumulated since the start '
+            'of the run.'
+        ),
+        default_factory=_make_roi_scalars_template,
+    )
+    roi_counts_per_pixel_current: WindowOutput = pydantic.Field(
+        title='ROI counts per pixel update',
+        description=(
+            'Counts averaged over the pixels of the displayed image inside each '
+            'ROI and summed over the range filter for the latest update interval '
+            'only. Resets each update interval.'
+        ),
+        default_factory=_make_roi_scalars_template,
     )
 
     # ROI geometry readbacks

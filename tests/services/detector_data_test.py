@@ -15,6 +15,11 @@ from ess.livedata.core.message import StreamKind
 from ess.livedata.services.detector_data import make_detector_service_builder
 from tests.helpers.livedata_app import LivedataApp
 
+# Messages published per update by a detector view with ROI support:
+# cumulative, current, counts_total (x2), counts_in_toa_range (x2), roi_spectra (x2),
+# roi_counts (x2), roi_counts_per_pixel (x2), roi_rectangle, roi_polygon.
+N_DETECTOR_VIEW_OUTPUTS = 14
+
 
 def _job_id(source: str) -> JobId:
     return JobId(source_name=source, job_number=uuid.uuid4())
@@ -91,12 +96,9 @@ def test_can_configure_and_stop_detector_workflow(
         app.publish_log_message(
             source_name='detector_carriage/value', time=1, value=5000.0
         )
-    # Each workflow call returns 10 results by default: cumulative, current,
-    # counts_total, counts_in_toa, counts_total_cumulative,
-    # counts_in_toa_range_cumulative, roi_spectra_cumulative,
-    # roi_spectra_current, roi_rectangle, roi_polygon. Instruments that enable
-    # a unified spectrum output add one additional spectrum_view message.
-    n_out = 11 if instrument == 'bifrost' else 10
+    # Instruments that enable a unified spectrum output add one additional
+    # spectrum_view message.
+    n_out = N_DETECTOR_VIEW_OUTPUTS + (1 if instrument == 'bifrost' else 0)
     app.publish_events(size=2000, time=2)
     service.step()
     assert len(_data_messages(sink)) == n_out
@@ -176,7 +178,7 @@ def test_loki_cumulative_resets_when_detector_carriage_moves() -> None:
             source_name='detector_carriage/value', time=time, value=position
         )
 
-    n_out = 10
+    n_out = N_DETECTOR_VIEW_OUTPUTS
 
     # Cycle 1: park, accumulate a first batch.
     prime_carriage(position=5000.0, time=1)
@@ -231,7 +233,7 @@ def test_odin_cumulative_resets_when_the_readout_resolution_changes() -> None:
     )
     service.step()
 
-    n_out = 10
+    n_out = N_DETECTOR_VIEW_OUTPUTS
     # Only the first rows of the 4096x4096 panel light up, so the ids seen so
     # far are consistent with a much smaller readout.
     app.publish_events(size=2000, time=2, id_range=(0, 100 * 4096))
@@ -327,7 +329,7 @@ def test_service_can_recover_after_bad_workflow_id_was_set(
     service.step()
     # Service recovered; data only -- the ack is on response_messages
     # First finalize sends 10 data messages (8 + 2 initial ROI readbacks)
-    assert len(_data_messages(sink)) == 10
+    assert len(_data_messages(sink)) == N_DETECTOR_VIEW_OUTPUTS
 
 
 def test_active_workflow_keeps_running_when_bad_workflow_id_was_set(
@@ -352,10 +354,7 @@ def test_active_workflow_keeps_running_when_bad_workflow_id_was_set(
     # Add events and verify workflow is running
     app.publish_events(size=2000, time=2)
     service.step()
-    # cumulative, current, roi_spectra_current, roi_spectra_cumulative,
-    # counts_total, counts_in_toa, counts_total_cumulative,
-    # counts_in_toa_range_cumulative, roi_rectangle, roi_polygon
-    assert len(_data_messages(sink)) == 10
+    assert len(_data_messages(sink)) == N_DETECTOR_VIEW_OUTPUTS
     assert _data_messages(sink)[0].value.values.sum() == 2000
 
     # Try to set an invalid workflow ID
@@ -370,9 +369,11 @@ def test_active_workflow_keeps_running_when_bad_workflow_id_was_set(
     # Add more events and verify the original workflow is still running
     app.publish_events(size=3000, time=4)
     service.step()
-    # No error ack without message_id, just data messages (10 + 10)
-    assert len(_data_messages(sink)) == 20
-    assert _data_messages(sink)[10].value.values.sum() == 5000  # cumulative
+    # No error ack without message_id, just data messages (two updates)
+    assert len(_data_messages(sink)) == 2 * N_DETECTOR_VIEW_OUTPUTS
+    assert (
+        _data_messages(sink)[N_DETECTOR_VIEW_OUTPUTS].value.values.sum() == 5000
+    )  # cumulative
 
 
 @pytest.fixture
@@ -434,10 +435,7 @@ def test_message_with_unknown_schema_is_ignored(
     with capture_logs() as captured:
         app.step()
 
-    # cumulative, current, roi_spectra_current, roi_spectra_cumulative,
-    # counts_total, counts_in_toa, counts_total_cumulative,
-    # counts_in_toa_range_cumulative + 2 initial ROI readbacks
-    assert len(_data_messages(sink)) == 10
+    assert len(_data_messages(sink)) == N_DETECTOR_VIEW_OUTPUTS
     assert _data_messages(sink)[0].value.values.sum() == 2000
 
     # Check log messages for warnings
@@ -459,10 +457,7 @@ def test_message_that_cannot_be_decoded_is_ignored(
     with capture_logs() as captured:
         app.step()
 
-    # cumulative, current, roi_spectra_current, roi_spectra_cumulative,
-    # counts_total, counts_in_toa, counts_total_cumulative,
-    # counts_in_toa_range_cumulative + 2 initial ROI readbacks
-    assert len(_data_messages(sink)) == 10
+    assert len(_data_messages(sink)) == N_DETECTOR_VIEW_OUTPUTS
     assert _data_messages(sink)[0].value.values.sum() == 2000
 
     # Check log messages for exceptions

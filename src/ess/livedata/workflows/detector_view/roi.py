@@ -17,6 +17,11 @@ from ess.livedata.config import models
 from .types import (
     AccumulatedHistogram,
     AccumulationMode,
+    Cumulative,
+    HistogramSlice,
+    ROICountsPerPixel,
+    ROIIntegratedCounts,
+    ROIPixelCounts,
     ROIPolygonMasks,
     ROIPolygonReadback,
     ROIPolygonRequest,
@@ -267,6 +272,61 @@ def roi_spectra(
     stacked = sc.concat(spectra, dim='roi')
     stacked.coords['roi'] = sc.array(dims=['roi'], values=roi_indices, dtype='int32')
     return ROISpectra[AccumulationMode](stacked)
+
+
+def roi_pixel_counts(
+    histogram: AccumulatedHistogram[Cumulative],
+    rectangle_bounds: ROIRectangleBounds,
+    polygon_masks: ROIPolygonMasks,
+) -> ROIPixelCounts:
+    """
+    Count the screen pixels inside each ROI.
+
+    Runs the ROI extraction on an all-ones image, so the count follows exactly the
+    same pixel selection as the ROI spectra.
+
+    Returns
+    -------
+    :
+        Pixel count per ROI with dims (roi,).
+    """
+    spectral_dim = histogram.dims[-1]
+    first_bin = histogram[spectral_dim, 0:1]
+    ones = sc.DataArray(
+        sc.ones(dims=first_bin.dims, shape=first_bin.shape, unit='dimensionless'),
+        coords=first_bin.coords,
+    )
+    counts = roi_spectra(ones, rectangle_bounds, polygon_masks)
+    return ROIPixelCounts(counts.sum(spectral_dim))
+
+
+def roi_integrated_counts(
+    spectra: ROISpectra[AccumulationMode],
+    histogram_slice: HistogramSlice,
+) -> ROIIntegratedCounts[AccumulationMode]:
+    """
+    Sum the ROI spectra over the spectral dimension.
+
+    The sum covers the active range filter, like the detector image.
+
+    Returns
+    -------
+    :
+        Counts per ROI with dims (roi,).
+    """
+    spectral_dim = spectra.dims[-1]
+    if histogram_slice is not None:
+        low, high = histogram_slice
+        spectra = spectra[spectral_dim, low:high]
+    return ROIIntegratedCounts[AccumulationMode](spectra.sum(spectral_dim))
+
+
+def roi_counts_per_pixel(
+    counts: ROIIntegratedCounts[AccumulationMode],
+    pixel_counts: ROIPixelCounts,
+) -> ROICountsPerPixel[AccumulationMode]:
+    """Divide the integrated ROI counts by the number of pixels in each ROI."""
+    return ROICountsPerPixel[AccumulationMode](counts / pixel_counts.data)
 
 
 def _get_coord_units_from_screen_metadata(

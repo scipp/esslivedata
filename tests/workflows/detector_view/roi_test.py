@@ -17,6 +17,9 @@ from ess.livedata.config.models import Interval, PolygonROI, RectangleROI
 from ess.livedata.workflows.detector_view.roi import (
     precompute_roi_polygon_masks,
     precompute_roi_rectangle_bounds,
+    roi_counts_per_pixel,
+    roi_integrated_counts,
+    roi_pixel_counts,
     roi_spectra,
 )
 from ess.livedata.workflows.detector_view.types import (
@@ -423,3 +426,69 @@ class TestEmptyROIRequests:
             metadata, histogram, polygon_request=empty_poly
         )
         assert result_poly.sizes['roi'] == 0
+
+
+class TestROICounts:
+    """Tests for the per-ROI scalars derived from the ROI spectra."""
+
+    @staticmethod
+    def make_bounds_and_masks(metadata: ScreenMetadata):
+        rectangle = RectangleROI(
+            x=Interval(min=2.0, max=5.0, unit='m'),
+            y=Interval(min=2.0, max=4.0, unit='m'),
+        )
+        polygon = PolygonROI(
+            x=[0.0, 4.0, 4.0, 0.0], y=[0.0, 0.0, 4.0, 4.0], x_unit='m', y_unit='m'
+        )
+        bounds = precompute_roi_rectangle_bounds(
+            metadata,
+            ROIRectangleRequest(
+                RectangleROI.to_concatenated_data_array({0: rectangle})
+            ),
+        )
+        masks = precompute_roi_polygon_masks(
+            metadata,
+            ROIPolygonRequest(PolygonROI.to_concatenated_data_array({1: polygon})),
+        )
+        return bounds, masks
+
+    def test_counts_per_pixel_divides_by_roi_pixel_count(self):
+        metadata = make_screen_metadata_from_edges()
+        histogram = make_uniform_histogram(value=2)
+        bounds, masks = self.make_bounds_and_masks(metadata)
+
+        pixels = roi_pixel_counts(histogram, bounds, masks)
+        spectra = roi_spectra(histogram, bounds, masks)
+        counts = roi_integrated_counts(spectra, None)
+        per_pixel = roi_counts_per_pixel(counts, pixels)
+
+        assert pixels.dims == ('roi',)
+        assert pixels.values.tolist() == [6, 16]  # 3x2 rectangle, 4x4 polygon
+        assert counts.values.tolist() == [6 * 2 * 3, 16 * 2 * 3]
+        assert per_pixel.values.tolist() == [6.0, 6.0]  # 2 counts x 3 tof bins
+        assert per_pixel.coords['roi'].values.tolist() == [0, 1]
+
+    def test_integrated_counts_cover_only_the_range_filter(self):
+        metadata = make_screen_metadata_from_edges()
+        histogram = make_uniform_histogram()
+        bounds, masks = self.make_bounds_and_masks(metadata)
+        spectra = roi_spectra(histogram, bounds, masks)
+
+        # tof bins are 10000 ns wide; keep the first two
+        low = sc.scalar(0, unit='ns')
+        high = sc.scalar(20000, unit='ns')
+        counts = roi_integrated_counts(spectra, (low, high))
+
+        assert counts.values.tolist() == [6 * 2, 16 * 2]
+
+    def test_no_rois_give_empty_outputs(self):
+        metadata = make_screen_metadata_from_edges()
+        histogram = make_uniform_histogram()
+        bounds, masks = self.make_bounds_and_masks(metadata)
+        bounds, masks = type(bounds)({}), type(masks)({})
+
+        pixels = roi_pixel_counts(histogram, bounds, masks)
+        counts = roi_integrated_counts(roi_spectra(histogram, bounds, masks), None)
+
+        assert pixels.sizes == {'roi': 0}
+        assert roi_counts_per_pixel(counts, pixels).sizes == {'roi': 0}

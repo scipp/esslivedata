@@ -245,6 +245,36 @@ class TestROISpectraIntegration:
         # Cumulative should be ~2x current (two batches)
         assert cumulative_sum > current_sum
 
+    def test_roi_counts_and_counts_per_pixel(self):
+        factory = make_test_factory(y_size=4, x_size=4)
+        workflow = factory.make_workflow('detector', params=make_test_params())
+        workflow.build(context_keys=ROI_CONTEXT_KEYS)
+        events = make_fake_nexus_detector_data(
+            y_size=4, x_size=4, n_events_per_pixel=10
+        )
+        roi = RectangleROI(
+            x=Interval(min=0, max=2, unit=None), y=Interval(min=0, max=2, unit=None)
+        )
+        workflow.accumulate(
+            {
+                **ROI_CONTEXT_DEFAULTS,
+                'detector': RawDetector[SampleRun](events),
+                'roi_rectangle': ROI.to_concatenated_data_array({3: roi}),
+            },
+            start_time=Timestamp.from_ns(1000),
+            end_time=Timestamp.from_ns(2000),
+        )
+        result = workflow.finalize()
+
+        for mode in ('cumulative', 'current'):
+            spectra = result[f'roi_spectra_{mode}']
+            counts = result[f'roi_counts_{mode}']
+            per_pixel = result[f'roi_counts_per_pixel_{mode}']
+            assert counts.dims == ('roi',)
+            assert counts.coords['roi'].values.tolist() == [3]
+            assert counts.values[0] == spectra.sum().value
+            assert per_pixel.values[0] == pytest.approx(counts.values[0] / 4)
+
     def test_roi_change_recomputes_from_accumulated_histogram(self):
         """Test that changing ROI recomputes spectra from full accumulated data."""
         # Use factory to create workflow (same code path as production)
