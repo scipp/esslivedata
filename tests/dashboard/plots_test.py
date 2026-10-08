@@ -2811,7 +2811,7 @@ class TestBarsPlotterPerRoi:
         assert [name for name, _ in hover.tooltips] == [
             'source',
             'roi',
-            'test_result (counts)',
+            hv.Dimension('test_result', unit='counts').pprint_label,
         ]
 
     def test_rendered_axis_is_categorical_with_the_bars(self, plotter, data_key):
