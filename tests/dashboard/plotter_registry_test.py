@@ -145,8 +145,7 @@ _DATA: dict[str, Callable[[], RoleData]] = {
     'slicer': lambda: _primary(_array({'z': 2, 'y': 3, 'x': 4})),
     'flatten': lambda: _primary(_array({'a': 2, 'b': 3, 'c': 4})),
     'overlay_1d': lambda: _primary(_array({'roi': 2, 'x': 5}, variances=True)),
-    'roi_bars': lambda: _primary(_roi_values(), _roi_values()),
-    'roi_timeseries': lambda: _primary(_roi_history(), _roi_history()),
+    'timeseries_per_entry': lambda: _primary(_roi_history(), _roi_history()),
     'correlation_histogram_1d': lambda: {
         **_primary(_history()),
         X_AXIS: {_key('axis_x'): _history()},
@@ -243,20 +242,18 @@ def test_session_test_covers_every_plotter() -> None:
     assert set(_PARAMS) <= set(plotter_registry.keys())
 
 
-class TestRoiPlotters:
-    def test_both_accept_per_roi_output_and_only_history_needs_full_history(self):
+class TestPerEntryPlotters:
+    def test_1d_data_is_offered_bars_and_a_history_that_needs_full_history(self):
         compatible = plotter_registry.get_compatible_plotters(
             {_key('det'): _roi_values()}
         )
-        assert compatible['roi_bars'].data_requirements.required_extractor is None
+        assert compatible['bars'].data_requirements.required_extractor is None
         assert (
-            compatible['roi_timeseries'].data_requirements.required_extractor
+            compatible['timeseries_per_entry'].data_requirements.required_extractor
             is FullHistoryExtractor
         )
 
-    def test_neither_accepts_other_1d_data(self):
-        compatible = plotter_registry.get_compatible_plotters(
-            {_key('det'): _array({'x': 3})}
-        )
-        assert 'roi_bars' not in compatible
-        assert 'roi_timeseries' not in compatible
+    def test_scalars_are_offered_bars_but_not_the_per_entry_history(self):
+        compatible = plotter_registry.get_compatible_plotters({_key('det'): _array({})})
+        assert 'bars' in compatible
+        assert 'timeseries_per_entry' not in compatible

@@ -316,8 +316,13 @@ def _register_all_plotters() -> None:
     plotter_registry.register_plotter(
         name='bars',
         title='Bars',
-        description='Plot 0D scalar values as bars.',
-        data_requirements=DataRequirements(min_dims=0, max_dims=0),
+        description=(
+            'Plot 0D scalar values as bars, one per source. For 1D data (e.g., '
+            'counts per ROI), plot one bar per position along its dimension, '
+            'grouped by source and colored like the ROI spectra. Data with more '
+            'entries than the limit in the plot settings is not drawn.'
+        ),
+        data_requirements=DataRequirements(min_dims=0, max_dims=1),
         factory=BarsPlotter.from_params,
     )
 
@@ -365,39 +370,27 @@ def _register_all_plotters() -> None:
         description=(
             'Slice 2D data along the first dimension and overlay as 1D curves. '
             'Useful for visualizing multiple spectra from a single 2D array '
-            '(e.g., ROI spectra stacked along a roi dimension).'
+            '(e.g., ROI spectra stacked along a roi dimension). Data with more '
+            'slices than the limit in the plot settings is not drawn.'
         ),
         data_requirements=DataRequirements(min_dims=2, max_dims=2),
         factory=Overlay1DPlotter.from_params,
     )
 
-    plotter_registry.register_plotter(
-        name='roi_bars',
-        title='Bars per ROI',
-        description=(
-            'Plot the latest value of each ROI of a 1D output (e.g., counts per '
-            'ROI) as one bar per ROI, colored like the ROI spectra. Multiple '
-            'sources are shown as groups of bars.'
-        ),
-        data_requirements=DataRequirements(
-            min_dims=1, max_dims=1, required_dim_names=['roi']
-        ),
-        factory=BarsPlotter.from_params,
-    )
-
     # Like 'timeseries', this uses from_timeseries_params: the full history is
     # downsampled at the plotter, and rate normalization would be wrong.
     plotter_registry.register_plotter(
-        name='roi_timeseries',
-        title='Timeseries per ROI',
+        name='timeseries_per_entry',
+        title='Timeseries per entry',
         description=(
-            'Plot the temporal evolution of a 1D output (e.g., counts per ROI) '
-            'as one line per ROI, colored like the ROI spectra.'
+            'Plot the temporal evolution of 1D data as one line per position along '
+            'its dimension (e.g., one per ROI), colored like the ROI spectra. '
+            'Data with more entries than the limit in the plot settings is not '
+            'drawn.'
         ),
         data_requirements=DataRequirements(
             min_dims=1,
             max_dims=1,
-            required_dim_names=['roi'],
             required_extractor=FullHistoryExtractor,
         ),
         factory=Overlay1DPlotter.from_timeseries_params,

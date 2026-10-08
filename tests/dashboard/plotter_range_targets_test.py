@@ -34,6 +34,7 @@ from ess.livedata.dashboard.plot_params import (
     PlotParams2d,
     PlotParams3d,
     PlotParamsBars,
+    PlotParamsOverlay1d,
     PlotScale,
     PlotScaleParams2d,
 )
@@ -354,7 +355,7 @@ class TestYFitsVisibleX:
         np.testing.assert_allclose(target, _expected(hv.Scatter, 'y', 1.0, 2.0))
 
     def test_overlay_unions_slices_within_window(self):
-        params = PlotParams1d()
+        params = PlotParamsOverlay1d()
         params.line.mode = 'points'
         plotter = Overlay1DPlotter.from_params(params)
         key = _key()
@@ -491,7 +492,7 @@ class TestOverlay1DPlotterRangeTargets:
         assert Overlay1DPlotter.AUTOSCALE_AXES == frozenset({'x', 'y'})
 
     def test_targets_union_across_slices(self):
-        plotter = Overlay1DPlotter.from_params(PlotParams1d())
+        plotter = Overlay1DPlotter.from_params(PlotParamsOverlay1d())
         key = _key()
         # 2D data: 3 slices along 'slice', 4 points along 'x'.
         values = np.array(
@@ -516,7 +517,7 @@ class TestOverlay1DPlotterRangeTargets:
         np.testing.assert_allclose(targets['y'], _expected(hv.Curve, 'y', -1.0, 7.0))
 
     def test_x_target_spans_indices_without_coord(self):
-        plotter = Overlay1DPlotter.from_params(PlotParams1d())
+        plotter = Overlay1DPlotter.from_params(PlotParamsOverlay1d())
         key = _key()
         data = sc.DataArray(
             sc.array(dims=['slice', 'x'], values=np.ones((2, 4)), unit='counts')

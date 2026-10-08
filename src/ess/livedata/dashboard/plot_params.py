@@ -553,6 +553,47 @@ class PlotParams1d(RateMixin, TimeWindowMixin, PlotDisplayParams1d):
     """Common parameters for 1D plots with windowing support."""
 
 
+# Measured with 100-1000 points per curve: building one update of 50 curves takes
+# about 0.3-0.6 s (computing) and 0.5-1.6 s (Bokeh) with error bars, and 100 curves
+# 2-4 s each, which exceeds the 1 s update period and freezes the dashboard.
+# HoloViews also fails outright at 1000 bars (recursion limit).
+MAX_ENTRIES_LIMIT = 50
+
+
+class EntryLimitParams(pydantic.BaseModel):
+    """Limit on the number of entries drawn from one dataset."""
+
+    max_entries: int = pydantic.Field(
+        default=20,
+        description=(
+            "Maximum number of entries (e.g., ROIs) drawn per source, one curve or "
+            "bar each. A source with more entries is not drawn, since too many "
+            "make the plot - and the rest of the dashboard - sluggish."
+        ),
+        title="Max Entries",
+        ge=1,
+        le=MAX_ENTRIES_LIMIT,
+    )
+
+
+class PlotParamsOverlay1d(PlotParams1d):
+    """Parameters for plots of one curve per entry of 2D data."""
+
+    limit: EntryLimitParams = pydantic.Field(
+        default_factory=EntryLimitParams,
+        description="Limit on the number of curves.",
+    )
+
+
+class PlotParamsOverlay1dTimeseries(PlotParamsTimeseries):
+    """Parameters for timeseries plots with one curve per entry."""
+
+    limit: EntryLimitParams = pydantic.Field(
+        default_factory=EntryLimitParams,
+        description="Limit on the number of curves.",
+    )
+
+
 class PlotParams2d(RateMixin, TimeWindowMixin, PlotDisplayParams2d):
     """Common parameters for 2D plots with windowing support."""
 
@@ -572,11 +613,15 @@ class BarOrientation(pydantic.BaseModel):
 
 
 class PlotParamsBars(RateMixin, TimeWindowMixin, PlotParamsBase):
-    """Parameters for bar plots of 0D scalar data."""
+    """Parameters for bar plots of 0D scalar data or 1D data, one bar per entry."""
 
     orientation: BarOrientation = pydantic.Field(
         default_factory=BarOrientation,
         description="Bar orientation options.",
+    )
+    limit: EntryLimitParams = pydantic.Field(
+        default_factory=EntryLimitParams,
+        description="Limit on the number of bars per source of 1D data.",
     )
 
 

@@ -36,6 +36,8 @@ from .plot_params import (
     PlotParams1d,
     PlotParams2d,
     PlotParamsBars,
+    PlotParamsOverlay1d,
+    PlotParamsOverlay1dTimeseries,
     PlotParamsTimeseries,
     PlotScale,
     PlotScaleParams,
@@ -1289,6 +1291,15 @@ def _line1d_style_opts(
     ]
 
 
+def _check_entry_limit(dim: str, size: int, limit: int) -> None:
+    """Raise if ``size`` entries along ``dim`` exceed the drawing ``limit``."""
+    if size > limit:
+        raise ValueError(
+            f"{size} entries along '{dim}'; at most {limit} can be drawn. "
+            "Raise the limit in the plot settings."
+        )
+
+
 def _slice_colors(coord_values: np.ndarray, colors: Sequence[str]) -> list[str]:
     """Color per slice: by integer coord value, else by position.
 
@@ -1707,6 +1718,7 @@ class BarsPlotter(Plotter):
         self,
         *,
         horizontal: bool = False,
+        max_entries: int = 20,
         **kwargs,
     ):
         """
@@ -1716,12 +1728,15 @@ class BarsPlotter(Plotter):
         ----------
         horizontal:
             If True, bars are horizontal; if False, bars are vertical.
+        max_entries:
+            Largest number of bars drawn per source of 1D data.
         **kwargs:
             Additional keyword arguments passed to the base class.
         """
         super().__init__(**kwargs)
         self._horizontal = horizontal
         self._colors = hv.Cycle.default_cycles["default_colors"]
+        self._max_entries = max_entries
         self._bars_opts: dict[str, Any] = {
             'invert_axes': horizontal,
             'show_legend': False,
@@ -1739,6 +1754,7 @@ class BarsPlotter(Plotter):
         """Create BarsPlotter from PlotParamsBars."""
         return cls(
             horizontal=params.orientation.horizontal,
+            max_entries=params.limit.max_entries,
             layout_params=params.layout,
             aspect_params=params.plot_aspect,
             normalize_to_rate=params.rate.normalize_to_rate,
@@ -1773,6 +1789,7 @@ class BarsPlotter(Plotter):
             )
 
         (dim,) = data.dims
+        _check_entry_limit(dim, data.sizes[dim], self._max_entries)
         coord = (
             data.coords[dim].values
             if dim in data.coords
@@ -1820,8 +1837,27 @@ class Overlay1DPlotter(LinePlotter):
     index would collapse closely-spaced coordinates onto the same color.
 
     Supports the same line style options (mode, errors) and timeseries
-    downsampling as LinePlotter.
+    downsampling as LinePlotter. Data with more than ``max_entries`` slices is
+    rejected rather than drawn.
     """
+
+    def __init__(self, *args, max_entries: int = 20, **kwargs):
+        super().__init__(*args, **kwargs)
+        self._max_entries = max_entries
+
+    @classmethod
+    def from_params(cls, params: PlotParamsOverlay1d):
+        """Create Overlay1DPlotter from PlotParamsOverlay1d."""
+        instance = super().from_params(params)
+        instance._max_entries = params.limit.max_entries
+        return instance
+
+    @classmethod
+    def from_timeseries_params(cls, params: PlotParamsOverlay1dTimeseries):
+        """Create Overlay1DPlotter for the history of 1D data, one curve per entry."""
+        instance = super().from_timeseries_params(params)
+        instance._max_entries = params.limit.max_entries
+        return instance
 
     def plot(
         self,
@@ -1847,6 +1883,7 @@ class Overlay1DPlotter(LinePlotter):
 
         slice_dim, plot_dim = data.dims
         slice_size = data.sizes[slice_dim]
+        _check_entry_limit(slice_dim, slice_size, self._max_entries)
 
         if slice_size == 0:
             # The first frame fixes the axis type, so the empty frame must carry

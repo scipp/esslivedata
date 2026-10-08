@@ -5,6 +5,7 @@ import warnings
 
 import holoviews as hv
 import numpy as np
+import pydantic
 import pytest
 import scipp as sc
 from bokeh.document import Document
@@ -17,6 +18,8 @@ from ess.livedata.dashboard import plots
 from ess.livedata.dashboard.data_roles import PRIMARY
 from ess.livedata.dashboard.extractors import WindowAggregatingExtractor
 from ess.livedata.dashboard.plot_params import (
+    MAX_ENTRIES_LIMIT,
+    EntryLimitParams,
     ErrorDisplay,
     LegendParams,
     LegendPosition,
@@ -28,7 +31,8 @@ from ess.livedata.dashboard.plot_params import (
     PlotParams2d,
     PlotParams3d,
     PlotParamsBars,
-    PlotParamsTimeseries,
+    PlotParamsOverlay1d,
+    PlotParamsOverlay1dTimeseries,
     PlotScale,
     PlotScaleParams2d,
     RateNormalizationParams,
@@ -2318,7 +2322,7 @@ class TestOverlay1DPlotter:
     @pytest.fixture
     def overlay_plotter(self):
         """Create an Overlay1DPlotter instance."""
-        return plots.Overlay1DPlotter.from_params(PlotParams1d())
+        return plots.Overlay1DPlotter.from_params(PlotParamsOverlay1d())
 
     @pytest.fixture
     def data_2d_with_roi_coord(self):
@@ -2517,7 +2521,7 @@ class TestOverlay1DPlotter:
         is enforced by the hook's CustomJS sizing the frame inside it."""
         from ess.livedata.dashboard.plot_params import PlotAspect, PlotAspectType
 
-        params = PlotParams1d()
+        params = PlotParamsOverlay1d()
         params.plot_aspect = PlotAspect(aspect_type=PlotAspectType.square)
         plotter = plots.Overlay1DPlotter.from_params(params)
 
@@ -2532,7 +2536,7 @@ class TestOverlay1DPlotter:
         """'free' aspect renders responsive (stretch_both) without an aspect ratio."""
         from ess.livedata.dashboard.plot_params import PlotAspect, PlotAspectType
 
-        params = PlotParams1d()
+        params = PlotParamsOverlay1d()
         params.plot_aspect = PlotAspect(aspect_type=PlotAspectType.free)
         plotter = plots.Overlay1DPlotter.from_params(params)
 
@@ -2561,7 +2565,7 @@ class TestOverlay1DPlotter:
             assert vdim.label == 'values'
 
     def test_points_mode_produces_scatter(self, data_2d_with_roi_coord, data_key):
-        params = PlotParams1d(line=Line1dParams(mode=Line1dRenderMode.points))
+        params = PlotParamsOverlay1d(line=Line1dParams(mode=Line1dRenderMode.points))
         plotter = plots.Overlay1DPlotter.from_params(params)
         result = plotter.plot(data_2d_with_roi_coord, data_key)
         assert isinstance(result, hv.Overlay)
@@ -2569,7 +2573,7 @@ class TestOverlay1DPlotter:
             assert isinstance(elem, hv.Scatter)
 
     def test_histogram_mode_produces_histograms(self, data_key):
-        params = PlotParams1d(line=Line1dParams(mode=Line1dRenderMode.histogram))
+        params = PlotParamsOverlay1d(line=Line1dParams(mode=Line1dRenderMode.histogram))
         plotter = plots.Overlay1DPlotter.from_params(params)
         toa_edges = sc.array(dims=['toa'], values=[0.0, 10.0, 20.0, 30.0], unit='us')
         data = sc.DataArray(
@@ -2587,14 +2591,14 @@ class TestOverlay1DPlotter:
     def test_histogram_mode_without_bin_edges_falls_back_to_curve(
         self, data_2d_with_roi_coord, data_key
     ):
-        params = PlotParams1d(line=Line1dParams(mode=Line1dRenderMode.histogram))
+        params = PlotParamsOverlay1d(line=Line1dParams(mode=Line1dRenderMode.histogram))
         plotter = plots.Overlay1DPlotter.from_params(params)
         result = plotter.plot(data_2d_with_roi_coord, data_key)
         for elem in result:
             assert isinstance(elem, hv.Curve)
 
     def test_error_bars_with_variances(self, data_key):
-        params = PlotParams1d(
+        params = PlotParamsOverlay1d(
             line=Line1dParams(mode=Line1dRenderMode.line, errors=ErrorDisplay.bars)
         )
         plotter = plots.Overlay1DPlotter.from_params(params)
@@ -2627,7 +2631,7 @@ class TestOverlay1DPlotter:
         _assert_error_bar_endcaps_colored(fig, base_colors)
 
     def test_error_band_with_variances(self, data_key):
-        params = PlotParams1d(
+        params = PlotParamsOverlay1d(
             line=Line1dParams(mode=Line1dRenderMode.line, errors=ErrorDisplay.band)
         )
         plotter = plots.Overlay1DPlotter.from_params(params)
@@ -2649,7 +2653,7 @@ class TestOverlay1DPlotter:
         assert isinstance(elements[1], hv.Spread)
 
     def test_errors_none_suppresses_error_display(self, data_key):
-        params = PlotParams1d(
+        params = PlotParamsOverlay1d(
             line=Line1dParams(mode=Line1dRenderMode.line, errors=ErrorDisplay.none)
         )
         plotter = plots.Overlay1DPlotter.from_params(params)
@@ -2670,7 +2674,7 @@ class TestOverlay1DPlotter:
             assert isinstance(elem, hv.Curve)
 
     def test_no_variances_no_errors_displayed(self, data_2d_with_roi_coord, data_key):
-        params = PlotParams1d(
+        params = PlotParamsOverlay1d(
             line=Line1dParams(mode=Line1dRenderMode.line, errors=ErrorDisplay.bars)
         )
         plotter = plots.Overlay1DPlotter.from_params(params)
@@ -2743,12 +2747,84 @@ class TestBarsPlotterPerRoi:
             plotter.plot(sc.zeros(dims=['a', 'b'], shape=[2, 2]), data_key)
 
 
+def _error_texts(plotter, data, data_key):
+    """Compute ``data``; the texts of the 'Error: ...' frame, if it was drawn."""
+    plotter.compute({PRIMARY: {data_key: data}})
+    return [t.text for t in plotter.get_cached_state().traverse(specs=[hv.Text])]
+
+
+class TestEntryLimit:
+    """Data with more entries than the limit gets an error frame, not a plot."""
+
+    @pytest.fixture
+    def limit(self):
+        return 3
+
+    @staticmethod
+    def spectra(n):
+        return sc.DataArray(
+            sc.ones(dims=['roi', 'x'], shape=[n, 4], unit='counts'),
+            coords={'roi': sc.arange('roi', n, dtype='int32', unit=None)},
+        )
+
+    @pytest.fixture(
+        params=['bars', 'spectra', 'history'],
+    )
+    def case(self, request, limit):
+        """A plotter with ``limit`` and a function making data of n entries."""
+        limit_params = {'limit': {'max_entries': limit}}
+        match request.param:
+            case 'bars':
+                plotter = plots.BarsPlotter.from_params(
+                    PlotParamsBars.model_validate(limit_params)
+                )
+                return plotter, lambda n: _per_roi(list(range(n)))
+            case 'spectra':
+                plotter = plots.Overlay1DPlotter.from_params(
+                    PlotParamsOverlay1d.model_validate(limit_params)
+                )
+                return plotter, self.spectra
+            case 'history':
+                plotter = plots.Overlay1DPlotter.from_timeseries_params(
+                    PlotParamsOverlay1dTimeseries.model_validate(limit_params)
+                )
+                # Later times for larger n: the plotter throttles repeated times.
+                return plotter, lambda n: TestOverlay1DPlotterHistory.history(
+                    rois=range(n), start=100 * n
+                )
+
+    def test_data_at_the_limit_is_drawn(self, case, limit, data_key):
+        plotter, make = case
+        assert _error_texts(plotter, make(limit), data_key) == []
+
+    def test_data_over_the_limit_gives_an_error_frame(self, case, limit, data_key):
+        plotter, make = case
+        (text,) = _error_texts(plotter, make(limit + 1), data_key)
+        assert text == (
+            f"Error: {limit + 1} entries along 'roi'; at most {limit} can be drawn. "
+            "Raise the limit in the plot settings."
+        )
+
+    def test_empty_first_frame_then_over_the_limit(self, case, limit, data_key):
+        plotter, make = case
+        assert _error_texts(plotter, make(0), data_key) == []
+        assert len(_error_texts(plotter, make(limit + 1), data_key)) == 1
+
+    def test_default_limit_is_20_and_bounded_by_a_hard_cap(self):
+        assert EntryLimitParams().max_entries == 20
+        for max_entries in (0, MAX_ENTRIES_LIMIT + 1):
+            with pytest.raises(pydantic.ValidationError):
+                EntryLimitParams(max_entries=max_entries)
+
+
 class TestOverlay1DPlotterHistory:
     """Overlay1DPlotter with ``(time, roi)`` history: one curve per roi."""
 
     @pytest.fixture
     def plotter(self):
-        return plots.Overlay1DPlotter.from_timeseries_params(PlotParamsTimeseries())
+        return plots.Overlay1DPlotter.from_timeseries_params(
+            PlotParamsOverlay1dTimeseries()
+        )
 
     @staticmethod
     def history(rois=(1, 4), n=4, start=0):
@@ -2819,7 +2895,7 @@ class TestOverlay1DPlotterRenderedValues:
                 'x': sc.array(dims=['x'], values=[10.0, 20.0, 30.0], unit='m'),
             },
         )
-        plotter = plots.Overlay1DPlotter.from_params(PlotParams1d())
+        plotter = plots.Overlay1DPlotter.from_params(PlotParamsOverlay1d())
 
         overlay = plotter.plot(data, data_key, output_display_name='Intensity')
 
@@ -3769,7 +3845,7 @@ class TestLegendPosition:
 
     def test_overlay_1d_plotter_places_its_legend_beside_the_plot(self):
         """The per-slice overlay is the plot with the most legend entries."""
-        params = PlotParams1d(legend=LegendParams(position=LegendPosition.right))
+        params = PlotParamsOverlay1d(legend=LegendParams(position=LegendPosition.right))
         plotter = plots.Overlay1DPlotter.from_params(params)
         workflow_id = WorkflowId(instrument='test', name='wf', version=1)
         data_key = DataKey(
