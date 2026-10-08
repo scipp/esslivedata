@@ -5,7 +5,7 @@
 from __future__ import annotations
 
 import weakref
-from collections.abc import Callable, Iterable, Iterator
+from collections.abc import Callable, Iterable, Iterator, Sequence
 from dataclasses import dataclass
 from typing import Any, ClassVar
 
@@ -1289,6 +1289,21 @@ def _line1d_style_opts(
     ]
 
 
+def _slice_colors(coord_values: np.ndarray, colors: Sequence[str]) -> list[str]:
+    """Color per slice: by integer coord value, else by position.
+
+    Integer coords (e.g. ROI indices) give each slice a stable color even when
+    the set of slices changes between updates. For non-integer coords (e.g.
+    distances in metres) ``int()`` would collapse nearby values onto the same
+    color, so the position is used instead.
+    """
+    by_value = np.issubdtype(coord_values.dtype, np.integer)
+    return [
+        colors[(int(v) if by_value else i) % len(colors)]
+        for i, v in enumerate(coord_values)
+    ]
+
+
 def _with_index_edges(data: sc.DataArray, dim: str) -> sc.DataArray:
     """Give ``dim`` bin edges centred on the indices ``0..n-1`` if it has no coord.
 
@@ -1680,7 +1695,11 @@ class ImagePlotter(Plotter):
 
 
 class BarsPlotter(Plotter):
-    """Plotter for bar charts of 0D scalar data."""
+    """Plotter for bar charts of 0D scalar data or 1D data with one value per slice.
+
+    1D data (e.g., counts per ROI) gives one bar per position along its dimension,
+    grouped by source and colored like the slices of :class:`Overlay1DPlotter`.
+    """
 
     AUTOSCALE_AXES: ClassVar[frozenset[Axis]] = frozenset()
 
@@ -1702,6 +1721,7 @@ class BarsPlotter(Plotter):
         """
         super().__init__(**kwargs)
         self._horizontal = horizontal
+        self._colors = hv.Cycle.default_cycles["default_colors"]
         self._bars_opts: dict[str, Any] = {
             'invert_axes': horizontal,
             'show_legend': False,
@@ -1734,23 +1754,49 @@ class BarsPlotter(Plotter):
         output_display_name: str = '',
         **kwargs,
     ) -> hv.Bars:
-        """Create a bar chart from a 0D scipp DataArray."""
-        if data.ndim != 0:
-            raise ValueError(f"Expected 0D data, got {data.ndim}D")
+        """Create a bar chart from a 0D or 1D scipp DataArray."""
+        if data.ndim > 1:
+            raise ValueError(f"Expected 0D or 1D data, got {data.ndim}D")
 
         bar_label = source_display_name or data_key.source_name
-        value = float(data.value)
         unit = str(data.unit) if data.unit is not None else None
         vdim_label = output_display_name or data_key.output_name or 'values'
         vdim = hv.Dimension(
             data_key.output_name or 'values', label=vdim_label, unit=unit
         )
-        return hv.Bars(
-            [(bar_label, value)],
-            kdims=['source'],
-            vdims=[vdim],
-            label=label,
+        if data.ndim == 0:
+            return hv.Bars(
+                [(bar_label, float(data.value))],
+                kdims=['source'],
+                vdims=[vdim],
+                label=label,
+            )
+
+        (dim,) = data.dims
+        coord = (
+            data.coords[dim].values
+            if dim in data.coords
+            else np.arange(data.sizes[dim])
         )
+        kdims = ['source', dim]
+        if coord.size == 0:
+            # The first frame fixes the axis type, and a categorical axis needs
+            # a category.
+            return hv.Bars(
+                [(bar_label, f'no {dim}', np.nan, self._colors[0])],
+                kdims=kdims,
+                vdims=[vdim, 'color'],
+            ).opts(color='color', hover_tooltips=[*kdims, vdim.name])
+        return hv.Bars(
+            (
+                [bar_label] * coord.size,
+                [f'{dim}={v}' for v in coord],
+                data.values,
+                _slice_colors(coord, self._colors),
+            ),
+            kdims=kdims,
+            vdims=[vdim, 'color'],
+        ).opts(color='color', hover_tooltips=[*kdims, vdim.name])
 
     def style_opts(self) -> list[hv.Options]:
         return [
@@ -1761,14 +1807,12 @@ class BarsPlotter(Plotter):
 
 class Overlay1DPlotter(LinePlotter):
     """
-    Plotter that slices data along one dimension and overlays the slices.
+    Plotter that slices 2D data along the first dimension and overlays as 1D curves.
 
-    The slice dimension is the first dimension that is not ``time``. Each position
-    along it gets its own element, e.g., one curve per ROI:
-
-    - 2D data ``(slice_dim, plot_dim)`` or ``(time, slice_dim)`` gives one 1D curve
-      per slice. The latter is the history of a 1D output, one curve per entry.
-    - 1D data ``(slice_dim,)`` gives one bar per slice.
+    Takes 2D data with dims [slice_dim, plot_dim] and creates an overlay of 1D curves,
+    one for each position along the first dimension. Useful for visualizing multiple
+    spectra (e.g., ROI spectra) from a single 2D array. A history with dims
+    [time, slice_dim] is transposed first, so that it gives one timeseries per slice.
 
     Colors are assigned by coordinate value when coordinates are integer-like,
     providing stable color identity across updates. For non-integer coordinates
@@ -1778,20 +1822,6 @@ class Overlay1DPlotter(LinePlotter):
     Supports the same line style options (mode, errors) and timeseries
     downsampling as LinePlotter.
     """
-
-    @classmethod
-    def from_params(cls, params: PlotParams1d):
-        """Create Overlay1DPlotter from PlotParams1d."""
-        return cls(
-            layout_params=LayoutParams(combine_mode=CombineMode.overlay),
-            legend_position=params.legend.position,
-            aspect_params=params.plot_aspect,
-            scale_opts=params.plot_scale,
-            tick_params=params.ticks,
-            normalize_to_rate=params.rate.normalize_to_rate,
-            mode=params.line.mode,
-            errors=params.line.errors,
-        )
 
     def plot(
         self,
@@ -1803,49 +1833,27 @@ class Overlay1DPlotter(LinePlotter):
         dim_label: Callable[[str], str] | None = None,
         **kwargs,
     ) -> hv.Overlay | hv.Element:
-        """Create one element per slice of a 1D or 2D DataArray."""
-        del kwargs, label  # Unused
-        if data.ndim not in (1, 2):
-            raise ValueError(f"Expected 1D or 2D data, got {data.ndim}D")
+        """
+        Create overlaid elements from a 2D DataArray.
 
-        slice_dim = (
-            data.dims[1] if data.dims[0] == 'time' and data.ndim == 2 else data.dims[0]
-        )
+        Slices along the first dimension and creates an element for each slice.
+        """
+        del kwargs, label  # Unused
+        if data.ndim != 2:
+            raise ValueError(f"Expected 2D data, got {data.ndim}D")
+        if data.dims[0] == 'time':
+            # The time axis of a history is the x-axis of its curves.
+            data = data.transpose(data.dims[::-1])
+
+        slice_dim, plot_dim = data.dims
         slice_size = data.sizes[slice_dim]
 
         if slice_size == 0:
-            return hv.Curve([])
+            # The first frame fixes the axis type, so the empty frame must carry
+            # the type of the x values that follow (e.g. datetime for a history).
+            x = data.coords[plot_dim].values[:0] if plot_dim in data.coords else []
+            return hv.Curve((x, []))
 
-        # Get coordinate values for labels and colors
-        if slice_dim in data.coords:
-            coord_values = data.coords[slice_dim].values
-        else:
-            coord_values = np.arange(slice_size)
-
-        # Integer coords (e.g. ROI indices) color by value, giving each slice a
-        # stable color even when the set of slices changes between updates. For
-        # non-integer coords (e.g. distances in metres) ``int()`` would collapse
-        # nearby values onto the same color, so fall back to position instead.
-        color_by_value = np.issubdtype(coord_values.dtype, np.integer)
-        slice_colors = [
-            self._colors[(int(v) if color_by_value else i) % len(self._colors)]
-            for i, v in enumerate(coord_values)
-        ]
-        slice_labels = [f"{slice_dim}={v}" for v in coord_values]
-
-        if data.ndim == 1:
-            vdim = hv.Dimension(
-                data_key.output_name or 'values',
-                label=output_display_name or data_key.output_name or 'values',
-                unit=str(data.unit) if data.unit is not None else None,
-            )
-            return hv.Bars(
-                (slice_labels, data.values, slice_colors),
-                kdims=[slice_dim],
-                vdims=[vdim, 'color'],
-            ).opts(color='color')
-
-        plot_dim = data.dims[0] if slice_dim == data.dims[1] else data.dims[1]
         data = _with_index_edges(data, plot_dim)
         actual_mode, plot_data = _resolve_line1d_mode(self._mode, data, dim=plot_dim)
         targets, self._pending_y_extents[data_key] = _line1d_range_targets(
@@ -1858,6 +1866,13 @@ class Overlay1DPlotter(LinePlotter):
         )
         if targets:
             self._pending_range_targets[data_key] = targets
+
+        # Get coordinate values for labels and colors
+        if slice_dim in data.coords:
+            coord_values = data.coords[slice_dim].values
+        else:
+            coord_values = np.arange(slice_size)
+        slice_colors = _slice_colors(coord_values, self._colors)
 
         data = plot_data
         use_histogram = actual_mode == 'histogram'
@@ -1872,8 +1887,11 @@ class Overlay1DPlotter(LinePlotter):
             slice_data = data[slice_dim, i]
             if output_display_name:
                 slice_data.name = output_display_name
+            coord_val = coord_values[i]
+            # Per-slice ``color`` stays on the elements; the rest is static in
+            # style_opts().
             color = slice_colors[i]
-            curve_label = slice_labels[i] if label_slices else ''
+            curve_label = f"{slice_dim}={coord_val}" if label_slices else ''
             converter = HvConverter1d(
                 slice_data, value_label=output_display_name, dim_label=dim_label
             )
@@ -1903,15 +1921,3 @@ class Overlay1DPlotter(LinePlotter):
         if len(elements) == 1:
             return elements[0]
         return hv.Overlay(elements)
-
-    def style_opts(self) -> list[hv.Options]:
-        return [
-            *super().style_opts(),
-            hv.opts.Bars(
-                show_legend=False,
-                xrotation=25,
-                tools=['hover'],
-                logy=self._logy,
-                **self._sizing_opts,
-            ),
-        ]

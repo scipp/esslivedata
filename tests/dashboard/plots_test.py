@@ -8,7 +8,7 @@ import numpy as np
 import pytest
 import scipp as sc
 from bokeh.document import Document
-from bokeh.models import GlyphRenderer, Plot, Whisker
+from bokeh.models import DatetimeAxis, FactorRange, GlyphRenderer, Plot, Whisker
 from holoviews.plotting.bokeh import BokehRenderer
 
 from ess.livedata.config.workflow_spec import DataKey, WorkflowId
@@ -27,6 +27,8 @@ from ess.livedata.dashboard.plot_params import (
     PlotParams1d,
     PlotParams2d,
     PlotParams3d,
+    PlotParamsBars,
+    PlotParamsTimeseries,
     PlotScale,
     PlotScaleParams2d,
     RateNormalizationParams,
@@ -1893,11 +1895,11 @@ class TestBarsPlotter:
         assert 'HBar' in glyphs
         assert 'VBar' not in glyphs
 
-    def test_rejects_non_scalar_data(self, bars_plotter, data_key):
-        """Test that BarsPlotter rejects non-0D data."""
-        data_1d = sc.DataArray(sc.array(dims=['x'], values=[1.0, 2.0, 3.0]))
-        with pytest.raises(ValueError, match="Expected 0D data"):
-            bars_plotter.plot(data_1d, data_key)
+    def test_rejects_2d_data(self, bars_plotter, data_key):
+        """Test that BarsPlotter rejects data with more than one dim."""
+        data_2d = sc.DataArray(sc.zeros(dims=['y', 'x'], shape=[2, 3]))
+        with pytest.raises(ValueError, match="Expected 0D or 1D data"):
+            bars_plotter.plot(data_2d, data_key)
 
     def test_call_with_multiple_sources(self, bars_plotter):
         """Test __call__ with multiple 0D data sources creates multiple bars."""
@@ -2460,11 +2462,11 @@ class TestOverlay1DPlotter:
         assert 'row=0' in labels
         assert 'row=1' in labels
 
-    def test_rejects_3d_data(self, overlay_plotter, data_key):
-        """Test that Overlay1DPlotter rejects data it cannot slice into 1D/0D."""
-        data_3d = sc.DataArray(sc.zeros(dims=['a', 'b', 'c'], shape=[2, 2, 2]))
-        with pytest.raises(ValueError, match="Expected 1D or 2D data"):
-            overlay_plotter.plot(data_3d, data_key)
+    def test_rejects_non_2d_data(self, overlay_plotter, data_key):
+        """Test that Overlay1DPlotter rejects non-2D data."""
+        data_1d = sc.DataArray(sc.array(dims=['x'], values=[1.0, 2.0, 3.0]))
+        with pytest.raises(ValueError, match="Expected 2D data"):
+            overlay_plotter.plot(data_1d, data_key)
 
     def test_renders_to_bokeh(self, overlay_plotter, data_2d_with_roi_coord, data_key):
         """Test that overlay can be rendered to Bokeh."""
@@ -2677,76 +2679,125 @@ class TestOverlay1DPlotter:
             assert isinstance(elem, hv.Curve)
 
 
-class TestOverlay1DPlotterOneDimensional:
-    """Overlay1DPlotter with 1D data: one bar per entry along the dim."""
+def _render(plotter, data, key):
+    """Compute ``data`` and render it as a session does; returns (figure, pipe)."""
+    plotter.compute({PRIMARY: data})
+    pipe = hv.streams.Pipe(data=plotter.get_cached_state())
+    dmap = plotter.create_presenter().present(pipe)
+    return BokehRenderer.instance().get_plot(dmap).state, pipe
+
+
+def _per_roi(rois, values=None, source_unit='counts'):
+    return sc.DataArray(
+        sc.array(
+            dims=['roi'],
+            values=values if values is not None else [10.0 * (i + 1) for i in rois],
+            unit=source_unit,
+        ),
+        coords={'roi': sc.array(dims=['roi'], values=rois, dtype='int32', unit=None)},
+    )
+
+
+class TestBarsPlotterPerRoi:
+    """BarsPlotter with 1D data: one bar per ROI, grouped by source."""
 
     @pytest.fixture
-    def per_roi_counts(self):
-        return sc.DataArray(
-            sc.array(dims=['roi'], values=[10.0, 20.0, 30.0], unit='counts'),
-            coords={'roi': sc.array(dims=['roi'], values=[0, 3, 5], unit=None)},
-        )
+    def plotter(self):
+        return plots.BarsPlotter.from_params(PlotParamsBars())
 
-    def test_draws_one_bar_per_roi_colored_by_roi_index(self, per_roi_counts, data_key):
-        plotter = plots.Overlay1DPlotter.from_params(PlotParams1d())
-        bars = plotter.plot(per_roi_counts, data_key)
+    def test_bars_are_colored_by_roi_index(self, plotter, data_key):
+        bars = plotter.plot(_per_roi([0, 3, 5]), data_key)
         colors = hv.Cycle.default_cycles["default_colors"]
-        assert isinstance(bars, hv.Bars)
         assert list(bars.dimension_values('roi')) == ['roi=0', 'roi=3', 'roi=5']
         assert list(bars.dimension_values('color')) == [colors[0], colors[3], colors[5]]
 
-    def test_registered_for_per_roi_data_with_and_without_history(
-        self, per_roi_counts, data_key
+    def test_rendered_axis_is_categorical_with_the_bars(self, plotter, data_key):
+        fig, _ = _render(plotter, {data_key: _per_roi([0, 3])}, data_key)
+        assert isinstance(fig.x_range, FactorRange)
+        assert [f[1] for f in fig.x_range.factors] == ['roi=0', 'roi=3']
+
+    def test_several_sources_are_groups_of_bars(self, plotter, data_key):
+        other = make_data_key('other_source')
+        fig, _ = _render(
+            plotter, {data_key: _per_roi([0, 3]), other: _per_roi([0])}, data_key
+        )
+        assert fig.x_range.factors == [
+            ('test_source', 'roi=0'),
+            ('test_source', 'roi=3'),
+            ('other_source', 'roi=0'),
+        ]
+
+    def test_axis_stays_categorical_when_first_frame_has_no_roi(
+        self, plotter, data_key
     ):
-        from ess.livedata.dashboard.extractors import FullHistoryExtractor
-        from ess.livedata.dashboard.plotter_registry import plotter_registry
+        fig, pipe = _render(plotter, {data_key: _per_roi([], values=[])}, data_key)
+        assert isinstance(fig.x_range, FactorRange)
 
-        compatible = plotter_registry.get_compatible_plotters(
-            {data_key: per_roi_counts}
-        )
-        assert 'overlay_1d_values' in compatible
-        timeseries = compatible['overlay_1d_timeseries']
-        assert timeseries.data_requirements.required_extractor is FullHistoryExtractor
-        spectrum = per_roi_counts.rename_dims(roi='toa')
-        assert 'overlay_1d_values' not in plotter_registry.get_compatible_plotters(
-            {data_key: spectrum.drop_coords('roi')}
-        )
+        plotter.compute({PRIMARY: {data_key: _per_roi([0, 3])}})
+        pipe.send(plotter.get_cached_state())
 
-    def test_renders_to_bokeh(self, per_roi_counts, data_key):
-        plotter = plots.Overlay1DPlotter.from_params(PlotParams1d())
-        render_to_bokeh(plotter.plot(per_roi_counts, data_key))
+        assert [f[1] for f in fig.x_range.factors] == ['roi=0', 'roi=3']
+
+    def test_rejects_2d_data(self, plotter, data_key):
+        with pytest.raises(ValueError, match="Expected 0D or 1D data"):
+            plotter.plot(sc.zeros(dims=['a', 'b'], shape=[2, 2]), data_key)
 
 
 class TestOverlay1DPlotterHistory:
     """Overlay1DPlotter with ``(time, roi)`` history: one curve per roi."""
 
     @pytest.fixture
-    def history(self):
+    def plotter(self):
+        return plots.Overlay1DPlotter.from_timeseries_params(PlotParamsTimeseries())
+
+    @staticmethod
+    def history(rois=(1, 4), n=4, start=0):
         time = sc.datetime('2026-01-01T00:00:00', unit='ns') + sc.arange(
-            'time', 4, unit='s'
+            'time', start, start + n, unit='s'
         ).to(unit='ns')
         return sc.DataArray(
             sc.array(
                 dims=['time', 'roi'],
-                values=[[1.0, 2.0], [2.0, 4.0], [3.0, 6.0], [4.0, 8.0]],
+                values=np.arange(1.0, n * len(rois) + 1).reshape(n, len(rois)),
                 unit='counts',
             ),
             coords={
                 'time': time,
-                'roi': sc.array(dims=['roi'], values=[1, 4], unit=None),
+                'roi': sc.array(
+                    dims=['roi'], values=list(rois), dtype='int32', unit=None
+                ),
             },
         )
 
-    def test_slices_along_roi_not_time(self, history, data_key):
-        plotter = plots.Overlay1DPlotter.from_params(PlotParams1d())
-        result = plotter.plot(history, data_key)
+    def test_slices_along_roi_not_time(self, plotter, data_key):
+        result = plotter.plot(self.history(), data_key)
         assert [curve.label for curve in result] == ['roi=1', 'roi=4']
         assert [len(curve) for curve in result] == [4, 4]
         assert list(result)[-1].dimension_values(1).tolist() == [2.0, 4.0, 6.0, 8.0]
 
-    def test_renders_to_bokeh(self, history, data_key):
-        plotter = plots.Overlay1DPlotter.from_params(PlotParams1d())
-        render_to_bokeh(plotter.plot(history, data_key))
+    def test_x_range_target_spans_time_not_roi_index(self, plotter, data_key):
+        history = self.history()
+        plotter.compute({PRIMARY: {data_key: history}})
+
+        lo, hi = plotter.get_range_targets(data_key)['x']
+
+        times = history.coords['time'].values.astype('datetime64[ns]').astype('int64')
+        assert lo <= times.min()
+        assert hi >= times.max()
+
+    def test_renders_with_datetime_axis(self, plotter, data_key):
+        fig, _ = _render(plotter, {data_key: self.history()}, data_key)
+        assert isinstance(fig.xaxis[0], DatetimeAxis)
+
+    def test_axis_stays_datetime_when_first_frame_has_no_roi(self, plotter, data_key):
+        fig, pipe = _render(plotter, {data_key: self.history(rois=())}, data_key)
+        assert isinstance(fig.xaxis[0], DatetimeAxis)
+
+        # A later update, as the timeseries plotter throttles repeated times.
+        plotter.compute({PRIMARY: {data_key: self.history(start=100)}})
+        pipe.send(plotter.get_cached_state())
+
+        assert isinstance(fig.xaxis[0], DatetimeAxis)
 
 
 class TestOverlay1DPlotterRenderedValues:

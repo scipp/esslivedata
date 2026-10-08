@@ -372,23 +372,24 @@ def _register_all_plotters() -> None:
     )
 
     plotter_registry.register_plotter(
-        name='overlay_1d_values',
-        title='Overlay 1D Values',
+        name='roi_bars',
+        title='Bars per ROI',
         description=(
             'Plot the latest value of each ROI of a 1D output (e.g., counts per '
-            'ROI) as one bar per ROI, colored like the ROI spectra.'
+            'ROI) as one bar per ROI, colored like the ROI spectra. Multiple '
+            'sources are shown as groups of bars.'
         ),
         data_requirements=DataRequirements(
             min_dims=1, max_dims=1, required_dim_names=['roi']
         ),
-        factory=Overlay1DPlotter.from_params,
+        factory=BarsPlotter.from_params,
     )
 
     # Like 'timeseries', this uses from_timeseries_params: the full history is
     # downsampled at the plotter, and rate normalization would be wrong.
     plotter_registry.register_plotter(
-        name='overlay_1d_timeseries',
-        title='Overlay 1D Timeseries',
+        name='roi_timeseries',
+        title='Timeseries per ROI',
         description=(
             'Plot the temporal evolution of a 1D output (e.g., counts per ROI) '
             'as one line per ROI, colored like the ROI spectra.'
