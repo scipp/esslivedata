@@ -630,7 +630,7 @@ class TestRegisterMonitorWorkflowSpecs:
 
 @pytest.mark.slow
 class TestDreamMonitorWorkflowFactory:
-    """Tests for DREAM-specific monitor workflow factory validation."""
+    """Tests for the monitor workflow factory attached to DREAM."""
 
     @pytest.fixture
     def dream_params_wavelength_mode(self):
@@ -655,11 +655,10 @@ class TestDreamMonitorWorkflowFactory:
 
         Both monitors fall within the DREAM lookup table range (5-80 m).
         """
-        from ess.livedata.config.instruments.dream.factories import setup_factories
         from ess.livedata.config.instruments.dream.specs import instrument
         from ess.livedata.config.workflow_spec import WorkflowId
 
-        setup_factories(instrument)
+        instrument.load_factories()
         workflow_id = WorkflowId(
             instrument='dream',
             name='monitor_histogram',

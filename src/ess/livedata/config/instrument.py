@@ -1138,9 +1138,9 @@ class Instrument:
         """Attach the shared monitor workflow factory where none was provided.
 
         Monitor specs are parameterized by a :class:`MonitorDataParamsBase`
-        model and otherwise share a single factory. Instruments needing a
-        different one (DREAM) attach their own in ``setup_factories``; this
-        fills in the default for the rest. Done in
+        model and otherwise share a single factory. An instrument needing a
+        different one can attach its own in ``setup_factories``; this fills in
+        the default for the rest. Done in
         this backend-only factory phase rather than at spec registration so the
         dashboard, which imports specs but never calls ``load_factories``, holds
         no factory references.

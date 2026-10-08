@@ -316,8 +316,7 @@ def make_monitor_workflow_factory(instrument: Instrument) -> Callable[..., Any]:
     serves any spec whose params subclass :class:`MonitorDataParamsBase`,
     including the TOA-only restricted variant. In wavelength mode it passes the
     instrument's geometry file, which the monitor needs for ``Ltotal``; TOA mode
-    loads no file. DREAM provides its own factory, since it reads a different
-    geometry file.
+    loads no file.
 
     The returned function is defined here so its params type hint can be
     resolved by the workflow factory registration system.

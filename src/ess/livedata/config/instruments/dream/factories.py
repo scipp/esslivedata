@@ -11,7 +11,7 @@ import scipp as sc
 from ess.livedata.config import Instrument
 
 from . import specs
-from .specs import DreamMonitorDataParams, PowderWorkflowParams
+from .specs import PowderWorkflowParams
 
 
 def setup_factories(instrument: Instrument) -> None:
@@ -85,27 +85,6 @@ def setup_factories(instrument: Instrument) -> None:
     )
 
     specs.projection_handle.attach_factory()(_detector_view_factory.make_workflow)
-
-    # Monitor workflow factory with DREAM-specific TOF configuration
-    from ess.livedata.workflows.monitor_workflow import create_monitor_workflow
-
-    @specs.monitor_handle.attach_factory()
-    def _monitor_workflow_factory(source_name: str, params: DreamMonitorDataParams):
-        """Factory for DREAM monitor workflow with TOF lookup table support."""
-        mode = params.coordinate_mode.mode
-        geometry_filename = (
-            get_nexus_geometry_filename('dream-no-shape')
-            if mode == 'wavelength'
-            else None
-        )
-
-        return create_monitor_workflow(
-            source_name=source_name,
-            edges=params.get_active_edges(),
-            range_filter=params.get_active_range(),
-            coordinate_mode=mode,
-            geometry_filename=geometry_filename,
-        )
 
     # Powder reduction workflow setup
     # Normalization to monitors is partially broken due to some wavelength-range check
