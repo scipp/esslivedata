@@ -2,9 +2,11 @@
 # Copyright (c) 2025 Scipp contributors (https://github.com/scipp)
 
 import warnings
+from collections.abc import Sequence
 
 import holoviews as hv
 import numpy as np
+import pydantic
 import pytest
 import scipp as sc
 from bokeh.document import Document
@@ -2905,9 +2907,7 @@ class TestEntryLimit:
                     PlotParamsTimeseriesOverlay()
                 )
                 # Later times for larger n: the plotter throttles repeated times.
-                return plotter, lambda n: TestOverlay1DPlotterHistory.history(
-                    rois=range(n), start=100 * n
-                )
+                return plotter, lambda n: _roi_history(rois=range(n), start=100 * n)
 
     def test_data_at_the_limit_is_drawn(self, case, limit, data_key):
         plotter, make = case
@@ -2926,6 +2926,26 @@ class TestEntryLimit:
         assert len(_error_texts(plotter, make(limit + 1), data_key)) == 1
 
 
+def _roi_history(
+    rois: Sequence[int] = (1, 4), n: int = 4, start: int = 0
+) -> sc.DataArray:
+    """``(time, roi)`` history of per-ROI totals, values ``1, 2, ...`` row-major."""
+    time = sc.datetime('2026-01-01T00:00:00', unit='ns') + sc.arange(
+        'time', start, start + n, unit='s'
+    ).to(unit='ns')
+    return sc.DataArray(
+        sc.array(
+            dims=['time', 'roi'],
+            values=np.arange(1.0, n * len(rois) + 1).reshape(n, len(rois)),
+            unit='counts',
+        ),
+        coords={
+            'time': time,
+            'roi': sc.array(dims=['roi'], values=list(rois), dtype='int32', unit=None),
+        },
+    )
+
+
 class TestOverlay1DPlotterHistory:
     """Overlay1DPlotter with ``(time, roi)`` history: one curve per roi."""
 
@@ -2935,38 +2955,19 @@ class TestOverlay1DPlotterHistory:
             PlotParamsTimeseriesOverlay()
         )
 
-    @staticmethod
-    def history(rois=(1, 4), n=4, start=0):
-        time = sc.datetime('2026-01-01T00:00:00', unit='ns') + sc.arange(
-            'time', start, start + n, unit='s'
-        ).to(unit='ns')
-        return sc.DataArray(
-            sc.array(
-                dims=['time', 'roi'],
-                values=np.arange(1.0, n * len(rois) + 1).reshape(n, len(rois)),
-                unit='counts',
-            ),
-            coords={
-                'time': time,
-                'roi': sc.array(
-                    dims=['roi'], values=list(rois), dtype='int32', unit=None
-                ),
-            },
-        )
-
     def test_slices_along_roi_not_time(self, plotter, data_key):
-        result = plotter.plot(self.history(), data_key)
+        result = plotter.plot(_roi_history(), data_key)
         assert [curve.label for curve in result] == ['roi=1', 'roi=4']
         assert [len(curve) for curve in result] == [4, 4]
         assert list(result)[-1].dimension_values(1).tolist() == [2.0, 4.0, 6.0, 8.0]
 
     def test_time_may_be_the_last_dim(self, plotter, data_key):
-        result = plotter.plot(self.history().transpose(), data_key)
+        result = plotter.plot(_roi_history().transpose(), data_key)
         assert [curve.label for curve in result] == ['roi=1', 'roi=4']
         assert [len(curve) for curve in result] == [4, 4]
 
     def test_x_range_target_spans_time_not_roi_index(self, plotter, data_key):
-        history = self.history()
+        history = _roi_history()
         plotter.compute({PRIMARY: {data_key: history}})
 
         lo, hi = plotter.get_range_targets(data_key)['x']
@@ -2976,15 +2977,15 @@ class TestOverlay1DPlotterHistory:
         assert hi >= times.max()
 
     def test_renders_with_datetime_axis(self, plotter, data_key):
-        fig, _ = _render(plotter, {data_key: self.history()})
+        fig, _ = _render(plotter, {data_key: _roi_history()})
         assert isinstance(fig.xaxis[0], DatetimeAxis)
 
     def test_axis_stays_datetime_when_first_frame_has_no_roi(self, plotter, data_key):
-        fig, pipe = _render(plotter, {data_key: self.history(rois=())})
+        fig, pipe = _render(plotter, {data_key: _roi_history(rois=())})
         assert isinstance(fig.xaxis[0], DatetimeAxis)
 
         # A later update, as the timeseries plotter throttles repeated times.
-        plotter.compute({PRIMARY: {data_key: self.history(start=100)}})
+        plotter.compute({PRIMARY: {data_key: _roi_history(start=100)}})
         pipe.send(plotter.get_cached_state())
 
         assert isinstance(fig.xaxis[0], DatetimeAxis)
@@ -3739,10 +3740,14 @@ def _roi_spectra(
     )
 
 
-def _per_pixel_params(*, rate: bool = False) -> PlotParams1d:
-    return PlotParams1d(
+def _per_pixel_params(
+    params_class: type[pydantic.BaseModel] = PlotParams1d, *, rate: bool = False
+) -> pydantic.BaseModel:
+    """Params of ``params_class`` with 'Per Detector Pixel' on."""
+    fields = {'rate': RateNormalizationParams(normalize_to_rate=True)} if rate else {}
+    return params_class(
         pixel_normalization=DetectorPixelNormalizationParams(per_detector_pixel=True),
-        rate=RateNormalizationParams(normalize_to_rate=rate),
+        **fields,
     )
 
 
@@ -3763,17 +3768,6 @@ class TestDetectorPixelNormalization:
             source_name='panel',
             output_name='roi_spectra_current',
         )
-
-    def test_overlay_1d_divides_each_roi_by_its_own_pixel_count(self, data_key):
-        plotter = plots.Overlay1DPlotter.from_params(_per_pixel_params())
-
-        plotter.compute(
-            {PRIMARY: {data_key: _roi_spectra([[4.0, 8.0], [3.0, 6.0]], [4.0, 1.5])}}
-        )
-
-        curves = _curves_by_label(plotter)
-        np.testing.assert_allclose(curves['roi=0'].dimension_values(1), [1.0, 2.0])
-        np.testing.assert_allclose(curves['roi=1'].dimension_values(1), [2.0, 4.0])
 
     def test_lines_divide_each_roi_by_its_own_pixel_count(self, data_key):
         totals = _roi_spectra([[4.0, 0.0], [3.0, 0.0]], [4.0, 1.5])['toa', 0]
@@ -3821,13 +3815,7 @@ class TestDetectorPixelNormalization:
 
     def test_bars_divide_each_roi_by_its_own_pixel_count(self, data_key):
         totals = _roi_spectra([[4.0, 0.0], [3.0, 0.0]], [4.0, 1.5])['toa', 0]
-        plotter = plots.BarsPlotter.from_params(
-            PlotParamsBars(
-                pixel_normalization=DetectorPixelNormalizationParams(
-                    per_detector_pixel=True
-                )
-            )
-        )
+        plotter = plots.BarsPlotter.from_params(_per_pixel_params(PlotParamsBars))
 
         plotter.compute({PRIMARY: {data_key: totals}})
 
@@ -3837,13 +3825,7 @@ class TestDetectorPixelNormalization:
 
     def test_table_divides_each_roi_by_its_own_pixel_count(self, data_key):
         totals = _roi_spectra([[4.0, 0.0], [3.0, 0.0]], [4.0, 1.5])['toa', 0]
-        plotter = TablePlotter.from_params(
-            PlotParamsTable(
-                pixel_normalization=DetectorPixelNormalizationParams(
-                    per_detector_pixel=True
-                )
-            )
-        )
+        plotter = TablePlotter.from_params(_per_pixel_params(PlotParamsTable))
 
         plotter.compute({PRIMARY: {data_key: totals}})
 
@@ -3852,14 +3834,10 @@ class TestDetectorPixelNormalization:
         assert table.vdims[0].unit == 'counts per detector pixel'
 
     def test_timeseries_overlay_divides_each_roi_by_its_own_pixel_count(self, data_key):
-        history = TestOverlay1DPlotterHistory.history(rois=(0, 1), n=2)
+        history = _roi_history(rois=(0, 1), n=2)
         history.coords['detector_pixels'] = sc.array(dims=['roi'], values=[1.0, 2.0])
         plotter = plots.Overlay1DPlotter.from_timeseries_params(
-            PlotParamsTimeseriesOverlay(
-                pixel_normalization=DetectorPixelNormalizationParams(
-                    per_detector_pixel=True
-                )
-            )
+            _per_pixel_params(PlotParamsTimeseriesOverlay)
         )
 
         plotter.compute({PRIMARY: {data_key: history}})

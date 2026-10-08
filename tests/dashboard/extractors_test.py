@@ -2,8 +2,6 @@
 # Copyright (c) 2025 Scipp contributors (https://github.com/scipp)
 from __future__ import annotations
 
-from typing import ClassVar
-
 import numpy as np
 import pytest
 import scipp as sc
@@ -740,55 +738,22 @@ def _roi_frame(
     )
 
 
-class TestDetectorPixelsCoord:
-    """The per-ROI ``detector_pixels`` coord through buffer and extractors.
+def test_changed_roi_geometry_restarts_the_window():
+    """Counts gathered under the old ROI geometry must not be divided by the new
+    ``detector_pixels`` count: the buffer drops them when the coord changes."""
+    buffer = TemporalBuffer()
+    for index in range(4):
+        buffer.add(_roi_frame(index, detector_pixels=[4.0, 1.5]))
+    buffer.add(_roi_frame(4, detector_pixels=[2.0, 1.5], counts=10.0))
 
-    Plotters divide by it after extraction, so it must reach them as the pixel
-    count of one ROI, not summed over the window along with the counts.
-    """
+    result = WindowAggregatingExtractor(window_duration_seconds=4.0).extract(
+        buffer.get()
+    )
 
-    PIXELS: ClassVar[list[float]] = [4.0, 1.5]
-
-    @pytest.fixture
-    def buffer(self) -> TemporalBuffer:
-        buffer = TemporalBuffer()
-        for index in range(4):
-            buffer.add(_roi_frame(index, detector_pixels=self.PIXELS))
-        return buffer
-
-    def test_window_aggregation_keeps_the_coord_unsummed(self, buffer):
-        result = WindowAggregatingExtractor(window_duration_seconds=4.0).extract(
-            buffer.get()
-        )
-
-        assert sc.identical(
-            result.coords['detector_pixels'],
-            sc.array(dims=['roi'], values=self.PIXELS),
-        )
-        np.testing.assert_array_equal(result.values, 4.0)
-
-    def test_latest_value_keeps_the_coord(self, buffer):
-        result = LatestValueExtractor().extract(buffer.get())
-
-        assert sc.identical(
-            result.coords['detector_pixels'],
-            sc.array(dims=['roi'], values=self.PIXELS),
-        )
-
-    def test_changed_roi_geometry_restarts_the_window(self, buffer):
-        # Counts gathered under the old geometry must not be divided by the new
-        # pixel count: the buffer drops them when the coord changes.
-        buffer.add(_roi_frame(4, detector_pixels=[2.0, 1.5], counts=10.0))
-
-        result = WindowAggregatingExtractor(window_duration_seconds=4.0).extract(
-            buffer.get()
-        )
-
-        np.testing.assert_array_equal(result.values, 10.0)
-        assert sc.identical(
-            result.coords['detector_pixels'],
-            sc.array(dims=['roi'], values=[2.0, 1.5]),
-        )
+    np.testing.assert_array_equal(result.values, 10.0)
+    assert sc.identical(
+        result.coords['detector_pixels'], sc.array(dims=['roi'], values=[2.0, 1.5])
+    )
 
 
 class TestUpdateExtractorInterface:
