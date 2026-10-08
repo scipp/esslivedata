@@ -956,13 +956,16 @@ class TestChangedRoiSet:
             },
         )
 
-    def test_history_restarts_when_roi_set_changes(self):
-        # Known limitation: the history of existing ROIs is lost when an ROI is
-        # added or removed, since the buffer requires constant non-time coords.
+    @pytest.mark.xfail(
+        strict=True,
+        reason="#1359: adding or removing an ROI resets the history of all ROIs",
+    )
+    def test_adding_an_roi_keeps_the_history_of_existing_rois(self):
         buffer = TemporalBuffer()
         for t, rois in enumerate([[0], [0], [0, 1], [0, 1]]):
             buffer.add(self.per_roi(rois, t))
 
         result = buffer.get()
 
-        assert result.sizes == {'time': 2, 'roi': 2}
+        assert result.sizes['time'] == 4
+        assert result['roi', 0].values.tolist() == [1.0] * 4
