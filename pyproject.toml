@@ -36,7 +36,7 @@ dependencies = [
   "cyclebane>=26.9.0",
   "dask>=2026.3.0",
   "ess-streaming-data-types",
-  "essreduce>=26.9.0",  # StreamProcessor releases fed values after use, no graph rebuild per chunk
+  "essreduce>=26.10.0",  # Chopper out of phase with the source is closed, not an error; pulse stride guessed from synced choppers
   "jinja2",
   "numba",  # Compiled wavelength-LUT interpolation, see core/numba_threading.py
   "pydantic>=2",

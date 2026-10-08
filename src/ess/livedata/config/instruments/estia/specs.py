@@ -206,7 +206,8 @@ streams = name_streams(filter_authorized_streams(PARSED_STREAMS))
 #:
 #: The detector arm rotates about the sample, which leaves the flight path to
 #: every pixel unchanged, but the lookup-table range derivation refuses live
-#: rotations. The range is therefore declared; it is what the repaired artifact
+#: rotations. The range is therefore declared (the table pads it by 1%, at least
+#: 0.1 m, so the values are unpadded); it is what the repaired artifact
 #: gives at any arm angle, and agrees with the McStas geometry the reduction
 #: workflow uses to within 4 mm.
 instrument = Instrument(
