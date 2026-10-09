@@ -13,6 +13,7 @@ from ess.livedata.dashboard.extractors import (
     WindowAggregatingExtractor,
 )
 from ess.livedata.dashboard.plot_params import WindowAggregation
+from ess.livedata.dashboard.temporal_buffers import TemporalBuffer
 
 
 class TestLatestValueExtractor:
@@ -229,6 +230,34 @@ class TestFullHistoryExtractor:
 
         # Event coordinate should be converted to datetime64
         assert result.coords['event'].dtype == sc.DType.datetime64
+
+
+class TestFullHistoryOfPerRoiOutput:
+    """History of a 1-D ``roi`` output as buffered from the wire."""
+
+    def test_buffer_and_extractor_give_time_roi_with_datetime_time(self):
+        buffer = TemporalBuffer()
+        for i in range(3):
+            buffer.add(
+                sc.DataArray(
+                    sc.array(dims=['roi'], values=[1.0 * i, 2.0 * i], unit='counts'),
+                    coords={
+                        'roi': sc.array(
+                            dims=['roi'], values=[0, 1], dtype='int32', unit=None
+                        ),
+                        'start_time': sc.scalar(0, unit='ns'),
+                        'time': sc.scalar(1_000_000_000 * (i + 1), unit='ns'),
+                    },
+                )
+            )
+
+        result = FullHistoryExtractor().extract(buffer.get())
+
+        assert result.dims == ('time', 'roi')
+        assert result.shape == (3, 2)
+        assert result.coords['time'].dtype == sc.DType.datetime64
+        assert result.coords['roi'].dims == ('roi',)
+        assert result.coords['end_time'].ndim == 0
 
 
 class TestWindowAggregatingExtractor:

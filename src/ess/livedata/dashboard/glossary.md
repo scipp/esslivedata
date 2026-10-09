@@ -72,6 +72,9 @@ From coarse to fine: **grid → cell → layer → plotter → presenter → fig
   subscribed data (`dashboard/plots.py`); subclasses per plot type
   (`LinePlotter`, `ImagePlotter`, `SlicerPlotter`, …). Registered in
   **PlotterRegistry** with a spec, factory, and data requirements.
+- **Entry** — one position along the dim that a per-entry plotter (Overlay 1D,
+  Timeseries Overlay, Bars or Table of 1D data) draws as one curve, bar or row;
+  bounded per source by `MAX_ENTRIES` (`dashboard/plots.py`).
 - **Presenter** — per-session bridge from a plotter's cached state to a
   HoloViews `DynamicMap` via an `hv.streams.Pipe`; carries the dirty flag
   (`dashboard/plots.py`).

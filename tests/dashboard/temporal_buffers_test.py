@@ -941,3 +941,31 @@ class TestVariableBuffer:
         assert result.sizes['time'] == 21
         # Verify variances were preserved from at least one slice
         assert result.variances[0, 0] > 0
+
+
+class TestChangedRoiSet:
+    """A per-ROI output whose ``roi`` coord changes mid-stream."""
+
+    @staticmethod
+    def per_roi(rois, time):
+        return sc.DataArray(
+            sc.array(dims=['roi'], values=[1.0] * len(rois), unit='counts'),
+            coords={
+                'roi': sc.array(dims=['roi'], values=rois, dtype='int32', unit=None),
+                'time': sc.scalar(time, unit='s'),
+            },
+        )
+
+    @pytest.mark.xfail(
+        strict=True,
+        reason="#1359: adding or removing an ROI resets the history of all ROIs",
+    )
+    def test_adding_an_roi_keeps_the_history_of_existing_rois(self):
+        buffer = TemporalBuffer()
+        for t, rois in enumerate([[0], [0], [0, 1], [0, 1]]):
+            buffer.add(self.per_roi(rois, t))
+
+        result = buffer.get()
+
+        assert result.sizes['time'] == 4
+        assert result['roi', 0].values.tolist() == [1.0] * 4

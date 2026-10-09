@@ -8,7 +8,14 @@ import numpy as np
 import pytest
 import scipp as sc
 from bokeh.document import Document
-from bokeh.models import GlyphRenderer, Plot, Whisker
+from bokeh.models import (
+    DatetimeAxis,
+    FactorRange,
+    GlyphRenderer,
+    HoverTool,
+    Plot,
+    Whisker,
+)
 from holoviews.plotting.bokeh import BokehRenderer
 
 from ess.livedata.config.workflow_spec import DataKey, WorkflowId
@@ -27,6 +34,9 @@ from ess.livedata.dashboard.plot_params import (
     PlotParams1d,
     PlotParams2d,
     PlotParams3d,
+    PlotParamsBars,
+    PlotParamsTable,
+    PlotParamsTimeseriesOverlay,
     PlotScale,
     PlotScaleParams2d,
     RateNormalizationParams,
@@ -37,6 +47,7 @@ from ess.livedata.dashboard.slicer_plotter import (
     SlicerPresenter,
     SlicerState,
 )
+from ess.livedata.dashboard.table_plotter import TablePlotter
 from ess.livedata.dashboard.temporal_buffers import TemporalBuffer
 
 hv.extension('bokeh')
@@ -1893,11 +1904,11 @@ class TestBarsPlotter:
         assert 'HBar' in glyphs
         assert 'VBar' not in glyphs
 
-    def test_rejects_non_scalar_data(self, bars_plotter, data_key):
-        """Test that BarsPlotter rejects non-0D data."""
-        data_1d = sc.DataArray(sc.array(dims=['x'], values=[1.0, 2.0, 3.0]))
-        with pytest.raises(ValueError, match="Expected 0D data"):
-            bars_plotter.plot(data_1d, data_key)
+    def test_rejects_2d_data(self, bars_plotter, data_key):
+        """Test that BarsPlotter rejects data with more than one dim."""
+        data_2d = sc.DataArray(sc.zeros(dims=['y', 'x'], shape=[2, 3]))
+        with pytest.raises(ValueError, match="Expected 0D or 1D data"):
+            bars_plotter.plot(data_2d, data_key)
 
     def test_call_with_multiple_sources(self, bars_plotter):
         """Test __call__ with multiple 0D data sources creates multiple bars."""
@@ -1938,6 +1949,16 @@ class TestBarsPlotter:
         """Test that bars can be rendered to Bokeh."""
         result = bars_plotter.plot(scalar_data, data_key)
         render_to_bokeh(result)
+
+    def test_layers_sharing_a_cell_get_distinct_colors(self, scalar_data):
+        layers = []
+        for source in ['source1', 'source2']:
+            plotter = plots.BarsPlotter.from_params(PlotParamsBars())
+            plotter.compute({PRIMARY: {make_data_key(source): scalar_data}})
+            layers.append(plotter.get_cached_state())
+        fig = render_to_bokeh(hv.Overlay(layers)).state
+        colors = {gr.glyph.fill_color for gr in fig.select({'type': GlyphRenderer})}
+        assert len(colors) == 2
 
 
 class TestTablePlotter:
@@ -2041,11 +2062,59 @@ class TestTablePlotter:
         assert isinstance(by_field['unit'], StringFormatter)
         assert not isinstance(by_field['unit'], ScientificFormatter)
 
-    def test_rejects_non_scalar_data(self, table_plotter):
+    def test_rejects_2d_data(self, table_plotter):
         key = self._key('bank0', 'counts')
-        data_1d = sc.DataArray(sc.array(dims=['x'], values=[1.0, 2.0, 3.0]))
-        table_plotter.compute({'primary': {key: data_1d}})
+        data_2d = sc.DataArray(sc.zeros(dims=['y', 'x'], shape=[2, 3]))
+        table_plotter.compute({'primary': {key: data_2d}})
         # Errors are surfaced in-band as a Text element, matching other plotters.
+        assert isinstance(table_plotter.get_cached_state(), hv.Text)
+
+    def test_1d_data_gives_a_row_per_source_and_entry(self, table_plotter):
+        data = {
+            self._key('bank0', 'counts'): _per_roi([0, 3], values=[1.0, 2.0]),
+            self._key('bank1', 'counts'): _per_roi([0], values=[3.0]),
+        }
+        table_plotter.compute({'primary': data})
+        result = table_plotter.get_cached_state()
+        assert [d.name for d in result.kdims] == ['source', 'roi']
+        assert list(result.data['source']) == ['bank0', 'bank0', 'bank1']
+        assert list(result.data['roi']) == ['0', '3', '0']
+        assert list(result.data['counts']) == [1.0, 2.0, 3.0]
+        assert result.vdims[0].unit == 'counts'
+
+    def test_1d_data_without_entries_keeps_a_row_for_the_source(self, table_plotter):
+        key = self._key('bank0', 'counts')
+        table_plotter.compute({'primary': {key: _per_roi([], values=[])}})
+        result = table_plotter.get_cached_state()
+        assert list(result.data['source']) == ['bank0']
+        assert list(result.data['roi']) == ['no roi']
+        assert np.isnan(result.data['counts'][0])
+
+    def test_1d_entry_labels_keep_string_formatter(self, table_plotter):
+        from bokeh.models import DataTable, ScientificFormatter, StringFormatter
+
+        fig = present_figure(
+            table_plotter, {self._key('bank0', 'counts'): _per_roi([0, 3])}
+        )
+        table = next(m for m in fig.references() if isinstance(m, DataTable))
+        by_field = {c.field: c.formatter for c in table.columns}
+        assert isinstance(by_field['counts'], ScientificFormatter)
+        assert isinstance(by_field['roi'], StringFormatter)
+        assert not isinstance(by_field['roi'], ScientificFormatter)
+
+    def test_bin_edge_coord_labels_rows_by_midpoint(self, table_plotter):
+        key = self._key('bank0', 'counts')
+        table_plotter.compute({'primary': {key: _with_edges()}})
+        result = table_plotter.get_cached_state()
+        assert list(result.data['x']) == ['1.0', '3.0']
+        assert list(result.data['counts']) == [1.0, 2.0]
+
+    def test_rejects_sources_with_different_dims(self, table_plotter):
+        data = {
+            self._key('bank0', 'counts'): _per_roi([0]),
+            self._key('bank1', 'counts'): sc.DataArray(sc.scalar(1.0, unit='counts')),
+        }
+        table_plotter.compute({'primary': data})
         assert isinstance(table_plotter.get_cached_state(), hv.Text)
 
     def test_empty_data_shows_no_data(self, table_plotter):
@@ -2317,6 +2386,29 @@ class TestOverlay1DPlotter:
     def overlay_plotter(self):
         """Create an Overlay1DPlotter instance."""
         return plots.Overlay1DPlotter.from_params(PlotParams1d())
+
+    def test_bin_edge_coord_labels_curves_by_midpoint(self, overlay_plotter, data_key):
+        data = sc.DataArray(
+            sc.ones(dims=['x', 'toa'], shape=[2, 3], unit='counts'),
+            coords={'x': sc.array(dims=['x'], values=[0.0, 2.0, 4.0], unit='m')},
+        )
+        result = overlay_plotter.plot(data, data_key)
+        assert [curve.label for curve in result] == ['x=1.0', 'x=3.0']
+
+    def test_time_as_first_dim_is_sliced_like_any_other(
+        self, overlay_plotter, data_key
+    ):
+        """A ToNXlog-style ``(time, x)`` array gives one curve per time."""
+        data = sc.DataArray(
+            sc.array(dims=['time', 'x'], values=[[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]]),
+            coords={
+                'time': sc.array(dims=['time'], values=[0, 1], unit=None),
+                'x': sc.array(dims=['x'], values=[10.0, 20.0, 30.0], unit='m'),
+            },
+        )
+        result = overlay_plotter.plot(data, data_key)
+        assert [curve.label for curve in result] == ['time=0', 'time=1']
+        assert list(result)[-1].dimension_values(1).tolist() == [4.0, 5.0, 6.0]
 
     @pytest.fixture
     def data_2d_with_roi_coord(self):
@@ -2675,6 +2767,226 @@ class TestOverlay1DPlotter:
         result = plotter.plot(data_2d_with_roi_coord, data_key)
         for elem in result:
             assert isinstance(elem, hv.Curve)
+
+
+def _render(plotter, data):
+    """Compute ``data`` and render it as a session does; returns (figure, pipe)."""
+    plotter.compute({PRIMARY: data})
+    pipe = hv.streams.Pipe(data=plotter.get_cached_state())
+    dmap = plotter.create_presenter().present(pipe)
+    return BokehRenderer.instance().get_plot(dmap).state, pipe
+
+
+def _per_roi(rois, values=None, source_unit='counts'):
+    return sc.DataArray(
+        sc.array(
+            dims=['roi'],
+            values=values if values is not None else [10.0 * (i + 1) for i in rois],
+            unit=source_unit,
+        ),
+        coords={'roi': sc.array(dims=['roi'], values=rois, dtype='int32', unit=None)},
+    )
+
+
+class TestBarsPlotterPerRoi:
+    """BarsPlotter with 1D data: one bar per ROI, grouped by source."""
+
+    @pytest.fixture
+    def plotter(self):
+        return plots.BarsPlotter.from_params(PlotParamsBars())
+
+    def test_bars_are_colored_by_roi_index(self, plotter, data_key):
+        bars = plotter.plot(_per_roi([0, 3, 5]), data_key)
+        colors = hv.Cycle.default_cycles["default_colors"]
+        assert list(bars.dimension_values('roi')) == ['roi=0', 'roi=3', 'roi=5']
+        assert list(bars.dimension_values('color')) == [colors[0], colors[3], colors[5]]
+
+    def test_tooltips_show_the_value_but_not_the_color(self, plotter, data_key):
+        fig, _ = _render(plotter, {data_key: _per_roi([0, 3])})
+        (hover,) = fig.select({'type': HoverTool})
+        assert [name for name, _ in hover.tooltips] == [
+            'source',
+            'roi',
+            hv.Dimension('test_result', unit='counts').pprint_label,
+        ]
+
+    def test_rendered_axis_is_categorical_with_the_bars(self, plotter, data_key):
+        fig, _ = _render(plotter, {data_key: _per_roi([0, 3])})
+        assert isinstance(fig.x_range, FactorRange)
+        assert [f[1] for f in fig.x_range.factors] == ['roi=0', 'roi=3']
+
+    def test_several_sources_are_groups_of_bars(self, plotter, data_key):
+        other = make_data_key('other_source')
+        fig, _ = _render(plotter, {data_key: _per_roi([0, 3]), other: _per_roi([0])})
+        assert fig.x_range.factors == [
+            ('test_source', 'roi=0'),
+            ('test_source', 'roi=3'),
+            ('other_source', 'roi=0'),
+        ]
+
+    def test_axis_stays_categorical_when_first_frame_has_no_roi(
+        self, plotter, data_key
+    ):
+        fig, pipe = _render(plotter, {data_key: _per_roi([], values=[])})
+        assert isinstance(fig.x_range, FactorRange)
+
+        plotter.compute({PRIMARY: {data_key: _per_roi([0, 3])}})
+        pipe.send(plotter.get_cached_state())
+
+        assert [f[1] for f in fig.x_range.factors] == ['roi=0', 'roi=3']
+
+    def test_rejects_2d_data(self, plotter, data_key):
+        with pytest.raises(ValueError, match="Expected 0D or 1D data"):
+            plotter.plot(sc.zeros(dims=['a', 'b'], shape=[2, 2]), data_key)
+
+    def test_bin_edge_coord_labels_bars_by_midpoint(self, plotter, data_key):
+        fig, _ = _render(plotter, {data_key: _with_edges()})
+        assert [f[1] for f in fig.x_range.factors] == ['x=1.0', 'x=3.0']
+
+    def test_0d_and_1d_sources_give_an_error_frame(self, plotter, data_key):
+        data = {
+            data_key: _per_roi([0, 3]),
+            make_data_key('other_source'): sc.DataArray(sc.scalar(1.0)),
+        }
+        plotter.compute({PRIMARY: data})
+        result = plotter.get_cached_state()
+        assert [t.text for t in result.traverse(specs=[hv.Text])] == [
+            "Error: Cannot draw 0D and 1D data as bars in one plot."
+        ]
+        render_to_bokeh(result)
+
+
+def _with_edges():
+    """1D data with a bin-edge coord, ``x`` edges [0, 2, 4]."""
+    return sc.DataArray(
+        sc.array(dims=['x'], values=[1.0, 2.0], unit='counts'),
+        coords={'x': sc.array(dims=['x'], values=[0.0, 2.0, 4.0], unit='m')},
+    )
+
+
+def _error_texts(plotter, data, data_key):
+    """Compute ``data``; the texts of the 'Error: ...' frame, if it was drawn."""
+    plotter.compute({PRIMARY: {data_key: data}})
+    return [t.text for t in plotter.get_cached_state().traverse(specs=[hv.Text])]
+
+
+class TestEntryLimit:
+    """Data with more entries than the limit gets an error frame, not a plot."""
+
+    @pytest.fixture
+    def limit(self):
+        return plots.MAX_ENTRIES
+
+    @staticmethod
+    def spectra(n):
+        return sc.DataArray(
+            sc.ones(dims=['roi', 'x'], shape=[n, 4], unit='counts'),
+            coords={'roi': sc.arange('roi', n, dtype='int32', unit=None)},
+        )
+
+    @pytest.fixture(
+        params=['bars', 'table', 'spectra', 'history'],
+    )
+    def case(self, request):
+        """A plotter and a function making data of n entries."""
+        match request.param:
+            case 'bars':
+                plotter = plots.BarsPlotter.from_params(PlotParamsBars())
+                return plotter, lambda n: _per_roi(list(range(n)))
+            case 'table':
+                plotter = TablePlotter.from_params(PlotParamsTable())
+                return plotter, lambda n: _per_roi(list(range(n)))
+            case 'spectra':
+                plotter = plots.Overlay1DPlotter.from_params(PlotParams1d())
+                return plotter, self.spectra
+            case 'history':
+                plotter = plots.Overlay1DPlotter.from_timeseries_params(
+                    PlotParamsTimeseriesOverlay()
+                )
+                # Later times for larger n: the plotter throttles repeated times.
+                return plotter, lambda n: TestOverlay1DPlotterHistory.history(
+                    rois=range(n), start=100 * n
+                )
+
+    def test_data_at_the_limit_is_drawn(self, case, limit, data_key):
+        plotter, make = case
+        assert _error_texts(plotter, make(limit), data_key) == []
+
+    def test_data_over_the_limit_gives_an_error_frame(self, case, limit, data_key):
+        plotter, make = case
+        (text,) = _error_texts(plotter, make(limit + 1), data_key)
+        assert text == (
+            f"Error: {limit + 1} entries along 'roi'; at most {limit} can be drawn."
+        )
+
+    def test_empty_first_frame_then_over_the_limit(self, case, limit, data_key):
+        plotter, make = case
+        assert _error_texts(plotter, make(0), data_key) == []
+        assert len(_error_texts(plotter, make(limit + 1), data_key)) == 1
+
+
+class TestOverlay1DPlotterHistory:
+    """Overlay1DPlotter with ``(time, roi)`` history: one curve per roi."""
+
+    @pytest.fixture
+    def plotter(self):
+        return plots.Overlay1DPlotter.from_timeseries_params(
+            PlotParamsTimeseriesOverlay()
+        )
+
+    @staticmethod
+    def history(rois=(1, 4), n=4, start=0):
+        time = sc.datetime('2026-01-01T00:00:00', unit='ns') + sc.arange(
+            'time', start, start + n, unit='s'
+        ).to(unit='ns')
+        return sc.DataArray(
+            sc.array(
+                dims=['time', 'roi'],
+                values=np.arange(1.0, n * len(rois) + 1).reshape(n, len(rois)),
+                unit='counts',
+            ),
+            coords={
+                'time': time,
+                'roi': sc.array(
+                    dims=['roi'], values=list(rois), dtype='int32', unit=None
+                ),
+            },
+        )
+
+    def test_slices_along_roi_not_time(self, plotter, data_key):
+        result = plotter.plot(self.history(), data_key)
+        assert [curve.label for curve in result] == ['roi=1', 'roi=4']
+        assert [len(curve) for curve in result] == [4, 4]
+        assert list(result)[-1].dimension_values(1).tolist() == [2.0, 4.0, 6.0, 8.0]
+
+    def test_time_may_be_the_last_dim(self, plotter, data_key):
+        result = plotter.plot(self.history().transpose(), data_key)
+        assert [curve.label for curve in result] == ['roi=1', 'roi=4']
+        assert [len(curve) for curve in result] == [4, 4]
+
+    def test_x_range_target_spans_time_not_roi_index(self, plotter, data_key):
+        history = self.history()
+        plotter.compute({PRIMARY: {data_key: history}})
+
+        lo, hi = plotter.get_range_targets(data_key)['x']
+
+        times = history.coords['time'].values.astype('datetime64[ns]').astype('int64')
+        assert lo <= times.min()
+        assert hi >= times.max()
+
+    def test_renders_with_datetime_axis(self, plotter, data_key):
+        fig, _ = _render(plotter, {data_key: self.history()})
+        assert isinstance(fig.xaxis[0], DatetimeAxis)
+
+    def test_axis_stays_datetime_when_first_frame_has_no_roi(self, plotter, data_key):
+        fig, pipe = _render(plotter, {data_key: self.history(rois=())})
+        assert isinstance(fig.xaxis[0], DatetimeAxis)
+
+        # A later update, as the timeseries plotter throttles repeated times.
+        plotter.compute({PRIMARY: {data_key: self.history(start=100)}})
+        pipe.send(plotter.get_cached_state())
+
+        assert isinstance(fig.xaxis[0], DatetimeAxis)
 
 
 class TestOverlay1DPlotterRenderedValues:

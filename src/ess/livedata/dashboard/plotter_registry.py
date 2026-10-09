@@ -235,6 +235,22 @@ OVERLAY_PATTERNS: dict[str, list[tuple[str, str]]] = {
 _registered = False
 
 
+def _entries_are_labelled(data: sc.DataArray) -> bool:
+    """Whether the dim of 1D data is a set of labelled entries.
+
+    A coord without unit that is not bin edges labels each entry, e.g. one value
+    per ROI. A physical axis such as time of arrival has a unit, and dims without
+    a coord are typically detector pixels. Both have far more entries than a
+    plotter drawing one bar, row or curve per entry can show. 0D data passes.
+    """
+    if data.ndim == 0:
+        return True
+    coord = data.coords.get(data.dim)
+    return (
+        coord is not None and coord.unit is None and not data.coords.is_edges(data.dim)
+    )
+
+
 def _register_all_plotters() -> None:
     """Register all plotter types with the central registry.
 
@@ -253,6 +269,7 @@ def _register_all_plotters() -> None:
     from .extractors import FullHistoryExtractor
     from .flatten_plotter import FlattenPlotter, make_flatten_params
     from .plots import (
+        MAX_ENTRIES,
         BarsPlotter,
         ImagePlotter,
         LinePlotter,
@@ -296,11 +313,11 @@ def _register_all_plotters() -> None:
         factory=LinePlotter.from_params,
     )
 
-    # Uses from_timeseries_params (no window/rate config) because FullHistoryExtractor
-    # collapses start_time/end_time to the full buffer range. Rate normalization
-    # would divide every point by the total buffer duration, giving wrong results.
-    # The dedicated factory adds time-based downsampling + update throttling
-    # (issue #940).
+    # Timeseries plotters are built with from_timeseries_params, whose params have
+    # no window or rate options: FullHistoryExtractor collapses start_time/end_time
+    # to the span of the whole buffer, so rate normalization would divide every
+    # point by that span instead of by its own interval. The factory also adds
+    # time-based downsampling and update throttling (issue #940).
     plotter_registry.register_plotter(
         name='timeseries',
         title='Timeseries',
@@ -316,16 +333,32 @@ def _register_all_plotters() -> None:
     plotter_registry.register_plotter(
         name='bars',
         title='Bars',
-        description='Plot 0D scalar values as bars.',
-        data_requirements=DataRequirements(min_dims=0, max_dims=0),
+        description=(
+            'Plot 0D scalar values as bars, one per source. For 1D data with labeled '
+            'entries, such as one value per ROI, plot one bar per entry, grouped by '
+            'source. With an '
+            'integer coordinate, each coordinate value has a fixed color, the same '
+            'as in Overlay 1D and Timeseries Overlay. A source with more entries '
+            f'than {MAX_ENTRIES} is not shown.'
+        ),
+        data_requirements=DataRequirements(
+            min_dims=0, max_dims=1, custom_validators=[_entries_are_labelled]
+        ),
         factory=BarsPlotter.from_params,
     )
 
     plotter_registry.register_plotter(
         name='table',
         title='Table',
-        description='Display 0D scalar values as a table, one row per source.',
-        data_requirements=DataRequirements(min_dims=0, max_dims=0),
+        description=(
+            'Display 0D scalar values as a table, one row per source. For 1D data '
+            'with labeled entries, such as one value per ROI, display one row per '
+            'entry, labeled by its coordinate value. A source with more entries '
+            f'than {MAX_ENTRIES} is not shown.'
+        ),
+        data_requirements=DataRequirements(
+            min_dims=0, max_dims=1, custom_validators=[_entries_are_labelled]
+        ),
         factory=TablePlotter.from_params,
     )
 
@@ -363,12 +396,33 @@ def _register_all_plotters() -> None:
         name='overlay_1d',
         title='Overlay 1D',
         description=(
-            'Slice 2D data along the first dimension and overlay as 1D curves. '
-            'Useful for visualizing multiple spectra from a single 2D array '
-            '(e.g., ROI spectra stacked along a roi dimension).'
+            'Overlay 2D data as 1D curves, one per entry along the first '
+            'dimension. Useful for visualizing multiple spectra from a single 2D '
+            'array. With an integer coordinate, each coordinate value has a fixed '
+            f'color. A source with more entries than {MAX_ENTRIES} is not shown.'
         ),
         data_requirements=DataRequirements(min_dims=2, max_dims=2),
         factory=Overlay1DPlotter.from_params,
+    )
+
+    # A timeseries plotter: see the comment above 'timeseries' for why it is built
+    # with from_timeseries_params.
+    plotter_registry.register_plotter(
+        name='timeseries_overlay',
+        title='Timeseries Overlay',
+        description=(
+            'Plot the temporal evolution of 1D data with labeled entries, such as '
+            'one value per ROI, as one line per entry. With an integer coordinate, '
+            'each coordinate value has a fixed color, the same as in Overlay 1D and '
+            f'Bars. A source with more entries than {MAX_ENTRIES} is not shown.'
+        ),
+        data_requirements=DataRequirements(
+            min_dims=1,
+            max_dims=1,
+            required_extractor=FullHistoryExtractor,
+            custom_validators=[_entries_are_labelled],
+        ),
+        factory=Overlay1DPlotter.from_timeseries_params,
     )
 
     plotter_registry.register_plotter(

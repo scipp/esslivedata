@@ -18,6 +18,7 @@ from holoviews.plotting.bokeh import BokehRenderer
 from ess.livedata.config.models import Interval, PolygonROI, RectangleROI
 from ess.livedata.config.workflow_spec import DataKey, WorkflowId
 from ess.livedata.dashboard.data_roles import PRIMARY, X_AXIS, Y_AXIS
+from ess.livedata.dashboard.extractors import FullHistoryExtractor
 from ess.livedata.dashboard.plot_params import PlotAspectType
 from ess.livedata.dashboard.plots import TitleResolver
 from ess.livedata.dashboard.plotter_registry import plotter_registry
@@ -98,6 +99,24 @@ def _history(n: int = 10) -> sc.DataArray:
     )
 
 
+def _roi_values() -> sc.DataArray:
+    """A per-ROI scalar output, e.g., counts per ROI."""
+    return _array({'roi': 3}).assign_coords(
+        roi=sc.array(dims=['roi'], values=[0, 1, 4], dtype='int32', unit=None)
+    )
+
+
+def _roi_history(n: int = 10) -> sc.DataArray:
+    """Per-ROI output history shaped like the output of FullHistoryExtractor."""
+    time = _history(n).coords['time']
+    return _array({'time': n, 'roi': 3}).assign_coords(
+        time=time,
+        start_time=time[0],
+        end_time=time[-1],
+        roi=sc.array(dims=['roi'], values=[0, 1, 4], dtype='int32', unit=None),
+    )
+
+
 def _primary(*arrays: sc.DataArray) -> RoleData:
     return {PRIMARY: {_key(f'source{i}'): da for i, da in enumerate(arrays)}}
 
@@ -126,6 +145,7 @@ _DATA: dict[str, Callable[[], RoleData]] = {
     'slicer': lambda: _primary(_array({'z': 2, 'y': 3, 'x': 4})),
     'flatten': lambda: _primary(_array({'a': 2, 'b': 3, 'c': 4})),
     'overlay_1d': lambda: _primary(_array({'roi': 2, 'x': 5}, variances=True)),
+    'timeseries_overlay': lambda: _primary(_roi_history(), _roi_history()),
     'correlation_histogram_1d': lambda: {
         **_primary(_history()),
         X_AXIS: {_key('axis_x'): _history()},
@@ -144,6 +164,13 @@ _DATA: dict[str, Callable[[], RoleData]] = {
     'polygons_request': lambda: _primary(_POLYGONS),
 }
 
+# Further input for plotters with a separate code path per rank: 1D bars carry
+# per-element opts, 1D tables an entry column.
+_DATA_VARIANTS: dict[str, dict[str, Callable[[], RoleData]]] = {
+    'bars': {'1d': lambda: _primary(_roi_values(), _roi_values())},
+    'table': {'1d': lambda: _primary(_roi_values(), _roi_values())},
+}
+
 # Params without which a plotter draws nothing, i.e., has no geometry to show.
 _PARAMS: dict[str, dict[str, Any]] = {
     'rectangles': {'geometry': {'coordinates': '[0, 0, 2, 1]'}},
@@ -155,16 +182,22 @@ _PARAMS: dict[str, dict[str, Any]] = {
 
 
 def _session_cases() -> list:
-    """Each plotter, per aspect where it has one: a fixed aspect adds hooks."""
+    """Each plotter and input, per aspect where it has one: a fixed aspect adds
+    hooks."""
     cases = []
     for name, entry in plotter_registry.items():
-        if 'plot_aspect' in entry.spec.params.model_fields:
-            cases += [
-                pytest.param(name, aspect, id=f'{name}-{aspect.name}')
-                for aspect in (PlotAspectType.free, PlotAspectType.square)
-            ]
-        else:
-            cases.append(pytest.param(name, None, id=name))
+        inputs = {name: _DATA[name]} | {
+            f'{name}-{variant}': make_data
+            for variant, make_data in _DATA_VARIANTS.get(name, {}).items()
+        }
+        for case_id, make_data in inputs.items():
+            if 'plot_aspect' in entry.spec.params.model_fields:
+                cases += [
+                    pytest.param(name, make_data, aspect, id=f'{case_id}-{aspect.name}')
+                    for aspect in (PlotAspectType.free, PlotAspectType.square)
+                ]
+            else:
+                cases.append(pytest.param(name, make_data, None, id=case_id))
     return cases
 
 
@@ -182,9 +215,11 @@ def _make_params(
     return params_cls.model_validate(params)
 
 
-@pytest.mark.parametrize(('plotter_name', 'aspect'), _session_cases())
+@pytest.mark.parametrize(('plotter_name', 'make_data', 'aspect'), _session_cases())
 def test_computed_frame_renders_in_several_sessions(
-    plotter_name: str, aspect: PlotAspectType | None
+    plotter_name: str,
+    make_data: Callable[[], RoleData],
+    aspect: PlotAspectType | None,
 ) -> None:
     """Every browser session renders the one frame that compute() shares.
 
@@ -193,7 +228,7 @@ def test_computed_frame_renders_in_several_sessions(
     (see ``Plotter.style_opts``). Each session gets its own presenter and pipe,
     as in ``SessionComponents.create``.
     """
-    data = _DATA[plotter_name]()
+    data = make_data()
     dims = next((da.dims for da in data.get(PRIMARY, {}).values()), ())
     params = _make_params(plotter_name, aspect, dims)
     plotter = plotter_registry[plotter_name].factory(params)
@@ -220,3 +255,41 @@ def test_session_test_covers_every_plotter() -> None:
     """A newly registered plotter needs input in ``_DATA`` for the session test."""
     assert set(_DATA) == set(plotter_registry.keys())
     assert set(_PARAMS) <= set(plotter_registry.keys())
+    assert set(_DATA_VARIANTS) <= set(plotter_registry.keys())
+
+
+class TestPerEntryPlotters:
+    def test_1d_data_is_offered_bars_table_and_a_full_history_plot(self):
+        compatible = plotter_registry.get_compatible_plotters(
+            {_key('det'): _roi_values()}
+        )
+        assert compatible['bars'].data_requirements.required_extractor is None
+        assert compatible['table'].data_requirements.required_extractor is None
+        assert (
+            compatible['timeseries_overlay'].data_requirements.required_extractor
+            is FullHistoryExtractor
+        )
+
+    def test_scalars_are_offered_bars_but_not_the_per_entry_history(self):
+        compatible = plotter_registry.get_compatible_plotters({_key('det'): _array({})})
+        assert 'bars' in compatible
+        assert 'timeseries_overlay' not in compatible
+
+    @pytest.mark.parametrize(
+        'data',
+        [
+            pytest.param(_array({'toa': 3}), id='physical-coord'),
+            pytest.param(_array({'pixel': 3}).drop_coords('pixel'), id='no-coord'),
+            pytest.param(
+                _array({'roi': 3}).assign_coords(
+                    roi=sc.array(dims=['roi'], values=[0, 1, 2, 3], unit=None)
+                ),
+                id='bin-edge-labels',
+            ),
+        ],
+    )
+    def test_1d_data_without_label_coord_is_offered_lines_only(
+        self, data: sc.DataArray
+    ):
+        compatible = plotter_registry.get_compatible_plotters({_key('det'): data})
+        assert set(compatible) == {'lines'}

@@ -5,9 +5,9 @@
 from __future__ import annotations
 
 import weakref
-from collections.abc import Callable, Iterable, Iterator
+from collections.abc import Callable, Iterable, Iterator, Sequence
 from dataclasses import dataclass
-from typing import Any, ClassVar
+from typing import Any, ClassVar, Self
 
 import holoviews as hv
 import numpy as np
@@ -37,6 +37,7 @@ from .plot_params import (
     PlotParams2d,
     PlotParamsBars,
     PlotParamsTimeseries,
+    PlotParamsTimeseriesOverlay,
     PlotScale,
     PlotScaleParams,
     PlotScaleParams2d,
@@ -1289,6 +1290,54 @@ def _line1d_style_opts(
     ]
 
 
+#: Largest number of entries drawn per source, one curve, bar or row each.
+#: Measured with 100-1000 points per curve, one update of N curves takes 0.3-0.6 s
+#: to compute and 0.5-1.6 s to build in Bokeh for N=50, and 0.8-2.2 s and 1.3-3.7 s
+#: for N=100. 100 curves thus exceed the 1 s update period and freeze the
+#: dashboard. HoloViews also fails outright at 1000 bars (recursion limit).
+MAX_ENTRIES = 50
+
+
+def check_entry_limit(dim: str, size: int) -> None:
+    """Raise if ``size`` entries along ``dim`` exceed :data:`MAX_ENTRIES`."""
+    if size > MAX_ENTRIES:
+        raise ValueError(
+            f"{size} entries along '{dim}'; at most {MAX_ENTRIES} can be drawn."
+        )
+
+
+def entry_coord_values(da: sc.DataArray, dim: str) -> np.ndarray:
+    """Values labeling the entries of ``da`` along ``dim``, one per entry.
+
+    These are the values of the coord of ``dim``, its midpoints if it holds bin
+    edges, or the indices ``0..n-1`` if there is no such coord.
+    """
+    if dim not in da.coords:
+        return np.arange(da.sizes[dim])
+    coord = da.coords[dim]
+    if da.coords.is_edges(dim, dim):
+        if da.sizes[dim] == 0:
+            # sc.midpoints requires at least two edges.
+            return coord.values[:0]
+        coord = sc.midpoints(coord, dim=dim)
+    return coord.values
+
+
+def _entry_colors(coord_values: np.ndarray, colors: Sequence[str]) -> list[str]:
+    """Color per entry: by integer coord value, else by position.
+
+    Integer coords (e.g. ROI indices) give each entry a stable color even when
+    the set of entries changes between updates. For non-integer coords (e.g.
+    distances in metres) ``int()`` would collapse nearby values onto the same
+    color, so the position is used instead.
+    """
+    by_value = np.issubdtype(coord_values.dtype, np.integer)
+    return [
+        colors[(int(v) if by_value else i) % len(colors)]
+        for i, v in enumerate(coord_values)
+    ]
+
+
 def _with_index_edges(data: sc.DataArray, dim: str) -> sc.DataArray:
     """Give ``dim`` bin edges centred on the indices ``0..n-1`` if it has no coord.
 
@@ -1372,7 +1421,8 @@ class LinePlotter(Plotter):
         *,
         mode: str = 'line',
         errors: str = 'bars',
-        **kwargs,
+        downsampling: TimeseriesDownsamplingParams | None = None,
+        **kwargs: Any,
     ):
         """
         Initialize the line plotter.
@@ -1387,6 +1437,9 @@ class LinePlotter(Plotter):
             Rendering mode: 'line', 'points', or 'histogram'.
         errors:
             Error display mode: 'bars', 'band', or 'none'.
+        downsampling:
+            Time-based downsampling and update throttling of a timeseries, or
+            None to draw every update in full.
         **kwargs:
             Additional keyword arguments passed to the base class.
         """
@@ -1401,14 +1454,21 @@ class LinePlotter(Plotter):
             'logy': self._logy,
             **self._make_tick_opts(tick_params),
         }
-        self._downsampling: TimeseriesDownsamplingParams | None = None
+        self._downsampling = downsampling
         self._last_compute_data_time_ns: int | None = None
 
     @classmethod
     def from_display_params(
-        cls, params: PlotDisplayParams1d, *, normalize_to_rate: bool = False
-    ):
-        """Create LinePlotter from display parameters."""
+        cls,
+        params: PlotDisplayParams1d,
+        *,
+        normalize_to_rate: bool = False,
+        **kwargs: Any,
+    ) -> Self:
+        """Create LinePlotter from display parameters.
+
+        ``kwargs`` are passed on to the constructor.
+        """
         return cls(
             layout_params=params.layout,
             legend_position=params.legend.position,
@@ -1418,17 +1478,20 @@ class LinePlotter(Plotter):
             mode=params.line.mode,
             errors=params.line.errors,
             normalize_to_rate=normalize_to_rate,
+            **kwargs,
         )
 
     @classmethod
-    def from_params(cls, params: PlotParams1d):
-        """Create LinePlotter from PlotParams1d."""
+    def from_params(cls, params: PlotParams1d, **kwargs: Any) -> Self:
+        """Create LinePlotter from PlotParams1d; ``kwargs`` go to the constructor."""
         return cls.from_display_params(
-            params, normalize_to_rate=params.rate.normalize_to_rate
+            params, normalize_to_rate=params.rate.normalize_to_rate, **kwargs
         )
 
     @classmethod
-    def from_timeseries_params(cls, params: PlotParamsTimeseries):
+    def from_timeseries_params(
+        cls, params: PlotParamsTimeseries, **kwargs: Any
+    ) -> Self:
         """Create LinePlotter for the timeseries plotter, with downsampling on.
 
         The x-axis is always datetime, so only the y-axis scale is configurable
@@ -1437,8 +1500,10 @@ class LinePlotter(Plotter):
         Downsampling and update throttling live at the plotter rather than at
         the extractor: the subscription still pulls the full-history, and
         per-plot config can change without re-subscribing.
+
+        ``kwargs`` are passed on to the constructor.
         """
-        instance = cls(
+        return cls(
             layout_params=params.layout,
             legend_position=params.legend.position,
             aspect_params=params.plot_aspect,
@@ -1446,9 +1511,9 @@ class LinePlotter(Plotter):
             tick_params=params.ticks,
             mode=params.line.mode,
             errors=params.line.errors,
+            downsampling=params.downsampling,
+            **kwargs,
         )
-        instance._downsampling = params.downsampling
-        return instance
 
     def compute(
         self,
@@ -1680,7 +1745,14 @@ class ImagePlotter(Plotter):
 
 
 class BarsPlotter(Plotter):
-    """Plotter for bar charts of 0D scalar data."""
+    """Plotter for bar charts of 0D scalar data or 1D data, one bar per entry.
+
+    1D data gives one bar per entry along its dimension, grouped by source and
+    colored like the curves of :class:`Overlay1DPlotter`. Entries are labeled by
+    their coord value, or by the bin midpoint for a bin-edge coord. All datasets
+    of a layer must have the same rank: 0D and 1D bars cannot share a
+    categorical axis.
+    """
 
     AUTOSCALE_AXES: ClassVar[frozenset[Axis]] = frozenset()
 
@@ -1688,7 +1760,7 @@ class BarsPlotter(Plotter):
         self,
         *,
         horizontal: bool = False,
-        **kwargs,
+        **kwargs: Any,
     ):
         """
         Initialize the bars plotter.
@@ -1702,6 +1774,7 @@ class BarsPlotter(Plotter):
         """
         super().__init__(**kwargs)
         self._horizontal = horizontal
+        self._colors = hv.Cycle.default_cycles["default_colors"]
         self._bars_opts: dict[str, Any] = {
             'invert_axes': horizontal,
             'show_legend': False,
@@ -1724,6 +1797,23 @@ class BarsPlotter(Plotter):
             normalize_to_rate=params.rate.normalize_to_rate,
         )
 
+    def _build_result(
+        self,
+        data: dict[DataKey, sc.DataArray],
+        resolver: TitleResolver,
+        **kwargs,
+    ) -> hv.Element:
+        # Bokeh validates the axis factors of 0D bars (source) and 1D bars
+        # (source, entry) together and fails when rendering, so mixed ranks are
+        # rejected here, where the failure becomes an error frame.
+        ranks = sorted({da.ndim for da in data.values()})
+        if len(ranks) > 1:
+            raise ValueError(
+                f"Cannot draw {' and '.join(f'{r}D' for r in ranks)} data as bars "
+                "in one plot."
+            )
+        return super()._build_result(data, resolver, **kwargs)
+
     def plot(
         self,
         data: sc.DataArray,
@@ -1734,23 +1824,45 @@ class BarsPlotter(Plotter):
         output_display_name: str = '',
         **kwargs,
     ) -> hv.Bars:
-        """Create a bar chart from a 0D scipp DataArray."""
-        if data.ndim != 0:
-            raise ValueError(f"Expected 0D data, got {data.ndim}D")
+        """Create a bar chart from a 0D or 1D scipp DataArray."""
+        if data.ndim > 1:
+            raise ValueError(f"Expected 0D or 1D data, got {data.ndim}D")
 
         bar_label = source_display_name or data_key.source_name
-        value = float(data.value)
         unit = str(data.unit) if data.unit is not None else None
         vdim_label = output_display_name or data_key.output_name or 'values'
         vdim = hv.Dimension(
             data_key.output_name or 'values', label=vdim_label, unit=unit
         )
+        if data.ndim == 0:
+            return hv.Bars(
+                [(bar_label, float(data.value))],
+                kdims=['source'],
+                vdims=[vdim],
+                label=label,
+            )
+
+        (dim,) = data.dims
+        check_entry_limit(dim, data.sizes[dim])
+        coord = entry_coord_values(data, dim)
+        if coord.size == 0:
+            # The first frame fixes the axis type, and a categorical axis needs
+            # a category.
+            entries, values, colors = [f'no {dim}'], [np.nan], self._colors[:1]
+        else:
+            entries = [f'{dim}={v}' for v in coord]
+            values, colors = data.values, _entry_colors(coord, self._colors)
+        kdims = ['source', dim]
+        # Static opts are declared once in style_opts(). These two stay per
+        # element: only 1D bars carry a 'color' column, since an explicit color on
+        # 0D bars would override HoloViews' color cycle, which tells sources and
+        # layers sharing a cell apart. The tooltips leave out that column and name
+        # the vdim, which is named after the output.
         return hv.Bars(
-            [(bar_label, value)],
-            kdims=['source'],
-            vdims=[vdim],
-            label=label,
-        )
+            ([bar_label] * len(entries), entries, values, colors),
+            kdims=kdims,
+            vdims=[vdim, 'color'],
+        ).opts(color='color', hover_tooltips=[*kdims, vdim.name])
 
     def style_opts(self) -> list[hv.Options]:
         return [
@@ -1759,36 +1871,36 @@ class BarsPlotter(Plotter):
         ]
 
 
-class Overlay1DPlotter(Plotter):
+class Overlay1DPlotter(LinePlotter):
     """
-    Plotter that slices 2D data along the first dimension and overlays as 1D elements.
+    Plotter that slices 2D data along the first dimension and overlays as 1D curves.
 
-    Takes 2D data with dims [slice_dim, plot_dim] and creates an overlay of 1D elements,
-    one for each position along the first dimension. Useful for visualizing multiple
-    spectra (e.g., ROI spectra) from a single 2D array.
+    Takes 2D data with dims [entry_dim, plot_dim] and creates an overlay of 1D curves,
+    one for each entry along the first dimension. Useful for visualizing multiple
+    spectra (e.g., ROI spectra) from a single 2D array. Created with
+    :meth:`from_timeseries_params`, it takes the history of 1D data instead, with
+    dims [time, entry_dim] in any order, and draws one timeseries per entry.
 
     Colors are assigned by coordinate value when coordinates are integer-like,
     providing stable color identity across updates. For non-integer coordinates
     colors are assigned by position, since rounding values to an integer color
     index would collapse closely-spaced coordinates onto the same color.
 
-    Supports the same line style options (mode, errors) as LinePlotter.
+    Supports the same line style options (mode, errors) and timeseries
+    downsampling as LinePlotter. Data with more than :data:`MAX_ENTRIES` entries
+    is rejected rather than drawn.
     """
-
-    AUTOSCALE_AXES: ClassVar[frozenset[Axis]] = frozenset({'x', 'y'})
-    FITS_Y_TO_VISIBLE_X: ClassVar[bool] = True
 
     def __init__(
         self,
         scale_opts: PlotScaleParams,
         tick_params: TickParams | None = None,
         *,
-        mode: str = 'line',
-        errors: str = 'bars',
-        **kwargs,
+        time_as_x: bool = False,
+        **kwargs: Any,
     ):
         """
-        Initialize the overlay 1D plotter.
+        Initialize the overlay plotter.
 
         Parameters
         ----------
@@ -1796,38 +1908,19 @@ class Overlay1DPlotter(Plotter):
             Scaling options for axes.
         tick_params:
             Tick configuration parameters.
-        mode:
-            Rendering mode: 'line', 'points', or 'histogram'.
-        errors:
-            Error display mode: 'bars', 'band', or 'none'.
+        time_as_x:
+            If True, the data is a history with a ``time`` dim, which becomes the
+            x-axis of one curve per entry along the other dim.
         **kwargs:
-            Additional keyword arguments passed to the base class.
+            Additional keyword arguments passed to :class:`LinePlotter`.
         """
-        super().__init__(**kwargs)
-        self._mode = mode
-        self._errors = errors
-        self._logx = scale_opts.x_scale == PlotScale.log
-        self._logy = scale_opts.y_scale == PlotScale.log
-        self._base_opts: dict[str, Any] = {
-            'logx': self._logx,
-            'logy': self._logy,
-            **self._make_tick_opts(tick_params),
-        }
-        self._colors = hv.Cycle.default_cycles["default_colors"]
+        super().__init__(scale_opts, tick_params, **kwargs)
+        self._time_as_x = time_as_x
 
     @classmethod
-    def from_params(cls, params: PlotParams1d):
-        """Create Overlay1DPlotter from PlotParams1d."""
-        return cls(
-            layout_params=LayoutParams(combine_mode=CombineMode.overlay),
-            legend_position=params.legend.position,
-            aspect_params=params.plot_aspect,
-            scale_opts=params.plot_scale,
-            tick_params=params.ticks,
-            normalize_to_rate=params.rate.normalize_to_rate,
-            mode=params.line.mode,
-            errors=params.line.errors,
-        )
+    def from_timeseries_params(cls, params: PlotParamsTimeseriesOverlay) -> Self:
+        """Create Overlay1DPlotter for the history of 1D data, one curve per entry."""
+        return super().from_timeseries_params(params, time_as_x=True)
 
     def plot(
         self,
@@ -1847,17 +1940,22 @@ class Overlay1DPlotter(Plotter):
         del kwargs, label  # Unused
         if data.ndim != 2:
             raise ValueError(f"Expected 2D data, got {data.ndim}D")
+        if self._time_as_x:
+            (entry_dim,) = (dim for dim in data.dims if dim != 'time')
+            data = data.transpose([entry_dim, 'time'])
 
-        slice_dim = data.dims[0]
+        slice_dim, plot_dim = data.dims
         slice_size = data.sizes[slice_dim]
+        check_entry_limit(slice_dim, slice_size)
 
         if slice_size == 0:
-            return hv.Curve([])
+            # The first frame fixes the axis type, so the empty frame must carry
+            # the type of the x values that follow (e.g. datetime for a history).
+            x = data.coords[plot_dim].values[:0] if plot_dim in data.coords else []
+            return hv.Curve((x, []))
 
-        data = _with_index_edges(data, data.dims[1])
-        actual_mode, plot_data = _resolve_line1d_mode(
-            self._mode, data, dim=data.dims[1]
-        )
+        data = _with_index_edges(data, plot_dim)
+        actual_mode, plot_data = _resolve_line1d_mode(self._mode, data, dim=plot_dim)
         targets, self._pending_y_extents[data_key] = _line1d_range_targets(
             data,
             plot_data,
@@ -1869,17 +1967,8 @@ class Overlay1DPlotter(Plotter):
         if targets:
             self._pending_range_targets[data_key] = targets
 
-        # Get coordinate values for labels and colors
-        if slice_dim in data.coords:
-            coord_values = data.coords[slice_dim].values
-        else:
-            coord_values = np.arange(slice_size)
-
-        # Integer coords (e.g. ROI indices) color by value, giving each slice a
-        # stable color even when the set of slices changes between updates. For
-        # non-integer coords (e.g. distances in metres) ``int()`` would collapse
-        # nearby values onto the same color, so fall back to position instead.
-        color_by_value = np.issubdtype(coord_values.dtype, np.integer)
+        coord_values = entry_coord_values(data, slice_dim)
+        slice_colors = _entry_colors(coord_values, self._colors)
 
         data = plot_data
         use_histogram = actual_mode == 'histogram'
@@ -1895,10 +1984,9 @@ class Overlay1DPlotter(Plotter):
             if output_display_name:
                 slice_data.name = output_display_name
             coord_val = coord_values[i]
-
-            color_idx = (int(coord_val) if color_by_value else i) % len(self._colors)
-            color = self._colors[color_idx]
-
+            # Per-slice ``color`` stays on the elements; the rest is static in
+            # style_opts().
+            color = slice_colors[i]
             curve_label = f"{slice_dim}={coord_val}" if label_slices else ''
             converter = HvConverter1d(
                 slice_data, value_label=output_display_name, dim_label=dim_label
@@ -1929,10 +2017,3 @@ class Overlay1DPlotter(Plotter):
         if len(elements) == 1:
             return elements[0]
         return hv.Overlay(elements)
-
-    def style_opts(self) -> list[hv.Options]:
-        # Per-slice ``color`` stays on the elements in plot(); the rest is static.
-        return [
-            *_line1d_style_opts(self._base_opts, self._sizing_opts),
-            *super().style_opts(),
-        ]

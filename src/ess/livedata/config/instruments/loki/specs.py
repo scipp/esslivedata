@@ -252,11 +252,11 @@ register_monitor_workflow_specs(
 # with an identity logical projection to get per-pixel counts with TOA histogramming.
 # detector_number is hard-coded because current NeXus files do not contain
 # pixel IDs for this monitor.
+_m3_detector_number = sc.array(
+    dims=['detector_number'], values=[4, 5, 6, 7, 8], unit=None
+)
 instrument.configure_pixellated_monitor(
-    'beam_monitor_m3',
-    detector_number=sc.array(
-        dims=['detector_number'], values=[4, 5, 6, 7, 8], unit=None
-    ),
+    'beam_monitor_m3', detector_number=_m3_detector_number
 )
 instrument.add_logical_view(
     name='monitor_counts_per_pixel',
@@ -265,7 +265,11 @@ instrument.add_logical_view(
     source_names=['beam_monitor_m3'],
     group=MONITORS,
     roi_support=False,
-    output_ndim=1,
+    # The pixel IDs label the entries, so the dashboard offers Bars and Table.
+    output_template=sc.DataArray(
+        sc.zeros(sizes={'detector_number': 0}),
+        coords={'detector_number': _m3_detector_number[:0]},
+    ),
 )
 
 xy_projection_handle = instrument.register_detector_view(

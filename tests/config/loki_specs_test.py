@@ -5,6 +5,7 @@
 import pytest
 
 from ess.livedata.config.instruments.loki.specs import instrument, loki_aux_sources
+from ess.livedata.dashboard.plotter_registry import plotter_registry
 
 
 @pytest.mark.parametrize('input_name', ['incident_monitor', 'transmission_monitor'])
@@ -18,3 +19,17 @@ def test_monitor_choices_are_registered_monitors(input_name: str) -> None:
 
     assert set(aux_input.choices) <= set(instrument.monitors)
     assert aux_input.default in aux_input.choices
+
+
+def test_pixellated_monitor_is_offered_bars_and_table() -> None:
+    """The template labels the monitor pixels, as the published output does."""
+    (spec,) = (
+        reg.spec
+        for reg in instrument.workflow_factory.registrations()
+        if reg.spec.name == 'monitor_counts_per_pixel'
+    )
+    template = spec.get_output_template('image')
+
+    compatible = plotter_registry.get_compatible_plotters({'image': template})
+
+    assert {'bars', 'table'} <= set(compatible)

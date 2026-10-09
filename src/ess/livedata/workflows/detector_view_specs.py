@@ -270,7 +270,7 @@ def _make_0d_template() -> sc.DataArray:
 def _make_roi_coords() -> dict[str, sc.Variable]:
     """Create the empty coords shared by all per-ROI outputs."""
     return {
-        'roi': sc.array(dims=['roi'], values=[], unit=None),
+        'roi': sc.array(dims=['roi'], values=[], unit=None, dtype='int32'),
         DETECTOR_PIXELS_COORD: sc.array(dims=['roi'], values=[], dtype='float64'),
     }
 
@@ -480,6 +480,7 @@ def _make_spectrum_template(output_dims: list[str]) -> sc.DataArray:
 def make_detector_view_outputs(
     output_ndim: int | None = None,
     *,
+    output_template: sc.DataArray | None = None,
     roi_support: bool = True,
     spectrum_view: SpectrumViewSpec | None = None,
 ) -> type[DetectorViewOutputsBase]:
@@ -491,6 +492,10 @@ def make_detector_view_outputs(
     output_ndim:
         Number of dimensions for spatial outputs (cumulative, current).
         The counts outputs remain 0D scalars. If None, uses 2D default.
+    output_template:
+        Template for the spatial outputs, in place of the generic one of
+        ``output_ndim`` dims. For outputs whose dims and coords are known when
+        the spec is registered; the dashboard selects plotters by them.
     roi_support:
         Whether to include the ROI outputs.
     spectrum_view:
@@ -507,12 +512,16 @@ def make_detector_view_outputs(
         DetectorViewOutputs if roi_support else DetectorViewOutputsBase
     )
 
-    if output_ndim is None and spectrum_view is None:
+    if output_ndim is not None and output_template is not None:
+        raise ValueError("Pass either output_ndim or output_template, not both.")
+    if output_ndim is None and output_template is None and spectrum_view is None:
         return base_class
 
-    if output_ndim is not None:
+    if output_ndim is not None or output_template is not None:
 
         def make_template() -> sc.DataArray:
+            if output_template is not None:
+                return output_template.copy()
             return _make_nd_template(output_ndim)
 
         class _WithNdim(base_class):  # type: ignore[valid-type,misc]

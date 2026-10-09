@@ -553,6 +553,10 @@ class PlotParams1d(RateMixin, TimeWindowMixin, PlotDisplayParams1d):
     """Common parameters for 1D plots with windowing support."""
 
 
+class PlotParamsTimeseriesOverlay(PlotParamsTimeseries):
+    """Parameters for timeseries plots with one curve per entry."""
+
+
 class PlotParams2d(RateMixin, TimeWindowMixin, PlotDisplayParams2d):
     """Common parameters for 2D plots with windowing support."""
 
@@ -572,7 +576,7 @@ class BarOrientation(pydantic.BaseModel):
 
 
 class PlotParamsBars(RateMixin, TimeWindowMixin, PlotParamsBase):
-    """Parameters for bar plots of 0D scalar data."""
+    """Parameters for bar plots of 0D scalar data or 1D data, one bar per entry."""
 
     orientation: BarOrientation = pydantic.Field(
         default_factory=BarOrientation,
@@ -618,7 +622,7 @@ class TableFormatParams(pydantic.BaseModel):
 
 
 class PlotParamsTable(RateMixin, TimeWindowMixin, PlotParamsBase):
-    """Parameters for tabular display of 0D scalar data."""
+    """Parameters for tabular display of 0D scalar data or 1D data."""
 
     format: TableFormatParams = pydantic.Field(
         default_factory=TableFormatParams,
