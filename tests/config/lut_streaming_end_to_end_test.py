@@ -571,7 +571,7 @@ def test_dream_prod_setpoints_empty_the_consumer(dream: Instrument) -> None:
 
     assert not reply.has_error, reply.error_message
     assert result.error_message is None, result.error_message
-    assert result.data['current'].sum().value == 0
+    assert result.data['current'].nansum().value == 0
 
 
 @pytest.fixture(scope='module')

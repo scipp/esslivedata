@@ -14,13 +14,13 @@ def test_weighting_method_values():
 
 def test_pixel_weighting_defaults():
     weight = models.PixelWeighting()
-    assert not weight.enabled
+    assert weight.enabled
     assert weight.method == models.WeightingMethod.PIXEL_NUMBER
 
 
 def test_pixel_weighting_custom():
-    weight = models.PixelWeighting(enabled=True)
-    assert weight.enabled
+    weight = models.PixelWeighting(enabled=False)
+    assert not weight.enabled
 
 
 def test_pixel_weighting_invalid_method():

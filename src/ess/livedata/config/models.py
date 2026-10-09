@@ -19,21 +19,26 @@ TimeUnit = Literal['ns', 'us', 'μs', 'ms', 's']
 
 class WeightingMethod(StrEnum):
     """
-    Methods for pixel weighting.
+    How the weight of an image pixel is computed.
 
-    - PIXEL_NUMBER: Weight by the number of detector pixels contributing to each screen
-        pixel.
+    - PIXEL_NUMBER: The number of detector pixels that map to the image pixel.
     """
 
     PIXEL_NUMBER = 'pixel_number'
 
 
 class PixelWeighting(BaseModel):
-    """Setting for pixel weighting."""
+    """Divides a detector image by a weight per image pixel."""
 
-    enabled: bool = Field(default=False, description="Enable pixel weighting.")
+    enabled: bool = Field(
+        default=True,
+        description="Divide each image pixel by its weight, so that the image shows "
+        "counts per detector pixel.",
+    )
     method: WeightingMethod = Field(
-        default=WeightingMethod.PIXEL_NUMBER, description="Method for pixel weighting."
+        default=WeightingMethod.PIXEL_NUMBER,
+        description="How the weight of an image pixel is computed. 'pixel_number': "
+        "the number of detector pixels that map to the image pixel.",
     )
 
 
