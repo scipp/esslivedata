@@ -3777,7 +3777,7 @@ class TestDetectorPixelNormalization:
 
         line = single_layer(plotter)
         np.testing.assert_allclose(line.dimension_values(1), [1, 2])
-        assert line.vdims[0].unit == 'counts per detector pixel'
+        assert line.vdims[0].unit == 'counts/pixel'
 
     def test_combines_with_rate_to_counts_per_second_per_pixel(self, data_key):
         plotter = plots.Overlay1DPlotter.from_params(_per_pixel_params(rate=True))
@@ -3789,7 +3789,7 @@ class TestDetectorPixelNormalization:
         curves = _curves_by_label(plotter)
         np.testing.assert_allclose(curves['roi=0'].dimension_values(1), [0.5, 1.0])
         np.testing.assert_allclose(curves['roi=1'].dimension_values(1), [1.0, 2.0])
-        assert curves['roi=0'].vdims[0].unit == 'counts/s per detector pixel'
+        assert curves['roi=0'].vdims[0].unit == 'counts/pixel/s'
 
     def test_roi_without_detector_pixels_shows_no_value(self, data_key):
         plotter = plots.Overlay1DPlotter.from_params(_per_pixel_params())
@@ -3821,7 +3821,7 @@ class TestDetectorPixelNormalization:
 
         (bars,) = plotter.get_cached_state().traverse(lambda el: el, [hv.Bars])
         np.testing.assert_allclose(bars.dimension_values(2), [1.0, 2.0])
-        assert bars.vdims[0].unit == 'counts per detector pixel'
+        assert bars.vdims[0].unit == 'counts/pixel'
 
     def test_table_divides_each_roi_by_its_own_pixel_count(self, data_key):
         totals = _roi_spectra([[4.0, 0.0], [3.0, 0.0]], [4.0, 1.5])['toa', 0]
@@ -3831,7 +3831,7 @@ class TestDetectorPixelNormalization:
 
         (table,) = plotter.get_cached_state().traverse(lambda el: el, [hv.Table])
         np.testing.assert_allclose(table.dimension_values(table.vdims[0]), [1, 2])
-        assert table.vdims[0].unit == 'counts per detector pixel'
+        assert table.vdims[0].unit == 'counts/pixel'
 
     def test_timeseries_overlay_divides_each_roi_by_its_own_pixel_count(self, data_key):
         history = _roi_history(rois=(0, 1), n=2)
@@ -3846,7 +3846,7 @@ class TestDetectorPixelNormalization:
         # history values are [[1, 2], [3, 4]] along (time, roi)
         np.testing.assert_allclose(curves['roi=0'].dimension_values(1), [1.0, 3.0])
         np.testing.assert_allclose(curves['roi=1'].dimension_values(1), [1.0, 2.0])
-        assert curves['roi=0'].vdims[0].unit == 'counts per detector pixel'
+        assert curves['roi=0'].vdims[0].unit == 'counts/pixel'
 
     def test_missing_coord_shows_error_instead_of_unnormalized_data(self, data_key):
         data = _roi_spectra([[4.0, 8.0], [3.0, 6.0]], [4.0, 1.5])

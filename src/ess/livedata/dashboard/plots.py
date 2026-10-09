@@ -965,12 +965,14 @@ class Plotter:
         """Unit label of the plotted values of normalized data ``da``.
 
         scipp has no unit for a detector pixel, so the per-detector-pixel
-        normalization shows only in this label.
+        normalization shows only in this label: ``pixel`` goes after the numerator,
+        e.g. counts/pixel or counts/pixel/s.
         """
         if da.unit is None:
             return None
         if self._normalize_per_detector_pixel:
-            return f'{da.unit} per detector pixel'
+            numerator, slash, denominator = str(da.unit).partition('/')
+            return f'{numerator}/pixel{slash}{denominator}'
         return str(da.unit)
 
     def _normalize(
