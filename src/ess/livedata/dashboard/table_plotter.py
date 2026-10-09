@@ -107,7 +107,8 @@ class TablePlotter(Plotter):
         """Create TablePlotter from PlotParamsTable."""
         return cls(
             aspect_params=params.plot_aspect,
-            normalize_to_rate=params.rate.normalize_to_rate,
+            normalize_per_detector_pixel=params.normalization.per_detector_pixel,
+            normalize_to_rate=params.normalization.per_second,
             notation=params.format.notation,
             precision=params.format.precision,
         )
@@ -171,7 +172,7 @@ class TablePlotter(Plotter):
             rows += [resolver.source(data_key.source_name)] * len(da_entries)
             entries += da_entries
             values += da_values
-            units += ['' if da.unit is None else str(da.unit)] * len(da_entries)
+            units += [self._value_unit(da) or ''] * len(da_entries)
         if self._notation is TableNotation.decimal and self._precision < 0:
             # Negative precision rounds the magnitude (e.g. -3 -> thousands);
             # numbro format strings cannot express this, so round the values.

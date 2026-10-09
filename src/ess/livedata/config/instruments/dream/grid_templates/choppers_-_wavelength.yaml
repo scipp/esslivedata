@@ -37,8 +37,8 @@ cells:
         mode: window
         window_duration_seconds: 0.0
         aggregation: auto
-      rate:
-        normalize_to_rate: false
+      normalization:
+        per_second: false
 - geometry:
     row: 0
     col: 2
@@ -72,8 +72,8 @@ cells:
         mode: window
         window_duration_seconds: 0.0
         aggregation: auto
-      rate:
-        normalize_to_rate: false
+      normalization:
+        per_second: false
   - data_sources:
       primary:
         workflow_id: static/geometric/1

@@ -19,7 +19,6 @@ from .plots import (
     Plotter,
     PresenterBase,
     _hv_axis_padding,
-    _normalize_to_rate,
     _pad_range,
 )
 from .range_hook import Axis
@@ -294,7 +293,7 @@ class SlicerPlotter(Plotter):
             tick_params=params.ticks,
             layout_params=params.layout,
             aspect_params=params.plot_aspect,
-            normalize_to_rate=params.rate.normalize_to_rate,
+            normalize_to_rate=params.normalization.per_second,
         )
 
     def compute(self, data: dict[str, dict[DataKey, sc.DataArray]], **kwargs) -> None:
@@ -315,9 +314,7 @@ class SlicerPlotter(Plotter):
             Unused (required by base class signature).
         """
         del kwargs  # Unused for SlicerPlotter
-        data = data.get(PRIMARY, {})
-        if self._normalize_to_rate:
-            data = {key: _normalize_to_rate(da) for key, da in data.items()}
+        data = self._normalize(data.get(PRIMARY, {}))
         # With manual color limits the fixed clim is declared once in base_opts;
         # skip the data-derived clim so it neither overrides the manual value per
         # slice nor produces a 'c' autoscale target.

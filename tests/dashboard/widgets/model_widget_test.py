@@ -124,3 +124,34 @@ class TestModelWidget:
 
         assert params.visible.a == 1
         assert params.hidden.b == 99
+
+    def test_hidden_sub_field_keeps_its_default_and_the_group_its_other_fields(
+        self,
+    ) -> None:
+        class Inner(pydantic.BaseModel):
+            shown: bool = False
+            hidden: bool = False
+
+        class Outer(pydantic.BaseModel):
+            group: Inner = pydantic.Field(default_factory=Inner)
+
+        widget = ModelWidget(
+            Outer,
+            initial_values={'group': {'shown': True, 'hidden': True}},
+            hidden_fields=frozenset({'group.hidden'}),
+        )
+
+        assert set(widget.get_parameter_widget('group').widgets) == {'shown'}
+        assert widget.parameter_values.group == Inner(shown=True, hidden=False)
+
+    def test_group_with_all_sub_fields_hidden_is_hidden(self) -> None:
+        class Inner(pydantic.BaseModel):
+            a: bool = False
+
+        class Outer(pydantic.BaseModel):
+            group: Inner = pydantic.Field(default_factory=Inner)
+
+        widget = ModelWidget(Outer, hidden_fields=frozenset({'group.a'}))
+
+        assert widget.get_parameter_widget('group') is None
+        assert widget.param_group_tabs == []

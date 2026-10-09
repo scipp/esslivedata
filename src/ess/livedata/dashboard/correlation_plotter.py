@@ -42,7 +42,7 @@ from .plots import (
 from .range_hook import Axis, RangeTargets
 
 
-class NormalizationParams(pydantic.BaseModel):
+class CorrelationNormalizationParams(pydantic.BaseModel):
     per_second: bool = pydantic.Field(
         default=False,
         description="Divide data by time bin width to obtain a rate. When enabled, "
@@ -52,8 +52,8 @@ class NormalizationParams(pydantic.BaseModel):
 
 
 class _CorrelationHistogramBase(pydantic.BaseModel):
-    normalization: NormalizationParams = pydantic.Field(
-        default_factory=NormalizationParams,
+    normalization: CorrelationNormalizationParams = pydantic.Field(
+        default_factory=CorrelationNormalizationParams,
         title="Normalization",
         description="Options for normalizing the correlation histogram.",
     )

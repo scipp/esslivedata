@@ -9,7 +9,9 @@ import enum
 from enum import StrEnum
 
 import pydantic
+import scipp as sc
 
+from ..config.roi_names import DETECTOR_PIXELS_COORD
 from ..config.workflow_spec import Windowing
 
 
@@ -338,12 +340,29 @@ class PlotDisplayParams2d(PlotParamsBase):
 class RateNormalizationParams(pydantic.BaseModel):
     """Parameters for normalizing counts to rate (counts per second)."""
 
-    normalize_to_rate: bool = pydantic.Field(
+    per_second: bool = pydantic.Field(
         default=False,
         description="Display as rate (counts per second) by dividing by the "
         "time duration between start_time and end_time.",
         title="Counts Per Second",
     )
+
+
+class DetectorPixelNormalizationParams(pydantic.BaseModel):
+    """Parameters for normalizing per-ROI values to one detector pixel."""
+
+    per_detector_pixel: bool = pydantic.Field(
+        default=False,
+        description="Divide each ROI's values by the number of detector pixels "
+        "inside the ROI, so that ROIs of different size can be compared. A detector "
+        "pixel is one detector element, not an image pixel. Combined with 'Counts "
+        "Per Second', this gives counts per second per detector pixel.",
+        title="Per Detector Pixel",
+    )
+
+
+class NormalizationParams(DetectorPixelNormalizationParams, RateNormalizationParams):
+    """Parameters for normalizing to rate and to one detector pixel."""
 
 
 class WindowModeMixin(pydantic.BaseModel, abc.ABC):
@@ -399,7 +418,7 @@ class TimeWindowMixin(WindowModeMixin):
             "differ from the requested duration when it does not align with "
             "the reduction's current cadence. To compare values across "
             "different cadences or window durations, enable 'Counts Per Second' "
-            "in the 'Rate' tab."
+            "in the 'Normalization' tab."
         ),
         title="Time Window",
     )
@@ -426,9 +445,51 @@ class TimeWindowMixin(WindowModeMixin):
 class RateMixin(pydantic.BaseModel):
     """Mixin adding a rate-normalization section to plot parameters."""
 
-    rate: RateNormalizationParams = pydantic.Field(
+    normalization: RateNormalizationParams = pydantic.Field(
         default_factory=RateNormalizationParams,
-        description="Rate normalization options.",
+        title="Normalization",
+    )
+
+
+class DetectorPixelMixin(pydantic.BaseModel):
+    """Mixin adding a per-detector-pixel normalization section to plot parameters."""
+
+    normalization: DetectorPixelNormalizationParams = pydantic.Field(
+        default_factory=DetectorPixelNormalizationParams,
+        title="Normalization",
+    )
+
+    @classmethod
+    def hidden_pixel_fields(cls, template: sc.DataArray | None) -> frozenset[str]:
+        """Return this class's fields whose control the output cannot back.
+
+        The option divides by the ``detector_pixels`` coord, so it is offered only
+        when the output template declares that coord. Unlike
+        :meth:`WindowModeMixin.hidden_fields` this is strict for outputs without a
+        template: an option that fails on every update is worse than one that is
+        absent.
+
+        Parameters
+        ----------
+        template:
+            Template of the selected output, None if it has none.
+
+        Returns
+        -------
+        :
+            Dotted paths of the sub-fields to omit from the config UI.
+        """
+        if template is not None and DETECTOR_PIXELS_COORD in template.coords:
+            return frozenset()
+        return frozenset({'normalization.per_detector_pixel'})
+
+
+class NormalizationMixin(DetectorPixelMixin, RateMixin):
+    """Mixin adding rate and per-detector-pixel normalization in one section."""
+
+    normalization: NormalizationParams = pydantic.Field(
+        default_factory=NormalizationParams,
+        title="Normalization",
     )
 
 
@@ -549,11 +610,11 @@ class PlotParamsTimeseries(WindowModeMixin, PlotDisplayParams1d):
         return frozenset({'accumulation'})
 
 
-class PlotParams1d(RateMixin, TimeWindowMixin, PlotDisplayParams1d):
+class PlotParams1d(NormalizationMixin, TimeWindowMixin, PlotDisplayParams1d):
     """Common parameters for 1D plots with windowing support."""
 
 
-class PlotParamsTimeseriesOverlay(PlotParamsTimeseries):
+class PlotParamsTimeseriesOverlay(DetectorPixelMixin, PlotParamsTimeseries):
     """Parameters for timeseries plots with one curve per entry."""
 
 
@@ -575,7 +636,7 @@ class BarOrientation(pydantic.BaseModel):
     )
 
 
-class PlotParamsBars(RateMixin, TimeWindowMixin, PlotParamsBase):
+class PlotParamsBars(NormalizationMixin, TimeWindowMixin, PlotParamsBase):
     """Parameters for bar plots of 0D scalar data or 1D data, one bar per entry."""
 
     orientation: BarOrientation = pydantic.Field(
@@ -621,7 +682,7 @@ class TableFormatParams(pydantic.BaseModel):
     )
 
 
-class PlotParamsTable(RateMixin, TimeWindowMixin, PlotParamsBase):
+class PlotParamsTable(NormalizationMixin, TimeWindowMixin, PlotParamsBase):
     """Parameters for tabular display of 0D scalar data or 1D data."""
 
     format: TableFormatParams = pydantic.Field(

@@ -58,7 +58,9 @@ class ModelWidget:
             Whether to show field descriptions
         hidden_fields
             Field names to exclude from the UI. Hidden fields use their
-            model defaults in ``parameter_values``.
+            model defaults in ``parameter_values``. A dotted ``group.field``
+            hides one field of a group; a group whose fields are all hidden is
+            hidden as a whole.
         field_outputs
             Optional map from field name to the titles of the workflow outputs
             that field shapes. When provided, each parameter group shows which
@@ -82,7 +84,9 @@ class ModelWidget:
     def _build_tabs(self) -> None:
         """Build one (field_name, title, content) entry per parameter group."""
         for field_name, data in self._get_parameter_widget_data().items():
-            param_widget = ParamWidget(data['field_type'])
+            param_widget = ParamWidget(
+                data['field_type'], hidden_fields=data['hidden_fields']
+            )
             param_widget.set_values(data['values'])
             self._parameter_widgets[field_name] = param_widget
 
@@ -132,6 +136,13 @@ class ModelWidget:
             if field_name in self._hidden_fields:
                 continue
             field_type: type[pydantic.BaseModel] = field_info.annotation  # type: ignore[assignment]
+            hidden_sub_fields = frozenset(
+                sub_field
+                for sub_field in field_type.model_fields
+                if f'{field_name}.{sub_field}' in self._hidden_fields
+            )
+            if hidden_sub_fields == field_type.model_fields.keys():
+                continue
             values = get_defaults(field_type)
             values.update(root_defaults.get(field_name, {}))
             values.update(self._initial_values.get(field_name, {}))
@@ -142,6 +153,7 @@ class ModelWidget:
                 'values': values,
                 'title': title,
                 'description': field_info.description,
+                'hidden_fields': hidden_sub_fields,
             }
 
         return widget_data

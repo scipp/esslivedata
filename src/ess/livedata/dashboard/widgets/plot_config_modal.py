@@ -37,6 +37,7 @@ from ess.livedata.dashboard.plot_orchestrator import (
     DataSourceConfig,
     PlotConfig,
 )
+from ess.livedata.dashboard.plot_params import DetectorPixelMixin
 from ess.livedata.dashboard.plotter_registry import PlotterSpec
 
 from .configuration_widget import ConfigurationPanel
@@ -124,7 +125,8 @@ def _resolve_output_display_hints(
     """Derive UI hints from the workflow output view.
 
     Inspects the view's backing template once and returns all decisions
-    that depend on its properties (dimensionality, declared stream roles).
+    that depend on its properties (dimensionality, declared stream roles,
+    declared coords).
 
     Parameters
     ----------
@@ -136,8 +138,9 @@ def _resolve_output_display_hints(
     view_name:
         Name of the selected output view.
     params_class:
-        Params model of the selected plotter. Which window-mode control it
-        carries decides what the view must back for that control to apply.
+        Params model of the selected plotter. Which window-mode control and
+        per-detector-pixel option it carries decides what the view must back for
+        those controls to apply.
 
     Returns
     -------
@@ -148,9 +151,11 @@ def _resolve_output_display_hints(
         return OutputDisplayHints(hidden_fields=frozenset(), preselect_all_sources=True)
     from ess.livedata.dashboard.plotting_controller import hidden_window_fields
 
-    hidden = hidden_window_fields(params_class, workflow_spec, view_name)
-
     template = workflow_spec.get_output_template(view_name)
+    hidden = hidden_window_fields(params_class, workflow_spec, view_name)
+    if issubclass(params_class, DetectorPixelMixin):
+        hidden |= params_class.hidden_pixel_fields(template)
+
     preselect_all = template is None or template.ndim < 2
 
     return OutputDisplayHints(hidden_fields=hidden, preselect_all_sources=preselect_all)

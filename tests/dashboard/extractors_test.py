@@ -721,6 +721,41 @@ class TestWindowOverSilentSource:
         assert result.value == 0.0
 
 
+def _roi_frame(
+    index: int, *, detector_pixels: list[float], counts: float = 1.0
+) -> sc.DataArray:
+    """One per-update ROI-spectra message: 1 s window ending at ``index + 1`` s."""
+    n_roi = len(detector_pixels)
+    return sc.DataArray(
+        sc.full(dims=['roi', 'toa'], shape=[n_roi, 2], value=counts, unit='counts'),
+        coords={
+            'roi': sc.arange('roi', n_roi, unit=None),
+            'toa': sc.array(dims=['toa'], values=[0.0, 1.0, 2.0], unit='ns'),
+            'detector_pixels': sc.array(dims=['roi'], values=detector_pixels),
+            'start_time': sc.scalar(index * 1_000_000_000, unit='ns'),
+            'time': sc.scalar((index + 1) * 1_000_000_000, unit='ns'),
+        },
+    )
+
+
+def test_changed_roi_geometry_restarts_the_window():
+    """Counts gathered under the old ROI geometry must not be divided by the new
+    ``detector_pixels`` count: the buffer drops them when the coord changes."""
+    buffer = TemporalBuffer()
+    for index in range(4):
+        buffer.add(_roi_frame(index, detector_pixels=[4.0, 1.5]))
+    buffer.add(_roi_frame(4, detector_pixels=[2.0, 1.5], counts=10.0))
+
+    result = WindowAggregatingExtractor(window_duration_seconds=4.0).extract(
+        buffer.get()
+    )
+
+    np.testing.assert_array_equal(result.values, 10.0)
+    assert sc.identical(
+        result.coords['detector_pixels'], sc.array(dims=['roi'], values=[2.0, 1.5])
+    )
+
+
 class TestUpdateExtractorInterface:
     """Tests for UpdateExtractor abstract interface."""
 

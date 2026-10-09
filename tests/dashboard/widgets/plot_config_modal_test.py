@@ -410,6 +410,30 @@ class TestResolveOutputDisplayHints:
         assert 'time_window' not in hidden(PlotParams1d)
         assert 'accumulation' in hidden(PlotParamsTimeseries)
 
+    @pytest.mark.parametrize('declared', [True, False])
+    def test_detector_pixel_option_follows_the_template_coord(self, declared: bool):
+        coords = {'roi': sc.array(dims=['roi'], values=[], unit=None)}
+        if declared:
+            coords['detector_pixels'] = sc.array(dims=['roi'], values=[])
+
+        class Outputs(WorkflowOutputsBase):
+            roi_spectra: WindowOutput = pydantic.Field(
+                default_factory=lambda: sc.DataArray(
+                    sc.zeros(sizes={'roi': 0, 'toa': 0}, unit='counts'),
+                    coords=coords,
+                ),
+            )
+
+        spec = _make_workflow_spec("ROI output", Outputs)
+        hidden = _resolve_output_display_hints(
+            is_static=False,
+            workflow_spec=spec,
+            params_class=PlotParams1d,
+            view_name="roi_spectra",
+        ).hidden_fields
+
+        assert ('normalization.per_detector_pixel' in hidden) is not declared
+
     def test_unknown_output_preselects_all(self):
         class Outputs(WorkflowOutputsBase):
             data: sc.DataArray = pydantic.Field(

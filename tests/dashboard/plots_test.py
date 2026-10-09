@@ -2,9 +2,11 @@
 # Copyright (c) 2025 Scipp contributors (https://github.com/scipp)
 
 import warnings
+from collections.abc import Sequence
 
 import holoviews as hv
 import numpy as np
+import pydantic
 import pytest
 import scipp as sc
 from bokeh.document import Document
@@ -39,7 +41,6 @@ from ess.livedata.dashboard.plot_params import (
     PlotParamsTimeseriesOverlay,
     PlotScale,
     PlotScaleParams2d,
-    RateNormalizationParams,
     WindowAggregation,
 )
 from ess.livedata.dashboard.slicer_plotter import (
@@ -2904,9 +2905,7 @@ class TestEntryLimit:
                     PlotParamsTimeseriesOverlay()
                 )
                 # Later times for larger n: the plotter throttles repeated times.
-                return plotter, lambda n: TestOverlay1DPlotterHistory.history(
-                    rois=range(n), start=100 * n
-                )
+                return plotter, lambda n: _roi_history(rois=range(n), start=100 * n)
 
     def test_data_at_the_limit_is_drawn(self, case, limit, data_key):
         plotter, make = case
@@ -2925,6 +2924,26 @@ class TestEntryLimit:
         assert len(_error_texts(plotter, make(limit + 1), data_key)) == 1
 
 
+def _roi_history(
+    rois: Sequence[int] = (1, 4), n: int = 4, start: int = 0
+) -> sc.DataArray:
+    """``(time, roi)`` history of per-ROI totals, values ``1, 2, ...`` row-major."""
+    time = sc.datetime('2026-01-01T00:00:00', unit='ns') + sc.arange(
+        'time', start, start + n, unit='s'
+    ).to(unit='ns')
+    return sc.DataArray(
+        sc.array(
+            dims=['time', 'roi'],
+            values=np.arange(1.0, n * len(rois) + 1).reshape(n, len(rois)),
+            unit='counts',
+        ),
+        coords={
+            'time': time,
+            'roi': sc.array(dims=['roi'], values=list(rois), dtype='int32', unit=None),
+        },
+    )
+
+
 class TestOverlay1DPlotterHistory:
     """Overlay1DPlotter with ``(time, roi)`` history: one curve per roi."""
 
@@ -2934,38 +2953,19 @@ class TestOverlay1DPlotterHistory:
             PlotParamsTimeseriesOverlay()
         )
 
-    @staticmethod
-    def history(rois=(1, 4), n=4, start=0):
-        time = sc.datetime('2026-01-01T00:00:00', unit='ns') + sc.arange(
-            'time', start, start + n, unit='s'
-        ).to(unit='ns')
-        return sc.DataArray(
-            sc.array(
-                dims=['time', 'roi'],
-                values=np.arange(1.0, n * len(rois) + 1).reshape(n, len(rois)),
-                unit='counts',
-            ),
-            coords={
-                'time': time,
-                'roi': sc.array(
-                    dims=['roi'], values=list(rois), dtype='int32', unit=None
-                ),
-            },
-        )
-
     def test_slices_along_roi_not_time(self, plotter, data_key):
-        result = plotter.plot(self.history(), data_key)
+        result = plotter.plot(_roi_history(), data_key)
         assert [curve.label for curve in result] == ['roi=1', 'roi=4']
         assert [len(curve) for curve in result] == [4, 4]
         assert list(result)[-1].dimension_values(1).tolist() == [2.0, 4.0, 6.0, 8.0]
 
     def test_time_may_be_the_last_dim(self, plotter, data_key):
-        result = plotter.plot(self.history().transpose(), data_key)
+        result = plotter.plot(_roi_history().transpose(), data_key)
         assert [curve.label for curve in result] == ['roi=1', 'roi=4']
         assert [len(curve) for curve in result] == [4, 4]
 
     def test_x_range_target_spans_time_not_roi_index(self, plotter, data_key):
-        history = self.history()
+        history = _roi_history()
         plotter.compute({PRIMARY: {data_key: history}})
 
         lo, hi = plotter.get_range_targets(data_key)['x']
@@ -2975,15 +2975,15 @@ class TestOverlay1DPlotterHistory:
         assert hi >= times.max()
 
     def test_renders_with_datetime_axis(self, plotter, data_key):
-        fig, _ = _render(plotter, {data_key: self.history()})
+        fig, _ = _render(plotter, {data_key: _roi_history()})
         assert isinstance(fig.xaxis[0], DatetimeAxis)
 
     def test_axis_stays_datetime_when_first_frame_has_no_roi(self, plotter, data_key):
-        fig, pipe = _render(plotter, {data_key: self.history(rois=())})
+        fig, pipe = _render(plotter, {data_key: _roi_history(rois=())})
         assert isinstance(fig.xaxis[0], DatetimeAxis)
 
         # A later update, as the timeseries plotter throttles repeated times.
-        plotter.compute({PRIMARY: {data_key: self.history(start=100)}})
+        plotter.compute({PRIMARY: {data_key: _roi_history(start=100)}})
         pipe.send(plotter.get_cached_state())
 
         assert isinstance(fig.xaxis[0], DatetimeAxis)
@@ -3611,7 +3611,7 @@ class TestRateNormalizationIntegration:
     def test_line_plotter_normalizes_when_enabled(self, counts_1d, data_key):
         """Rendered y values are the counts divided by the 5 s duration."""
         params = PlotParams1d(
-            rate=RateNormalizationParams(normalize_to_rate=True),
+            normalization={'per_second': True},
         )
         plotter = plots.LinePlotter.from_params(params)
         plotter.compute({'primary': {data_key: counts_1d}})
@@ -3630,7 +3630,7 @@ class TestRateNormalizationIntegration:
     def test_image_plotter_normalizes_when_enabled(self, counts_2d, data_key):
         """Every pixel is divided by the 5 s duration."""
         params = PlotParams2d(
-            rate=RateNormalizationParams(normalize_to_rate=True),
+            normalization={'per_second': True},
         )
         plotter = plots.ImagePlotter.from_params(params)
         plotter.compute({'primary': {data_key: counts_2d}})
@@ -3665,7 +3665,7 @@ class TestRateNormalizationIntegration:
             window_duration_seconds=4.0, aggregation=WindowAggregation.nansum
         )
         params = PlotParams1d(
-            rate=RateNormalizationParams(normalize_to_rate=True),
+            normalization={'per_second': True},
             line=Line1dParams(mode=Line1dRenderMode.histogram),
         )
         plotter = plots.LinePlotter.from_params(params)
@@ -3690,7 +3690,7 @@ class TestRateNormalizationIntegration:
             },
         )
         params = PlotParams3d(
-            rate=RateNormalizationParams(normalize_to_rate=True),
+            normalization={'per_second': True},
         )
         plotter = SlicerPlotter.from_params(params)
         plotter.compute({'primary': {data_key: data_3d}})
@@ -3703,17 +3703,14 @@ class TestRateNormalizationIntegration:
 
     def test_bars_plotter_normalizes_when_enabled(self, data_key):
         """BarsPlotter with normalize_to_rate=True shows counts/s in vdim unit."""
-        from ess.livedata.dashboard.plot_params import (
-            PlotParamsBars,
-            RateNormalizationParams,
-        )
+        from ess.livedata.dashboard.plot_params import PlotParamsBars
 
         time_coords = _make_time_coords(duration_s=5.0)
         data_0d = sc.DataArray(
             sc.scalar(50.0, unit='counts'),
             coords=time_coords,
         )
-        params = PlotParamsBars(rate=RateNormalizationParams(normalize_to_rate=True))
+        params = PlotParamsBars(normalization={'per_second': True})
         plotter = plots.BarsPlotter.from_params(params)
         plotter.compute({'primary': {data_key: data_0d}})
         result = plotter.get_cached_state()
@@ -3721,6 +3718,161 @@ class TestRateNormalizationIntegration:
         bars = next(iter(result.values()))
         assert isinstance(bars, hv.Bars)
         assert bars.vdims[0].unit == 'counts/s'
+
+
+def _roi_spectra(
+    counts: list[list[float]], detector_pixels: list[float]
+) -> sc.DataArray:
+    """Per-ROI spectra as a detector view publishes them, over a 2 s window."""
+    return sc.DataArray(
+        sc.array(dims=['roi', 'toa'], values=counts, unit='counts'),
+        coords={
+            'roi': sc.arange('roi', len(counts), unit=None),
+            'toa': sc.array(dims=['toa'], values=[10.0, 20.0], unit='ns'),
+            'detector_pixels': sc.array(dims=['roi'], values=detector_pixels),
+            **_make_time_coords(duration_s=2.0),
+        },
+    )
+
+
+def _per_pixel_params(
+    params_class: type[pydantic.BaseModel] = PlotParams1d, *, rate: bool = False
+) -> pydantic.BaseModel:
+    """Params of ``params_class`` with 'Per Detector Pixel' on."""
+    normalization = {'per_detector_pixel': True}
+    if rate:
+        normalization['per_second'] = True
+    return params_class(normalization=normalization)
+
+
+def _curves_by_label(plotter) -> dict[str, hv.Curve]:
+    return {
+        curve.label: curve
+        for curve in plotter.get_cached_state().traverse(lambda el: el, [hv.Curve])
+    }
+
+
+class TestDetectorPixelNormalization:
+    """'Per Detector Pixel' divides each ROI by its ``detector_pixels`` coord."""
+
+    @pytest.fixture
+    def data_key(self) -> DataKey:
+        return DataKey(
+            workflow_id=WorkflowId(instrument='i', name='detector_view', version=1),
+            source_name='panel',
+            output_name='roi_spectra_current',
+        )
+
+    def test_lines_divide_each_roi_by_its_own_pixel_count(self, data_key):
+        totals = _roi_spectra([[4.0, 0.0], [3.0, 0.0]], [4.0, 1.5])['toa', 0]
+        plotter = plots.LinePlotter.from_params(_per_pixel_params())
+
+        plotter.compute({PRIMARY: {data_key: totals}})
+
+        line = single_layer(plotter)
+        np.testing.assert_allclose(line.dimension_values(1), [1, 2])
+        assert line.vdims[0].unit == 'counts/pixel'
+
+    def test_combines_with_rate_to_counts_per_second_per_pixel(self, data_key):
+        plotter = plots.Overlay1DPlotter.from_params(_per_pixel_params(rate=True))
+
+        plotter.compute(
+            {PRIMARY: {data_key: _roi_spectra([[4.0, 8.0], [3.0, 6.0]], [4.0, 1.5])}}
+        )
+
+        curves = _curves_by_label(plotter)
+        np.testing.assert_allclose(curves['roi=0'].dimension_values(1), [0.5, 1.0])
+        np.testing.assert_allclose(curves['roi=1'].dimension_values(1), [1.0, 2.0])
+        assert curves['roi=0'].vdims[0].unit == 'counts/pixel/s'
+
+    def test_roi_without_detector_pixels_shows_no_value(self, data_key):
+        plotter = plots.Overlay1DPlotter.from_params(_per_pixel_params())
+
+        plotter.compute(
+            {PRIMARY: {data_key: _roi_spectra([[4.0, 8.0], [0.0, 0.0]], [4.0, 0.0])}}
+        )
+
+        curves = _curves_by_label(plotter)
+        np.testing.assert_allclose(curves['roi=0'].dimension_values(1), [1.0, 2.0])
+        assert np.isnan(curves['roi=1'].dimension_values(1)).all()
+
+    def test_off_by_default(self, data_key):
+        plotter = plots.Overlay1DPlotter.from_params(PlotParams1d())
+
+        plotter.compute(
+            {PRIMARY: {data_key: _roi_spectra([[4.0, 8.0], [3.0, 6.0]], [4.0, 1.5])}}
+        )
+
+        curves = _curves_by_label(plotter)
+        np.testing.assert_allclose(curves['roi=1'].dimension_values(1), [3.0, 6.0])
+        assert curves['roi=1'].vdims[0].unit == 'counts'
+
+    def test_bars_divide_each_roi_by_its_own_pixel_count(self, data_key):
+        totals = _roi_spectra([[4.0, 0.0], [3.0, 0.0]], [4.0, 1.5])['toa', 0]
+        plotter = plots.BarsPlotter.from_params(_per_pixel_params(PlotParamsBars))
+
+        plotter.compute({PRIMARY: {data_key: totals}})
+
+        (bars,) = plotter.get_cached_state().traverse(lambda el: el, [hv.Bars])
+        np.testing.assert_allclose(bars.dimension_values(2), [1.0, 2.0])
+        assert bars.vdims[0].unit == 'counts/pixel'
+
+    def test_table_divides_each_roi_by_its_own_pixel_count(self, data_key):
+        totals = _roi_spectra([[4.0, 0.0], [3.0, 0.0]], [4.0, 1.5])['toa', 0]
+        plotter = TablePlotter.from_params(_per_pixel_params(PlotParamsTable))
+
+        plotter.compute({PRIMARY: {data_key: totals}})
+
+        (table,) = plotter.get_cached_state().traverse(lambda el: el, [hv.Table])
+        np.testing.assert_allclose(table.dimension_values(table.vdims[0]), [1, 2])
+        assert table.vdims[0].unit == 'counts/pixel'
+
+    def test_timeseries_overlay_divides_each_roi_by_its_own_pixel_count(self, data_key):
+        history = _roi_history(rois=(0, 1), n=2)
+        history.coords['detector_pixels'] = sc.array(dims=['roi'], values=[1.0, 2.0])
+        plotter = plots.Overlay1DPlotter.from_timeseries_params(
+            _per_pixel_params(PlotParamsTimeseriesOverlay)
+        )
+
+        plotter.compute({PRIMARY: {data_key: history}})
+
+        curves = _curves_by_label(plotter)
+        # history values are [[1, 2], [3, 4]] along (time, roi)
+        np.testing.assert_allclose(curves['roi=0'].dimension_values(1), [1.0, 3.0])
+        np.testing.assert_allclose(curves['roi=1'].dimension_values(1), [1.0, 2.0])
+        assert curves['roi=0'].vdims[0].unit == 'counts/pixel'
+
+    def test_missing_coord_shows_error_instead_of_unnormalized_data(self, data_key):
+        data = _roi_spectra([[4.0, 8.0], [3.0, 6.0]], [4.0, 1.5])
+        plotter = plots.Overlay1DPlotter.from_params(_per_pixel_params())
+
+        plotter.compute({PRIMARY: {data_key: data.drop_coords('detector_pixels')}})
+
+        assert not _curves_by_label(plotter)
+        (text,) = plotter.get_cached_state().traverse(lambda el: el, [hv.Text])
+        assert 'detector_pixels' in text.text
+
+    def test_window_aggregation_divides_by_pixels_of_one_frame(self, data_key):
+        """The window sums counts over frames, never the per-ROI pixel count."""
+        buffer = TemporalBuffer()
+        for frame in range(4):
+            opened = 1_000_000_000 + frame * 1_000_000_000
+            data = _roi_spectra([[4.0, 8.0], [3.0, 6.0]], [4.0, 1.5])
+            buffer.add(
+                data.drop_coords('end_time').assign_coords(
+                    start_time=sc.scalar(opened, unit='ns'),
+                    time=sc.scalar(opened + 1_000_000_000, unit='ns'),
+                )
+            )
+        extractor = WindowAggregatingExtractor(window_duration_seconds=4.0)
+        plotter = plots.Overlay1DPlotter.from_params(_per_pixel_params(rate=True))
+
+        plotter.compute({PRIMARY: {data_key: extractor.extract(buffer.get())}})
+
+        # 4 frames over 4 s: the rate per pixel equals one frame's counts per pixel.
+        curves = _curves_by_label(plotter)
+        np.testing.assert_allclose(curves['roi=0'].dimension_values(1), [1.0, 2.0])
+        np.testing.assert_allclose(curves['roi=1'].dimension_values(1), [2.0, 4.0])
 
 
 def _make_timeseries_data_array(n_points: int, period_s: float = 1.0) -> sc.DataArray:

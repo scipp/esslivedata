@@ -398,7 +398,7 @@ class DetectorViewOutputs(DetectorViewOutputsBase):
         ),
         OutputView(
             name='roi_total_in_range',
-            title='ROI total in range',
+            title='Σ ROI',
             fields=('roi_counts_in_range_cumulative', 'roi_counts_in_range_current'),
             description=(
                 'Counts summed over each ROI and over the range filter, one value '
@@ -441,7 +441,7 @@ class DetectorViewOutputs(DetectorViewOutputsBase):
 
     # One scalar per ROI (1D: roi)
     roi_counts_in_range_cumulative: CumulativeOutput = pydantic.Field(
-        title='ROI total in range',
+        title='Σ ROI',
         description=(
             'Counts summed over each ROI and over the range filter, '
             'accumulated since the start of the run.'
@@ -449,7 +449,7 @@ class DetectorViewOutputs(DetectorViewOutputsBase):
         default_factory=_make_roi_scalars_template,
     )
     roi_counts_in_range_current: WindowOutput = pydantic.Field(
-        title='ROI total in range (update)',
+        title='Σ ROI (update)',
         description=(
             'Counts summed over each ROI and over the range filter '
             'for the latest update interval only. Resets each update interval.'

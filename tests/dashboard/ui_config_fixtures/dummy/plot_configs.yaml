@@ -37,8 +37,8 @@ plot_grids:
             mode: window
             window_duration_seconds: 0.0
             aggregation: auto
-          rate:
-            normalize_to_rate: false
+          normalization:
+            per_second: false
     # Image with the ROI overlay stack the UI builds on top of it (readback
     # before request, as OVERLAY_PATTERNS orders them). Drawing a rectangle
     # here exercises the request/readback loopback end to end.
@@ -76,8 +76,8 @@ plot_grids:
             mode: window
             window_duration_seconds: 0.0
             aggregation: auto
-          rate:
-            normalize_to_rate: false
+          normalization:
+            per_second: false
       - data_sources:
           primary:
             workflow_id: dummy/panel_0_xy/1
