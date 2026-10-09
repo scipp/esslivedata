@@ -769,6 +769,7 @@ class Instrument:
         service: str | None = None,
         roi_support: bool = True,
         output_ndim: int | None = None,
+        output_template: sc.DataArray | None = None,
         spectrum_view: SpectrumViewSpec | None = None,
         params: type[pydantic.BaseModel] | None = None,
         device_outputs: dict[str, str] | None = None,
@@ -808,6 +809,10 @@ class Instrument:
             output pixels back to input pixels does not.
         output_ndim:
             Number of dimensions for spatial outputs. Defaults to 2.
+        output_template:
+            Template for the spatial outputs, in place of the generic one of
+            ``output_ndim`` dims. Pass it when the output's dims and coords are
+            known at registration, so the dashboard can select plotters by them.
         spectrum_view:
             Optional ``SpectrumViewSpec`` enabling a ``spectrum_view`` output
             derived from the cumulative accumulated histogram via a
@@ -848,7 +853,10 @@ class Instrument:
                 else params
             ),
             outputs=make_detector_view_outputs(
-                output_ndim, roi_support=roi_support, spectrum_view=spectrum_view
+                output_ndim,
+                output_template=output_template,
+                roi_support=roi_support,
+                spectrum_view=spectrum_view,
             ),
             device_outputs=device_outputs,
         )
@@ -865,6 +873,7 @@ class Instrument:
         service: str | None = None,
         roi_support: bool = True,
         output_ndim: int | None = None,
+        output_template: sc.DataArray | None = None,
         reduction_dim: str | list[str] | None = None,
         spectrum_view: SpectrumViewSpec | None = None,
         device_outputs: dict[str, str] | None = None,
@@ -923,6 +932,7 @@ class Instrument:
             service=service,
             roi_support=roi_support,
             output_ndim=output_ndim,
+            output_template=output_template,
             spectrum_view=spectrum_view,
             params=make_detector_view_params(
                 spectrum_view=spectrum_view,

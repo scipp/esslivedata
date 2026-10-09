@@ -235,6 +235,22 @@ OVERLAY_PATTERNS: dict[str, list[tuple[str, str]]] = {
 _registered = False
 
 
+def _entries_are_labelled(data: sc.DataArray) -> bool:
+    """Whether the dim of 1D data is a set of labelled entries.
+
+    A coord without unit that is not bin edges labels each entry, e.g. one value
+    per ROI. A physical axis such as time of arrival has a unit, and dims without
+    a coord are typically detector pixels. Both have far more entries than a
+    plotter drawing one bar, row or curve per entry can show. 0D data passes.
+    """
+    if data.ndim == 0:
+        return True
+    coord = data.coords.get(data.dim)
+    return (
+        coord is not None and coord.unit is None and not data.coords.is_edges(data.dim)
+    )
+
+
 def _register_all_plotters() -> None:
     """Register all plotter types with the central registry.
 
@@ -317,13 +333,16 @@ def _register_all_plotters() -> None:
         name='bars',
         title='Bars',
         description=(
-            'Plot 0D scalar values as bars, one per source. For 1D data, plot one '
-            'bar per entry along its dimension, grouped by source. With an '
+            'Plot 0D scalar values as bars, one per source. For 1D data with labeled '
+            'entries, such as one value per ROI, plot one bar per entry, grouped by '
+            'source. With an '
             'integer coordinate, each coordinate value has a fixed color, the same '
             'as in Overlay 1D and Timeseries Overlay. A source with more entries '
             'than "Max Entries" in the plot settings is not shown.'
         ),
-        data_requirements=DataRequirements(min_dims=0, max_dims=1),
+        data_requirements=DataRequirements(
+            min_dims=0, max_dims=1, custom_validators=[_entries_are_labelled]
+        ),
         factory=BarsPlotter.from_params,
     )
 
@@ -331,12 +350,14 @@ def _register_all_plotters() -> None:
         name='table',
         title='Table',
         description=(
-            'Display 0D scalar values as a table, one row per source. For 1D data, '
-            'display one row per entry along its dimension, labeled by its '
-            'coordinate value. A source with more entries than "Max Entries" in '
-            'the plot settings is not shown.'
+            'Display 0D scalar values as a table, one row per source. For 1D data '
+            'with labeled entries, such as one value per ROI, display one row per '
+            'entry, labeled by its coordinate value. A source with more entries '
+            'than "Max Entries" in the plot settings is not shown.'
         ),
-        data_requirements=DataRequirements(min_dims=0, max_dims=1),
+        data_requirements=DataRequirements(
+            min_dims=0, max_dims=1, custom_validators=[_entries_are_labelled]
+        ),
         factory=TablePlotter.from_params,
     )
 
@@ -390,15 +411,17 @@ def _register_all_plotters() -> None:
         name='timeseries_overlay',
         title='Timeseries Overlay',
         description=(
-            'Plot the temporal evolution of 1D data as one line per entry along '
-            'its dimension. With an integer coordinate, each coordinate value has '
-            'a fixed color, the same as in Overlay 1D and Bars. A source with more '
-            'entries than "Max Entries" in the plot settings is not shown.'
+            'Plot the temporal evolution of 1D data with labeled entries, such as '
+            'one value per ROI, as one line per entry. With an integer coordinate, '
+            'each coordinate value has a fixed color, the same as in Overlay 1D and '
+            'Bars. A source with more entries than "Max Entries" in the plot '
+            'settings is not shown.'
         ),
         data_requirements=DataRequirements(
             min_dims=1,
             max_dims=1,
             required_extractor=FullHistoryExtractor,
+            custom_validators=[_entries_are_labelled],
         ),
         factory=Overlay1DPlotter.from_timeseries_params,
     )

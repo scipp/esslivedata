@@ -274,3 +274,22 @@ class TestPerEntryPlotters:
         compatible = plotter_registry.get_compatible_plotters({_key('det'): _array({})})
         assert 'bars' in compatible
         assert 'timeseries_overlay' not in compatible
+
+    @pytest.mark.parametrize(
+        'data',
+        [
+            pytest.param(_array({'toa': 3}), id='physical-coord'),
+            pytest.param(_array({'pixel': 3}).drop_coords('pixel'), id='no-coord'),
+            pytest.param(
+                _array({'roi': 3}).assign_coords(
+                    roi=sc.array(dims=['roi'], values=[0, 1, 2, 3], unit=None)
+                ),
+                id='bin-edge-labels',
+            ),
+        ],
+    )
+    def test_1d_data_without_label_coord_is_offered_lines_only(
+        self, data: sc.DataArray
+    ):
+        compatible = plotter_registry.get_compatible_plotters({_key('det'): data})
+        assert set(compatible) == {'lines'}
