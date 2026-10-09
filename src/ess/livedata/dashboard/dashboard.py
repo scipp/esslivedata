@@ -8,7 +8,6 @@ from contextlib import ExitStack
 from pathlib import Path
 
 import panel as pn
-from holoviews import Dimension
 
 from ess.livedata import ServiceBase, __version__, format_version
 
@@ -147,9 +146,6 @@ class DashboardBase(ServiceBase, ABC):
         )
 
         self._logger.info("%s initialized", self.__class__.__name__)
-
-        # Global unit format
-        Dimension.unit_format = ' [{unit}]'
 
     def _create_transport(self, transport: str) -> Transport:
         """
