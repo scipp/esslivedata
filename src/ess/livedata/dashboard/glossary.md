@@ -65,7 +65,7 @@ From coarse to fine: **grid → cell → layer → plotter → presenter → fig
   name). Persisted verbatim in grid templates and `ConfigStore`.
 - **ResolvedDataSource** — `DataSourceConfig` with `view_name` resolved to the
   backend pydantic field name (`output_name`) selected by the current window
-  mode, ready to key a `DataKey`. Built by `_build_resolved_data_sources` at
+  mode, ready to key a `DataKey`. Built by `resolve_data_sources` at
   layer-setup time; runtime-only, never persisted
   (`dashboard/plot_orchestrator.py`).
 - **Plotter** — session-shared object producing HoloViews elements from

@@ -279,6 +279,11 @@ class PlotGridTabs:
         Use the phone layout: icon-only tabs, and a single "Plots" tab
         previewing all grids, from which one cell at a time is opened, in place
         of one tab per grid (see ``plot_overview``).
+    overlays
+        Zero-height holders of modals opened from outside this widget, e.g. from
+        the page header. They are placed next to this widget's own modal
+        container: elsewhere in the page, panes built inside the modal after
+        load can stay invisible (#1154).
     """
 
     def __init__(
@@ -293,6 +298,7 @@ class PlotGridTabs:
         session_updater: SessionUpdater,
         theme: Theme = DEFAULT_THEME,
         phone: bool = False,
+        overlays: Sequence[pn.viewable.Viewable] = (),
     ) -> None:
         self._orchestrator = plot_orchestrator
         self._workflow_registry = dict(workflow_registry)
@@ -449,6 +455,7 @@ class PlotGridTabs:
         self._widget = pn.Column(
             self._tabs,
             self._modal_container,
+            *overlays,
             self._popouts.container,
             ModalEscapeCloser(),
             *([self._orientation] if self._orientation is not None else []),
