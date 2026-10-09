@@ -48,8 +48,22 @@ def _is_set_of_enum(field_type) -> bool:
 class ParamWidget:
     """Widget for creating and validating Pydantic model instances."""
 
-    def __init__(self, model_class: type[pydantic.BaseModel]):
+    def __init__(
+        self,
+        model_class: type[pydantic.BaseModel],
+        hidden_fields: frozenset[str] = frozenset(),
+    ):
+        """
+        Parameters
+        ----------
+        model_class:
+            Pydantic model to configure.
+        hidden_fields:
+            Field names to exclude from the UI. Hidden fields keep their model
+            defaults in the created model.
+        """
         self.model_class = model_class
+        self._hidden_fields = hidden_fields
         self.widgets = {}
         self._create_widgets()
         self._error_pane = pn.pane.HTML("", sizing_mode='stretch_width', margin=(0, 5))
@@ -58,6 +72,8 @@ class ParamWidget:
     def _create_widgets(self):
         """Create Panel widgets for each field in the model."""
         for field_name, field_info in self.model_class.model_fields.items():
+            if field_name in self._hidden_fields:
+                continue
             widget = self._create_widget_for_field(field_name, field_info)
             self.widgets[field_name] = widget
 

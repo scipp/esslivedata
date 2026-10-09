@@ -26,7 +26,6 @@ from ess.livedata.dashboard import plots
 from ess.livedata.dashboard.data_roles import PRIMARY
 from ess.livedata.dashboard.extractors import WindowAggregatingExtractor
 from ess.livedata.dashboard.plot_params import (
-    DetectorPixelNormalizationParams,
     ErrorDisplay,
     LegendParams,
     LegendPosition,
@@ -42,7 +41,6 @@ from ess.livedata.dashboard.plot_params import (
     PlotParamsTimeseriesOverlay,
     PlotScale,
     PlotScaleParams2d,
-    RateNormalizationParams,
     WindowAggregation,
 )
 from ess.livedata.dashboard.slicer_plotter import (
@@ -3613,7 +3611,7 @@ class TestRateNormalizationIntegration:
     def test_line_plotter_normalizes_when_enabled(self, counts_1d, data_key):
         """Rendered y values are the counts divided by the 5 s duration."""
         params = PlotParams1d(
-            rate=RateNormalizationParams(normalize_to_rate=True),
+            normalization={'per_second': True},
         )
         plotter = plots.LinePlotter.from_params(params)
         plotter.compute({'primary': {data_key: counts_1d}})
@@ -3632,7 +3630,7 @@ class TestRateNormalizationIntegration:
     def test_image_plotter_normalizes_when_enabled(self, counts_2d, data_key):
         """Every pixel is divided by the 5 s duration."""
         params = PlotParams2d(
-            rate=RateNormalizationParams(normalize_to_rate=True),
+            normalization={'per_second': True},
         )
         plotter = plots.ImagePlotter.from_params(params)
         plotter.compute({'primary': {data_key: counts_2d}})
@@ -3667,7 +3665,7 @@ class TestRateNormalizationIntegration:
             window_duration_seconds=4.0, aggregation=WindowAggregation.nansum
         )
         params = PlotParams1d(
-            rate=RateNormalizationParams(normalize_to_rate=True),
+            normalization={'per_second': True},
             line=Line1dParams(mode=Line1dRenderMode.histogram),
         )
         plotter = plots.LinePlotter.from_params(params)
@@ -3692,7 +3690,7 @@ class TestRateNormalizationIntegration:
             },
         )
         params = PlotParams3d(
-            rate=RateNormalizationParams(normalize_to_rate=True),
+            normalization={'per_second': True},
         )
         plotter = SlicerPlotter.from_params(params)
         plotter.compute({'primary': {data_key: data_3d}})
@@ -3705,17 +3703,14 @@ class TestRateNormalizationIntegration:
 
     def test_bars_plotter_normalizes_when_enabled(self, data_key):
         """BarsPlotter with normalize_to_rate=True shows counts/s in vdim unit."""
-        from ess.livedata.dashboard.plot_params import (
-            PlotParamsBars,
-            RateNormalizationParams,
-        )
+        from ess.livedata.dashboard.plot_params import PlotParamsBars
 
         time_coords = _make_time_coords(duration_s=5.0)
         data_0d = sc.DataArray(
             sc.scalar(50.0, unit='counts'),
             coords=time_coords,
         )
-        params = PlotParamsBars(rate=RateNormalizationParams(normalize_to_rate=True))
+        params = PlotParamsBars(normalization={'per_second': True})
         plotter = plots.BarsPlotter.from_params(params)
         plotter.compute({'primary': {data_key: data_0d}})
         result = plotter.get_cached_state()
@@ -3744,11 +3739,10 @@ def _per_pixel_params(
     params_class: type[pydantic.BaseModel] = PlotParams1d, *, rate: bool = False
 ) -> pydantic.BaseModel:
     """Params of ``params_class`` with 'Per Detector Pixel' on."""
-    fields = {'rate': RateNormalizationParams(normalize_to_rate=True)} if rate else {}
-    return params_class(
-        pixel_normalization=DetectorPixelNormalizationParams(per_detector_pixel=True),
-        **fields,
-    )
+    normalization = {'per_detector_pixel': True}
+    if rate:
+        normalization['per_second'] = True
+    return params_class(normalization=normalization)
 
 
 def _curves_by_label(plotter) -> dict[str, hv.Curve]:

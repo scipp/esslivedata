@@ -293,7 +293,7 @@ class SlicerPlotter(Plotter):
             tick_params=params.ticks,
             layout_params=params.layout,
             aspect_params=params.plot_aspect,
-            normalize_to_rate=params.rate.normalize_to_rate,
+            normalize_to_rate=params.normalization.per_second,
         )
 
     def compute(self, data: dict[str, dict[DataKey, sc.DataArray]], **kwargs) -> None:

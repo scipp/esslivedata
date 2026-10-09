@@ -1535,8 +1535,8 @@ class LinePlotter(Plotter):
         """Create LinePlotter from PlotParams1d; ``kwargs`` go to the constructor."""
         return cls.from_display_params(
             params,
-            normalize_per_detector_pixel=params.pixel_normalization.per_detector_pixel,
-            normalize_to_rate=params.rate.normalize_to_rate,
+            normalize_per_detector_pixel=params.normalization.per_detector_pixel,
+            normalize_to_rate=params.normalization.per_second,
             **kwargs,
         )
 
@@ -1708,13 +1708,13 @@ class ImagePlotter(Plotter):
     @classmethod
     def from_params(cls, params: PlotParams2d):
         """Create ImagePlotter from PlotParams2d."""
-        rate = params.rate if isinstance(params, RateMixin) else None
         return cls(
             layout_params=params.layout,
             aspect_params=params.plot_aspect,
             scale_opts=params.plot_scale,
             tick_params=params.ticks,
-            normalize_to_rate=rate.normalize_to_rate if rate is not None else False,
+            normalize_to_rate=isinstance(params, RateMixin)
+            and params.normalization.per_second,
         )
 
     def _compute_image_range_targets(
@@ -1850,8 +1850,8 @@ class BarsPlotter(Plotter):
             horizontal=params.orientation.horizontal,
             layout_params=params.layout,
             aspect_params=params.plot_aspect,
-            normalize_per_detector_pixel=params.pixel_normalization.per_detector_pixel,
-            normalize_to_rate=params.rate.normalize_to_rate,
+            normalize_per_detector_pixel=params.normalization.per_detector_pixel,
+            normalize_to_rate=params.normalization.per_second,
         )
 
     def _build_result(
@@ -1980,7 +1980,7 @@ class Overlay1DPlotter(LinePlotter):
         return super().from_timeseries_params(
             params,
             time_as_x=True,
-            normalize_per_detector_pixel=params.pixel_normalization.per_detector_pixel,
+            normalize_per_detector_pixel=params.normalization.per_detector_pixel,
         )
 
     def plot(

@@ -185,7 +185,7 @@ class FlattenPlotter(ImagePlotter):
             aspect_params=params.plot_aspect,
             scale_opts=params.plot_scale,
             tick_params=params.ticks,
-            normalize_to_rate=params.rate.normalize_to_rate,
+            normalize_to_rate=params.normalization.per_second,
             axis_x_dims=frozenset(int(p) for p in cfg.axis_x_dims),
             transpose_x_flatten=cfg.transpose_x_flatten,
             transpose_y_flatten=cfg.transpose_y_flatten,
