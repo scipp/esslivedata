@@ -244,7 +244,7 @@ class DetectorImage(
     """2D detector image parametrized by accumulation mode.
 
     - DetectorImage[Cumulative]: Summed over all accumulated data
-    - DetectorImage[Window]: Current window only (since last finalize)
+    - DetectorImage[Current]: Current window only (since last finalize)
     """
 
 
@@ -299,11 +299,27 @@ class ROISpectra(
 ):
     """ROI spectra parametrized by accumulation mode.
 
-    Spectra for ROIs with dims (roi, spectral_dim).
+    Spectra for ROIs with dims (roi, spectral_dim), with the number of detector
+    pixels in each ROI as the ``detector_pixels`` coord.
 
     - ROISpectra[Cumulative]: Extracted from cumulative histogram
-    - ROISpectra[Window]: Extracted from current window histogram
+    - ROISpectra[Current]: Extracted from current window histogram
     """
+
+
+class ROICountsInRange(
+    sciline.Scope[AccumulationMode, sc.DataArray],
+    sc.DataArray,  # type: ignore[misc]
+):
+    """Counts summed over each ROI and over the active range filter.
+
+    Parametrized by accumulation mode. Dims (roi,), with the ``detector_pixels``
+    coord of the ROI spectra.
+    """
+
+
+ROIDetectorPixels = NewType('ROIDetectorPixels', sc.DataArray)
+"""Number of detector pixels inside each ROI, with dims (roi,)."""
 
 
 ROIRectangleBounds = NewType('ROIRectangleBounds', dict)

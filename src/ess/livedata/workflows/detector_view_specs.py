@@ -23,6 +23,7 @@ import scipp as sc
 
 from .. import parameter_models
 from ..config import models
+from ..config.roi_names import DETECTOR_PIXELS_COORD
 from ..config.workflow_spec import (
     CumulativeOutput,
     OutputView,
@@ -266,12 +267,35 @@ def _make_0d_template() -> sc.DataArray:
     return _make_nd_template(0)
 
 
+def _make_roi_coords() -> dict[str, sc.Variable]:
+    """Create the empty coords shared by all per-ROI outputs."""
+    return {
+        'roi': sc.array(dims=['roi'], values=[], unit=None),
+        DETECTOR_PIXELS_COORD: sc.array(dims=['roi'], values=[], dtype='float64'),
+    }
+
+
+def _make_roi_scalars_template() -> sc.DataArray:
+    """Create an empty template for one scalar per ROI."""
+    return sc.DataArray(
+        sc.zeros(dims=['roi'], shape=[0], unit='counts'), coords=_make_roi_coords()
+    )
+
+
 def _make_roi_spectra_template() -> sc.DataArray:
     """Create an empty template for stacked per-ROI spectra."""
     return sc.DataArray(
         sc.zeros(dims=['roi', 'time_of_arrival'], shape=[0, 0], unit='counts'),
-        coords={'roi': sc.array(dims=['roi'], values=[], unit=None)},
+        coords=_make_roi_coords(),
     )
+
+
+_DETECTOR_PIXELS_NOTE = (
+    ' Each ROI carries its number of detector pixels, so plots can show counts '
+    'per detector pixel. Image pixels without a detector pixel behind them do not '
+    'count. For detectors downsampled at ingest, a detector pixel is a pixel of the '
+    'downsampled image.'
+)
 
 
 _BASE_DETECTOR_VIEWS: tuple[OutputView, ...] = (
@@ -369,8 +393,19 @@ class DetectorViewOutputs(DetectorViewOutputsBase):
             name='roi_spectra',
             title='ROI spectra',
             fields=('roi_spectra_cumulative', 'roi_spectra_current'),
-            description='Histogram for each active ROI region.',
+            description='Histogram for each active ROI region.' + _DETECTOR_PIXELS_NOTE,
             params=('coordinate_mode', 'toa_edges', 'wavelength_edges'),
+        ),
+        OutputView(
+            name='roi_total_in_range',
+            title='ROI total in range',
+            fields=('roi_counts_in_range_cumulative', 'roi_counts_in_range_current'),
+            description=(
+                'Counts summed over each ROI and over the range filter, one value '
+                'per ROI. Unlike the ROI spectra, this respects the range filter.'
+                + _DETECTOR_PIXELS_NOTE
+            ),
+            params=('coordinate_mode', 'toa_range', 'wavelength_range'),
         ),
         OutputView(
             name='roi_rectangle',
@@ -402,6 +437,24 @@ class DetectorViewOutputs(DetectorViewOutputsBase):
             'for the latest update interval only. Resets each update interval.'
         ),
         default_factory=_make_roi_spectra_template,
+    )
+
+    # One scalar per ROI (1D: roi)
+    roi_counts_in_range_cumulative: CumulativeOutput = pydantic.Field(
+        title='ROI total in range',
+        description=(
+            'Counts summed over each ROI and over the range filter, '
+            'accumulated since the start of the run.'
+        ),
+        default_factory=_make_roi_scalars_template,
+    )
+    roi_counts_in_range_current: WindowOutput = pydantic.Field(
+        title='ROI total in range (update)',
+        description=(
+            'Counts summed over each ROI and over the range filter '
+            'for the latest update interval only. Resets each update interval.'
+        ),
+        default_factory=_make_roi_scalars_template,
     )
 
     # ROI geometry readbacks
@@ -439,9 +492,7 @@ def make_detector_view_outputs(
         Number of dimensions for spatial outputs (cumulative, current).
         The counts outputs remain 0D scalars. If None, uses 2D default.
     roi_support:
-        Whether to include ROI-related outputs. If False, the returned class
-        will not include roi_spectra_current, roi_spectra_cumulative,
-        roi_rectangle, or roi_polygon fields.
+        Whether to include the ROI outputs.
     spectrum_view:
         Optional spectrum view configuration. When provided, the returned
         class includes an additional ``spectrum_view`` field with a template

@@ -40,6 +40,7 @@ from .types import (
     DetectorImage,
     GeometricViewConfig,
     LogicalViewConfig,
+    ROICountsInRange,
     ROIPolygonReadback,
     ROIPolygonRequest,
     ROIRectangleReadback,
@@ -229,6 +230,8 @@ class DetectorViewFactory:
                 {
                     'roi_spectra_cumulative': ROISpectra[Cumulative],
                     'roi_spectra_current': ROISpectra[Current],
+                    'roi_counts_in_range_cumulative': ROICountsInRange[Cumulative],
+                    'roi_counts_in_range_current': ROICountsInRange[Current],
                     'roi_rectangle': ROIRectangleReadback,
                     'roi_polygon': ROIPolygonReadback,
                 }

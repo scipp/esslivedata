@@ -6,11 +6,13 @@ import uuid
 
 import numpy as np
 import pytest
+import scipp as sc
 from ess.reduce.nexus.types import RawDetector, SampleRun
 
 from ess.livedata.config.models import (
     ROI,
     Interval,
+    PixelWeighting,
     PolygonROI,
     RectangleROI,
 )
@@ -18,14 +20,20 @@ from ess.livedata.config.roi_names import roi_stream_name
 from ess.livedata.config.workflow_spec import JobId, WorkflowId
 from ess.livedata.core.job import Job, JobData
 from ess.livedata.core.timestamp import Timestamp
+from ess.livedata.parameter_models import TimeUnit, TOARange
+from ess.livedata.workflows.detector_view.data_source import DetectorNumberSource
+from ess.livedata.workflows.detector_view.factory import DetectorViewFactory
 from ess.livedata.workflows.detector_view.types import (
+    LogicalViewConfig,
     ROIPolygonRequest,
     ROIRectangleRequest,
 )
+from ess.livedata.workflows.detector_view_specs import DetectorViewParams
 
 from .utils import (
     ROI_CONTEXT_DEFAULTS,
     ROI_CONTEXT_KEYS,
+    make_fake_detector_number,
     make_fake_nexus_detector_data,
     make_test_factory,
     make_test_params,
@@ -73,6 +81,7 @@ class TestIntegrationWithStreamProcessor:
             'counts_total',
             'counts_in_toa_range',
             'roi_spectra_current',
+            'roi_counts_in_range_current',
         ):
             coords = result[key].coords
             assert coords['start_time'].value == 1000, key
@@ -85,6 +94,7 @@ class TestIntegrationWithStreamProcessor:
         for key in (
             'cumulative',
             'roi_spectra_cumulative',
+            'roi_counts_in_range_cumulative',
             'counts_total_cumulative',
             'counts_in_toa_range_cumulative',
         ):
@@ -244,6 +254,111 @@ class TestROISpectraIntegration:
 
         # Cumulative should be ~2x current (two batches)
         assert cumulative_sum > current_sum
+
+    def test_roi_outputs_carry_detector_pixels(self):
+        factory = make_test_factory(y_size=4, x_size=4)
+        workflow = factory.make_workflow('detector', params=make_test_params())
+        workflow.build(context_keys=ROI_CONTEXT_KEYS)
+        events = make_fake_nexus_detector_data(
+            y_size=4, x_size=4, n_events_per_pixel=10
+        )
+        roi = RectangleROI(
+            x=Interval(min=0, max=2, unit=None), y=Interval(min=0, max=2, unit=None)
+        )
+        workflow.accumulate(
+            {
+                **ROI_CONTEXT_DEFAULTS,
+                'detector': RawDetector[SampleRun](events),
+                'roi_rectangle': ROI.to_concatenated_data_array({3: roi}),
+            },
+            start_time=Timestamp.from_ns(1000),
+            end_time=Timestamp.from_ns(2000),
+        )
+        result = workflow.finalize()
+
+        for mode in ('cumulative', 'current'):
+            spectra = result[f'roi_spectra_{mode}']
+            counts = result[f'roi_counts_in_range_{mode}']
+            assert counts.dims == ('roi',)
+            assert counts.coords['roi'].values.tolist() == [3]
+            assert counts.values[0] == spectra.sum().value
+            assert counts.coords['detector_pixels'].values.tolist() == [4.0]
+            assert spectra.coords['detector_pixels'].values.tolist() == [4.0]
+
+    @pytest.mark.parametrize('pixel_weighting', [False, True])
+    def test_counts_per_detector_pixel_match_pixel_weighted_image_with_reduction(
+        self, pixel_weighting: bool
+    ):
+        # 4 detector pixels are summed into each pixel of the 2x2 image.
+        def fold(da: sc.DataArray, source_name: str) -> sc.DataArray:
+            return da.fold(dim='detector_number', sizes={'y': 2, 'x': 2, 'z': 4})
+
+        factory = DetectorViewFactory(
+            data_source=DetectorNumberSource(make_fake_detector_number(4, 4)),
+            view_config=LogicalViewConfig(transform=fold, reduction_dim='z'),
+        )
+        params = DetectorViewParams(
+            pixel_weighting=PixelWeighting(enabled=pixel_weighting)
+        )
+        workflow = factory.make_workflow('detector', params=params)
+        workflow.build(context_keys=ROI_CONTEXT_KEYS)
+        events = make_fake_nexus_detector_data(
+            y_size=4, x_size=4, n_events_per_pixel=10
+        )
+        roi = RectangleROI(
+            x=Interval(min=0, max=1, unit=None), y=Interval(min=0, max=2, unit=None)
+        )
+        workflow.accumulate(
+            {
+                **ROI_CONTEXT_DEFAULTS,
+                'detector': RawDetector[SampleRun](events),
+                'roi_rectangle': ROI.to_concatenated_data_array({0: roi}),
+            },
+            start_time=Timestamp.from_ns(1000),
+            end_time=Timestamp.from_ns(2000),
+        )
+        result = workflow.finalize()
+
+        # 2 image pixels of 4 detector pixels with 10 events each
+        assert result['roi_counts_in_range_cumulative'].values.tolist() == [80]
+        counts = result['roi_counts_in_range_cumulative']
+        assert (counts / counts.coords['detector_pixels']).values.tolist() == [10.0]
+        image_value = 10.0 if pixel_weighting else 40.0
+        assert result['cumulative'].values.tolist() == [[image_value] * 2] * 2
+
+    def test_roi_counts_in_range_follow_the_range_filter_like_the_image(self):
+        factory = make_test_factory(y_size=4, x_size=4)
+        params = DetectorViewParams(
+            toa_range=TOARange(enabled=True, start=0.0, stop=35.0, unit=TimeUnit.MS)
+        )
+        workflow = factory.make_workflow('detector', params=params)
+        workflow.build(context_keys=ROI_CONTEXT_KEYS)
+        events = make_fake_nexus_detector_data(
+            y_size=4, x_size=4, n_events_per_pixel=100
+        )
+        small = RectangleROI(
+            x=Interval(min=0, max=2, unit=None), y=Interval(min=0, max=2, unit=None)
+        )
+        full = RectangleROI(
+            x=Interval(min=0, max=4, unit=None), y=Interval(min=0, max=4, unit=None)
+        )
+        workflow.accumulate(
+            {
+                **ROI_CONTEXT_DEFAULTS,
+                'detector': RawDetector[SampleRun](events),
+                'roi_rectangle': ROI.to_concatenated_data_array({0: small, 1: full}),
+            },
+            start_time=Timestamp.from_ns(1000),
+            end_time=Timestamp.from_ns(2000),
+        )
+        result = workflow.finalize()
+
+        counts = result['roi_counts_in_range_current']
+        image = result['current']
+        assert counts.values[0] == image['y', 0:2]['x', 0:2].sum().value
+        assert counts.values[1] == result['counts_in_toa_range'].value
+        # The filter removes events, and only the ROI spectra stay unfiltered.
+        assert counts.values[1] < result['roi_spectra_current'].sum().value
 
     def test_roi_change_recomputes_from_accumulated_histogram(self):
         """Test that changing ROI recomputes spectra from full accumulated data."""
@@ -476,7 +591,6 @@ class TestUnitHandling:
         output with the user-specified unit.
         """
         from ess.livedata.parameter_models import TimeUnit, TOAEdges
-        from ess.livedata.workflows.detector_view_specs import DetectorViewParams
 
         # Create params with microsecond TOA edges
         # Events have event_time_offset in nanoseconds (0-71ms = 0-71000 us)

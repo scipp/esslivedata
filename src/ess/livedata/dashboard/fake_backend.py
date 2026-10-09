@@ -37,7 +37,7 @@ import structlog
 
 from ..config.acknowledgement import AcknowledgementResponse, CommandAcknowledgement
 from ..config.instruments import get_config
-from ..config.roi_names import get_roi_mapper, roi_stream_name
+from ..config.roi_names import DETECTOR_PIXELS_COORD, get_roi_mapper, roi_stream_name
 from ..config.workflow_spec import (
     JobId,
     ResultKey,
@@ -185,23 +185,23 @@ def roi_variants(rois: Mapping[str, sc.DataArray]) -> dict[int, float]:
     return dict(sorted(variants.items()))
 
 
-def expand_roi_spectra(
+def expand_per_roi(
     template: sc.DataArray,
     variants: Mapping[int, float],
     update: int,
     timestamp_ns: int,
 ) -> sc.DataArray:
-    """Build one synthetic spectrum per currently drawn ROI.
+    """Build synthetic data for each currently drawn ROI.
 
     The length of the ``roi`` dimension follows the ROI set the dashboard
     published, down to zero rows while no ROI is drawn. This mirrors the real
-    backend, which computes ROI spectra from the start and yields an empty
+    backend, which computes per-ROI outputs from the start and yields an empty
     result until an ROI request arrives.
 
     Parameters
     ----------
     template:
-        Empty ROI spectra template, with dims ``(roi, <spectral>)``.
+        Empty per-ROI template, with dims ``(roi,)`` or ``(roi, <spectral>)``.
     variants:
         Phase per ROI index, see :func:`roi_variants`.
     update:
@@ -209,13 +209,18 @@ def expand_roi_spectra(
     timestamp_ns:
         Wall-clock time of this update, used for the ``time`` coordinate.
     """
-    spectral_size = template.sizes[template.dims[-1]] or _DEFAULT_DIM_SIZE
-    spectra = [
-        _synthesize_values([spectral_size], update, variant)
-        for variant in variants.values()
+    trailing = [template.sizes[dim] or _DEFAULT_DIM_SIZE for dim in template.dims[1:]]
+    rows = [
+        _synthesize_values(trailing, update, variant) for variant in variants.values()
     ]
-    values = np.stack(spectra) if spectra else np.zeros((0, spectral_size))
+    values = np.stack(rows) if rows else np.zeros((0, *trailing))
     coords = {'roi': sc.array(dims=['roi'], values=list(variants), dtype='int32')}
+    if DETECTOR_PIXELS_COORD in template.coords:
+        # Fixed per ROI geometry, like the real count, so it stays constant
+        # across updates while the ROI is unchanged.
+        coords[DETECTOR_PIXELS_COORD] = sc.array(
+            dims=['roi'], values=[10.0 + 90.0 * v for v in variants.values()]
+        )
     if (time := template.coords.get('time')) is not None and time.ndim == 0:
         coords['time'] = sc.scalar(timestamp_ns, unit=time.unit, dtype=time.dtype)
     data = sc.array(dims=template.dims, values=values, unit=template.unit)
@@ -394,7 +399,7 @@ class FakeBackend:
                 # its empty-request equivalent.
                 value = rois.get(output_name, template)
             elif 'roi' in template.dims:
-                value = expand_roi_spectra(template, variants, job.update, timestamp_ns)
+                value = expand_per_roi(template, variants, job.update, timestamp_ns)
             else:
                 value = expand_template(template, job.update, timestamp_ns, job.variant)
             # Production arrives at these coords by a different route:
