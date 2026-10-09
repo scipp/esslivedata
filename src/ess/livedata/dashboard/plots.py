@@ -36,7 +36,6 @@ from .plot_params import (
     PlotParams1d,
     PlotParams2d,
     PlotParamsBars,
-    PlotParamsOverlay1d,
     PlotParamsTimeseries,
     PlotParamsTimeseriesOverlay,
     PlotScale,
@@ -1917,11 +1916,6 @@ class Overlay1DPlotter(LinePlotter):
         """
         super().__init__(scale_opts, tick_params, **kwargs)
         self._time_as_x = time_as_x
-
-    @classmethod
-    def from_params(cls, params: PlotParamsOverlay1d) -> Self:
-        """Create Overlay1DPlotter from PlotParamsOverlay1d."""
-        return super().from_params(params)
 
     @classmethod
     def from_timeseries_params(cls, params: PlotParamsTimeseriesOverlay) -> Self:

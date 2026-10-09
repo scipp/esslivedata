@@ -70,9 +70,7 @@ def image_plotter() -> ImagePlotter:
 
 @pytest.fixture
 def overlay_plotter() -> Overlay1DPlotter:
-    from ess.livedata.dashboard.plot_params import PlotParamsOverlay1d
-
-    return Overlay1DPlotter.from_params(PlotParamsOverlay1d())
+    return Overlay1DPlotter.from_params(PlotParams1d())
 
 
 def test_line_plotter_compute(benchmark, line_plotter):

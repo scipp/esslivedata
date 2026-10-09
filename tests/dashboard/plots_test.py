@@ -35,7 +35,6 @@ from ess.livedata.dashboard.plot_params import (
     PlotParams2d,
     PlotParams3d,
     PlotParamsBars,
-    PlotParamsOverlay1d,
     PlotParamsTable,
     PlotParamsTimeseriesOverlay,
     PlotScale,
@@ -2386,7 +2385,7 @@ class TestOverlay1DPlotter:
     @pytest.fixture
     def overlay_plotter(self):
         """Create an Overlay1DPlotter instance."""
-        return plots.Overlay1DPlotter.from_params(PlotParamsOverlay1d())
+        return plots.Overlay1DPlotter.from_params(PlotParams1d())
 
     def test_bin_edge_coord_labels_curves_by_midpoint(self, overlay_plotter, data_key):
         data = sc.DataArray(
@@ -2608,7 +2607,7 @@ class TestOverlay1DPlotter:
         is enforced by the hook's CustomJS sizing the frame inside it."""
         from ess.livedata.dashboard.plot_params import PlotAspect, PlotAspectType
 
-        params = PlotParamsOverlay1d()
+        params = PlotParams1d()
         params.plot_aspect = PlotAspect(aspect_type=PlotAspectType.square)
         plotter = plots.Overlay1DPlotter.from_params(params)
 
@@ -2623,7 +2622,7 @@ class TestOverlay1DPlotter:
         """'free' aspect renders responsive (stretch_both) without an aspect ratio."""
         from ess.livedata.dashboard.plot_params import PlotAspect, PlotAspectType
 
-        params = PlotParamsOverlay1d()
+        params = PlotParams1d()
         params.plot_aspect = PlotAspect(aspect_type=PlotAspectType.free)
         plotter = plots.Overlay1DPlotter.from_params(params)
 
@@ -2652,7 +2651,7 @@ class TestOverlay1DPlotter:
             assert vdim.label == 'values'
 
     def test_points_mode_produces_scatter(self, data_2d_with_roi_coord, data_key):
-        params = PlotParamsOverlay1d(line=Line1dParams(mode=Line1dRenderMode.points))
+        params = PlotParams1d(line=Line1dParams(mode=Line1dRenderMode.points))
         plotter = plots.Overlay1DPlotter.from_params(params)
         result = plotter.plot(data_2d_with_roi_coord, data_key)
         assert isinstance(result, hv.Overlay)
@@ -2660,7 +2659,7 @@ class TestOverlay1DPlotter:
             assert isinstance(elem, hv.Scatter)
 
     def test_histogram_mode_produces_histograms(self, data_key):
-        params = PlotParamsOverlay1d(line=Line1dParams(mode=Line1dRenderMode.histogram))
+        params = PlotParams1d(line=Line1dParams(mode=Line1dRenderMode.histogram))
         plotter = plots.Overlay1DPlotter.from_params(params)
         toa_edges = sc.array(dims=['toa'], values=[0.0, 10.0, 20.0, 30.0], unit='us')
         data = sc.DataArray(
@@ -2678,14 +2677,14 @@ class TestOverlay1DPlotter:
     def test_histogram_mode_without_bin_edges_falls_back_to_curve(
         self, data_2d_with_roi_coord, data_key
     ):
-        params = PlotParamsOverlay1d(line=Line1dParams(mode=Line1dRenderMode.histogram))
+        params = PlotParams1d(line=Line1dParams(mode=Line1dRenderMode.histogram))
         plotter = plots.Overlay1DPlotter.from_params(params)
         result = plotter.plot(data_2d_with_roi_coord, data_key)
         for elem in result:
             assert isinstance(elem, hv.Curve)
 
     def test_error_bars_with_variances(self, data_key):
-        params = PlotParamsOverlay1d(
+        params = PlotParams1d(
             line=Line1dParams(mode=Line1dRenderMode.line, errors=ErrorDisplay.bars)
         )
         plotter = plots.Overlay1DPlotter.from_params(params)
@@ -2718,7 +2717,7 @@ class TestOverlay1DPlotter:
         _assert_error_bar_endcaps_colored(fig, base_colors)
 
     def test_error_band_with_variances(self, data_key):
-        params = PlotParamsOverlay1d(
+        params = PlotParams1d(
             line=Line1dParams(mode=Line1dRenderMode.line, errors=ErrorDisplay.band)
         )
         plotter = plots.Overlay1DPlotter.from_params(params)
@@ -2740,7 +2739,7 @@ class TestOverlay1DPlotter:
         assert isinstance(elements[1], hv.Spread)
 
     def test_errors_none_suppresses_error_display(self, data_key):
-        params = PlotParamsOverlay1d(
+        params = PlotParams1d(
             line=Line1dParams(mode=Line1dRenderMode.line, errors=ErrorDisplay.none)
         )
         plotter = plots.Overlay1DPlotter.from_params(params)
@@ -2761,7 +2760,7 @@ class TestOverlay1DPlotter:
             assert isinstance(elem, hv.Curve)
 
     def test_no_variances_no_errors_displayed(self, data_2d_with_roi_coord, data_key):
-        params = PlotParamsOverlay1d(
+        params = PlotParams1d(
             line=Line1dParams(mode=Line1dRenderMode.line, errors=ErrorDisplay.bars)
         )
         plotter = plots.Overlay1DPlotter.from_params(params)
@@ -2898,7 +2897,7 @@ class TestEntryLimit:
                 plotter = TablePlotter.from_params(PlotParamsTable())
                 return plotter, lambda n: _per_roi(list(range(n)))
             case 'spectra':
-                plotter = plots.Overlay1DPlotter.from_params(PlotParamsOverlay1d())
+                plotter = plots.Overlay1DPlotter.from_params(PlotParams1d())
                 return plotter, self.spectra
             case 'history':
                 plotter = plots.Overlay1DPlotter.from_timeseries_params(
@@ -3009,7 +3008,7 @@ class TestOverlay1DPlotterRenderedValues:
                 'x': sc.array(dims=['x'], values=[10.0, 20.0, 30.0], unit='m'),
             },
         )
-        plotter = plots.Overlay1DPlotter.from_params(PlotParamsOverlay1d())
+        plotter = plots.Overlay1DPlotter.from_params(PlotParams1d())
 
         overlay = plotter.plot(data, data_key, output_display_name='Intensity')
 
@@ -3959,7 +3958,7 @@ class TestLegendPosition:
 
     def test_overlay_1d_plotter_places_its_legend_beside_the_plot(self):
         """The per-slice overlay is the plot with the most legend entries."""
-        params = PlotParamsOverlay1d(legend=LegendParams(position=LegendPosition.right))
+        params = PlotParams1d(legend=LegendParams(position=LegendPosition.right))
         plotter = plots.Overlay1DPlotter.from_params(params)
         workflow_id = WorkflowId(instrument='test', name='wf', version=1)
         data_key = DataKey(

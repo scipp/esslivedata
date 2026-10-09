@@ -553,10 +553,6 @@ class PlotParams1d(RateMixin, TimeWindowMixin, PlotDisplayParams1d):
     """Common parameters for 1D plots with windowing support."""
 
 
-class PlotParamsOverlay1d(PlotParams1d):
-    """Parameters for plots of one curve per entry of 2D data."""
-
-
 class PlotParamsTimeseriesOverlay(PlotParamsTimeseries):
     """Parameters for timeseries plots with one curve per entry."""
 
