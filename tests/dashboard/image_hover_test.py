@@ -64,7 +64,8 @@ def test_float_coord_axis_keeps_cursor_position() -> None:
     data = _image(x=sc.linspace('x', 0.5, 3.5, 4, unit='m'))
     hover = _hover(_render(plots.ImagePlotter.from_params(PlotParams2d()), data))
     assert set(hover.formatters) == {'$y'}
-    assert dict(hover.tooltips)['x (m)'] == '$x'
+    label = hv.Dimension('x', unit='m').pprint_label
+    assert dict(hover.tooltips)[label] == '$x'
 
 
 def test_physical_coords_keep_default_hover() -> None:
