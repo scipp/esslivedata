@@ -60,6 +60,8 @@ pn.extension(
     'holoviews', 'modal', 'floatpanel', notifications=True, template='material'
 )
 hv.extension('bokeh')
+# Axis labels read "name [unit]" rather than HoloViews' default "name (unit)".
+hv.Dimension.unit_format = ' [{unit}]'
 
 # HoloViews defaults its Bokeh renderer to `webgl=True`, which sets
 # `output_backend='webgl'` on every figure. That gives each plot a second, WebGL
