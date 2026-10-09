@@ -269,6 +269,7 @@ def _register_all_plotters() -> None:
     from .extractors import FullHistoryExtractor
     from .flatten_plotter import FlattenPlotter, make_flatten_params
     from .plots import (
+        MAX_ENTRIES,
         BarsPlotter,
         ImagePlotter,
         LinePlotter,
@@ -338,7 +339,7 @@ def _register_all_plotters() -> None:
             'source. With an '
             'integer coordinate, each coordinate value has a fixed color, the same '
             'as in Overlay 1D and Timeseries Overlay. A source with more entries '
-            'than "Max Entries" in the plot settings is not shown.'
+            f'than {MAX_ENTRIES} is not shown.'
         ),
         data_requirements=DataRequirements(
             min_dims=0, max_dims=1, custom_validators=[_entries_are_labelled]
@@ -353,7 +354,7 @@ def _register_all_plotters() -> None:
             'Display 0D scalar values as a table, one row per source. For 1D data '
             'with labeled entries, such as one value per ROI, display one row per '
             'entry, labeled by its coordinate value. A source with more entries '
-            'than "Max Entries" in the plot settings is not shown.'
+            f'than {MAX_ENTRIES} is not shown.'
         ),
         data_requirements=DataRequirements(
             min_dims=0, max_dims=1, custom_validators=[_entries_are_labelled]
@@ -398,8 +399,7 @@ def _register_all_plotters() -> None:
             'Overlay 2D data as 1D curves, one per entry along the first '
             'dimension. Useful for visualizing multiple spectra from a single 2D '
             'array. With an integer coordinate, each coordinate value has a fixed '
-            'color. A source with more entries than "Max Entries" in the plot '
-            'settings is not shown.'
+            f'color. A source with more entries than {MAX_ENTRIES} is not shown.'
         ),
         data_requirements=DataRequirements(min_dims=2, max_dims=2),
         factory=Overlay1DPlotter.from_params,
@@ -414,8 +414,7 @@ def _register_all_plotters() -> None:
             'Plot the temporal evolution of 1D data with labeled entries, such as '
             'one value per ROI, as one line per entry. With an integer coordinate, '
             'each coordinate value has a fixed color, the same as in Overlay 1D and '
-            'Bars. A source with more entries than "Max Entries" in the plot '
-            'settings is not shown.'
+            f'Bars. A source with more entries than {MAX_ENTRIES} is not shown.'
         ),
         data_requirements=DataRequirements(
             min_dims=1,

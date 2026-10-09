@@ -553,43 +553,11 @@ class PlotParams1d(RateMixin, TimeWindowMixin, PlotDisplayParams1d):
     """Common parameters for 1D plots with windowing support."""
 
 
-# Measured with 100-1000 points per curve, one update of N curves takes 0.3-0.6 s to
-# compute and 0.5-1.6 s to build in Bokeh for N=50, and 0.8-2.2 s and 1.3-3.7 s for
-# N=100. 100 curves thus exceed the 1 s update period and freeze the dashboard.
-# HoloViews also fails outright at 1000 bars (recursion limit).
-MAX_ENTRIES_LIMIT = 50
-
-
-class EntryLimitParams(pydantic.BaseModel):
-    """Limit on the number of entries drawn from one dataset."""
-
-    max_entries: int = pydantic.Field(
-        default=20,
-        description=(
-            "Maximum number of entries drawn per source, one curve, bar or row "
-            "each. A source with more entries is not shown, since too many make "
-            "the plot - and the rest of the dashboard - sluggish."
-        ),
-        title="Max Entries",
-        ge=1,
-        le=MAX_ENTRIES_LIMIT,
-    )
-
-
-class EntryLimitMixin(pydantic.BaseModel):
-    """Mixin adding a limit on the number of entries drawn per source."""
-
-    limit: EntryLimitParams = pydantic.Field(
-        default_factory=EntryLimitParams,
-        description="Limit on the number of entries drawn per source.",
-    )
-
-
-class PlotParamsOverlay1d(EntryLimitMixin, PlotParams1d):
+class PlotParamsOverlay1d(PlotParams1d):
     """Parameters for plots of one curve per entry of 2D data."""
 
 
-class PlotParamsTimeseriesOverlay(EntryLimitMixin, PlotParamsTimeseries):
+class PlotParamsTimeseriesOverlay(PlotParamsTimeseries):
     """Parameters for timeseries plots with one curve per entry."""
 
 
@@ -611,7 +579,7 @@ class BarOrientation(pydantic.BaseModel):
     )
 
 
-class PlotParamsBars(EntryLimitMixin, RateMixin, TimeWindowMixin, PlotParamsBase):
+class PlotParamsBars(RateMixin, TimeWindowMixin, PlotParamsBase):
     """Parameters for bar plots of 0D scalar data or 1D data, one bar per entry."""
 
     orientation: BarOrientation = pydantic.Field(
@@ -657,7 +625,7 @@ class TableFormatParams(pydantic.BaseModel):
     )
 
 
-class PlotParamsTable(EntryLimitMixin, RateMixin, TimeWindowMixin, PlotParamsBase):
+class PlotParamsTable(RateMixin, TimeWindowMixin, PlotParamsBase):
     """Parameters for tabular display of 0D scalar data or 1D data."""
 
     format: TableFormatParams = pydantic.Field(

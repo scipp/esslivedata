@@ -1291,12 +1291,19 @@ def _line1d_style_opts(
     ]
 
 
-def check_entry_limit(dim: str, size: int, limit: int) -> None:
-    """Raise if ``size`` entries along ``dim`` exceed the drawing ``limit``."""
-    if size > limit:
+#: Largest number of entries drawn per source, one curve, bar or row each.
+#: Measured with 100-1000 points per curve, one update of N curves takes 0.3-0.6 s
+#: to compute and 0.5-1.6 s to build in Bokeh for N=50, and 0.8-2.2 s and 1.3-3.7 s
+#: for N=100. 100 curves thus exceed the 1 s update period and freeze the
+#: dashboard. HoloViews also fails outright at 1000 bars (recursion limit).
+MAX_ENTRIES = 50
+
+
+def check_entry_limit(dim: str, size: int) -> None:
+    """Raise if ``size`` entries along ``dim`` exceed :data:`MAX_ENTRIES`."""
+    if size > MAX_ENTRIES:
         raise ValueError(
-            f"{size} entries along '{dim}'; at most {limit} can be drawn. "
-            "Raise 'Max Entries' in the plot settings."
+            f"{size} entries along '{dim}'; at most {MAX_ENTRIES} can be drawn."
         )
 
 
@@ -1754,7 +1761,6 @@ class BarsPlotter(Plotter):
         self,
         *,
         horizontal: bool = False,
-        max_entries: int = 20,
         **kwargs: Any,
     ):
         """
@@ -1764,16 +1770,12 @@ class BarsPlotter(Plotter):
         ----------
         horizontal:
             If True, bars are horizontal; if False, bars are vertical.
-        max_entries:
-            Largest number of entries drawn per source of 1D data; a source
-            with more gives an error frame.
         **kwargs:
             Additional keyword arguments passed to the base class.
         """
         super().__init__(**kwargs)
         self._horizontal = horizontal
         self._colors = hv.Cycle.default_cycles["default_colors"]
-        self._max_entries = max_entries
         self._bars_opts: dict[str, Any] = {
             'invert_axes': horizontal,
             'show_legend': False,
@@ -1791,7 +1793,6 @@ class BarsPlotter(Plotter):
         """Create BarsPlotter from PlotParamsBars."""
         return cls(
             horizontal=params.orientation.horizontal,
-            max_entries=params.limit.max_entries,
             layout_params=params.layout,
             aspect_params=params.plot_aspect,
             normalize_to_rate=params.rate.normalize_to_rate,
@@ -1843,7 +1844,7 @@ class BarsPlotter(Plotter):
             )
 
         (dim,) = data.dims
-        check_entry_limit(dim, data.sizes[dim], self._max_entries)
+        check_entry_limit(dim, data.sizes[dim])
         coord = entry_coord_values(data, dim)
         if coord.size == 0:
             # The first frame fixes the axis type, and a categorical axis needs
@@ -1887,8 +1888,8 @@ class Overlay1DPlotter(LinePlotter):
     index would collapse closely-spaced coordinates onto the same color.
 
     Supports the same line style options (mode, errors) and timeseries
-    downsampling as LinePlotter. Data with more than ``max_entries`` entries is
-    rejected rather than drawn.
+    downsampling as LinePlotter. Data with more than :data:`MAX_ENTRIES` entries
+    is rejected rather than drawn.
     """
 
     def __init__(
@@ -1896,7 +1897,6 @@ class Overlay1DPlotter(LinePlotter):
         scale_opts: PlotScaleParams,
         tick_params: TickParams | None = None,
         *,
-        max_entries: int = 20,
         time_as_x: bool = False,
         **kwargs: Any,
     ):
@@ -1909,9 +1909,6 @@ class Overlay1DPlotter(LinePlotter):
             Scaling options for axes.
         tick_params:
             Tick configuration parameters.
-        max_entries:
-            Largest number of entries (curves) drawn per source; a source with
-            more gives an error frame.
         time_as_x:
             If True, the data is a history with a ``time`` dim, which becomes the
             x-axis of one curve per entry along the other dim.
@@ -1919,20 +1916,17 @@ class Overlay1DPlotter(LinePlotter):
             Additional keyword arguments passed to :class:`LinePlotter`.
         """
         super().__init__(scale_opts, tick_params, **kwargs)
-        self._max_entries = max_entries
         self._time_as_x = time_as_x
 
     @classmethod
     def from_params(cls, params: PlotParamsOverlay1d) -> Self:
         """Create Overlay1DPlotter from PlotParamsOverlay1d."""
-        return super().from_params(params, max_entries=params.limit.max_entries)
+        return super().from_params(params)
 
     @classmethod
     def from_timeseries_params(cls, params: PlotParamsTimeseriesOverlay) -> Self:
         """Create Overlay1DPlotter for the history of 1D data, one curve per entry."""
-        return super().from_timeseries_params(
-            params, max_entries=params.limit.max_entries, time_as_x=True
-        )
+        return super().from_timeseries_params(params, time_as_x=True)
 
     def plot(
         self,
@@ -1958,7 +1952,7 @@ class Overlay1DPlotter(LinePlotter):
 
         slice_dim, plot_dim = data.dims
         slice_size = data.sizes[slice_dim]
-        check_entry_limit(slice_dim, slice_size, self._max_entries)
+        check_entry_limit(slice_dim, slice_size)
 
         if slice_size == 0:
             # The first frame fixes the axis type, so the empty frame must carry

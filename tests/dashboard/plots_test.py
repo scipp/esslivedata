@@ -5,7 +5,6 @@ import warnings
 
 import holoviews as hv
 import numpy as np
-import pydantic
 import pytest
 import scipp as sc
 from bokeh.document import Document
@@ -25,8 +24,6 @@ from ess.livedata.dashboard import plots
 from ess.livedata.dashboard.data_roles import PRIMARY
 from ess.livedata.dashboard.extractors import WindowAggregatingExtractor
 from ess.livedata.dashboard.plot_params import (
-    MAX_ENTRIES_LIMIT,
-    EntryLimitParams,
     ErrorDisplay,
     LegendParams,
     LegendPosition,
@@ -2879,7 +2876,7 @@ class TestEntryLimit:
 
     @pytest.fixture
     def limit(self):
-        return 3
+        return plots.MAX_ENTRIES
 
     @staticmethod
     def spectra(n):
@@ -2891,28 +2888,21 @@ class TestEntryLimit:
     @pytest.fixture(
         params=['bars', 'table', 'spectra', 'history'],
     )
-    def case(self, request, limit):
-        """A plotter with ``limit`` and a function making data of n entries."""
-        limit_params = {'limit': {'max_entries': limit}}
+    def case(self, request):
+        """A plotter and a function making data of n entries."""
         match request.param:
             case 'bars':
-                plotter = plots.BarsPlotter.from_params(
-                    PlotParamsBars.model_validate(limit_params)
-                )
+                plotter = plots.BarsPlotter.from_params(PlotParamsBars())
                 return plotter, lambda n: _per_roi(list(range(n)))
             case 'table':
-                plotter = TablePlotter.from_params(
-                    PlotParamsTable.model_validate(limit_params)
-                )
+                plotter = TablePlotter.from_params(PlotParamsTable())
                 return plotter, lambda n: _per_roi(list(range(n)))
             case 'spectra':
-                plotter = plots.Overlay1DPlotter.from_params(
-                    PlotParamsOverlay1d.model_validate(limit_params)
-                )
+                plotter = plots.Overlay1DPlotter.from_params(PlotParamsOverlay1d())
                 return plotter, self.spectra
             case 'history':
                 plotter = plots.Overlay1DPlotter.from_timeseries_params(
-                    PlotParamsTimeseriesOverlay.model_validate(limit_params)
+                    PlotParamsTimeseriesOverlay()
                 )
                 # Later times for larger n: the plotter throttles repeated times.
                 return plotter, lambda n: TestOverlay1DPlotterHistory.history(
@@ -2927,20 +2917,13 @@ class TestEntryLimit:
         plotter, make = case
         (text,) = _error_texts(plotter, make(limit + 1), data_key)
         assert text == (
-            f"Error: {limit + 1} entries along 'roi'; at most {limit} can be drawn. "
-            "Raise 'Max Entries' in the plot settings."
+            f"Error: {limit + 1} entries along 'roi'; at most {limit} can be drawn."
         )
 
     def test_empty_first_frame_then_over_the_limit(self, case, limit, data_key):
         plotter, make = case
         assert _error_texts(plotter, make(0), data_key) == []
         assert len(_error_texts(plotter, make(limit + 1), data_key)) == 1
-
-    def test_default_limit_is_20_and_bounded_by_a_hard_cap(self):
-        assert EntryLimitParams().max_entries == 20
-        for max_entries in (0, MAX_ENTRIES_LIMIT + 1):
-            with pytest.raises(pydantic.ValidationError):
-                EntryLimitParams(max_entries=max_entries)
 
 
 class TestOverlay1DPlotterHistory:

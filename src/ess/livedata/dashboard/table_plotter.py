@@ -96,13 +96,11 @@ class TablePlotter(Plotter):
         *,
         notation: TableNotation = TableNotation.auto,
         precision: int = 3,
-        max_entries: int = 20,
         **kwargs: Any,
     ) -> None:
         super().__init__(**kwargs)
         self._notation = notation
         self._precision = precision
-        self._max_entries = max_entries
 
     @classmethod
     def from_params(cls, params: PlotParamsTable):
@@ -112,7 +110,6 @@ class TablePlotter(Plotter):
             normalize_to_rate=params.rate.normalize_to_rate,
             notation=params.format.notation,
             precision=params.format.precision,
-            max_entries=params.limit.max_entries,
         )
 
     def _error_placeholder(self, message: str) -> hv.Element:
@@ -163,7 +160,7 @@ class TablePlotter(Plotter):
             if dim is None:
                 da_entries, da_values = [''], [float(da.value)]
             else:
-                check_entry_limit(dim, da.sizes[dim], self._max_entries)
+                check_entry_limit(dim, da.sizes[dim])
                 coord = entry_coord_values(da, dim)
                 if coord.size == 0:
                     # Keeps the source visible while it has no entries.
