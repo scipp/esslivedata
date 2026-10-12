@@ -20,6 +20,7 @@ from ess.reduce.unwrap.types import WavelengthDetector
 from scippnexus import NXdetector
 
 from ..geometry_signal import geometry_signal
+from ..spectral_range import select_spectral_range
 from .projectors import GeometricProjector, LogicalProjector, Projector
 from .types import (
     DETECTOR_TRANSFORM,
@@ -243,20 +244,6 @@ def accumulated_histogram(
     return AccumulatedHistogram[AccumulationMode](data)
 
 
-def slice_spectral_range(
-    data: sc.DataArray, histogram_slice: HistogramSlice
-) -> sc.DataArray:
-    """Restrict ``data`` to the active range filter along its last dimension.
-
-    Every output that reports counts "in range" goes through this function, so
-    they all select the same spectral bins. ``None`` selects everything.
-    """
-    if histogram_slice is None:
-        return data
-    low, high = histogram_slice
-    return data[data.dims[-1], low:high]
-
-
 def detector_image(
     histogram: AccumulatedHistogram[AccumulationMode],
     histogram_slice: HistogramSlice,
@@ -286,9 +273,11 @@ def detector_image(
     Returns
     -------
     :
-        2D detector image, published as float32.
+        2D detector image, published as float32, with the summed spectral
+        interval as coords (see
+        :func:`~ess.livedata.workflows.spectral_range.select_spectral_range`).
     """
-    image = slice_spectral_range(histogram, histogram_slice).sum(histogram.dims[-1])
+    image = select_spectral_range(histogram, histogram_slice).sum(histogram.dims[-1])
 
     if use_weighting:
         image = image / weights
@@ -316,9 +305,11 @@ def counts_total(
     Returns
     -------
     :
-        Total counts as 0D scalar.
+        Total counts as 0D scalar, with the spectral interval of all bins as
+        coords (see
+        :func:`~ess.livedata.workflows.spectral_range.select_spectral_range`).
     """
-    return CountsTotal[AccumulationMode](histogram.sum())
+    return CountsTotal[AccumulationMode](select_spectral_range(histogram, None).sum())
 
 
 def spectrum_view(
@@ -368,8 +359,10 @@ def counts_in_range(
     Returns
     -------
     :
-        Counts in range as 0D scalar.
+        Counts in range as 0D scalar, with the summed spectral interval as coords
+        (see
+        :func:`~ess.livedata.workflows.spectral_range.select_spectral_range`).
     """
     return CountsInRange[AccumulationMode](
-        slice_spectral_range(histogram, histogram_slice).sum()
+        select_spectral_range(histogram, histogram_slice).sum()
     )

@@ -79,6 +79,14 @@ From coarse to fine: **grid → cell → layer → plotter → presenter → fig
   `DetectorPixelMixin`) dividing per-ROI outputs by their `detector_pixels`
   coord, before any rate normalization. Offered only for outputs whose template
   declares the coord. See *detector pixel* in `src/ess/livedata/glossary.md`.
+- **Per Unit TOA / Wavelength** — plot option (`normalization.per_spectral_unit`,
+  `SpectralUnitMixin`) dividing counts by the width of the spectral interval
+  they were summed over: each bin for spectra, the spectral range coords for
+  images and totals. The unit of the width appears only in the value label
+  (e.g. counts/µs), since scipp would print it as kcounts/s. Offered only for
+  counts outputs whose template declares the coords or bin edges along a
+  spectral dim. See
+  *spectral range coords* in `src/ess/livedata/glossary.md`.
 - **Presenter** — per-session bridge from a plotter's cached state to a
   HoloViews `DynamicMap` via an `hv.streams.Pipe`; carries the dirty flag
   (`dashboard/plots.py`).

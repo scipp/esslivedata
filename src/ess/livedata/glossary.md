@@ -123,6 +123,15 @@ The naming stack, from the Kafka wire inwards (see ADR 0004 and
   dims `(roi,)`, on the per-ROI outputs of a detector view
   (`DETECTOR_PIXELS_COORD` in `config/roi_names.py`). The dashboard can divide
   by it to show counts per detector pixel.
+- **Spectral axis** — the time-of-arrival or wavelength axis along which monitor
+  and detector-view workflows histogram events (`SPECTRAL_DIMS` in
+  `config/spectral_coords.py`).
+- **Spectral range coords** — scalar coords `spectral_range_low` and
+  `spectral_range_high` on outputs summed over the spectral axis (images,
+  totals, Σ ROI): the interval that was summed. It spans whole bins, those
+  overlapping the range filter, so it can be wider than the filter
+  (`select_spectral_range` in `workflows/spectral_range.py`). The dashboard can
+  divide by its width to show counts per unit of the spectral axis.
 
 ## Backend
 

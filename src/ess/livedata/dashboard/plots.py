@@ -22,6 +22,12 @@ from holoviews.core.util import range_pad
 from holoviews.plotting.util import get_axis_padding
 
 from ess.livedata.config.roi_names import DETECTOR_PIXELS_COORD
+from ess.livedata.config.spectral_coords import (
+    SPECTRAL_DIMS,
+    SPECTRAL_RANGE_HIGH_COORD,
+    SPECTRAL_RANGE_LOW_COORD,
+    spectral_edge_dim,
+)
 from ess.livedata.config.workflow_spec import DataKey
 from ess.livedata.core.timestamp import Timestamp
 
@@ -34,6 +40,7 @@ from .plot_params import (
     LegendPosition,
     PlotAspect,
     PlotDisplayParams1d,
+    PlotDisplayParams2d,
     PlotParams1d,
     PlotParams2d,
     PlotParamsBars,
@@ -42,7 +49,6 @@ from .plot_params import (
     PlotScale,
     PlotScaleParams,
     PlotScaleParams2d,
-    RateMixin,
     TickParams,
     TimeseriesDownsamplingParams,
 )
@@ -359,6 +365,50 @@ def _normalize_per_detector_pixel(da: sc.DataArray) -> sc.DataArray:
             "which this output does not have."
         )
     return da / pixels
+
+
+def _normalize_per_spectral_unit(da: sc.DataArray) -> sc.DataArray:
+    """Divide counts by the width of the spectral interval each value was summed over.
+
+    Spectra are divided by the width of each bin along their spectral dim. Outputs
+    summed over the spectral axis carry the summed interval as the spectral range
+    coords. Bin edges take precedence, since range coords on data that still has
+    its spectral bins describe the whole selection, not each bin.
+
+    The divisor is the magnitude of the width, so the unit stays ``counts`` and
+    rate normalization still applies. The plotter shows the unit of the width in the
+    value label instead (see :func:`_spectral_unit`), because scipp would print, e.g.,
+    counts/ms as kcounts/s and counts/Å/s in base units.
+
+    Raises if the data has neither bin edges along a spectral dim nor the range
+    coords. The config UI offers the option only for outputs whose template declares
+    either, so this means the data does not match its spec.
+    """
+    if (dim := spectral_edge_dim(da)) is not None:
+        edges = da.coords[dim]
+        width = edges[dim, 1:] - edges[dim, :-1]
+    elif SPECTRAL_RANGE_LOW_COORD in da.coords:
+        width = (
+            da.coords[SPECTRAL_RANGE_HIGH_COORD] - da.coords[SPECTRAL_RANGE_LOW_COORD]
+        )
+    else:
+        raise ValueError(
+            "'Per Unit TOA / Wavelength' needs bin edges along one of "
+            f"{SPECTRAL_DIMS} or spectral range coords, which this output does not "
+            "have."
+        )
+    return da / (width / sc.scalar(1.0, unit=width.unit))
+
+
+def _spectral_unit(da: sc.DataArray) -> sc.Unit | None:
+    """Unit of the spectral widths :func:`_normalize_per_spectral_unit` divided by.
+
+    Taken from the coord rather than the widths, so that it can also be read from
+    data whose bin edges were replaced by midpoints for drawing.
+    """
+    if (dim := next((d for d in da.dims if d in SPECTRAL_DIMS), None)) is not None:
+        return da.coords[dim].unit
+    return da.coords[SPECTRAL_RANGE_LOW_COORD].unit
 
 
 def _identity(x: str) -> str:
@@ -702,6 +752,7 @@ class Plotter:
         layout_params: LayoutParams | None = None,
         legend_position: LegendPosition | None = None,
         normalize_per_detector_pixel: bool = False,
+        normalize_per_spectral_unit: bool = False,
         normalize_to_rate: bool = False,
     ):
         """
@@ -718,11 +769,15 @@ class Plotter:
         normalize_per_detector_pixel:
             If True, divide data by its ``detector_pixels`` coord before plotting,
             ahead of any rate normalization.
+        normalize_per_spectral_unit:
+            If True, divide counts by the width of the time-of-arrival or
+            wavelength interval each value was summed over before plotting.
         normalize_to_rate:
             If True, normalize counts data to rate (counts/s) using
             start_time/end_time coordinates before plotting.
         """
         self._normalize_per_detector_pixel = normalize_per_detector_pixel
+        self._normalize_per_spectral_unit = normalize_per_spectral_unit
         self._normalize_to_rate = normalize_to_rate
         self._legend_position = legend_position
         self._cached_state: Any | None = None
@@ -964,23 +1019,33 @@ class Plotter:
     def _value_unit(self, da: sc.DataArray) -> str | None:
         """Unit label of the plotted values of normalized data ``da``.
 
-        scipp has no unit for a detector pixel, so the per-detector-pixel
-        normalization shows only in this label: ``pixel`` goes after the numerator,
-        e.g. counts/pixel or counts/pixel/s.
+        scipp has no unit for a detector pixel, and prints counts per spectral unit
+        in a hard-to-read form, so these normalizations show only in this label:
+        ``pixel`` and the spectral unit go after the numerator, e.g. counts/pixel,
+        counts/µs or counts/pixel/Å/s.
         """
         if da.unit is None:
             return None
+        divisors = []
         if self._normalize_per_detector_pixel:
-            numerator, slash, denominator = str(da.unit).partition('/')
-            return f'{numerator}/pixel{slash}{denominator}'
-        return str(da.unit)
+            divisors.append('pixel')
+        if self._normalize_per_spectral_unit:
+            divisors.append(str(_spectral_unit(da)))
+        numerator, slash, denominator = str(da.unit).partition('/')
+        return '/'.join([numerator, *divisors]) + slash + denominator
 
     def _normalize(
         self, data: dict[DataKey, sc.DataArray]
     ) -> dict[DataKey, sc.DataArray]:
-        """Apply the configured normalizations, per detector pixel before rate."""
+        """Apply the configured normalizations.
+
+        Per detector pixel and per spectral unit divide by magnitudes and keep the
+        unit ``counts``, which rate normalization requires.
+        """
         if self._normalize_per_detector_pixel:
             data = {key: _normalize_per_detector_pixel(da) for key, da in data.items()}
+        if self._normalize_per_spectral_unit:
+            data = {key: _normalize_per_spectral_unit(da) for key, da in data.items()}
         if self._normalize_to_rate:
             data = {key: _normalize_to_rate(da) for key, da in data.items()}
         return data
@@ -1536,6 +1601,7 @@ class LinePlotter(Plotter):
         return cls.from_display_params(
             params,
             normalize_per_detector_pixel=params.normalization.per_detector_pixel,
+            normalize_per_spectral_unit=params.normalization.per_spectral_unit,
             normalize_to_rate=params.normalization.per_second,
             **kwargs,
         )
@@ -1706,15 +1772,26 @@ class ImagePlotter(Plotter):
             self._autoscale_axes_override = self.AUTOSCALE_AXES - {'c'}
 
     @classmethod
-    def from_params(cls, params: PlotParams2d):
-        """Create ImagePlotter from PlotParams2d."""
+    def from_display_params(cls, params: PlotDisplayParams2d, **kwargs: Any) -> Self:
+        """Create ImagePlotter from display parameters.
+
+        ``kwargs`` are passed on to the constructor.
+        """
         return cls(
             layout_params=params.layout,
             aspect_params=params.plot_aspect,
             scale_opts=params.plot_scale,
             tick_params=params.ticks,
-            normalize_to_rate=isinstance(params, RateMixin)
-            and params.normalization.per_second,
+            **kwargs,
+        )
+
+    @classmethod
+    def from_params(cls, params: PlotParams2d) -> Self:
+        """Create ImagePlotter from PlotParams2d."""
+        return cls.from_display_params(
+            params,
+            normalize_per_spectral_unit=params.normalization.per_spectral_unit,
+            normalize_to_rate=params.normalization.per_second,
         )
 
     def _compute_image_range_targets(
@@ -1767,7 +1844,9 @@ class ImagePlotter(Plotter):
         # backend) show values below the color limits with the same color as the lowest
         # value in the colormap, which is not what we want for, e.g., zeros on a log
         # scale plot. The nan values will be shown as transparent.
-        histogram = to_holoviews(plot_data, label=label, dim_label=dim_label)
+        histogram = to_holoviews(
+            plot_data, label=label, dim_label=dim_label, unit=self._value_unit(data)
+        )
 
         targets = self._compute_image_range_targets(histogram, plot_data, use_log_scale)
         if targets:
@@ -1851,6 +1930,7 @@ class BarsPlotter(Plotter):
             layout_params=params.layout,
             aspect_params=params.plot_aspect,
             normalize_per_detector_pixel=params.normalization.per_detector_pixel,
+            normalize_per_spectral_unit=params.normalization.per_spectral_unit,
             normalize_to_rate=params.normalization.per_second,
         )
 

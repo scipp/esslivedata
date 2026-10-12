@@ -7,6 +7,10 @@ import scipp as sc
 from ess.reduce.nexus.types import NeXusTransformation, SampleRun
 from scippnexus import NXdetector
 
+from ess.livedata.config.spectral_coords import (
+    SPECTRAL_RANGE_HIGH_COORD,
+    SPECTRAL_RANGE_LOW_COORD,
+)
 from ess.livedata.workflows.detector_view.projectors import make_logical_projector
 from ess.livedata.workflows.detector_view.providers import (
     accumulated_histogram,
@@ -305,7 +309,12 @@ class TestDetectorImageProviders:
         data = sc.DataArray(
             sc.ones(
                 dims=['y', 'x', 'event_time_offset'], shape=[4, 4, 10], unit='counts'
-            )
+            ),
+            coords={
+                'event_time_offset': sc.linspace(
+                    'event_time_offset', 0, 10, 11, unit='ms'
+                )
+            },
         )
         weights = PixelWeights(sc.ones(dims=['y', 'x'], shape=[4, 4], dtype='float32'))
 
@@ -430,3 +439,37 @@ class TestCountProviders:
         )
         assert result_sliced.dims == ()
         assert result_sliced.data < expected_all
+
+    @pytest.mark.parametrize(
+        ("histogram_slice", "interval"),
+        [
+            (None, (0.0, 100000.0)),
+            ((sc.scalar(15000, unit='ns'), sc.scalar(35000, unit='ns')), (1e4, 4e4)),
+        ],
+    )
+    def test_outputs_summed_over_spectral_dim_carry_summed_interval(
+        self, histogram_slice, interval
+    ):
+        data = _int32_histogram(1, [4, 4, 10])
+        histogram = AccumulatedHistogram[Cumulative](data)
+        weights = PixelWeights(sc.ones(dims=['y', 'x'], shape=[4, 4]))
+
+        image = detector_image(
+            histogram=histogram,
+            histogram_slice=histogram_slice,
+            weights=weights,
+            use_weighting=UsePixelWeighting(True),
+        )
+        in_range = counts_in_range(histogram=histogram, histogram_slice=histogram_slice)
+        total = counts_total(histogram=histogram)
+
+        low, high = (sc.scalar(v, unit='ns') for v in interval)
+        for result in (image, in_range):
+            assert sc.identical(result.coords[SPECTRAL_RANGE_LOW_COORD], low)
+            assert sc.identical(result.coords[SPECTRAL_RANGE_HIGH_COORD], high)
+        assert sc.identical(
+            total.coords[SPECTRAL_RANGE_LOW_COORD], sc.scalar(0.0, unit='ns')
+        )
+        assert sc.identical(
+            total.coords[SPECTRAL_RANGE_HIGH_COORD], sc.scalar(100000.0, unit='ns')
+        )

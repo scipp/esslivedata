@@ -24,6 +24,10 @@ import scipp as sc
 from .. import parameter_models
 from ..config import models
 from ..config.roi_names import DETECTOR_PIXELS_COORD
+from ..config.spectral_coords import (
+    spectral_edges_template_coords,
+    spectral_range_template_coords,
+)
 from ..config.workflow_spec import (
     CumulativeOutput,
     OutputView,
@@ -259,11 +263,14 @@ class SpectrumViewSpec:
 
 
 def _make_nd_template(ndim: int) -> sc.DataArray:
-    """Create an empty template with the specified number of dimensions."""
+    """Create an empty template for an output summed over the spectral axis."""
+    coords = spectral_range_template_coords()
     if ndim == 0:
-        return sc.DataArray(sc.scalar(0, unit='counts'))
+        return sc.DataArray(sc.scalar(0, unit='counts'), coords=coords)
     dims = [f'dim_{i}' for i in range(ndim)]
-    return sc.DataArray(sc.zeros(dims=dims, shape=[0] * ndim, unit='counts'))
+    return sc.DataArray(
+        sc.zeros(dims=dims, shape=[0] * ndim, unit='counts'), coords=coords
+    )
 
 
 def _make_2d_template() -> sc.DataArray:
@@ -287,7 +294,8 @@ def _make_roi_coords() -> dict[str, sc.Variable]:
 def _make_roi_scalars_template() -> sc.DataArray:
     """Create an empty template for one scalar per ROI."""
     return sc.DataArray(
-        sc.zeros(dims=['roi'], shape=[0], unit='counts'), coords=_make_roi_coords()
+        sc.zeros(dims=['roi'], shape=[0], unit='counts'),
+        coords={**_make_roi_coords(), **spectral_range_template_coords()},
     )
 
 
@@ -295,7 +303,7 @@ def _make_roi_spectra_template() -> sc.DataArray:
     """Create an empty template for stacked per-ROI spectra."""
     return sc.DataArray(
         sc.zeros(dims=['roi', 'time_of_arrival'], shape=[0, 0], unit='counts'),
-        coords=_make_roi_coords(),
+        coords={**_make_roi_coords(), **spectral_edges_template_coords()},
     )
 
 
@@ -391,6 +399,33 @@ class DetectorViewOutputsBase(WorkflowOutputsBase):
             'for the latest update interval only. Resets each update interval.'
         ),
         default_factory=_make_0d_template,
+    )
+
+
+def _make_area_image_template() -> sc.DataArray:
+    """Create an empty template for an area-detector image."""
+    return sc.DataArray(sc.zeros(dims=['dim_0', 'dim_1'], shape=[0, 0], unit='counts'))
+
+
+class AreaDetectorViewOutputs(DetectorViewOutputsBase):
+    """Outputs for area-detector (camera) views.
+
+    Camera images have no spectral axis, so unlike the images of other detector
+    views they carry no spectral range coords.
+    """
+
+    cumulative: CumulativeOutput = pydantic.Field(
+        title='Image',
+        description='Detector image accumulated since the start of the run.',
+        default_factory=_make_area_image_template,
+    )
+    current: WindowOutput = pydantic.Field(
+        title='Image update',
+        description=(
+            'Detector image for the latest update interval only. '
+            'Resets each update interval.'
+        ),
+        default_factory=_make_area_image_template,
     )
 
 
@@ -531,7 +566,9 @@ def make_detector_view_outputs(
 
         def make_template() -> sc.DataArray:
             if output_template is not None:
-                return output_template.copy()
+                return output_template.copy().assign_coords(
+                    spectral_range_template_coords()
+                )
             return _make_nd_template(output_ndim)
 
         class _WithNdim(base_class):  # type: ignore[valid-type,misc]

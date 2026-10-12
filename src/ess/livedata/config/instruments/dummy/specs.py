@@ -10,7 +10,7 @@ import scipp as sc
 from ess.livedata.config import F144Stream, Instrument, instrument_registry
 from ess.livedata.config.device_contract import DETECTOR_VIEW_DEVICES
 from ess.livedata.config.workflow_spec import DETECTORS, WorkflowOutputsBase
-from ess.livedata.workflows.detector_view_specs import DetectorViewOutputsBase
+from ess.livedata.workflows.detector_view_specs import AreaDetectorViewOutputs
 from ess.livedata.workflows.monitor_workflow_specs import (
     TOAOnlyMonitorDataParams,
     register_monitor_workflow_specs,
@@ -94,7 +94,7 @@ area_panel_view_handle = instrument.register_spec(
     source_names=['area_panel'],
     # AreaDetectorView renders images only; it neither reads ROI requests nor
     # publishes readbacks, so it must not declare the ROI outputs.
-    outputs=DetectorViewOutputsBase,
+    outputs=AreaDetectorViewOutputs,
     device_outputs=DETECTOR_VIEW_DEVICES,
 )
 

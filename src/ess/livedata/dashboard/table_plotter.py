@@ -108,6 +108,7 @@ class TablePlotter(Plotter):
         return cls(
             aspect_params=params.plot_aspect,
             normalize_per_detector_pixel=params.normalization.per_detector_pixel,
+            normalize_per_spectral_unit=params.normalization.per_spectral_unit,
             normalize_to_rate=params.normalization.per_second,
             notation=params.format.notation,
             precision=params.format.precision,

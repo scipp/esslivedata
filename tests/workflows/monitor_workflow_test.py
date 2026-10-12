@@ -14,6 +14,10 @@ from ess.reduce.nexus.types import (
 )
 from scippnexus import NXmonitor
 
+from ess.livedata.config.spectral_coords import (
+    SPECTRAL_RANGE_HIGH_COORD,
+    SPECTRAL_RANGE_LOW_COORD,
+)
 from ess.livedata.config.stream import ChainPatchBinding
 from ess.livedata.config.value_log import ValueLog
 from ess.livedata.config.workflow_spec import JobId
@@ -228,11 +232,20 @@ class TestMonitorWorkflowProviders:
     @pytest.mark.parametrize('mode', [Current, Cumulative])
     def test_counts_total(self, mode):
         hist = sc.DataArray(
-            sc.array(dims=['time_of_arrival'], values=[1.0, 2.0, 3.0], unit='counts')
+            sc.array(dims=['time_of_arrival'], values=[1.0, 2.0, 3.0], unit='counts'),
+            coords={
+                'time_of_arrival': sc.linspace('time_of_arrival', 0, 6, 4, unit='ns')
+            },
         )
         result = counts_total(AccumulatedMonitorHistogram[mode](hist))
         assert result.value == 6.0
         assert result.unit == 'counts'
+        assert sc.identical(
+            result.coords[SPECTRAL_RANGE_LOW_COORD], sc.scalar(0.0, unit='ns')
+        )
+        assert sc.identical(
+            result.coords[SPECTRAL_RANGE_HIGH_COORD], sc.scalar(6.0, unit='ns')
+        )
 
     @pytest.mark.parametrize('mode', [Current, Cumulative])
     def test_counts_in_range(self, mode):
@@ -246,6 +259,12 @@ class TestMonitorWorkflowProviders:
         high = HistogramRangeHigh(sc.scalar(8, unit='ns'))
         result = counts_in_range(AccumulatedMonitorHistogram[mode](hist), low, high)
         assert result.value == 9.0  # 2 + 3 + 4
+        assert sc.identical(
+            result.coords[SPECTRAL_RANGE_LOW_COORD], sc.scalar(2.0, unit='ns')
+        )
+        assert sc.identical(
+            result.coords[SPECTRAL_RANGE_HIGH_COORD], sc.scalar(8.0, unit='ns')
+        )
 
 
 class TestBuildMonitorWorkflow:

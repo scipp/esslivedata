@@ -434,6 +434,34 @@ class TestResolveOutputDisplayHints:
 
         assert ('normalization.per_detector_pixel' in hidden) is not declared
 
+    @pytest.mark.parametrize('declared', [True, False])
+    def test_spectral_unit_option_follows_the_template_coords(self, declared: bool):
+        coords = (
+            {
+                'spectral_range_low': sc.scalar(0.0, unit='ms'),
+                'spectral_range_high': sc.scalar(0.0, unit='ms'),
+            }
+            if declared
+            else {}
+        )
+
+        class Outputs(WorkflowOutputsBase):
+            image: WindowOutput = pydantic.Field(
+                default_factory=lambda: sc.DataArray(
+                    sc.zeros(sizes={'y': 0, 'x': 0}, unit='counts'), coords=coords
+                ),
+            )
+
+        spec = _make_workflow_spec("Image output", Outputs)
+        hidden = _resolve_output_display_hints(
+            is_static=False,
+            workflow_spec=spec,
+            params_class=PlotParams2d,
+            view_name="image",
+        ).hidden_fields
+
+        assert ('normalization.per_spectral_unit' in hidden) is not declared
+
     def test_unknown_output_preselects_all(self):
         class Outputs(WorkflowOutputsBase):
             data: sc.DataArray = pydantic.Field(
