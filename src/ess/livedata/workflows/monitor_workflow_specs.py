@@ -14,6 +14,7 @@ import scipp as sc
 from .. import parameter_models
 from ..config.device_contract import MONITOR_DEVICES
 from ..config.instrument import Instrument
+from ..config.spectral_coords import spectral_range_template_coords
 from ..config.workflow_spec import (
     MONITORS,
     AuxSources,
@@ -155,6 +156,13 @@ class MonitorDataParams(_MonitorTOAFields, MonitorDataParamsBase):
                 )
 
 
+def _make_scalar_template() -> sc.DataArray:
+    """Create an empty template for a total summed over the spectral axis."""
+    return sc.DataArray(
+        sc.scalar(0, unit='counts'), coords=spectral_range_template_coords()
+    )
+
+
 class MonitorHistogramOutputs(WorkflowOutputsBase):
     """Outputs for the monitor histogram workflow."""
 
@@ -219,7 +227,7 @@ class MonitorHistogramOutputs(WorkflowOutputsBase):
         ),
     )
     counts_total: WindowOutput = pydantic.Field(
-        default_factory=lambda: sc.DataArray(sc.scalar(0, unit='counts')),
+        default_factory=_make_scalar_template,
         title='Total',
         description=(
             'Total number of monitor events for the latest update interval only. '
@@ -227,7 +235,7 @@ class MonitorHistogramOutputs(WorkflowOutputsBase):
         ),
     )
     counts_in_toa_range: WindowOutput = pydantic.Field(
-        default_factory=lambda: sc.DataArray(sc.scalar(0, unit='counts')),
+        default_factory=_make_scalar_template,
         title='Total in range',
         description=(
             'Number of monitor events within the configured range filter '
@@ -235,13 +243,13 @@ class MonitorHistogramOutputs(WorkflowOutputsBase):
         ),
     )
     counts_total_cumulative: CumulativeOutput = pydantic.Field(
-        default_factory=lambda: sc.DataArray(sc.scalar(0, unit='counts')),
+        default_factory=_make_scalar_template,
         title='Total',
         description='Total number of monitor events accumulated since the start '
         'of the run.',
     )
     counts_in_toa_range_cumulative: CumulativeOutput = pydantic.Field(
-        default_factory=lambda: sc.DataArray(sc.scalar(0, unit='counts')),
+        default_factory=_make_scalar_template,
         title='Total in range',
         description='Number of monitor events within the configured range filter '
         'accumulated since the start of the run.',

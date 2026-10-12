@@ -152,7 +152,11 @@ class HvConverter1d:
 
 
 def convert_histogram_1d(
-    data: sc.DataArray, label: str = '', *, dim_label: DimLabel = None
+    data: sc.DataArray,
+    label: str = '',
+    *,
+    dim_label: DimLabel = None,
+    unit: str | None = None,
 ) -> hv.Histogram:
     """Convert a 1D scipp DataArray to a Holoviews Histogram.
 
@@ -161,39 +165,59 @@ def convert_histogram_1d(
     ValueError
         If the data does not have bin-edge coordinates.
     """
-    return HvConverter1d(data, dim_label=dim_label).histogram(label=label)
+    return HvConverter1d(data, dim_label=dim_label, unit=unit).histogram(label=label)
 
 
 def convert_curve_1d(
-    data: sc.DataArray, label: str = '', *, dim_label: DimLabel = None
+    data: sc.DataArray,
+    label: str = '',
+    *,
+    dim_label: DimLabel = None,
+    unit: str | None = None,
 ) -> hv.Curve:
     """Convert a 1D scipp DataArray to a Holoviews Curve."""
-    return HvConverter1d(data, dim_label=dim_label).curve(label=label)
+    return HvConverter1d(data, dim_label=dim_label, unit=unit).curve(label=label)
 
 
 def convert_scatter_1d(
-    data: sc.DataArray, label: str = '', *, dim_label: DimLabel = None
+    data: sc.DataArray,
+    label: str = '',
+    *,
+    dim_label: DimLabel = None,
+    unit: str | None = None,
 ) -> hv.Scatter:
     """Convert a 1D scipp DataArray to a Holoviews Scatter."""
-    return HvConverter1d(data, dim_label=dim_label).scatter(label=label)
+    return HvConverter1d(data, dim_label=dim_label, unit=unit).scatter(label=label)
 
 
 def convert_error_bars_1d(
-    data: sc.DataArray, label: str = '', *, dim_label: DimLabel = None
+    data: sc.DataArray,
+    label: str = '',
+    *,
+    dim_label: DimLabel = None,
+    unit: str | None = None,
 ) -> hv.ErrorBars:
     """Convert a 1D scipp DataArray to a Holoviews ErrorBars."""
-    return HvConverter1d(data, dim_label=dim_label).error_bars(label=label)
+    return HvConverter1d(data, dim_label=dim_label, unit=unit).error_bars(label=label)
 
 
 def convert_spread_1d(
-    data: sc.DataArray, label: str = '', *, dim_label: DimLabel = None
+    data: sc.DataArray,
+    label: str = '',
+    *,
+    dim_label: DimLabel = None,
+    unit: str | None = None,
 ) -> hv.Spread:
     """Convert a 1D scipp DataArray to a Holoviews Spread."""
-    return HvConverter1d(data, dim_label=dim_label).spread(label=label)
+    return HvConverter1d(data, dim_label=dim_label, unit=unit).spread(label=label)
 
 
 def convert_quadmesh_2d(
-    data: sc.DataArray, label: str = '', *, dim_label: DimLabel = None
+    data: sc.DataArray,
+    label: str = '',
+    *,
+    dim_label: DimLabel = None,
+    unit: str | None = None,
 ) -> hv.QuadMesh:
     """
     Convert a 2D scipp DataArray to a Holoviews QuadMesh.
@@ -210,7 +234,7 @@ def convert_quadmesh_2d(
         coord_to_dimension(data.coords[dim], dim_label=dim_label)
         for dim in reversed(data.dims)
     ]
-    vdims = [create_value_dimension(data)]
+    vdims = [create_value_dimension(data, unit=unit)]
     coord_values = [data.coords[dim].values for dim in reversed(data.dims)]
 
     # QuadMesh expects (x, y, values) format
@@ -311,7 +335,11 @@ def _compute_image_bounds_from_edges(
 
 
 def convert_image_2d(
-    data: sc.DataArray, label: str = '', *, dim_label: DimLabel = None
+    data: sc.DataArray,
+    label: str = '',
+    *,
+    dim_label: DimLabel = None,
+    unit: str | None = None,
 ) -> hv.Image:
     """
     Convert a 2D scipp DataArray to a Holoviews Image.
@@ -328,7 +356,7 @@ def convert_image_2d(
         coord_to_dimension(data.coords[dim], dim_label=dim_label)
         for dim in reversed(data.dims)
     ]
-    vdims = [create_value_dimension(data)]
+    vdims = [create_value_dimension(data, unit=unit)]
 
     x_coords = _get_midpoints(data, data.dims[1]).values
     y_coords = _get_midpoints(data, data.dims[0]).values
@@ -382,6 +410,7 @@ def to_holoviews(
     label: str = '',
     *,
     dim_label: DimLabel = None,
+    unit: str | None = None,
 ) -> hv.Histogram | hv.Curve | hv.ErrorBars | hv.QuadMesh | hv.Image:
     """
     Convert a scipp DataArray to a Holoviews object.
@@ -401,6 +430,8 @@ def to_holoviews(
         the overhead of calling relabel() after creation.
     dim_label:
         Optional callback resolving coord/dim names to display labels.
+    unit:
+        Unit label of the values. If None, it is taken from ``data``.
 
     Returns
     -------
@@ -412,20 +443,28 @@ def to_holoviews(
 
     if len(data.dims) == 1:
         if _is_edges(data, data.dim):
-            return convert_histogram_1d(data, label=label, dim_label=dim_label)
+            return convert_histogram_1d(
+                data, label=label, dim_label=dim_label, unit=unit
+            )
         elif data.variances is None:
-            return convert_curve_1d(data, label=label, dim_label=dim_label)
+            return convert_curve_1d(data, label=label, dim_label=dim_label, unit=unit)
         else:
-            return convert_error_bars_1d(data, label=label, dim_label=dim_label)
+            return convert_error_bars_1d(
+                data, label=label, dim_label=dim_label, unit=unit
+            )
     elif len(data.dims) == 2:
         # Check if we have bin edges and user favors QuadMesh
         has_bin_edges = any(_is_edges(data, dim) for dim in data.dims)
         if preserve_edges and has_bin_edges:
-            return convert_quadmesh_2d(data, label=label, dim_label=dim_label)
+            return convert_quadmesh_2d(
+                data, label=label, dim_label=dim_label, unit=unit
+            )
         elif _all_coords_evenly_spaced(data):
-            return convert_image_2d(data, label=label, dim_label=dim_label)
+            return convert_image_2d(data, label=label, dim_label=dim_label, unit=unit)
         else:
-            return convert_quadmesh_2d(data, label=label, dim_label=dim_label)
+            return convert_quadmesh_2d(
+                data, label=label, dim_label=dim_label, unit=unit
+            )
     else:
         raise ValueError("Only 1D and 2D data are supported.")
 

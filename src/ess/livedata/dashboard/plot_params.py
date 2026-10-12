@@ -12,6 +12,7 @@ import pydantic
 import scipp as sc
 
 from ..config.roi_names import DETECTOR_PIXELS_COORD
+from ..config.spectral_coords import SPECTRAL_DIMS, SPECTRAL_RANGE_LOW_COORD
 from ..config.workflow_spec import Windowing
 
 
@@ -361,8 +362,34 @@ class DetectorPixelNormalizationParams(pydantic.BaseModel):
     )
 
 
-class NormalizationParams(DetectorPixelNormalizationParams, RateNormalizationParams):
-    """Parameters for normalizing to rate and to one detector pixel."""
+class SpectralUnitNormalizationParams(pydantic.BaseModel):
+    """Parameters for normalizing counts to one unit of the spectral axis."""
+
+    per_spectral_unit: bool = pydantic.Field(
+        default=False,
+        description="Divide counts by the width of the time-of-arrival or "
+        "wavelength interval they were summed over: by each bin's width for "
+        "spectra, by the width of the range filter for images and totals. The "
+        "result is in counts per unit of the histogram edges, e.g. counts/µs or "
+        "counts/Å, so plots with different binning or range filters can be "
+        "compared. The range filter selects whole bins, so the width is that of "
+        "the bins it overlaps.",
+        title="Per Unit TOA / Wavelength",
+    )
+
+
+class ImageNormalizationParams(
+    SpectralUnitNormalizationParams, RateNormalizationParams
+):
+    """Parameters for normalizing to rate and to one unit of the spectral axis."""
+
+
+class NormalizationParams(
+    SpectralUnitNormalizationParams,
+    DetectorPixelNormalizationParams,
+    RateNormalizationParams,
+):
+    """Parameters for normalizing to rate, one detector pixel, and spectral unit."""
 
 
 class WindowModeMixin(pydantic.BaseModel, abc.ABC):
@@ -484,8 +511,57 @@ class DetectorPixelMixin(pydantic.BaseModel):
         return frozenset({'normalization.per_detector_pixel'})
 
 
-class NormalizationMixin(DetectorPixelMixin, RateMixin):
-    """Mixin adding rate and per-detector-pixel normalization in one section."""
+class SpectralUnitMixin(pydantic.BaseModel):
+    """Mixin adding a per-spectral-unit normalization section to plot parameters."""
+
+    normalization: SpectralUnitNormalizationParams = pydantic.Field(
+        default_factory=SpectralUnitNormalizationParams,
+        title="Normalization",
+    )
+
+    @classmethod
+    def hidden_spectral_fields(cls, template: sc.DataArray | None) -> frozenset[str]:
+        """Return this class's fields whose control the output cannot back.
+
+        The option divides counts by the spectral range coords of outputs summed
+        over the spectral axis, or by the bin widths of spectra. It is offered only
+        when the output template is in counts and declares those coords or a
+        spectral dim. Like :meth:`DetectorPixelMixin.hidden_pixel_fields`, this is
+        strict for outputs without a template.
+
+        Parameters
+        ----------
+        template:
+            Template of the selected output, None if it has none.
+
+        Returns
+        -------
+        :
+            Dotted paths of the sub-fields to omit from the config UI.
+        """
+        if (
+            template is not None
+            and template.unit == 'counts'
+            and (
+                SPECTRAL_RANGE_LOW_COORD in template.coords
+                or any(dim in SPECTRAL_DIMS for dim in template.dims)
+            )
+        ):
+            return frozenset()
+        return frozenset({'normalization.per_spectral_unit'})
+
+
+class ImageNormalizationMixin(SpectralUnitMixin, RateMixin):
+    """Mixin adding rate and per-spectral-unit normalization in one section."""
+
+    normalization: ImageNormalizationParams = pydantic.Field(
+        default_factory=ImageNormalizationParams,
+        title="Normalization",
+    )
+
+
+class NormalizationMixin(SpectralUnitMixin, DetectorPixelMixin, RateMixin):
+    """Mixin adding rate, per-detector-pixel and per-spectral-unit normalization."""
 
     normalization: NormalizationParams = pydantic.Field(
         default_factory=NormalizationParams,
@@ -618,7 +694,7 @@ class PlotParamsTimeseriesOverlay(DetectorPixelMixin, PlotParamsTimeseries):
     """Parameters for timeseries plots with one curve per entry."""
 
 
-class PlotParams2d(RateMixin, TimeWindowMixin, PlotDisplayParams2d):
+class PlotParams2d(ImageNormalizationMixin, TimeWindowMixin, PlotDisplayParams2d):
     """Common parameters for 2D plots with windowing support."""
 
 

@@ -3875,6 +3875,181 @@ class TestDetectorPixelNormalization:
         np.testing.assert_allclose(curves['roi=1'].dimension_values(1), [2.0, 4.0])
 
 
+def _spectral_range(low: float, high: float, unit: str) -> dict[str, sc.Variable]:
+    """Spectral range coords as outputs summed over the spectral axis carry them."""
+    return {
+        'spectral_range_low': sc.scalar(low, unit=unit),
+        'spectral_range_high': sc.scalar(high, unit=unit),
+    }
+
+
+def _monitor_spectrum(variances: bool = False) -> sc.DataArray:
+    """Monitor spectrum over TOA bins 1, 2 and 4 ms wide."""
+    return sc.DataArray(
+        sc.array(
+            dims=['time_of_arrival'],
+            values=[2.0, 2.0, 2.0],
+            variances=[2.0, 2.0, 2.0] if variances else None,
+            unit='counts',
+        ),
+        coords={
+            'time_of_arrival': sc.array(
+                dims=['time_of_arrival'], values=[0.0, 1.0, 3.0, 7.0], unit='ms'
+            )
+        },
+    )
+
+
+def _per_spectral_unit_params(
+    params_class: type[pydantic.BaseModel] = PlotParams1d, **normalization: bool
+) -> pydantic.BaseModel:
+    """Params of ``params_class`` with 'Per Unit TOA / Wavelength' on."""
+    return params_class(normalization={'per_spectral_unit': True, **normalization})
+
+
+class TestSpectralUnitNormalization:
+    """'Per Unit TOA / Wavelength' divides counts by spectral bin or range width."""
+
+    @pytest.fixture
+    def data_key(self) -> DataKey:
+        return DataKey(
+            workflow_id=WorkflowId(instrument='i', name='detector_view', version=1),
+            source_name='panel',
+            output_name='current',
+        )
+
+    def test_lines_divide_spectrum_by_each_bin_width(self, data_key):
+        plotter = plots.LinePlotter.from_params(_per_spectral_unit_params())
+
+        plotter.compute({PRIMARY: {data_key: _monitor_spectrum()}})
+
+        line = single_layer(plotter)
+        np.testing.assert_allclose(line.dimension_values(1), [2.0, 1.0, 0.5])
+        assert line.vdims[0].unit == 'counts/ms'
+
+    def test_image_divides_by_range_width_and_labels_colorbar(self, data_key):
+        image = sc.DataArray(
+            sc.full(sizes={'y': 2, 'x': 3}, value=12.0, unit='counts'),
+            coords=_spectral_range(100.0, 104.0, 'us'),
+        )
+        plotter = plots.ImagePlotter.from_params(
+            _per_spectral_unit_params(PlotParams2d)
+        )
+
+        plotter.compute({PRIMARY: {data_key: image}})
+
+        element = single_layer(plotter)
+        np.testing.assert_allclose(element.dimension_values(2), 3.0)
+        assert element.vdims[0].unit == 'counts/µs'
+
+    def test_image_combines_with_rate(self, data_key):
+        image = sc.DataArray(
+            sc.full(sizes={'y': 2, 'x': 3}, value=12.0, unit='counts'),
+            coords={**_spectral_range(0.0, 4.0, 'us'), **_make_time_coords(2.0)},
+        )
+        plotter = plots.ImagePlotter.from_params(
+            _per_spectral_unit_params(PlotParams2d, per_second=True)
+        )
+
+        plotter.compute({PRIMARY: {data_key: image}})
+
+        element = single_layer(plotter)
+        np.testing.assert_allclose(element.dimension_values(2), 1.5)
+        assert element.vdims[0].unit == 'counts/µs/s'
+
+    def test_overlay_combines_bin_widths_with_pixel_and_rate(self, data_key):
+        spectra = sc.DataArray(
+            sc.array(
+                dims=['roi', 'wavelength'],
+                values=[[8.0, 8.0], [4.0, 4.0]],
+                unit='counts',
+            ),
+            coords={
+                'roi': sc.arange('roi', 2, unit=None),
+                'wavelength': sc.array(
+                    dims=['wavelength'], values=[1.0, 2.0, 4.0], unit='angstrom'
+                ),
+                'detector_pixels': sc.array(dims=['roi'], values=[4.0, 1.0]),
+                **_make_time_coords(duration_s=2.0),
+            },
+        )
+        plotter = plots.Overlay1DPlotter.from_params(
+            _per_spectral_unit_params(per_detector_pixel=True, per_second=True)
+        )
+
+        plotter.compute({PRIMARY: {data_key: spectra}})
+
+        curves = _curves_by_label(plotter)
+        np.testing.assert_allclose(curves['roi=0'].dimension_values(1), [1.0, 0.5])
+        np.testing.assert_allclose(curves['roi=1'].dimension_values(1), [2.0, 1.0])
+        assert curves['roi=0'].vdims[0].unit == 'counts/pixel/Å/s'
+
+    def test_histogram_with_error_bars_labels_both_elements(self, data_key):
+        """Error bars are drawn at bin midpoints, which must not lose the unit."""
+        params = _per_spectral_unit_params()
+        params.line.mode = Line1dRenderMode.histogram
+        params.line.errors = ErrorDisplay.bars
+        plotter = plots.Overlay1DPlotter.from_params(params)
+        spectra = sc.concat([_monitor_spectrum(variances=True)] * 2, 'roi')
+
+        plotter.compute({PRIMARY: {data_key: spectra}})
+
+        elements = plotter.get_cached_state().traverse(
+            lambda el: el, [hv.Histogram, hv.ErrorBars]
+        )
+        assert {type(el) for el in elements} == {hv.Histogram, hv.ErrorBars}
+        assert {el.vdims[0].unit for el in elements} == {'counts/ms'}
+
+    def test_bars_divide_per_roi_totals_by_range_width(self, data_key):
+        totals = sc.DataArray(
+            sc.array(dims=['roi'], values=[6.0, 3.0], unit='counts'),
+            coords={
+                'roi': sc.arange('roi', 2, unit=None),
+                **_spectral_range(2.0, 5.0, 'angstrom'),
+            },
+        )
+        plotter = plots.BarsPlotter.from_params(
+            _per_spectral_unit_params(PlotParamsBars)
+        )
+
+        plotter.compute({PRIMARY: {data_key: totals}})
+
+        (bars,) = plotter.get_cached_state().traverse(lambda el: el, [hv.Bars])
+        np.testing.assert_allclose(bars.dimension_values(2), [2.0, 1.0])
+        assert bars.vdims[0].unit == 'counts/Å'
+
+    def test_table_divides_total_by_range_width(self, data_key):
+        total = sc.DataArray(
+            sc.scalar(10.0, unit='counts'), coords=_spectral_range(0.0, 4.0, 'ms')
+        )
+        plotter = TablePlotter.from_params(_per_spectral_unit_params(PlotParamsTable))
+
+        plotter.compute({PRIMARY: {data_key: total}})
+
+        (table,) = plotter.get_cached_state().traverse(lambda el: el, [hv.Table])
+        np.testing.assert_allclose(table.dimension_values(table.vdims[0]), [2.5])
+        assert table.vdims[0].unit == 'counts/ms'
+
+    def test_off_by_default(self, data_key):
+        plotter = plots.LinePlotter.from_params(PlotParams1d())
+
+        plotter.compute({PRIMARY: {data_key: _monitor_spectrum()}})
+
+        line = single_layer(plotter)
+        np.testing.assert_allclose(line.dimension_values(1), [2.0, 2.0, 2.0])
+        assert line.vdims[0].unit == 'counts'
+
+    def test_missing_coords_show_error_instead_of_unnormalized_data(self, data_key):
+        total = sc.DataArray(sc.scalar(10.0, unit='counts'))
+        plotter = TablePlotter.from_params(_per_spectral_unit_params(PlotParamsTable))
+
+        plotter.compute({PRIMARY: {data_key: total}})
+
+        assert not plotter.get_cached_state().traverse(lambda el: el, [hv.Table])
+        (text,) = plotter.get_cached_state().traverse(lambda el: el, [hv.Text])
+        assert 'Per Unit TOA / Wavelength' in text.text
+
+
 def _make_timeseries_data_array(n_points: int, period_s: float = 1.0) -> sc.DataArray:
     """Timeseries shaped like FullHistoryExtractor output: 1-D datetime64 time
     coord plus scalar start_time / end_time coords."""

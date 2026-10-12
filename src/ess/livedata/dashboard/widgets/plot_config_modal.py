@@ -37,7 +37,7 @@ from ess.livedata.dashboard.plot_orchestrator import (
     DataSourceConfig,
     PlotConfig,
 )
-from ess.livedata.dashboard.plot_params import DetectorPixelMixin
+from ess.livedata.dashboard.plot_params import DetectorPixelMixin, SpectralUnitMixin
 from ess.livedata.dashboard.plotter_registry import PlotterSpec
 
 from .configuration_widget import ConfigurationPanel
@@ -139,7 +139,7 @@ def _resolve_output_display_hints(
         Name of the selected output view.
     params_class:
         Params model of the selected plotter. Which window-mode control and
-        per-detector-pixel option it carries decides what the view must back for
+        normalization options it carries decides what the view must back for
         those controls to apply.
 
     Returns
@@ -155,6 +155,8 @@ def _resolve_output_display_hints(
     hidden = hidden_window_fields(params_class, workflow_spec, view_name)
     if issubclass(params_class, DetectorPixelMixin):
         hidden |= params_class.hidden_pixel_fields(template)
+    if issubclass(params_class, SpectralUnitMixin):
+        hidden |= params_class.hidden_spectral_fields(template)
 
     preselect_all = template is None or template.ndim < 2
 

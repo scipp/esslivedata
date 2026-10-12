@@ -15,7 +15,7 @@ import scipp as sc
 from ess.livedata.config import models
 from ess.livedata.config.roi_names import DETECTOR_PIXELS_COORD
 
-from .providers import slice_spectral_range
+from ..spectral_range import select_spectral_range
 from .types import (
     AccumulatedHistogram,
     AccumulationMode,
@@ -355,9 +355,10 @@ def roi_counts_in_range(
     -------
     :
         Counts per ROI with dims (roi,), with the ``detector_pixels`` coord of the
-        spectra.
+        spectra and the summed spectral interval as coords (see
+        :func:`~ess.livedata.workflows.spectral_range.select_spectral_range`).
     """
-    in_range = slice_spectral_range(spectra, histogram_slice)
+    in_range = select_spectral_range(spectra, histogram_slice)
     return ROICountsInRange[AccumulationMode](in_range.sum(spectra.dims[-1]))
 
 

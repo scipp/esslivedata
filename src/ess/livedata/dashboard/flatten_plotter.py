@@ -20,7 +20,7 @@ import scipp as sc
 from ess.livedata.config.workflow_spec import DataKey
 
 from .image_hover import axis_hover_formatter_args, make_hover_hook
-from .plot_params import PlotParams2d
+from .plot_params import PlotDisplayParams2d, RateMixin, TimeWindowMixin
 from .plots import ImagePlotter
 
 
@@ -62,8 +62,12 @@ class FlattenAxisConfig(pydantic.BaseModel):
     )
 
 
-class FlattenParams(PlotParams2d):
-    """Parameters for the static-flatten N-D-to-2D plotter."""
+class FlattenParams(RateMixin, TimeWindowMixin, PlotDisplayParams2d):
+    """Parameters for the static-flatten N-D-to-2D plotter.
+
+    Unlike :class:`~ess.livedata.dashboard.plot_params.PlotParams2d` it has no
+    per-spectral-unit option, which this plotter does not implement.
+    """
 
     flatten: FlattenAxisConfig = pydantic.Field(
         default_factory=FlattenAxisConfig,

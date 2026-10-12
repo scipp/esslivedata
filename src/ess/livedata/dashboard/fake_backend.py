@@ -38,6 +38,11 @@ import structlog
 from ..config.acknowledgement import AcknowledgementResponse, CommandAcknowledgement
 from ..config.instruments import get_config
 from ..config.roi_names import DETECTOR_PIXELS_COORD, get_roi_mapper, roi_stream_name
+from ..config.spectral_coords import (
+    SPECTRAL_DIMS,
+    SPECTRAL_RANGE_HIGH_COORD,
+    SPECTRAL_RANGE_LOW_COORD,
+)
 from ..config.workflow_spec import (
     JobId,
     ResultKey,
@@ -80,6 +85,27 @@ def _expand_coord(coord: sc.Variable, dim: str, size: int) -> sc.Variable:
         values = start + np.arange(size, dtype='timedelta64[s]')
         return sc.array(dims=[dim], values=values, unit=coord.unit)
     return sc.linspace(dim, 0.0, float(size), num=size, unit=coord.unit)
+
+
+def _spectral_coords(
+    template: sc.DataArray, sizes: Sequence[int]
+) -> dict[str, sc.Variable]:
+    """Spectral coords the real backend publishes for an output of this template.
+
+    Bin edges along spectral dims, since the backend histograms along them, and
+    the spectral range coords if the template declares them.
+    """
+    coords = {}
+    for dim, size in zip(template.dims, sizes, strict=True):
+        if dim in SPECTRAL_DIMS:
+            unit = template.coords[dim].unit if dim in template.coords else 'ms'
+            coords[dim] = sc.linspace(dim, 0.0, float(size), num=size + 1, unit=unit)
+    if (low := template.coords.get(SPECTRAL_RANGE_LOW_COORD)) is not None:
+        coords[SPECTRAL_RANGE_LOW_COORD] = sc.scalar(0.0, unit=low.unit)
+        coords[SPECTRAL_RANGE_HIGH_COORD] = sc.scalar(
+            float(_DEFAULT_DIM_SIZE), unit=low.unit
+        )
+    return coords
 
 
 def source_variant(source_name: str) -> float:
@@ -152,6 +178,7 @@ def expand_template(
         for dim, size in zip(template.dims, sizes, strict=True)
         if dim in template.coords
     }
+    coords.update(_spectral_coords(template, sizes))
     if (time := template.coords.get('time')) is not None and time.ndim == 0:
         coords['time'] = sc.scalar(timestamp_ns, unit=time.unit, dtype=time.dtype)
     return sc.DataArray(data=data, coords=coords)
@@ -215,6 +242,7 @@ def expand_per_roi(
     ]
     values = np.stack(rows) if rows else np.zeros((0, *trailing))
     coords = {'roi': sc.array(dims=['roi'], values=list(variants), dtype='int32')}
+    coords.update(_spectral_coords(template, [len(variants), *trailing]))
     if DETECTOR_PIXELS_COORD in template.coords:
         # Fixed per ROI geometry, like the real count, so it stays constant
         # across updates while the ROI is unchanged.

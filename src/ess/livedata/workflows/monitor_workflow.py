@@ -35,6 +35,7 @@ from .monitor_workflow_types import (
     MonitorCountsTotal,
     MonitorHistogram,
 )
+from .spectral_range import select_spectral_range
 
 MONITOR_TRANSFORM = 'monitor_transform'
 """Coord name carrying :data:`MonitorGeometry` on the accumulated histogram."""
@@ -148,8 +149,12 @@ def accumulated_monitor_histogram(
 def counts_total(
     hist: AccumulatedMonitorHistogram[AccumulationMode],
 ) -> MonitorCountsTotal[AccumulationMode]:
-    """Total counts, for the given accumulation mode."""
-    return MonitorCountsTotal[AccumulationMode](hist.sum())
+    """Total counts, for the given accumulation mode.
+
+    Carries the spectral interval of all bins as coords, see
+    :func:`~ess.livedata.workflows.spectral_range.select_spectral_range`.
+    """
+    return MonitorCountsTotal[AccumulationMode](select_spectral_range(hist, None).sum())
 
 
 def counts_in_range(
@@ -157,15 +162,14 @@ def counts_in_range(
     low: HistogramRangeLow,
     high: HistogramRangeHigh,
 ) -> MonitorCountsInRange[AccumulationMode]:
-    """Counts within range filter, for the given accumulation mode."""
-    dim = hist.dim
-    # Convert range to histogram coordinate unit
-    coord_unit = hist.coords[dim].unit
-    low_converted = low.to(unit=coord_unit)
-    high_converted = high.to(unit=coord_unit)
-    return MonitorCountsInRange[AccumulationMode](
-        hist[dim, low_converted:high_converted].sum()
-    )
+    """Counts within range filter, for the given accumulation mode.
+
+    Carries the summed spectral interval as coords, see
+    :func:`~ess.livedata.workflows.spectral_range.select_spectral_range`.
+    """
+    unit = hist.coords[hist.dim].unit
+    in_range = select_spectral_range(hist, (low.to(unit=unit), high.to(unit=unit)))
+    return MonitorCountsInRange[AccumulationMode](in_range.sum())
 
 
 def build_monitor_workflow(
