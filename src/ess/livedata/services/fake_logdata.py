@@ -7,9 +7,8 @@ import numpy as np
 import scipp as sc
 
 from ess.livedata import Message, MessageSource, Service, StreamId, StreamKind
-from ess.livedata.config import config_names, instrument_registry
+from ess.livedata.config import config_names
 from ess.livedata.config.config_loader import load_config
-from ess.livedata.config.instruments import get_config
 from ess.livedata.core import IdentityProcessor
 from ess.livedata.core.timestamp import Timestamp
 from ess.livedata.kafka.sink import KafkaSink
@@ -41,33 +40,8 @@ def _make_ramp(size: int) -> sc.DataArray:
     )
 
 
-# Keys of the NXdetector image_key cycle, one phase each: dark, flat field, sample.
-_IMAGE_KEY_CYCLE = (2, 1, 0)
-_IMAGE_KEY_PHASE_NS = int(10e9)
-
-
-def image_key_at(elapsed_ns: int) -> int:
-    """Image key of the cycle ``elapsed_ns`` after the start of the run."""
-    return _IMAGE_KEY_CYCLE[(elapsed_ns // _IMAGE_KEY_PHASE_NS) % len(_IMAGE_KEY_CYCLE)]
-
-
-def find_image_key_streams(instrument: str) -> list[str]:
-    """Names of the instrument's f144 streams that map to an NXdetector image_key."""
-    get_config(instrument)
-    return [
-        name
-        for name, stream in instrument_registry[instrument].f144_streams.items()
-        if (stream.nexus_path or '').endswith('/image_key')
-    ]
-
-
 class FakeLogdataSource(MessageSource[sc.DataArray]):
-    """Fake message source for f144 logs.
-
-    Publishes a ramp for ``detector_tank_angle_r0`` and, for instruments having
-    one, an image key that cycles through dark, flat field and sample. Like the
-    real device, the image key is sent only when it changes.
-    """
+    """Fake message source that generates continuous monitor events in a loop."""
 
     def __init__(self, *, instrument: str):
         # Create the base ramp patterns
@@ -79,9 +53,6 @@ class FakeLogdataSource(MessageSource[sc.DataArray]):
         # How often to produce new data points (in seconds)
         self._interval_ns = int(1e9)  # 1 second in nanoseconds
         self._last_produce_time = self._time_ns()
-        self._image_key_streams = find_image_key_streams(instrument)
-        self._start_ns = self._last_produce_time.value
-        self._last_image_key: int | None = None
 
     def _time_ns(self) -> sc.Variable:
         """Return the current time in nanoseconds."""
@@ -132,18 +103,6 @@ class FakeLogdataSource(MessageSource[sc.DataArray]):
 
             # Move to the next index
             self._current_index[name] = idx + 1
-
-        image_key = image_key_at(current_time.value - self._start_ns)
-        if image_key != self._last_image_key:
-            self._last_image_key = image_key
-            data_point = sc.DataArray(
-                data=sc.scalar(image_key, unit='dimensionless'),
-                coords={'time': sc.scalar(current_time.value, unit='ns')},
-            )
-            messages.extend(
-                self._make_message(name=name, data=data_point)
-                for name in self._image_key_streams
-            )
 
         return messages
 

@@ -49,14 +49,8 @@ SERVICE_GROUPS: dict[str, tuple[str, ...]] = {
     'detectors': ('fake_detectors', 'detector_data'),
     'monitors': ('fake_monitors', 'monitor_data'),
     # data_reduction consumes the raw streams itself, so it needs the fakes but
-    # not detector_data or monitor_data. Logs feed context streams such as the
-    # image key.
-    'reduction': (
-        'fake_detectors',
-        'fake_monitors',
-        'fake_logdata',
-        'data_reduction',
-    ),
+    # not detector_data or monitor_data.
+    'reduction': ('fake_detectors', 'fake_monitors', 'data_reduction'),
     'timeseries': ('fake_logdata', 'timeseries'),
 }
 

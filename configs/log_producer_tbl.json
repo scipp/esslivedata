@@ -1,0 +1,12 @@
+{
+    "sliders": [
+        {
+            "stream_name": "orca_detector/image_key",
+            "label": "ORCA image key (0 sample, 1 flat field, 2 dark, 3 invalid, 4 background)",
+            "min": 0.0,
+            "max": 4.0,
+            "step": 1.0,
+            "initial": 0.0
+        }
+    ]
+}
