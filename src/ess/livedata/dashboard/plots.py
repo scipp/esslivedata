@@ -26,6 +26,7 @@ from ess.livedata.config.spectral_coords import (
     SPECTRAL_DIMS,
     SPECTRAL_RANGE_HIGH_COORD,
     SPECTRAL_RANGE_LOW_COORD,
+    spectral_edge_dim,
 )
 from ess.livedata.config.workflow_spec import DataKey
 from ess.livedata.core.timestamp import Timestamp
@@ -39,6 +40,7 @@ from .plot_params import (
     LegendPosition,
     PlotAspect,
     PlotDisplayParams1d,
+    PlotDisplayParams2d,
     PlotParams1d,
     PlotParams2d,
     PlotParamsBars,
@@ -47,8 +49,6 @@ from .plot_params import (
     PlotScale,
     PlotScaleParams,
     PlotScaleParams2d,
-    RateMixin,
-    SpectralUnitMixin,
     TickParams,
     TimeseriesDownsamplingParams,
 )
@@ -370,38 +370,33 @@ def _normalize_per_detector_pixel(da: sc.DataArray) -> sc.DataArray:
 def _normalize_per_spectral_unit(da: sc.DataArray) -> sc.DataArray:
     """Divide counts by the width of the spectral interval each value was summed over.
 
-    Outputs summed over the spectral axis carry that interval as the spectral range
-    coords; spectra are divided by the width of each bin along their spectral dim.
+    Spectra are divided by the width of each bin along their spectral dim. Outputs
+    summed over the spectral axis carry the summed interval as the spectral range
+    coords. Bin edges take precedence, since range coords on data that still has
+    its spectral bins describe the whole selection, not each bin.
 
     The divisor is the magnitude of the width, so the unit stays ``counts`` and
     rate normalization still applies. The plotter shows the unit of the width in the
     value label instead (see :func:`_spectral_unit`), because scipp would print, e.g.,
     counts/ms as kcounts/s and counts/Å/s in base units.
 
-    Raises if the data has neither the range coords nor bin edges along a spectral
-    dim. The config UI offers the option only for outputs whose template declares
+    Raises if the data has neither bin edges along a spectral dim nor the range
+    coords. The config UI offers the option only for outputs whose template declares
     either, so this means the data does not match its spec.
     """
-    low = da.coords.get(SPECTRAL_RANGE_LOW_COORD)
-    high = da.coords.get(SPECTRAL_RANGE_HIGH_COORD)
-    if low is not None and high is not None:
-        width = high - low
-    else:
-        dim = next(
-            (
-                dim
-                for dim in da.dims
-                if dim in SPECTRAL_DIMS and dim in da.coords and da.coords.is_edges(dim)
-            ),
-            None,
-        )
-        if dim is None:
-            raise ValueError(
-                "'Per Unit TOA / Wavelength' needs spectral range coords or bin edges "
-                f"along one of {SPECTRAL_DIMS}, which this output does not have."
-            )
+    if (dim := spectral_edge_dim(da)) is not None:
         edges = da.coords[dim]
         width = edges[dim, 1:] - edges[dim, :-1]
+    elif SPECTRAL_RANGE_LOW_COORD in da.coords:
+        width = (
+            da.coords[SPECTRAL_RANGE_HIGH_COORD] - da.coords[SPECTRAL_RANGE_LOW_COORD]
+        )
+    else:
+        raise ValueError(
+            "'Per Unit TOA / Wavelength' needs bin edges along one of "
+            f"{SPECTRAL_DIMS} or spectral range coords, which this output does not "
+            "have."
+        )
     return da / (width / sc.scalar(1.0, unit=width.unit))
 
 
@@ -411,10 +406,9 @@ def _spectral_unit(da: sc.DataArray) -> sc.Unit | None:
     Taken from the coord rather than the widths, so that it can also be read from
     data whose bin edges were replaced by midpoints for drawing.
     """
-    if (low := da.coords.get(SPECTRAL_RANGE_LOW_COORD)) is not None:
-        return low.unit
-    dim = next(dim for dim in da.dims if dim in SPECTRAL_DIMS)
-    return da.coords[dim].unit
+    if (dim := next((d for d in da.dims if d in SPECTRAL_DIMS), None)) is not None:
+        return da.coords[dim].unit
+    return da.coords[SPECTRAL_RANGE_LOW_COORD].unit
 
 
 def _identity(x: str) -> str:
@@ -1778,19 +1772,26 @@ class ImagePlotter(Plotter):
             self._autoscale_axes_override = self.AUTOSCALE_AXES - {'c'}
 
     @classmethod
-    def from_params(cls, params: PlotParams2d):
-        """Create ImagePlotter from PlotParams2d."""
+    def from_display_params(cls, params: PlotDisplayParams2d, **kwargs: Any) -> Self:
+        """Create ImagePlotter from display parameters.
+
+        ``kwargs`` are passed on to the constructor.
+        """
         return cls(
             layout_params=params.layout,
             aspect_params=params.plot_aspect,
             scale_opts=params.plot_scale,
             tick_params=params.ticks,
-            # Also called with params that carry their own normalization, e.g.
-            # those of the 2D correlation histogram, which must not apply ours.
-            normalize_per_spectral_unit=isinstance(params, SpectralUnitMixin)
-            and params.normalization.per_spectral_unit,
-            normalize_to_rate=isinstance(params, RateMixin)
-            and params.normalization.per_second,
+            **kwargs,
+        )
+
+    @classmethod
+    def from_params(cls, params: PlotParams2d) -> Self:
+        """Create ImagePlotter from PlotParams2d."""
+        return cls.from_display_params(
+            params,
+            normalize_per_spectral_unit=params.normalization.per_spectral_unit,
+            normalize_to_rate=params.normalization.per_second,
         )
 
     def _compute_image_range_targets(

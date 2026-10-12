@@ -167,8 +167,7 @@ def counts_in_range(
     Carries the summed spectral interval as coords, see
     :func:`~ess.livedata.workflows.spectral_range.select_spectral_range`.
     """
-    unit = hist.coords[hist.dim].unit
-    in_range = select_spectral_range(hist, (low.to(unit=unit), high.to(unit=unit)))
+    in_range = select_spectral_range(hist, (low, high))
     return MonitorCountsInRange[AccumulationMode](in_range.sum())
 
 

@@ -401,7 +401,7 @@ class CorrelationHistogram2dPlotter(CorrelationHistogramPlotter):
                 bins=params.bins.x_bins,
             ),
         ]
-        renderer = ImagePlotter.from_params(params)
+        renderer = ImagePlotter.from_display_params(params)
         super().__init__(
             axes=axes, normalize=params.normalization.per_second, renderer=renderer
         )

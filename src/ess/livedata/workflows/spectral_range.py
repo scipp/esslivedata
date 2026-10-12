@@ -23,24 +23,27 @@ def select_spectral_range(
     data:
         Histogram with bin edges along its last dim.
     spectral_range:
-        ``(low, high)`` in the unit of the bin edges. Selects every bin that
-        overlaps the range, so the selected interval extends to the enclosing bin
-        edges. ``None`` selects all bins.
+        ``(low, high)`` in any unit convertible to that of the bin edges. Selects
+        every bin that overlaps the range, so the selected interval extends to the
+        enclosing bin edges. ``None`` selects all bins.
 
     Returns
     -------
     :
-        The selected bins. If no bin overlaps the range, the result has no bins
-        and its interval is ``spectral_range`` itself.
+        The selected bins, with the interval in the unit of the bin edges. If no
+        bin overlaps the range, the result has no bins and its interval is
+        ``spectral_range`` itself.
     """
     dim = data.dims[-1]
-    if spectral_range is not None:
-        data = data[dim, spectral_range[0] : spectral_range[1]]
-    if data.sizes[dim] == 0:
-        low, high = spectral_range
-    else:
-        edges = data.coords[dim]
+    edges = data.coords[dim]
+    if spectral_range is None:
         low, high = edges[dim, 0], edges[dim, -1]
+    else:
+        low, high = (v.to(unit=edges.unit, dtype=edges.dtype) for v in spectral_range)
+        data = data[dim, low:high]
+        if data.sizes[dim] > 0:
+            selected = data.coords[dim]
+            low, high = selected[dim, 0], selected[dim, -1]
     return data.assign_coords(
         {SPECTRAL_RANGE_LOW_COORD: low, SPECTRAL_RANGE_HIGH_COORD: high}
     )

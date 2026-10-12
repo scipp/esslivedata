@@ -12,7 +12,7 @@ import pydantic
 import scipp as sc
 
 from ..config.roi_names import DETECTOR_PIXELS_COORD
-from ..config.spectral_coords import SPECTRAL_DIMS, SPECTRAL_RANGE_LOW_COORD
+from ..config.spectral_coords import SPECTRAL_RANGE_LOW_COORD, spectral_edge_dim
 from ..config.workflow_spec import Windowing
 
 
@@ -369,7 +369,8 @@ class SpectralUnitNormalizationParams(pydantic.BaseModel):
         default=False,
         description="Divide counts by the width of the time-of-arrival or "
         "wavelength interval they were summed over: by each bin's width for "
-        "spectra, by the width of the range filter for images and totals. The "
+        "spectra, by the width of the range filter (or of all bins without one) "
+        "for images and totals. The "
         "result is in counts per unit of the histogram edges, e.g. counts/µs or "
         "counts/Å, so plots with different binning or range filters can be "
         "compared. The range filter selects whole bins, so the width is that of "
@@ -545,12 +546,7 @@ class SpectralUnitMixin(pydantic.BaseModel):
             and template.unit == 'counts'
             and (
                 SPECTRAL_RANGE_LOW_COORD in template.coords
-                or any(
-                    dim in SPECTRAL_DIMS
-                    and dim in template.coords
-                    and template.coords.is_edges(dim)
-                    for dim in template.dims
-                )
+                or spectral_edge_dim(template) is not None
             )
         ):
             return frozenset()

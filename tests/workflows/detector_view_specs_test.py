@@ -262,3 +262,18 @@ class TestDetectorViewCoordinateModeRestriction:
         params = make_detector_view_params(spec, base=TOAOnlyDetectorViewParams)
         assert issubclass(params, TOAOnlyDetectorViewParams)
         assert params().spectrum_params.value == 3
+
+
+def test_only_images_with_a_spectral_axis_declare_spectral_range() -> None:
+    """Area-detector (camera) images are not summed over a spectral axis."""
+    from ess.livedata.config.spectral_coords import SPECTRAL_RANGE_LOW_COORD
+    from ess.livedata.workflows.detector_view_specs import (
+        AreaDetectorViewOutputs,
+        DetectorViewOutputsBase,
+    )
+
+    for field in ('cumulative', 'current'):
+        detector_view = DetectorViewOutputsBase.model_fields[field].default_factory()
+        area = AreaDetectorViewOutputs.model_fields[field].default_factory()
+        assert SPECTRAL_RANGE_LOW_COORD in detector_view.coords
+        assert SPECTRAL_RANGE_LOW_COORD not in area.coords

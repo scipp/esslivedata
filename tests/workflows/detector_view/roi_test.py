@@ -537,6 +537,12 @@ class TestROICounts:
         counts = roi_counts_in_range(spectra, (low, high))
 
         assert counts.values.tolist() == [6 * 2, 16 * 2]
+        assert sc.identical(
+            counts.coords['spectral_range_low'], sc.scalar(0.0, unit='ns')
+        )
+        assert sc.identical(
+            counts.coords['spectral_range_high'], sc.scalar(20000.0, unit='ns')
+        )
 
     def test_no_rois_give_empty_outputs(self):
         histogram = make_uniform_histogram()

@@ -28,6 +28,18 @@ See :data:`SPECTRAL_RANGE_LOW_COORD`.
 """
 
 
+def spectral_edge_dim(da: sc.DataArray) -> str | None:
+    """Spectral dim along which ``da`` has bin edges, None if there is none."""
+    return next(
+        (
+            dim
+            for dim in da.dims
+            if dim in SPECTRAL_DIMS and dim in da.coords and da.coords.is_edges(dim)
+        ),
+        None,
+    )
+
+
 def spectral_range_template_coords() -> dict[str, sc.Variable]:
     """Spectral-range coords for the empty template of an output.
 

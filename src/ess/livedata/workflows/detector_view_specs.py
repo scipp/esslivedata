@@ -402,6 +402,33 @@ class DetectorViewOutputsBase(WorkflowOutputsBase):
     )
 
 
+def _make_area_image_template() -> sc.DataArray:
+    """Create an empty template for an area-detector image."""
+    return sc.DataArray(sc.zeros(dims=['dim_0', 'dim_1'], shape=[0, 0], unit='counts'))
+
+
+class AreaDetectorViewOutputs(DetectorViewOutputsBase):
+    """Outputs for area-detector (camera) views.
+
+    Camera images have no spectral axis, so unlike the images of other detector
+    views they carry no spectral range coords.
+    """
+
+    cumulative: CumulativeOutput = pydantic.Field(
+        title='Image',
+        description='Detector image accumulated since the start of the run.',
+        default_factory=_make_area_image_template,
+    )
+    current: WindowOutput = pydantic.Field(
+        title='Image update',
+        description=(
+            'Detector image for the latest update interval only. '
+            'Resets each update interval.'
+        ),
+        default_factory=_make_area_image_template,
+    )
+
+
 class DetectorViewOutputs(DetectorViewOutputsBase):
     """Outputs for detector view workflows with ROI support."""
 

@@ -61,3 +61,24 @@ def test_range_outside_edges_selects_nothing_and_keeps_requested_interval() -> N
     low, high = _interval(result)
     assert sc.identical(low, spectral_range[0])
     assert sc.identical(high, spectral_range[1])
+
+
+def test_range_in_other_unit_is_converted_to_edge_unit() -> None:
+    spectral_range = (sc.scalar(2500, unit='us'), sc.scalar(5500, unit='us'))
+
+    result = select_spectral_range(_histogram(), spectral_range)
+
+    assert result.sum().value == 2 + 3 + 4 + 5
+    low, high = _interval(result)
+    assert sc.identical(low, sc.scalar(2.0, unit='ms'))
+    assert sc.identical(high, sc.scalar(6.0, unit='ms'))
+
+
+def test_empty_selection_interval_is_in_edge_unit() -> None:
+    spectral_range = (sc.scalar(20000, unit='us'), sc.scalar(30000, unit='us'))
+
+    result = select_spectral_range(_histogram(), spectral_range)
+
+    low, high = _interval(result)
+    assert sc.identical(low, sc.scalar(20.0, unit='ms'))
+    assert sc.identical(high, sc.scalar(30.0, unit='ms'))
