@@ -39,3 +39,14 @@ def spectral_range_template_coords() -> dict[str, sc.Variable]:
         SPECTRAL_RANGE_LOW_COORD: sc.scalar(0.0, unit='ms'),
         SPECTRAL_RANGE_HIGH_COORD: sc.scalar(0.0, unit='ms'),
     }
+
+
+def spectral_edges_template_coords() -> dict[str, sc.Variable]:
+    """Bin-edge coord along the spectral axis for the empty template of a spectrum.
+
+    A template declaring it tells the dashboard that the output is histogrammed
+    along the spectral axis, so it offers to normalize by the bin widths. The dim
+    is a placeholder: in wavelength mode the output has a ``wavelength`` dim
+    instead.
+    """
+    return {'time_of_arrival': sc.zeros(dims=['time_of_arrival'], shape=[1], unit='ms')}

@@ -24,7 +24,10 @@ import scipp as sc
 from .. import parameter_models
 from ..config import models
 from ..config.roi_names import DETECTOR_PIXELS_COORD
-from ..config.spectral_coords import spectral_range_template_coords
+from ..config.spectral_coords import (
+    spectral_edges_template_coords,
+    spectral_range_template_coords,
+)
 from ..config.workflow_spec import (
     CumulativeOutput,
     OutputView,
@@ -300,7 +303,7 @@ def _make_roi_spectra_template() -> sc.DataArray:
     """Create an empty template for stacked per-ROI spectra."""
     return sc.DataArray(
         sc.zeros(dims=['roi', 'time_of_arrival'], shape=[0, 0], unit='counts'),
-        coords=_make_roi_coords(),
+        coords={**_make_roi_coords(), **spectral_edges_template_coords()},
     )
 
 

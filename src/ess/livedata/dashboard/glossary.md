@@ -84,7 +84,8 @@ From coarse to fine: **grid → cell → layer → plotter → presenter → fig
   they were summed over: each bin for spectra, the spectral range coords for
   images and totals. The unit of the width appears only in the value label
   (e.g. counts/µs), since scipp would print it as kcounts/s. Offered only for
-  counts outputs whose template declares the coords or a spectral dim. See
+  counts outputs whose template declares the coords or bin edges along a
+  spectral dim. See
   *spectral range coords* in `src/ess/livedata/glossary.md`.
 - **Presenter** — per-session bridge from a plotter's cached state to a
   HoloViews `DynamicMap` via an `hv.streams.Pipe`; carries the dirty flag

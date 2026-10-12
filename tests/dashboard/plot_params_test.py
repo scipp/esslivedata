@@ -245,13 +245,19 @@ class TestSpectralUnitMixin:
                 sc.zeros(sizes={'dim_0': 0, 'dim_1': 0}, unit='counts'),
                 coords=_spectral_range_coords(),
             ),
-            sc.DataArray(sc.zeros(sizes={'time_of_arrival': 0}, unit='counts')),
-            sc.DataArray(sc.zeros(sizes={'roi': 0, 'wavelength': 0}, unit='counts')),
+            sc.DataArray(
+                sc.zeros(sizes={'time_of_arrival': 0}, unit='counts'),
+                coords={'time_of_arrival': sc.zeros(sizes={'time_of_arrival': 1})},
+            ),
+            sc.DataArray(
+                sc.zeros(sizes={'roi': 0, 'wavelength': 0}, unit='counts'),
+                coords={'wavelength': sc.zeros(sizes={'wavelength': 1})},
+            ),
         ],
         ids=['total', 'image', 'toa-spectrum', 'wavelength-roi-spectra'],
     )
     @pytest.mark.parametrize('params_class', [PlotParams1d, PlotParams2d])
-    def test_option_offered_for_counts_with_range_coords_or_spectral_dim(
+    def test_option_offered_for_counts_with_range_coords_or_spectral_edges(
         self, params_class, template
     ):
         assert params_class.hidden_spectral_fields(template) == frozenset()
@@ -261,11 +267,30 @@ class TestSpectralUnitMixin:
         [
             None,
             sc.DataArray(sc.scalar(0, unit='counts')),
-            sc.DataArray(sc.zeros(sizes={'Q': 0}, unit='counts')),
-            sc.DataArray(sc.zeros(sizes={'wavelength': 0}, unit='dimensionless')),
+            sc.DataArray(
+                sc.zeros(sizes={'Q': 0}, unit='counts'),
+                coords={'Q': sc.zeros(sizes={'Q': 1})},
+            ),
+            sc.DataArray(sc.zeros(sizes={'wavelength': 0}, unit='counts')),
+            sc.DataArray(
+                sc.zeros(sizes={'wavelength': 0}, unit='counts'),
+                coords={'wavelength': sc.zeros(sizes={'wavelength': 0})},
+            ),
+            sc.DataArray(
+                sc.zeros(sizes={'wavelength': 0}, unit='dimensionless'),
+                coords={'wavelength': sc.zeros(sizes={'wavelength': 1})},
+            ),
             sc.DataArray(sc.scalar(0.0, unit='K'), coords=_spectral_range_coords()),
         ],
-        ids=['no-template', 'no-coords', 'other-dim', 'not-counts', 'not-counts-0d'],
+        ids=[
+            'no-template',
+            'no-coords',
+            'other-dim',
+            'spectral-dim-without-coord',
+            'spectral-dim-without-edges',
+            'not-counts',
+            'not-counts-0d',
+        ],
     )
     def test_option_hidden_otherwise(self, template):
         assert PlotParams1d.hidden_spectral_fields(template) == {

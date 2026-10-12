@@ -525,9 +525,10 @@ class SpectralUnitMixin(pydantic.BaseModel):
 
         The option divides counts by the spectral range coords of outputs summed
         over the spectral axis, or by the bin widths of spectra. It is offered only
-        when the output template is in counts and declares those coords or a
-        spectral dim. Like :meth:`DetectorPixelMixin.hidden_pixel_fields`, this is
-        strict for outputs without a template.
+        when the output template is in counts and declares those coords or bin
+        edges along a spectral dim. Like
+        :meth:`DetectorPixelMixin.hidden_pixel_fields`, this is strict for outputs
+        without a template.
 
         Parameters
         ----------
@@ -544,7 +545,12 @@ class SpectralUnitMixin(pydantic.BaseModel):
             and template.unit == 'counts'
             and (
                 SPECTRAL_RANGE_LOW_COORD in template.coords
-                or any(dim in SPECTRAL_DIMS for dim in template.dims)
+                or any(
+                    dim in SPECTRAL_DIMS
+                    and dim in template.coords
+                    and template.coords.is_edges(dim)
+                    for dim in template.dims
+                )
             )
         ):
             return frozenset()

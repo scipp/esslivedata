@@ -380,7 +380,7 @@ def _normalize_per_spectral_unit(da: sc.DataArray) -> sc.DataArray:
 
     Raises if the data has neither the range coords nor bin edges along a spectral
     dim. The config UI offers the option only for outputs whose template declares
-    the coords or a spectral dim, so this means the data does not match its spec.
+    either, so this means the data does not match its spec.
     """
     low = da.coords.get(SPECTRAL_RANGE_LOW_COORD)
     high = da.coords.get(SPECTRAL_RANGE_HIGH_COORD)

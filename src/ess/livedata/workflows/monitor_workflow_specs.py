@@ -14,7 +14,10 @@ import scipp as sc
 from .. import parameter_models
 from ..config.device_contract import MONITOR_DEVICES
 from ..config.instrument import Instrument
-from ..config.spectral_coords import spectral_range_template_coords
+from ..config.spectral_coords import (
+    spectral_edges_template_coords,
+    spectral_range_template_coords,
+)
 from ..config.workflow_spec import (
     MONITORS,
     AuxSources,
@@ -206,7 +209,7 @@ class MonitorHistogramOutputs(WorkflowOutputsBase):
     cumulative: CumulativeOutput = pydantic.Field(
         default_factory=lambda: sc.DataArray(
             sc.zeros(dims=['time_of_arrival'], shape=[0], unit='counts'),
-            coords={'time_of_arrival': sc.arange('time_of_arrival', 0, unit='ms')},
+            coords=spectral_edges_template_coords(),
         ),
         title='Histogram',
         description=(
@@ -218,7 +221,7 @@ class MonitorHistogramOutputs(WorkflowOutputsBase):
     current: WindowOutput = pydantic.Field(
         default_factory=lambda: sc.DataArray(
             sc.zeros(dims=['time_of_arrival'], shape=[0], unit='counts'),
-            coords={'time_of_arrival': sc.arange('time_of_arrival', 0, unit='ms')},
+            coords=spectral_edges_template_coords(),
         ),
         title='Histogram update',
         description=(

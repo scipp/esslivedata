@@ -39,7 +39,6 @@ from ..config.acknowledgement import AcknowledgementResponse, CommandAcknowledge
 from ..config.instruments import get_config
 from ..config.roi_names import DETECTOR_PIXELS_COORD, get_roi_mapper, roi_stream_name
 from ..config.spectral_coords import (
-    SPECTRAL_DIMS,
     SPECTRAL_RANGE_HIGH_COORD,
     SPECTRAL_RANGE_LOW_COORD,
 )
@@ -73,33 +72,39 @@ _UPDATE_PERIOD_SECONDS = 1.0
 _ROI_READBACK_KEYS = frozenset(get_roi_mapper().readback_keys)
 
 
-def _expand_coord(coord: sc.Variable, dim: str, size: int) -> sc.Variable:
-    """Build a length-``size`` coordinate from an empty template coordinate.
+def _expand_coord(
+    coord: sc.Variable, dim: str, size: int, *, edges: bool
+) -> sc.Variable:
+    """Build a coordinate for ``size`` values from an empty template coordinate.
 
-    Templates carry coordinates of zero length that only declare dim, unit, and
-    dtype. We synthesize a monotonically increasing coordinate spanning a unit
-    range so plots have a sensible axis.
+    Templates carry coordinates of zero length (one for bin edges) that only
+    declare dim, unit, and dtype. We synthesize a monotonically increasing
+    coordinate spanning a unit range so plots have a sensible axis, with
+    ``size + 1`` values if ``edges``.
     """
+    num = size + 1 if edges else size
     if coord.dtype == sc.DType.datetime64:
         start = np.datetime64('2025-01-01T00:00:00', 's')
-        values = start + np.arange(size, dtype='timedelta64[s]')
+        values = start + np.arange(num, dtype='timedelta64[s]')
         return sc.array(dims=[dim], values=values, unit=coord.unit)
-    return sc.linspace(dim, 0.0, float(size), num=size, unit=coord.unit)
+    return sc.linspace(dim, 0.0, float(size), num=num, unit=coord.unit)
 
 
-def _spectral_coords(
+def _template_coords(
     template: sc.DataArray, sizes: Sequence[int]
 ) -> dict[str, sc.Variable]:
-    """Spectral coords the real backend publishes for an output of this template.
+    """Coords for populated data of shape ``sizes`` from an empty template.
 
-    Bin edges along spectral dims, since the backend histograms along them, and
-    the spectral range coords if the template declares them.
+    Expands the template's dim coords, keeping bin edges as bin edges, and fills
+    in the spectral range coords if the template declares them.
     """
-    coords = {}
-    for dim, size in zip(template.dims, sizes, strict=True):
-        if dim in SPECTRAL_DIMS:
-            unit = template.coords[dim].unit if dim in template.coords else 'ms'
-            coords[dim] = sc.linspace(dim, 0.0, float(size), num=size + 1, unit=unit)
+    coords = {
+        dim: _expand_coord(
+            template.coords[dim], dim, size, edges=template.coords.is_edges(dim)
+        )
+        for dim, size in zip(template.dims, sizes, strict=True)
+        if dim in template.coords
+    }
     if (low := template.coords.get(SPECTRAL_RANGE_LOW_COORD)) is not None:
         coords[SPECTRAL_RANGE_LOW_COORD] = sc.scalar(0.0, unit=low.unit)
         coords[SPECTRAL_RANGE_HIGH_COORD] = sc.scalar(
@@ -173,12 +178,7 @@ def expand_template(
     data = sc.array(
         dims=template.dims, values=values, unit=template.unit, dtype='float64'
     )
-    coords = {
-        dim: _expand_coord(template.coords[dim], dim, size)
-        for dim, size in zip(template.dims, sizes, strict=True)
-        if dim in template.coords
-    }
-    coords.update(_spectral_coords(template, sizes))
+    coords = _template_coords(template, sizes)
     if (time := template.coords.get('time')) is not None and time.ndim == 0:
         coords['time'] = sc.scalar(timestamp_ns, unit=time.unit, dtype=time.dtype)
     return sc.DataArray(data=data, coords=coords)
@@ -241,8 +241,10 @@ def expand_per_roi(
         _synthesize_values(trailing, update, variant) for variant in variants.values()
     ]
     values = np.stack(rows) if rows else np.zeros((0, *trailing))
-    coords = {'roi': sc.array(dims=['roi'], values=list(variants), dtype='int32')}
-    coords.update(_spectral_coords(template, [len(variants), *trailing]))
+    coords = {
+        **_template_coords(template, [len(variants), *trailing]),
+        'roi': sc.array(dims=['roi'], values=list(variants), dtype='int32'),
+    }
     if DETECTOR_PIXELS_COORD in template.coords:
         # Fixed per ROI geometry, like the real count, so it stays constant
         # across updates while the ROI is unchanged.
