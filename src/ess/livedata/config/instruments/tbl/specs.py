@@ -13,6 +13,9 @@ from ess.livedata.config import (
 )
 from ess.livedata.config.device_contract import DETECTOR_VIEW_DEVICES
 from ess.livedata.config.workflow_spec import DETECTORS
+from ess.livedata.workflows.area_detector_transmission_specs import (
+    AreaDetectorTransmissionOutputs,
+)
 from ess.livedata.workflows.detector_view_specs import (
     AreaDetectorViewOutputs,
     SpectrumViewSpec,
@@ -196,4 +199,16 @@ orca_view_handle = instrument.register_spec(
     # publishes readbacks, so it must not declare the ROI outputs.
     outputs=AreaDetectorViewOutputs,
     device_outputs=DETECTOR_VIEW_DEVICES,
+)
+
+orca_transmission_handle = instrument.register_spec(
+    name='tbl_orca_transmission',
+    version=1,
+    title='Orca Transmission',
+    description=(
+        'Transmission (sample - dark) / (open beam - dark) from ORCA frames, '
+        'classified by the image key. Images are downsampled to 512x512.'
+    ),
+    source_names=['orca_detector'],
+    outputs=AreaDetectorTransmissionOutputs,
 )
