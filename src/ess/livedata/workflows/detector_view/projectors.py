@@ -51,6 +51,12 @@ class GeometricProjector:
     detector pixels to screen coordinates (a plane or a cylinder mantle).
     Bins events instead of histogramming counts, preserving TOF information.
 
+    Each detector pixel has one screen position per position-noise replica. The
+    replicas sample the pixel's extent, so that pixel centres do not alias onto the
+    screen grid. Every event uses one replica, and the events of each pixel are
+    spread evenly over its replicas within every batch. The image of a single batch
+    therefore matches :meth:`compute_weights`, which averages over all replicas.
+
     Parameters
     ----------
     coords:
@@ -62,11 +68,20 @@ class GeometricProjector:
     """
 
     def __init__(self, coords: sc.DataGroup, edges: sc.DataGroup) -> None:
-        self._coords = coords
         self._edges = edges
-        self._replica_dim = 'replica'
-        self._replicas = coords.sizes.get(self._replica_dim, 1)
-        self._current = 0
+        self._replicas = coords.sizes['replica']
+        # Screen coordinates of all (pixel, replica) pairs, flattened pixel-major:
+        # index = pixel * replicas + replica. Events are sorted by pixel, so looking
+        # up their coordinates reads memory in order.
+        self._coords = {
+            key: coords[key]
+            .broadcast(sizes=coords.sizes)
+            .transpose(['detector_number', 'replica'])
+            .flatten(to='pixel_replica')
+            for key in edges.keys()
+        }
+        # Replica of the first event of the next batch, see project_events.
+        self._first_replica = 0
         self._screen_metadata = ScreenMetadata(
             coords={dim: sc.midpoints(edges[dim]) for dim in edges.keys()},
             sizes={dim: len(edges[dim]) - 1 for dim in edges.keys()},
@@ -102,16 +117,6 @@ class GeometricProjector:
             Binned data with screen coordinates as outer dimensions,
             preserving events with TOF information.
         """
-        # Cycle through replicas for smoother visualization
-        replica = self._current % self._replicas
-        self._current += 1
-
-        # Get coords for this replica
-        replica_coords = {
-            key: self._coords[key][self._replica_dim, replica]
-            for key in self._edges.keys()
-        }
-
         # Extract flat event table from bins, discarding the pixel binning structure.
         # This is more efficient than using bin(dim='detector_number', ...) which
         # would process the bin structure before flattening.
@@ -120,12 +125,24 @@ class GeometricProjector:
         end = constituents['end'].values
         event_table = constituents['data']
 
-        # Compute event-to-pixel mapping: for each event, which pixel did it come from?
-        # This allows broadcasting per-pixel coordinates to per-event coordinates.
+        # For each event, the index of its (pixel, replica) pair in self._coords.
+        # Consecutive events take consecutive replicas, so each pixel's events are
+        # spread evenly over its replicas. The first replica rotates from batch to
+        # batch, so a pixel with the same number of events in every batch does not
+        # always use the same replicas.
         n_events_per_pixel = end - begin
-        event_to_pixel = np.repeat(
-            np.arange(len(n_events_per_pixel)), n_events_per_pixel
+        replicas = self._replicas
+        index = np.repeat(
+            np.arange(len(n_events_per_pixel)) * replicas, n_events_per_pixel
         )
+        cycle = (np.arange(replicas) + self._first_replica) % replicas
+        self._first_replica = (self._first_replica + 1) % replicas
+        # Add the repeating cycle in place. np.arange(n_events) % replicas would add
+        # about 40% to the run time of this method.
+        n_full = len(index) - len(index) % replicas
+        full_cycles = index[:n_full].reshape(-1, replicas)  # view, index is contiguous
+        full_cycles += cycle
+        index[n_full:] += cycle[: len(index) - n_full]
 
         # Build coordinates dict for flat events
         event_coords = {}
@@ -134,11 +151,11 @@ class GeometricProjector:
         for name in event_table.coords:
             event_coords[name] = event_table.coords[name]
 
-        # Add screen coordinates by indexing pixel coords with the event-to-pixel map
-        for key, coord in replica_coords.items():
+        # Add screen coordinates of each event's (pixel, replica) pair
+        for key, coord in self._coords.items():
             event_coords[key] = sc.array(
                 dims=[event_table.dim],
-                values=coord.values[event_to_pixel],
+                values=coord.values[index],
                 unit=coord.unit,
             )
 
@@ -165,11 +182,9 @@ class GeometricProjector:
             2D array with shape matching screen dimensions, containing the
             average number of detector pixels per screen bin.
         """
-        n_pixels = self._coords.sizes['detector_number']
-        ones = sc.ones(dims=['detector_number'], shape=[n_pixels], dtype='float32')
-        replicated = sc.concat([ones] * self._replicas, dim=self._replica_dim)
-        da = sc.DataArray(replicated, coords=self._coords).flatten(to='_')
-        return da.hist(self._edges) / self._replicas
+        sizes = next(iter(self._coords.values())).sizes
+        ones = sc.DataArray(sc.ones(sizes=sizes, dtype='float32'), coords=self._coords)
+        return ones.hist(self._edges) / self._replicas
 
 
 class LogicalProjector:
