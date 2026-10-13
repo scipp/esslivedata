@@ -3,6 +3,7 @@
 """Tests for GeometricProjector and make_geometric_projector."""
 
 import numpy as np
+import pytest
 import scipp as sc
 
 from ess.livedata.workflows.detector_view.projectors import (
@@ -104,21 +105,86 @@ class TestGeometricProjector:
         event_data = result.bins.constituents['data']
         assert 'event_time_offset' in event_data.coords
 
-    def test_project_events_cycles_replicas(self):
-        """Test that projector cycles through replicas."""
-        n_pixels = 16
-        screen_shape = (4, 4)
-        data = make_fake_nexus_detector_data(y_size=4, x_size=4, n_events_per_pixel=10)
-        coords, edges = self.make_screen_coords_and_edges(n_pixels, screen_shape)
 
-        projector = GeometricProjector(coords, edges)
+def _make_events(counts: list[int]) -> sc.DataArray:
+    """Events binned by detector pixel, with the given number of events per pixel."""
+    n_events = sum(counts)
+    table = sc.DataArray(
+        sc.ones(dims=['event'], shape=[n_events], unit='counts'),
+        coords={
+            'event_time_offset': sc.zeros(dims=['event'], shape=[n_events], unit='ns')
+        },
+    )
+    begin = sc.array(
+        dims=['detector_number'], values=np.cumsum([0, *counts[:-1]]), unit=None
+    )
+    return sc.DataArray(sc.bins(begin=begin, dim='event', data=table))
 
-        # Project twice with same data
-        result1 = projector.project_events(data)
-        result2 = projector.project_events(data)
 
-        # Results should differ (different replicas with different noise)
-        assert not sc.identical(result1.bins.size(), result2.bins.size())
+def _make_row_projector(x: np.ndarray, n_image_pixels: int) -> GeometricProjector:
+    """Projector onto one row of 1 m wide image pixels starting at x = 0.
+
+    ``x`` holds the x position in m of each (replica, pixel); y is 0.5 m.
+    """
+    x = sc.array(dims=['replica', 'detector_number'], values=x, unit='m')
+    edges = sc.DataGroup(
+        y=sc.linspace('y', 0.0, 1.0, 2, unit='m'),
+        x=sc.linspace('x', 0.0, n_image_pixels, n_image_pixels + 1, unit='m'),
+    )
+    return GeometricProjector(sc.DataGroup(y=sc.full_like(x, 0.5), x=x), edges)
+
+
+class TestGeometricProjectorReplicas:
+    """Each event uses one position-noise replica of its detector pixel.
+
+    The image is one row of four 1 m wide image pixels. Four replicas place the
+    detector pixels as follows (x in m, y = 0.5 m):
+
+    =====  ==================  ============
+    pixel  replica 0, 1, 2, 3  image pixels
+    =====  ==================  ============
+    0      0.5, 1.5, 2.5, 3.5  0, 1, 2, 3
+    1      3.5, 3.5, 3.5, 3.5  3, 3, 3, 3
+    =====  ==================  ============
+    """
+
+    @pytest.fixture
+    def projector(self) -> GeometricProjector:
+        x = np.array([[0.5, 3.5], [1.5, 3.5], [2.5, 3.5], [3.5, 3.5]])
+        return _make_row_projector(x, n_image_pixels=4)
+
+    @staticmethod
+    def image(projector: GeometricProjector, counts: list[int]) -> sc.DataArray:
+        return projector.project_events(_make_events(counts)).bins.sum()['y', 0]
+
+    def test_single_batch_divided_by_weights_gives_counts_per_detector_pixel(
+        self, projector
+    ):
+        weights = projector.compute_weights()['y', 0]
+        assert weights.values.tolist() == [0.25, 0.25, 0.25, 1.25]
+
+        image = self.image(projector, [4, 4]) / weights
+
+        assert image.values.tolist() == [4.0, 4.0, 4.0, 4.0]
+
+    def test_every_pixel_spreads_its_events_evenly_over_its_replicas(self):
+        # Replica r of pixel p lands in image pixel 4 * p + r
+        x = 4.0 * np.arange(3) + np.arange(4)[:, None] + 0.5
+        projector = _make_row_projector(x, n_image_pixels=12)
+
+        # Six events are not a multiple of four replicas: pixel 2 starts in the
+        # middle of a cycle of replicas and ends in the incomplete last cycle.
+        image = self.image(projector, [3, 0, 3])
+
+        per_replica = image.values.reshape(3, 4)
+        assert per_replica.sum(axis=1).tolist() == [3.0, 0.0, 3.0]
+        assert (per_replica.max(axis=1) - per_replica.min(axis=1) <= 1).all()
+
+    def test_first_replica_rotates_from_batch_to_batch(self, projector):
+        images = [self.image(projector, [1, 0]).values for _ in range(4)]
+
+        # One event per batch visits every replica of its pixel in four batches
+        assert np.sum(images, axis=0).tolist() == [1.0, 1.0, 1.0, 1.0]
 
 
 def _make_positions(*, z_sign: float = 1.0) -> sc.Variable:
