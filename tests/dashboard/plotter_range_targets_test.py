@@ -30,6 +30,7 @@ from ess.livedata.dashboard.correlation_plotter import (
     CorrelationHistogram2dPlotter,
 )
 from ess.livedata.dashboard.plot_params import (
+    ColorLimits,
     PlotParams1d,
     PlotParams2d,
     PlotParams3d,
@@ -592,6 +593,112 @@ class TestSlicerPlotterRangeTargets:
         )
 
 
+def _image(values: np.ndarray) -> sc.DataArray:
+    """A 1 x n counts image with the given values."""
+    values = np.asarray(values, dtype='float64').reshape(1, -1)
+    return sc.DataArray(
+        sc.array(dims=['y', 'x'], values=values, unit='counts'),
+        coords={
+            'x': sc.arange('x', values.shape[1], dtype='float64'),
+            'y': sc.arange('y', 1, dtype='float64'),
+        },
+    )
+
+
+class TestPercentileColorLimits:
+    """``ColorLimits.percentile`` caps the color target at a percentile of the data.
+
+    A few bright pixels, such as counting noise at the edges of a pixel-weighted
+    detector view, would otherwise set the top of the color range.
+    """
+
+    @staticmethod
+    def _image_plotter(
+        percentile: float = 99.0, color_scale: PlotScale = PlotScale.linear
+    ) -> ImagePlotter:
+        params = PlotParams2d()
+        params.plot_scale.color_scale = color_scale
+        params.plot_scale.color_limits = ColorLimits.percentile
+        params.plot_scale.color_percentile = percentile
+        return ImagePlotter.from_params(params)
+
+    @staticmethod
+    def _c_target(plotter, data: sc.DataArray) -> tuple[float, float]:
+        key = _key()
+        plotter.compute({PRIMARY: {key: data}})
+        return plotter.get_range_targets(key)['c']
+
+    def test_upper_limit_ignores_outlier(self):
+        values = np.arange(1.0, 201.0)
+        values[-1] = 1e6
+        target = self._c_target(self._image_plotter(99.0), _image(values))
+        np.testing.assert_allclose(
+            target, _expected(hv.Image, 'c', 1.0, np.percentile(values, 99.0))
+        )
+        assert target[1] < 200.0
+
+    def test_keeps_color_autoscale(self):
+        assert self._image_plotter().autoscale_axes == frozenset({'x', 'y', 'c'})
+
+    def test_percentile_100_is_the_data_range(self):
+        target = self._c_target(self._image_plotter(100.0), _image([1.0, 2.0, 50.0]))
+        np.testing.assert_allclose(target, _expected(hv.Image, 'c', 1.0, 50.0))
+
+    def test_mostly_empty_image_falls_back_to_maximum(self):
+        """A percentile equal to the minimum would give an empty color range."""
+        values = np.zeros(1000)
+        values[0] = 5.0
+        target = self._c_target(self._image_plotter(99.0), _image(values))
+        np.testing.assert_allclose(target, _expected(hv.Image, 'c', 0.0, 5.0))
+
+    def test_log_scale_takes_percentile_of_positive_values(self):
+        values = np.concatenate([np.zeros(1000), np.arange(1.0, 101.0), [1e6]])
+        plotter = self._image_plotter(99.0, color_scale=PlotScale.log)
+        target = self._c_target(plotter, _image(values))
+        positive = values[values > 0]
+        np.testing.assert_allclose(
+            target,
+            _expected(hv.Image, 'c', 1.0, np.percentile(positive, 99.0), log=True),
+        )
+
+    def test_large_image_percentile_is_close_to_exact(self):
+        """Above a size threshold the percentile is taken from a random sample."""
+        values = np.arange(4_000_000.0)
+        target = self._c_target(self._image_plotter(99.0), _image(values))
+        assert target[0] == 0.0
+        np.testing.assert_allclose(target[1], 0.99 * 4_000_000, rtol=1e-3)
+
+    def test_large_image_percentile_is_stable_across_updates(self):
+        values = np.random.default_rng(1).exponential(size=2_000_000)
+        plotter = self._image_plotter(99.0)
+        assert self._c_target(plotter, _image(values)) == self._c_target(
+            plotter, _image(values)
+        )
+
+    def test_slicer_clim_uses_percentile(self):
+        params = PlotParams3d(plot_scale=PlotScaleParams2d())
+        params.plot_scale.color_scale = PlotScale.linear
+        params.plot_scale.color_limits = ColorLimits.percentile
+        params.plot_scale.color_percentile = 99.0
+        plotter = SlicerPlotter.from_params(params)
+        values = np.arange(1.0, 201.0)
+        values[-1] = 1e6
+        data = sc.DataArray(
+            sc.array(dims=['z', 'y', 'x'], values=values.reshape(2, 10, 10)),
+            coords={
+                'z': sc.arange('z', 2, dtype='float64'),
+                'y': sc.arange('y', 10, dtype='float64'),
+                'x': sc.arange('x', 10, dtype='float64'),
+            },
+        )
+        expected = (1.0, np.percentile(values, 99.0))
+
+        target = self._c_target(plotter, data)
+
+        np.testing.assert_allclose(plotter.get_cached_state().clim, expected)
+        np.testing.assert_allclose(target, _expected(hv.Image, 'c', *expected))
+
+
 def _correlation_axis_data(times, values, unit='m'):
     return sc.DataArray(
         data=sc.array(dims=['time'], values=values, unit=unit),
@@ -808,7 +915,7 @@ class TestManualColorLimitsDropAutoscaleC:
 
     def test_image_manual_drops_c(self):
         params = PlotParams2d()
-        params.plot_scale.manual_color_limits = True
+        params.plot_scale.color_limits = ColorLimits.manual
         plotter = ImagePlotter.from_params(params)
         assert plotter.autoscale_axes == frozenset({'x', 'y'})
 
@@ -820,7 +927,7 @@ class TestManualColorLimitsDropAutoscaleC:
     def test_slicer_manual_drops_c(self):
         params = PlotParams3d(
             plot_scale=PlotScaleParams2d(
-                color_scale=PlotScale.linear, manual_color_limits=True
+                color_scale=PlotScale.linear, color_limits=ColorLimits.manual
             )
         )
         plotter = SlicerPlotter.from_params(params)
@@ -828,7 +935,7 @@ class TestManualColorLimitsDropAutoscaleC:
 
     def test_correlation_2d_delegates_to_renderer(self):
         params = CorrelationHistogram2dParams(bins=Bin2dParams(x_bins=4, y_bins=4))
-        params.plot_scale.manual_color_limits = True
+        params.plot_scale.color_limits = ColorLimits.manual
         plotter = CorrelationHistogram2dPlotter(params=params)
         assert plotter.autoscale_axes == frozenset({'x', 'y'})
 
@@ -836,7 +943,7 @@ class TestManualColorLimitsDropAutoscaleC:
         """Manual limits leave ``SlicerState.clim`` unset and emit no 'c' target."""
         params = PlotParams3d(
             plot_scale=PlotScaleParams2d(
-                color_scale=PlotScale.linear, manual_color_limits=True
+                color_scale=PlotScale.linear, color_limits=ColorLimits.manual
             )
         )
         plotter = SlicerPlotter.from_params(params)

@@ -46,6 +46,14 @@ class PlotScale(enum.StrEnum):
     log = 'log'
 
 
+class ColorLimits(StrEnum):
+    """How the color limits of an image are chosen."""
+
+    data = 'data'
+    percentile = 'percentile'
+    manual = 'manual'
+
+
 class Line1dRenderMode(StrEnum):
     """Enumeration of rendering modes for 1D plots."""
 
@@ -191,29 +199,42 @@ class PlotScaleParams2d(PlotScaleParams):
         description="Scale for color axis",
         title="Color Axis Scale",
     )
-    manual_color_limits: bool = pydantic.Field(
-        default=False,
+    color_limits: ColorLimits = pydantic.Field(
+        default=ColorLimits.data,
         description=(
-            "Use fixed color limits below instead of autoscaling to the data. "
-            "When enabled, the color autoscale toolbar button is removed for this "
-            "plot."
+            "'data' autoscales the color range to the data minimum and maximum. "
+            "'percentile' autoscales the upper limit to the Color Percentile of the "
+            "data instead of the maximum, so a few bright pixels do not compress "
+            "the color range; brighter pixels take the top color. 'manual' uses "
+            "fixed Color Min and Color Max and removes the color autoscale "
+            "toolbar button for this plot."
         ),
-        title="Manual Color Limits",
+        title="Color Limits",
+    )
+    color_percentile: float = pydantic.Field(
+        default=99.5,
+        description=(
+            "Percentile of the data used as the upper color limit (used only "
+            "with 'percentile' color limits)."
+        ),
+        title="Color Percentile",
+        ge=50.0,
+        le=100.0,
     )
     color_min: float = pydantic.Field(
         default=0.0,
-        description="Lower color limit (used only when manual color limits are on).",
+        description="Lower color limit (used only with 'manual' color limits).",
         title="Color Min",
     )
     color_max: float = pydantic.Field(
         default=1.0,
-        description="Upper color limit (used only when manual color limits are on).",
+        description="Upper color limit (used only with 'manual' color limits).",
         title="Color Max",
     )
 
     @pydantic.model_validator(mode='after')
     def _check_manual_limits(self) -> PlotScaleParams2d:
-        if not self.manual_color_limits:
+        if self.color_limits != ColorLimits.manual:
             return self
         if self.color_max <= self.color_min:
             raise ValueError("Color Max must be greater than Color Min.")
