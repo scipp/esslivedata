@@ -61,8 +61,12 @@ def _nansum_keeping_all_nan(data: sc.DataArray, dim: str) -> sc.DataArray:
     result = sc.nansum(data, dim)
     if data.dtype not in (sc.DType.float32, sc.DType.float64):
         return result
+    # fmax skips NaN unless all values are NaN: a single pass without temporaries,
+    # while sc.isnan(data.data).all(dim) costs about twice the nansum.
+    all_nan = np.isnan(np.fmax.reduce(data.values, axis=data.dims.index(dim)))
+    all_nan = sc.array(dims=result.dims, values=all_nan)
     nan = sc.scalar(np.nan, unit=result.unit, dtype=result.dtype)
-    return result.assign(sc.where(sc.isnan(data.data).all(dim), nan, result.data))
+    return result.assign(sc.where(all_nan, nan, result.data))
 
 
 class UpdateExtractor(ABC):
