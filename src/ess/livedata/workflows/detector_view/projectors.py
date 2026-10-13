@@ -47,22 +47,23 @@ class GeometricProjector:
     """
     Projects events using geometric coordinate transformation.
 
-    Uses calibrated positions (with optional noise replicas) to project
+    Uses calibrated positions (with position-noise replicas) to project
     detector pixels to screen coordinates (a plane or a cylinder mantle).
     Bins events instead of histogramming counts, preserving TOF information.
 
     Each detector pixel has one screen position per position-noise replica. The
-    replicas sample the pixel's extent, so that pixel centres do not alias onto the
-    screen grid. Every event uses one replica, and the events of each pixel are
-    spread evenly over its replicas within every batch. The image of a single batch
-    therefore matches :meth:`compute_weights`, which averages over all replicas.
+    replicas sample the pixel's extent, so that pixel centers do not alias onto the
+    image grid. Every event uses one replica, and the events of each pixel are
+    spread evenly over its replicas within every batch. Dividing a single-batch image
+    by :meth:`compute_weights` therefore gives counts per detector pixel, up to
+    counting noise.
 
     Parameters
     ----------
     coords:
         Projected coordinates for each detector pixel, with shape
-        (replica, detector_number). Created by make_xy_plane_coords or
-        make_cylinder_mantle_coords.
+        (replica, detector_number). The replica dim has length 1 without position
+        noise. Created by make_xy_plane_coords or make_cylinder_mantle_coords.
     edges:
         Bin edges for screen coordinates, keyed by dimension name.
     """
@@ -71,15 +72,16 @@ class GeometricProjector:
         self._edges = edges
         self._replicas = coords.sizes['replica']
         # Screen coordinates of all (pixel, replica) pairs, flattened pixel-major:
-        # index = pixel * replicas + replica. Events are sorted by pixel, so looking
+        # index = pixel * replicas + replica. Events come in pixel order, so looking
         # up their coordinates reads memory in order.
-        self._coords = {
-            key: coords[key]
-            .broadcast(sizes=coords.sizes)
-            .transpose(['detector_number', 'replica'])
-            .flatten(to='pixel_replica')
-            for key in edges.keys()
-        }
+        self._coords = sc.DataGroup(
+            {
+                key: coords[key]
+                .transpose(['detector_number', 'replica'])
+                .flatten(to='pixel_replica')
+                for key in edges.keys()
+            }
+        )
         # Replica of the first event of the next batch, see project_events.
         self._first_replica = 0
         self._screen_metadata = ScreenMetadata(
@@ -109,7 +111,9 @@ class GeometricProjector:
         ----------
         events:
             Binned event data with detector pixels as the outer dimension.
-            Events should have 'event_time_offset' coordinate.
+            Events should have 'event_time_offset' coordinate. The event table must
+            be contiguous and in pixel order, as produced by grouping events by
+            detector pixel.
 
         Returns
         -------
@@ -139,10 +143,11 @@ class GeometricProjector:
         self._first_replica = (self._first_replica + 1) % replicas
         # Add the repeating cycle in place. np.arange(n_events) % replicas would add
         # about 40% to the run time of this method.
-        n_full = len(index) - len(index) % replicas
+        n_tail = len(index) % replicas
+        n_full = len(index) - n_tail
         full_cycles = index[:n_full].reshape(-1, replicas)  # view, index is contiguous
         full_cycles += cycle
-        index[n_full:] += cycle[: len(index) - n_full]
+        index[n_full:] += cycle[:n_tail]
 
         # Build coordinates dict for flat events
         event_coords = {}
@@ -182,8 +187,9 @@ class GeometricProjector:
             2D array with shape matching screen dimensions, containing the
             average number of detector pixels per screen bin.
         """
-        sizes = next(iter(self._coords.values())).sizes
-        ones = sc.DataArray(sc.ones(sizes=sizes, dtype='float32'), coords=self._coords)
+        ones = sc.DataArray(
+            sc.ones(sizes=self._coords.sizes, dtype='float32'), coords=self._coords
+        )
         return ones.hist(self._edges) / self._replicas
 
 
