@@ -614,6 +614,18 @@ class TestTemporalBuffer:
         assert result.sizes['time'] == 1
         assert result.coords['time'].values[0] == 1.0
 
+    def test_nan_in_data_does_not_reset(self):
+        """NaN in the data is no metadata change (#1384).
+
+        Pixel-weighted detector images are NaN in image pixels without detector
+        pixels, and masked outputs arrive with NaN in their masked elements.
+        """
+        buffer = TemporalBuffer()
+        buffer.add(make_single_slice([float('nan'), 1.0], time_value=0.0))
+        buffer.add(make_single_slice([float('nan'), 2.0], time_value=1.0))
+
+        assert_buffer_has_time_data(buffer, 2)
+
     def test_time_regression_resets_to_incoming_data(self):
         """A frame stamped before the newest buffered one restarts the buffer.
 

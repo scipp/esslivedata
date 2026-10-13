@@ -536,4 +536,7 @@ class TemporalBuffer(BufferProtocol[sc.DataArray]):
             [name for name in accumulated if name in template.coords]
         )
 
-        return sc.identical(self._reference, template)
+        # The template carries the reference's data, so the data always matches,
+        # provided NaN counts as equal: pixel-weighted detector images are NaN in
+        # image pixels without detector pixels, and masked outputs arrive with NaN.
+        return sc.identical(self._reference, template, equal_nan=True)
