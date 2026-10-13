@@ -417,6 +417,27 @@ class TestWindowAggregatingExtractor:
             result.data, sc.array(dims=['x'], values=[3.0, 5.0], unit='m')
         )
 
+    def test_nansum_keeps_elements_that_are_nan_in_every_frame(self):
+        """Image pixels without detector pixels stay empty, not zero (#1384)."""
+        extractor = WindowAggregatingExtractor(
+            window_duration_seconds=2.0,
+            aggregation=WindowAggregation.nansum,
+            concat_dim='time',
+        )
+        nan = float('nan')
+        data = sc.DataArray(
+            sc.array(
+                dims=['time', 'x'],
+                values=[[nan, nan, 1.0], [nan, 2.0, 3.0]],
+                unit='counts',
+            ),
+            coords={'time': sc.array(dims=['time'], values=[0.0, 1.0], unit='s')},
+        )
+
+        result = extractor.extract(data)
+
+        np.testing.assert_array_equal(result.values, [nan, 2.0, 4.0])
+
     def test_extract_is_consistent_across_calls(self):
         """Test that extraction produces consistent results across multiple calls."""
         extractor = WindowAggregatingExtractor(

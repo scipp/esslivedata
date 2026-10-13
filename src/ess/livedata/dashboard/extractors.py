@@ -6,6 +6,7 @@ from abc import ABC, abstractmethod
 from collections.abc import Callable
 from typing import Any
 
+import numpy as np
 import scipp as sc
 
 from .plot_params import WindowAggregation
@@ -47,6 +48,21 @@ def _extract_time_bounds_as_scalars(data: sc.DataArray) -> dict[str, sc.Variable
         'start_time': start_time[0] if start_time.ndim == 1 else start_time,
         'end_time': time[-1] if time.ndim == 1 else time,
     }
+
+
+def _nansum_keeping_all_nan(data: sc.DataArray, dim: str) -> sc.DataArray:
+    """Sum over ``dim`` ignoring NaN, but keep elements that are NaN all along ``dim``.
+
+    ``sc.nansum`` turns such elements into 0. In a pixel-weighted detector image,
+    image pixels without detector pixels are NaN in every frame. They must stay NaN,
+    so that the plot shows them as empty rather than as zero counts. ``sc.nanmean``
+    returns NaN for them already.
+    """
+    result = sc.nansum(data, dim)
+    if data.dtype not in (sc.DType.float32, sc.DType.float64):
+        return result
+    nan = sc.scalar(np.nan, unit=result.unit, dtype=result.dtype)
+    return result.assign(sc.where(sc.isnan(data.data).all(dim), nan, result.data))
 
 
 class UpdateExtractor(ABC):
@@ -246,7 +262,7 @@ class WindowAggregatingExtractor(UpdateExtractor):
                 aggregation = self._aggregation
             aggregators = {
                 WindowAggregation.sum: sc.sum,
-                WindowAggregation.nansum: sc.nansum,
+                WindowAggregation.nansum: _nansum_keeping_all_nan,
                 WindowAggregation.mean: sc.mean,
                 WindowAggregation.nanmean: sc.nanmean,
             }
