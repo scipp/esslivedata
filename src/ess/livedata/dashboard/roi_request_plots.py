@@ -289,12 +289,19 @@ class PolygonConverter:
 
         rois = {}
         for i, (xs, ys) in enumerate(zip(xs_list, ys_list, strict=True)):
+            xs, ys = list(xs), list(ys)
+            # HoloViews closes each polygon it renders by repeating the first
+            # vertex, and PolyDraw reports the rendered vertices. Dropping the
+            # repeat makes the round trip through the element a fixed point;
+            # otherwise each render reads as an edit and republishes every ROI.
+            if len(xs) > 1 and xs[0] == xs[-1] and ys[0] == ys[-1]:
+                xs, ys = xs[:-1], ys[:-1]
             # Polygons are always closed by HoloViews, so 3 vertices define a triangle.
             if len(xs) < 3 or len(ys) < 3:
                 continue
 
             rois[index_offset + i] = PolygonROI(
-                x=list(xs), y=list(ys), x_unit=x_unit, y_unit=y_unit
+                x=xs, y=ys, x_unit=x_unit, y_unit=y_unit
             )
 
         return rois
@@ -666,8 +673,8 @@ class BaseROIRequestPlotter[
         """Serialize ROIs into the coordinate string format params store."""
 
     @abstractmethod
-    def _should_skip_edit(self, new_rois: dict[int, ROIType]) -> bool:
-        """Return True if this edit event should be skipped."""
+    def _should_skip_edit(self, stream_data: dict) -> bool:
+        """Return True if this raw edit stream event should be skipped."""
 
     @abstractmethod
     def _get_style(self) -> Any:
@@ -763,7 +770,7 @@ class BaseROIRequestPlotter[
                 if new_rois == self._current_rois:
                     return None
                 # Apply subclass-specific skip logic
-                if self._should_skip_edit(new_rois):
+                if self._should_skip_edit(stream_data):
                     return None
                 self._current_rois = new_rois
                 self._publish_rois(new_rois)
@@ -870,8 +877,8 @@ class RectanglesRequestPlotter(
 
         return ', '.join(f'[{corners(rois[i])}]' for i in sorted(rois))
 
-    def _should_skip_edit(self, new_rois: dict[int, RectangleROI]) -> bool:
-        del new_rois  # Rectangles never skip edits
+    def _should_skip_edit(self, stream_data: dict) -> bool:
+        del stream_data  # Rectangles never skip edits
         return False
 
     def _get_style(self) -> RectanglesRequestStyle:
@@ -1041,25 +1048,31 @@ class PolygonsRequestPlotter(
 
         return ', '.join(f'[{vertices(rois[i])}]' for i in sorted(rois))
 
-    def _should_skip_edit(self, new_rois: dict[int, PolygonROI]) -> bool:
-        """Skip publishing while user is actively drawing a polygon.
+    def _should_skip_edit(self, stream_data: dict) -> bool:
+        """Skip edits while the user is drawing a polygon.
 
-        PolyDraw reports the cursor position as a trailing duplicate vertex
-        (last vertex == second-to-last vertex). We only publish when the
-        user clicks to confirm a vertex, which removes the duplicate.
-        This avoids race conditions with backend updates during drawing.
+        While drawing, PolyDraw reports the cursor position as a trailing
+        duplicate vertex (last vertex == second-to-last vertex): "new" mode
+        starts a polygon as [x,x]/[y,y], and each tap in "add" mode places
+        the vertex and pushes a fresh copy for the cursor. The duplicate goes
+        away only when drawing ends (a press places the final vertex, Esc
+        removes the cursor vertex), which is when the polygon is published.
 
-        NOTE: This relies on undocumented Bokeh PolyDrawTool behavior.
-        In poly_draw_tool.ts, "new" mode initializes with [x,x]/[y,y] and
-        "add" mode captures-then-pushes the last vertex, creating a brief
-        duplicate after each click until cursor movement updates it.
-        This is fundamental to the rubber-band preview UX but not a
-        documented API guarantee.
+        The check runs on the raw stream data rather than parsed ROIs: a just
+        started polygon has two vertices and is not an ROI yet, but it is in
+        the browser. Accepting an edit then would push an element without it
+        back to the browser while the tool keeps drawing, and further taps
+        would extend the previous polygon instead.
+
+        NOTE: This relies on undocumented Bokeh PolyDrawTool behavior
+        (poly_draw_tool.ts), fundamental to the rubber-band preview UX but not
+        a documented API guarantee.
         """
-        for roi in new_rois.values():
-            if len(roi.x) >= 2:
-                if roi.x[-1] == roi.x[-2] and roi.y[-1] == roi.y[-2]:
-                    return True
+        for xs, ys in zip(
+            stream_data.get('xs', ()), stream_data.get('ys', ()), strict=True
+        ):
+            if len(xs) >= 2 and xs[-1] == xs[-2] and ys[-1] == ys[-2]:
+                return True
         return False
 
     def _get_style(self) -> PolygonsRequestStyle:

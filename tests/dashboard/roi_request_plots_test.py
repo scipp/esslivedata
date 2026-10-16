@@ -445,6 +445,74 @@ def test_a_polygon_still_being_drawn_does_not_reach_the_element(
     assert presenter._pipe.data == []
 
 
+def _rendered_polygons(presenter) -> dict[str, list[list[float]]]:
+    """Render the session's element and return what PolyDraw reports back."""
+    plot = hv.renderer('bokeh').get_plot(presenter.present(None))
+    data = plot.handles['source'].data
+    return {key: [list(map(float, v)) for v in data[key]] for key in ('xs', 'ys')}
+
+
+@pytest.fixture
+def publisher() -> FakeROIPublisher:
+    return FakeROIPublisher()
+
+
+@pytest.fixture
+def drawn_triangle_presenter(data_key: DataKey, publisher: FakeROIPublisher):
+    """A session whose user has drawn one triangle, publishes cleared."""
+    plotter = _computed_polygon_plotter(PolygonsRequestParams(), data_key)
+    plotter.set_roi_publisher(publisher)
+    presenter = plotter.create_presenter()
+    presenter._handle_edit({'xs': [[0.0, 1.0, 0.5]], 'ys': [[0.0, 0.0, 1.0]]})
+    publisher.reset()
+    return presenter
+
+
+def test_rendering_a_drawn_polygon_does_not_republish_it(
+    drawn_triangle_presenter, publisher: FakeROIPublisher
+) -> None:
+    """HoloViews closes rendered polygons; the repeated vertex is not an edit."""
+    rendered = _rendered_polygons(drawn_triangle_presenter)
+    assert rendered['xs'] == [[0.0, 1.0, 0.5, 0.0]]
+
+    drawn_triangle_presenter._handle_edit(rendered)
+
+    assert publisher.published == []
+
+
+def test_starting_a_second_polygon_keeps_it_in_the_browser(
+    drawn_triangle_presenter, publisher: FakeROIPublisher
+) -> None:
+    """Pushing an element without the started polygon makes PolyDraw extend
+    the previous polygon on the next tap."""
+    data = _rendered_polygons(drawn_triangle_presenter)
+    rendered = drawn_triangle_presenter._pipe.data
+    # PolyDraw "new" mode: the first vertex plus its cursor copy.
+    data['xs'].append([5.0, 5.0])
+    data['ys'].append([5.0, 5.0])
+
+    drawn_triangle_presenter._handle_edit(data)
+
+    assert drawn_triangle_presenter._pipe.data is rendered
+    assert publisher.published == []
+
+
+def test_starting_a_polygon_that_evicts_the_oldest_is_not_published_yet(
+    drawn_triangle_presenter, publisher: FakeROIPublisher
+) -> None:
+    """At max_roi_count, PolyDraw drops the oldest polygon when one is started.
+
+    That is a real change, but publishing it would still push an element
+    without the started polygon to the browser mid-draw.
+    """
+    rendered = drawn_triangle_presenter._pipe.data
+
+    drawn_triangle_presenter._handle_edit({'xs': [[5.0, 5.0]], 'ys': [[5.0, 5.0]]})
+
+    assert drawn_triangle_presenter._pipe.data is rendered
+    assert publisher.published == []
+
+
 @pytest.mark.parametrize(
     ('plotter_cls', 'params_cls'),
     [
