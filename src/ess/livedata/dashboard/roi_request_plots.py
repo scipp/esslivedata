@@ -222,32 +222,6 @@ class RectangleConverter:
             rectangles.append(rect_tuple)
         return rectangles
 
-    def to_stream_data(self, rois: dict[int, RectangleROI]) -> dict[str, list[float]]:
-        """
-        Convert RectangleROI instances to BoxEdit data format.
-
-        Parameters
-        ----------
-        rois:
-            Dictionary mapping ROI index to RectangleROI.
-
-        Returns
-        -------
-        :
-            Dictionary with keys 'x0', 'x1', 'y0', 'y1' in BoxEdit format.
-            Empty dict with empty lists if no ROIs.
-        """
-        if not rois:
-            return {"x0": [], "y0": [], "x1": [], "y1": []}
-
-        sorted_indices = sorted(rois.keys())
-        return {
-            "x0": [rois[i].x.min for i in sorted_indices],
-            "y0": [rois[i].y.min for i in sorted_indices],
-            "x1": [rois[i].x.max for i in sorted_indices],
-            "y1": [rois[i].y.max for i in sorted_indices],
-        }
-
 
 class PolygonConverter:
     """Converter for polygon ROIs using PolyDraw stream."""
@@ -338,32 +312,6 @@ class PolygonConverter:
             polygons.append(poly_dict)
         return polygons
 
-    def to_stream_data(
-        self, rois: dict[int, PolygonROI]
-    ) -> dict[str, list[list[float]]]:
-        """
-        Convert PolygonROI instances to PolyDraw data format.
-
-        Parameters
-        ----------
-        rois:
-            Dictionary mapping ROI index to PolygonROI.
-
-        Returns
-        -------
-        :
-            Dictionary with keys 'xs', 'ys' in PolyDraw format.
-            Empty dict with empty lists if no ROIs.
-        """
-        if not rois:
-            return {"xs": [], "ys": []}
-
-        sorted_indices = sorted(rois.keys())
-        return {
-            "xs": [[float(v) for v in rois[i].x] for i in sorted_indices],
-            "ys": [[float(v) for v in rois[i].y] for i in sorted_indices],
-        }
-
 
 if TYPE_CHECKING:
     from ess.livedata.config.workflow_spec import DataKey
@@ -450,9 +398,10 @@ class BaseROIRequestPresenter(PresenterBase, ABC):
     Base presenter for ROI request plotters.
 
     Handles only HoloViews mechanics: creates session-bound Pipe, DynamicMap,
-    and edit streams in __init__. Edit events are forwarded to a callback
-    provided by the plotter, which handles all domain logic (ROI parsing,
-    comparison, skip logic, publishing).
+    and edit streams in __init__. Triggers of the edit stream are forwarded
+    to a callback provided by the plotter, which handles all domain logic
+    (ROI parsing, comparison, skip logic, publishing). Figure setup writes the
+    edit stream too but never reaches the callback; see ``_handle_edit``.
 
     Parameters
     ----------
@@ -460,8 +409,6 @@ class BaseROIRequestPresenter(PresenterBase, ABC):
         The plotter that created this presenter.
     initial_hv_data:
         Initial data in HoloViews format for pipe initialization.
-    initial_stream_data:
-        Initial data in edit stream format.
     style:
         Style parameters (color, line_width, line_dash).
     max_roi_count:
@@ -478,7 +425,6 @@ class BaseROIRequestPresenter(PresenterBase, ABC):
         *,
         plotter: Plotter,
         initial_hv_data: list,
-        initial_stream_data: dict,
         style: Any,
         max_roi_count: int,
         on_edit: Callable[[dict], list | None],
@@ -491,22 +437,20 @@ class BaseROIRequestPresenter(PresenterBase, ABC):
         # Create session-bound components
         self._pipe = hv.streams.Pipe(data=[])
         self._dmap = hv.DynamicMap(self._create_element, streams=[self._pipe])
-        self._edit_stream = self._create_edit_stream(self._dmap, initial_stream_data)
+        self._edit_stream = self._create_edit_stream(self._dmap)
 
         # Initialize pipe with data
         self._pipe.send(initial_hv_data)
 
-        # Set up edit callback
-        self._edit_stream.param.watch(self._handle_edit, 'data')
+        # A subscriber, not a watcher on `data`: see _handle_edit.
+        self._edit_stream.add_subscriber(self._handle_edit)
 
     @abstractmethod
     def _create_element(self, data: list) -> hv.Element:
         """Create HoloViews element (Rectangles or Polygons)."""
 
     @abstractmethod
-    def _create_edit_stream(
-        self, dmap: hv.DynamicMap, initial_data: dict
-    ) -> hv.streams.Stream:
+    def _create_edit_stream(self, dmap: hv.DynamicMap) -> hv.streams.Stream:
         """Create edit stream (BoxEdit or PolyDraw)."""
 
     def present(self, pipe: hv.streams.Pipe) -> hv.DynamicMap:
@@ -529,20 +473,41 @@ class BaseROIRequestPresenter(PresenterBase, ABC):
         del pipe  # ROI request plotters don't use the shared pipe for updates
         return self._apply_styling(self._dmap)
 
-    def _handle_edit(self, event) -> None:
-        """Forward edit stream events to the plotter's callback.
+    def _handle_edit(self, data: dict) -> None:
+        """Forward a user edit to the plotter's callback.
+
+        Runs as a stream subscriber, i.e. only when the edit stream is
+        triggered. HoloViews triggers it when the edit tool's data source
+        changes: for messages from the browser, and as an echo of server-side
+        updates to that source, such as the re-render after ``pipe.send``
+        below. An echo carries the set this session rendered, so the plotter
+        finds it unchanged and does nothing. If another session edited in
+        between, the echo reads as an edit.
+
+        Building a figure writes the stream as well: the edit callback's
+        ``initialize`` copies the shapes the figure was built from into
+        ``data``, without a trigger. Those shapes may be stale (another
+        session edited since, or the figure was built from an outdated frame).
+        Taken as an edit, they would be published and persisted, deleting
+        ROIs, and the ``pipe.send`` below would re-enter the half-built figure.
 
         The accepted set is pushed back through the pipe, so that the element
         this session renders always matches the plotter's live ROIs. Without
         it the element stays at whatever this presenter was constructed with:
         drawn ROIs live only in the browser's edit tool, and the next
         re-render -- a cell rebuilt on job state change, a pop-out --
-        rebuilds that tool from the stale element and syncs the difference
-        back as an edit, silently dropping ROIs the user drew.
+        rebuilds that tool from the stale element. The ROIs the user drew
+        disappear from view, and the next edit syncs the stale set plus that
+        edit back, deleting them.
+
+        Parameters
+        ----------
+        data:
+            The edit stream's contents: the shapes in the edit tool's data
+            source.
         """
-        data = event.new if hasattr(event, 'new') else event
         try:
-            accepted = self._on_edit_callback(data or {})
+            accepted = self._on_edit_callback(data)
         except Exception as e:
             logger.error("Failed to process ROI edit: %s", e)
             return
@@ -571,14 +536,8 @@ class RectanglesRequestPresenter(BaseROIRequestPresenter):
     def _create_element(self, data: list) -> hv.Rectangles:
         return hv.Rectangles(data)
 
-    def _create_edit_stream(
-        self, dmap: hv.DynamicMap, initial_data: dict
-    ) -> hv.streams.BoxEdit:
-        return hv.streams.BoxEdit(
-            source=dmap,
-            num_objects=self._max_roi_count,
-            data=initial_data,
-        )
+    def _create_edit_stream(self, dmap: hv.DynamicMap) -> hv.streams.BoxEdit:
+        return hv.streams.BoxEdit(source=dmap, num_objects=self._max_roi_count)
 
 
 class PolygonsRequestPresenter(BaseROIRequestPresenter):
@@ -587,15 +546,12 @@ class PolygonsRequestPresenter(BaseROIRequestPresenter):
     def _create_element(self, data: list) -> hv.Polygons:
         return hv.Polygons(data)
 
-    def _create_edit_stream(
-        self, dmap: hv.DynamicMap, initial_data: dict
-    ) -> hv.streams.PolyDraw:
+    def _create_edit_stream(self, dmap: hv.DynamicMap) -> hv.streams.PolyDraw:
         return hv.streams.PolyDraw(
             source=dmap,
             num_objects=self._max_roi_count,
             drag=True,
             show_vertices=True,
-            data=initial_data,
         )
 
 
@@ -894,7 +850,6 @@ class RectanglesRequestPlotter(
             initial_hv_data=self._converter.to_hv_data(
                 self._current_rois, index_to_color=None
             ),
-            initial_stream_data=self._converter.to_stream_data(self._current_rois),
             style=self._get_style(),
             max_roi_count=self._get_max_roi_count(),
             on_edit=self._create_edit_handler(),
@@ -1088,7 +1043,6 @@ class PolygonsRequestPlotter(
             initial_hv_data=self._converter.to_hv_data(
                 self._current_rois, index_to_color=None
             ),
-            initial_stream_data=self._converter.to_stream_data(self._current_rois),
             style=self._get_style(),
             max_roi_count=self._get_max_roi_count(),
             on_edit=self._create_edit_handler(),
