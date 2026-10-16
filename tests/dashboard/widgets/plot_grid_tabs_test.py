@@ -14,6 +14,7 @@ there; this file only checks that the pass carries them out.
 import holoviews as hv
 import panel as pn
 import pytest
+from bokeh.document import Document
 
 from ess.livedata.config.workflow_spec import WorkflowId
 from ess.livedata.dashboard.data_service import DataService
@@ -874,17 +875,6 @@ class TestDisabledGridTabs:
 
         assert fake_layer_id not in plot_grid_tabs._session_layers
 
-    def test_rename_updates_tab_title(self, plot_orchestrator, plot_grid_tabs):
-        """Renaming a grid updates the corresponding tab title."""
-        grid_id = plot_orchestrator.add_grid(title='Old Name', nrows=2, ncols=2)
-        _tick(plot_grid_tabs)
-
-        plot_orchestrator.rename_grid(grid_id, 'New Name')
-        _tick(plot_grid_tabs)
-
-        assert 'New Name' in plot_grid_tabs.tabs._names
-        assert 'Old Name' not in plot_grid_tabs.tabs._names
-
     def test_reorder_updates_tab_order(self, plot_orchestrator, plot_grid_tabs):
         """Moving a grid updates tab order."""
         plot_orchestrator.add_grid(title='Alpha', nrows=2, ncols=2)
@@ -967,6 +957,99 @@ class TestDisabledGridTabs:
 
         # C's tab is gone; B remains.
         assert plot_grid_tabs.tabs._names[static:] == ['B']
+
+
+_TOPOLOGY_CHANGES = {
+    'grid-added': lambda orch, ids: orch.add_grid(title='New', nrows=1, ncols=1),
+    'earlier-grid-removed': lambda orch, ids: orch.remove_grid(ids['X']),
+    'earlier-grid-disabled': lambda orch, ids: orch.set_grid_enabled(
+        ids['X'], enabled=False
+    ),
+    'later-grid-removed': lambda orch, ids: orch.remove_grid(ids['Y']),
+    'later-grid-disabled': lambda orch, ids: orch.set_grid_enabled(
+        ids['Y'], enabled=False
+    ),
+    'grids-reordered': lambda orch, ids: orch.move_grid(ids['B'], -1),
+}
+# Replacing a grid gives it a new id and so a new tab: the one change that
+# shows a new title, and one that cannot keep the grid's models.
+_TITLE_CHANGES = {
+    **_TOPOLOGY_CHANGES,
+    'grid-replaced': lambda orch, ids: orch.replace_grid(
+        ids['A'], 'Replaced', nrows=1, ncols=1
+    ),
+}
+
+
+class TestGridTabsKeepModels:
+    """A grid that keeps its tab across a topology change keeps its models.
+
+    Building a grid's Bokeh models means building every figure in it, so a
+    grid that is popped and re-appended pays a full rebuild on its next
+    reveal. A tab that stays in the list must keep its models.
+    """
+
+    @pytest.fixture
+    def rendered(self, plot_orchestrator, plot_grid_tabs):
+        """Grids X, A, B, Y; B and then A viewed, so both hold models."""
+        ids = {
+            title: plot_orchestrator.add_grid(title=title, nrows=1, ncols=1)
+            for title in ('X', 'A', 'B', 'Y')
+        }
+        _add_static_cell(plot_orchestrator, ids['A'], _GEO)
+        _add_static_cell(plot_orchestrator, ids['B'], _GEO)
+        _tick(plot_grid_tabs)
+        root = plot_grid_tabs.tabs.get_root(Document())
+        models = {}
+        for title in ('B', 'A'):
+            self._show(plot_grid_tabs, ids[title])
+            models[title] = self._active_child(plot_grid_tabs, root)
+        return ids, root, models
+
+    @staticmethod
+    def _show(plot_grid_tabs: PlotGridTabs, grid_id: GridId) -> None:
+        tabbed = plot_grid_tabs._tabbed_grid_ids()
+        plot_grid_tabs.tabs.active = plot_grid_tabs._static_tabs_count + (
+            tabbed.index(grid_id)
+        )
+        _tick(plot_grid_tabs)
+
+    @staticmethod
+    def _active_child(plot_grid_tabs: PlotGridTabs, root):
+        return root.tabs[plot_grid_tabs.tabs.active].child
+
+    @pytest.mark.parametrize(
+        'change', _TOPOLOGY_CHANGES.values(), ids=_TOPOLOGY_CHANGES
+    )
+    def test_shown_and_hidden_grids_keep_their_models(
+        self, plot_orchestrator, plot_grid_tabs, rendered, change
+    ):
+        ids, root, models = rendered
+
+        change(plot_orchestrator, ids)
+        _tick(plot_grid_tabs)
+
+        assert plot_grid_tabs._get_active_grid_id() == ids['A']
+        assert self._active_child(plot_grid_tabs, root) is models['A']
+        self._show(plot_grid_tabs, ids['B'])
+        assert self._active_child(plot_grid_tabs, root) is models['B']
+
+    @pytest.mark.parametrize('change', _TITLE_CHANGES.values(), ids=_TITLE_CHANGES)
+    def test_rendered_titles_follow_the_topology(
+        self, plot_orchestrator, plot_grid_tabs, rendered, change
+    ):
+        ids, root, _ = rendered
+
+        change(plot_orchestrator, ids)
+        _tick(plot_grid_tabs)
+
+        static = plot_grid_tabs._static_tabs_count
+        expected = [
+            config.title
+            for config in plot_orchestrator.get_all_grids().values()
+            if config.enabled
+        ]
+        assert [panel.title for panel in root.tabs[static:]] == expected
 
 
 def _static_plot_config(positions='10, 20'):
@@ -1418,10 +1501,9 @@ class TestCellActions:
         assert not presenter.has_pending_update()
 
     def test_cell_edit_does_not_churn_tabs(self, plot_orchestrator, plot_grid_tabs):
-        """Cell-level changes bump the topology version but must not tear down
-        and re-append the Tabs entries -- that would discard the active tab's
-        Bokeh models (flicker) on every layer edit in every session. Grid-level
-        changes still rebuild the tabs."""
+        """Cell-level changes bump the topology version but must not reassign
+        the Tabs entries -- a tab-strip update on every layer edit in every
+        session. Grid-level changes still reassign them."""
         grid_id = plot_orchestrator.add_grid(title='G', nrows=2, ncols=2)
         cell_id = _add_static_cell(plot_orchestrator, grid_id, _GEO)
         _tick(plot_grid_tabs)
@@ -1434,7 +1516,7 @@ class TestCellActions:
         _tick(plot_grid_tabs)
         assert events == []
 
-        plot_orchestrator.rename_grid(grid_id, 'G2')
+        plot_orchestrator.add_grid(title='G2', nrows=1, ncols=1)
         _tick(plot_grid_tabs)
         assert events
 

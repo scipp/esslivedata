@@ -915,9 +915,45 @@ _DRAW_BOX_JS = f"""(box) => {{
 _ROI_PUBLISHED = re.compile(r"Published (\d+) rectangle ROI\(s\) for source")
 
 
-def _add_unrelated_grid(dash: Dashboard) -> None:
+_BOX = [1.0, 1.0, 5.0, 5.0]
+
+
+def _draw_box_in_roi_cell(dash: Dashboard, log: Path) -> tuple[set[str], int]:
+    """Draw ``_BOX`` in the Detectors tab's ROI cell and wait for its publish.
+
+    Returns the ids of the figures showing the cell, and the log offset past
+    the publish.
+    """
+    dash.goto_tab("Detectors")
+    wait_until(
+        dash,
+        lambda: [f["tools"] for f in dash.page.evaluate(_ROI_FIGURES_JS)] == [[[]]],
+        label="the ROI cell's edit tool",
+    )
+    figure_ids = {f["id"] for f in dash.page.evaluate(_ROI_FIGURES_JS)}
+    assert dash.page.evaluate(_DRAW_BOX_JS, _BOX)
+    wait_until(
+        dash,
+        lambda: _ROI_PUBLISHED.findall(log.read_text())[-1:] == ["1"],
+        label="the drawn box to be published",
+    )
+    return figure_ids, log.stat().st_size
+
+
+def _disable_and_re_enable_roi_grid(dash: Dashboard) -> None:
     dash.goto_tab("Manage Plots")
-    _add_grid(dash, "Unrelated")
+    click_until(
+        dash,
+        ".lt-grid-detectors.lt-tool-eye",
+        lambda: "Detectors" not in dash.tab_names(),
+        label="the Detectors grid to be disabled",
+    )
+    click_until(
+        dash,
+        ".lt-grid-detectors.lt-tool-eye-off",
+        lambda: "Detectors" in dash.tab_names(),
+        label="the Detectors grid to be re-enabled",
+    )
     dash.goto_tab("Detectors")
 
 
@@ -933,34 +969,20 @@ def _pop_out_roi_cell(dash: Dashboard) -> None:
 @pytest.mark.browser
 @pytest.mark.parametrize(
     ("rerender", "figures"),
-    [(_add_unrelated_grid, 1), (_pop_out_roi_cell, 2)],
-    ids=["unrelated-grid-added", "popped-out"],
+    [(_disable_and_re_enable_roi_grid, 1), (_pop_out_roi_cell, 2)],
+    ids=["grid-re-enabled", "popped-out"],
 )
 def test_drawn_roi_survives_a_new_figure_for_its_cell(rerender, figures):
     """A cell rendered into a new figure must show the ROIs drawn so far.
 
-    Adding a grid rebuilds the tab strip, after which Panel renders the cells
-    of a revealed grid into new figures; a pop-out renders its cell into a
+    Disabling a grid takes its tab away, after which Panel renders the cells of
+    the re-enabled grid into new figures; a pop-out renders its cell into a
     second one. An edit tool built from a stale frame of the cell syncs it back
     as an edit: the ROIs drawn since vanish, the deletion is published, and the
     re-entrant update leaves the figure with a second edit tool.
     """
-    box = [1.0, 1.0, 5.0, 5.0]
     with fake_dashboard("dummy") as fake, Dashboard.connect(fake.url) as dash:
-        dash.goto_tab("Detectors")
-        wait_until(
-            dash,
-            lambda: [f["tools"] for f in dash.page.evaluate(_ROI_FIGURES_JS)] == [[[]]],
-            label="the ROI cell's edit tool",
-        )
-        before = {f["id"] for f in dash.page.evaluate(_ROI_FIGURES_JS)}
-        assert dash.page.evaluate(_DRAW_BOX_JS, box)
-        wait_until(
-            dash,
-            lambda: _ROI_PUBLISHED.findall(fake.log.read_text())[-1:] == ["1"],
-            label="the drawn box to be published",
-        )
-        log_offset = fake.log.stat().st_size
+        before, log_offset = _draw_box_in_roi_cell(dash, fake.log)
 
         rerender(dash)
 
@@ -971,5 +993,31 @@ def test_drawn_roi_survives_a_new_figure_for_its_cell(rerender, figures):
         wait_until(dash, new_figure_built, label="the cell's new figure")
         dash.settle()
         shown = [f["tools"] for f in dash.page.evaluate(_ROI_FIGURES_JS)]
-        assert shown == [[[box]]] * figures
+        assert shown == [[[_BOX]]] * figures
+        assert not _ROI_PUBLISHED.findall(fake.log.read_text()[log_offset:])
+
+
+@pytest.mark.browser
+def test_adding_a_grid_keeps_the_figures_of_the_others():
+    """A grid's figures survive a change to the set of grids, ROIs included.
+
+    Rebuilding the figures of every viewed grid on each grid add costs ~50 ms
+    per layer on the next reveal (see ``plot_grid_tabs``).
+    """
+    with fake_dashboard("dummy") as fake, Dashboard.connect(fake.url) as dash:
+        before, log_offset = _draw_box_in_roi_cell(dash, fake.log)
+
+        dash.goto_tab("Manage Plots")
+        _add_grid(dash, "Unrelated")
+        dash.goto_tab("Detectors")
+
+        wait_until(
+            dash,
+            lambda: dash.page.evaluate(_ROI_FIGURES_JS),
+            label="the ROI cell's figure to be shown",
+        )
+        dash.settle()
+        shown = dash.page.evaluate(_ROI_FIGURES_JS)
+        assert {f["id"] for f in shown} == before
+        assert [f["tools"] for f in shown] == [[[_BOX]]]
         assert not _ROI_PUBLISHED.findall(fake.log.read_text()[log_offset:])

@@ -869,12 +869,6 @@ class TestTopologyVersion:
         plot_orchestrator.remove_grid(grid_id)
         assert plot_orchestrator.topology_version() > before
 
-    def test_rename_grid_bumps_version(self, plot_orchestrator):
-        grid_id = plot_orchestrator.add_grid(title='Old', nrows=3, ncols=3)
-        before = plot_orchestrator.topology_version()
-        plot_orchestrator.rename_grid(grid_id, 'New')
-        assert plot_orchestrator.topology_version() > before
-
     def test_move_grid_bumps_version(self, plot_orchestrator):
         id_a = plot_orchestrator.add_grid(title='A', nrows=2, ncols=2)
         plot_orchestrator.add_grid(title='B', nrows=2, ncols=2)
@@ -2446,23 +2440,6 @@ class TestWindowingSelectedByParams:
         assert setup['output_name'] == expected_field
 
 
-class TestRenameGrid:
-    """Tests for grid rename functionality."""
-
-    def test_rename_grid_updates_title(self, plot_orchestrator):
-        grid_id = plot_orchestrator.add_grid(title='Old Title', nrows=3, ncols=3)
-        plot_orchestrator.rename_grid(grid_id, 'New Title')
-
-        grids = plot_orchestrator.get_all_grids()
-        assert grids[grid_id].title == 'New Title'
-
-    def test_rename_grid_persists(self, plot_orchestrator):
-        """Rename triggers persistence (no error from _persist_to_store)."""
-        grid_id = plot_orchestrator.add_grid(title='Before', nrows=2, ncols=2)
-        plot_orchestrator.rename_grid(grid_id, 'After')
-        assert plot_orchestrator.get_all_grids()[grid_id].title == 'After'
-
-
 class TestMoveGrid:
     """Tests for grid reorder functionality."""
 
@@ -2829,35 +2806,6 @@ class TestPersistenceRoundTrip:
         loaded_grid = next(iter(grids.values()))
         assert loaded_grid.title == 'Hidden'
         assert loaded_grid.enabled is False
-
-    def test_renamed_grid_restored_on_load(
-        self,
-        job_orchestrator,
-        fake_plotting_controller,
-        fake_data_service,
-        plot_data_service,
-        config_store,
-    ):
-        """A renamed grid keeps its new title after a store round-trip."""
-        orch1 = self._make_orchestrator(
-            job_orchestrator,
-            fake_plotting_controller,
-            fake_data_service,
-            plot_data_service,
-            config_store,
-        )
-        grid_id = orch1.add_grid(title='Original', nrows=2, ncols=2)
-        orch1.rename_grid(grid_id, 'Renamed')
-
-        orch2 = self._make_orchestrator(
-            job_orchestrator,
-            fake_plotting_controller,
-            fake_data_service,
-            plot_data_service,
-            config_store,
-        )
-        grids = orch2.get_all_grids()
-        assert next(iter(grids.values())).title == 'Renamed'
 
     def test_reordered_grids_restored_on_load(
         self,
