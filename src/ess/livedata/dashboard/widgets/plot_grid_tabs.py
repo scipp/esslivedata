@@ -632,9 +632,10 @@ class PlotGridTabs:
         touch the Tabs. For an assignment: captures the active tab by identity
         first (bypassing ``_get_active_grid_id``'s modal guard,
         which would misreport "no active grid" while a modal is open), assigns
-        all grid tabs, then restores the active tab by identity. A pending
-        local-creation focus overrides the restore. Cells are reconciled
-        separately by the poll loop.
+        all grid tabs, then restores the active tab by identity, or by position
+        if the active grid lost its tab. A pending local-creation focus
+        overrides the restore. Cells are reconciled separately by the poll
+        loop.
         """
         all_grids = self._orchestrator.get_all_grids()
         composition = tuple(
@@ -657,15 +658,23 @@ class PlotGridTabs:
             # Restore the active tab by identity.
             if static_active:
                 self._tabs.active = active_before
-            elif active_grid_id is not None:
+            else:
                 tabbed = self._tabbed_grid_ids()
                 if active_grid_id in tabbed:
                     self._tabs.active = self._static_tabs_count + tabbed.index(
                         active_grid_id
                     )
-                # else: the active grid was removed. Nothing moves the index
-                # then: it points at whichever tab now holds that position, or
-                # past the last tab, which leaves no tab active.
+                else:
+                    # The active grid was removed, disabled or replaced: stay
+                    # at its position, now held by its replacement or the grid
+                    # that followed it, clamped to the last tab -- the grid
+                    # that preceded it, or Manage Plots once no grid is left.
+                    # Without the clamp the index points past the last tab:
+                    # Panel only narrows the bounds of ``active``, never its
+                    # value, and the browser then shows no tab at all. A
+                    # changed index reveals the new grid through
+                    # ``on_activate``, as a tab switch does.
+                    self._tabs.active = min(active_before, len(self._tabs) - 1)
 
             # Recorded only after the assignment succeeded: an exception above
             # leaves the memo stale, so the retried pass assigns the tabs

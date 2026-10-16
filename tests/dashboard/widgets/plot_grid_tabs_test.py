@@ -959,6 +959,15 @@ class TestDisabledGridTabs:
         assert plot_grid_tabs.tabs._names[static:] == ['B']
 
 
+def _show_grid(plot_grid_tabs: PlotGridTabs, grid_id: GridId) -> None:
+    """Switch to the grid's tab and run the pass the switch requests."""
+    tabbed = plot_grid_tabs._tabbed_grid_ids()
+    plot_grid_tabs.tabs.active = plot_grid_tabs._static_tabs_count + (
+        tabbed.index(grid_id)
+    )
+    _tick(plot_grid_tabs)
+
+
 _TOPOLOGY_CHANGES = {
     'grid-added': lambda orch, ids: orch.add_grid(title='New', nrows=1, ncols=1),
     'earlier-grid-removed': lambda orch, ids: orch.remove_grid(ids['X']),
@@ -1002,17 +1011,9 @@ class TestGridTabsKeepModels:
         root = plot_grid_tabs.tabs.get_root(Document())
         models = {}
         for title in ('B', 'A'):
-            self._show(plot_grid_tabs, ids[title])
+            _show_grid(plot_grid_tabs, ids[title])
             models[title] = self._active_child(plot_grid_tabs, root)
         return ids, root, models
-
-    @staticmethod
-    def _show(plot_grid_tabs: PlotGridTabs, grid_id: GridId) -> None:
-        tabbed = plot_grid_tabs._tabbed_grid_ids()
-        plot_grid_tabs.tabs.active = plot_grid_tabs._static_tabs_count + (
-            tabbed.index(grid_id)
-        )
-        _tick(plot_grid_tabs)
 
     @staticmethod
     def _active_child(plot_grid_tabs: PlotGridTabs, root):
@@ -1031,7 +1032,7 @@ class TestGridTabsKeepModels:
 
         assert plot_grid_tabs._get_active_grid_id() == ids['A']
         assert self._active_child(plot_grid_tabs, root) is models['A']
-        self._show(plot_grid_tabs, ids['B'])
+        _show_grid(plot_grid_tabs, ids['B'])
         assert self._active_child(plot_grid_tabs, root) is models['B']
 
     @pytest.mark.parametrize('change', _TITLE_CHANGES.values(), ids=_TITLE_CHANGES)
@@ -1050,6 +1051,100 @@ class TestGridTabsKeepModels:
             if config.enabled
         ]
         assert [panel.title for panel in root.tabs[static:]] == expected
+
+
+_TAB_LOSSES = {
+    'removed': lambda orch, grid_id: orch.remove_grid(grid_id),
+    'disabled': lambda orch, grid_id: orch.set_grid_enabled(grid_id, enabled=False),
+}
+
+
+class TestActiveGridLosesItsTab:
+    """A session whose visible grid loses its tab lands on a valid tab.
+
+    It stays at the grid's position, clamped to the last tab, so the grid that
+    followed takes over, else the one before, else Manage Plots.
+
+    Ticks are deferred as with a real document, so the tick the tab switch
+    requests does not run inside the reconcile that switched.
+    """
+
+    @pytest.fixture
+    def plot_grid_tabs(self, deferred_tick_tabs) -> PlotGridTabs:
+        return deferred_tick_tabs
+
+    @pytest.fixture
+    def ids(self, plot_orchestrator, plot_grid_tabs) -> dict[str, GridId]:
+        ids = {
+            title: plot_orchestrator.add_grid(title=title, nrows=1, ncols=1)
+            for title in ('A', 'B', 'C')
+        }
+        _tick(plot_grid_tabs)
+        return ids
+
+    @pytest.mark.parametrize('lose', _TAB_LOSSES.values(), ids=_TAB_LOSSES)
+    def test_last_grid_hands_over_to_the_one_before(
+        self, plot_orchestrator, plot_grid_tabs, ids, lose
+    ):
+        _show_grid(plot_grid_tabs, ids['C'])
+
+        lose(plot_orchestrator, ids['C'])
+        _tick(plot_grid_tabs)
+
+        tabs = plot_grid_tabs.tabs
+        assert tabs._names[tabs.active] == 'B'
+
+    @pytest.mark.parametrize('lose', _TAB_LOSSES.values(), ids=_TAB_LOSSES)
+    def test_middle_grid_hands_over_to_the_one_after(
+        self, plot_orchestrator, plot_grid_tabs, ids, lose
+    ):
+        _show_grid(plot_grid_tabs, ids['B'])
+
+        lose(plot_orchestrator, ids['B'])
+        _tick(plot_grid_tabs)
+
+        tabs = plot_grid_tabs.tabs
+        assert tabs._names[tabs.active] == 'C'
+
+    @pytest.mark.parametrize('lose', _TAB_LOSSES.values(), ids=_TAB_LOSSES)
+    def test_only_grid_hands_over_to_manage_plots(
+        self, plot_orchestrator, plot_grid_tabs, ids, lose
+    ):
+        _show_grid(plot_grid_tabs, ids['C'])
+        plot_orchestrator.remove_grid(ids['A'])
+        plot_orchestrator.remove_grid(ids['B'])
+        _tick(plot_grid_tabs)
+
+        lose(plot_orchestrator, ids['C'])
+        _tick(plot_grid_tabs)
+
+        tabs = plot_grid_tabs.tabs
+        assert tabs._names[tabs.active] == 'Manage Plots'
+
+    def test_grid_taking_over_is_built_before_it_materializes(
+        self, plot_orchestrator, plot_grid_tabs, ids
+    ):
+        """The grid taking over is revealed like on a tab switch.
+
+        See ``TestRevealOrdering``: Panel builds the models of the active tab
+        on each ``objects`` trigger.
+        """
+        cell_id = _add_static_cell(plot_orchestrator, ids['B'], _GEO)
+        _show_grid(plot_grid_tabs, ids['C'])
+        assert cell_id not in plot_grid_tabs._cells
+        b_index = plot_grid_tabs._static_tabs_count + 1
+        built_when_materialized: list[bool] = []
+
+        def record(_) -> None:
+            if plot_grid_tabs.tabs.active == b_index:
+                built_when_materialized.append(cell_id in plot_grid_tabs._cells)
+
+        plot_grid_tabs.tabs.param.watch(record, 'objects')
+
+        plot_orchestrator.remove_grid(ids['C'])
+        _tick(plot_grid_tabs)
+
+        assert built_when_materialized == [True]
 
 
 def _static_plot_config(positions='10, 20'):
@@ -1490,6 +1585,8 @@ class TestCellActions:
 
         plot_orchestrator.set_grid_enabled(grid_id, enabled=True)
         _tick(plot_grid_tabs)
+        # Disabling moved the session off the grid; show it again.
+        _show_grid(plot_grid_tabs, grid_id)
         assert plot_grid_tabs._cells[cell_id] is widget
 
         # New data must still reach the widget's pipe.
