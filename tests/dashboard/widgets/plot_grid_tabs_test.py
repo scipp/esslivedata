@@ -15,6 +15,7 @@ import holoviews as hv
 import panel as pn
 import pytest
 from bokeh.document import Document
+from bokeh.models import Spacer
 
 from ess.livedata.config.workflow_spec import WorkflowId
 from ess.livedata.dashboard.data_service import DataService
@@ -968,6 +969,25 @@ def _show_grid(plot_grid_tabs: PlotGridTabs, grid_id: GridId) -> None:
     _tick(plot_grid_tabs)
 
 
+def _built_at_materialization(
+    plot_grid_tabs: PlotGridTabs, cell_id: CellId, index: int
+) -> list[bool]:
+    """Record whether the cell is built at each materialization of tab ``index``.
+
+    Panel builds the models of the active tab on each ``objects`` change (see
+    ``TestRevealOrdering``), so this records, at each such change while
+    ``index`` is active, whether the cell was in the grid in time.
+    """
+    built: list[bool] = []
+
+    def record(_) -> None:
+        if plot_grid_tabs.tabs.active == index:
+            built.append(cell_id in plot_grid_tabs._cells)
+
+    plot_grid_tabs.tabs.param.watch(record, 'objects')
+    return built
+
+
 _TOPOLOGY_CHANGES = {
     'grid-added': lambda orch, ids: orch.add_grid(title='New', nrows=1, ncols=1),
     'earlier-grid-removed': lambda orch, ids: orch.remove_grid(ids['X']),
@@ -1121,30 +1141,164 @@ class TestActiveGridLosesItsTab:
         tabs = plot_grid_tabs.tabs
         assert tabs._names[tabs.active] == 'Manage Plots'
 
+    @pytest.mark.parametrize('lose', _TAB_LOSSES.values(), ids=_TAB_LOSSES)
+    @pytest.mark.parametrize(
+        ('shown', 'taking_over'), [('C', 'B'), ('B', 'C')], ids=['last', 'middle']
+    )
     def test_grid_taking_over_is_built_before_it_materializes(
-        self, plot_orchestrator, plot_grid_tabs, ids
+        self, plot_orchestrator, plot_grid_tabs, ids, lose, shown, taking_over
     ):
         """The grid taking over is revealed like on a tab switch.
 
-        See ``TestRevealOrdering``: Panel builds the models of the active tab
-        on each ``objects`` trigger.
+        In the middle case it takes over the shown grid's index, so ``active``
+        does not change, and without care no tab switch runs the reveal hook.
         """
-        cell_id = _add_static_cell(plot_orchestrator, ids['B'], _GEO)
-        _show_grid(plot_grid_tabs, ids['C'])
+        cell_id = _add_static_cell(plot_orchestrator, ids[taking_over], _GEO)
+        _show_grid(plot_grid_tabs, ids[shown])
         assert cell_id not in plot_grid_tabs._cells
-        b_index = plot_grid_tabs._static_tabs_count + 1
-        built_when_materialized: list[bool] = []
+        built = _built_at_materialization(
+            plot_grid_tabs, cell_id, plot_grid_tabs._static_tabs_count + 1
+        )
 
-        def record(_) -> None:
-            if plot_grid_tabs.tabs.active == b_index:
-                built_when_materialized.append(cell_id in plot_grid_tabs._cells)
-
-        plot_grid_tabs.tabs.param.watch(record, 'objects')
-
-        plot_orchestrator.remove_grid(ids['C'])
+        lose(plot_orchestrator, ids[shown])
         _tick(plot_grid_tabs)
 
-        assert built_when_materialized == [True]
+        assert plot_grid_tabs._get_active_grid_id() == ids[taking_over]
+        assert built
+        assert all(built)
+
+    def test_focus_on_a_created_grid_wins_over_the_handover(
+        self, plot_orchestrator, plot_grid_tabs, ids
+    ):
+        """With both in one pass, only the created grid is revealed."""
+        cell_id = _add_static_cell(plot_orchestrator, ids['C'], _GEO)
+        _show_grid(plot_grid_tabs, ids['B'])
+
+        plot_orchestrator.remove_grid(ids['B'])
+        plot_grid_tabs._grid_manager._on_add_grid(None)
+        _tick(plot_grid_tabs)
+
+        new_id = next(reversed(plot_orchestrator.get_all_grids()))
+        assert plot_grid_tabs._get_active_grid_id() == new_id
+        assert cell_id not in plot_grid_tabs._cells
+
+
+# Each shifts the tab of the active grid A; W starts disabled.
+_SHIFTS_BEFORE_ACTIVE = {
+    'earlier-grid-removed': lambda orch, ids: orch.remove_grid(ids['X']),
+    'earlier-grid-disabled': lambda orch, ids: orch.set_grid_enabled(
+        ids['X'], enabled=False
+    ),
+    'earlier-grid-re-enabled': lambda orch, ids: orch.set_grid_enabled(
+        ids['W'], enabled=True
+    ),
+    'earlier-grid-moved-past': lambda orch, ids: orch.move_grid(ids['X'], 1),
+}
+
+
+class TestGridTabsMaterializeOnlyTheShownOne:
+    """A topology change builds the models of no tab but the one shown after it.
+
+    A grid that is not shown must not be materialized: for a re-enabled grid
+    that kept its cell widgets this is a full figure build, paid in every
+    session whose active grid sits behind it.
+
+    Ticks are deferred as with a real document, so the tick a tab switch
+    requests does not run inside the reconcile that switched.
+    """
+
+    @pytest.fixture
+    def plot_grid_tabs(self, deferred_tick_tabs) -> PlotGridTabs:
+        return deferred_tick_tabs
+
+    @pytest.fixture
+    def sent_with_content(self, plot_orchestrator, plot_grid_tabs):
+        """Grids W (disabled), X, A, B, Y with A shown; records built tabs.
+
+        Returns the grid ids and the titles of the tabs that any later update
+        of the rendered tab strip carries with content, not as the placeholder
+        ``dynamic=True`` puts in for a hidden tab. A tab whose models are
+        reused counts too, so the shown one is in the set.
+
+        This sees every update only because the test runs without the
+        ``hold(doc)`` that wraps the pass in production: Bokeh's ``combine``
+        mode merges the updates there and would hide an intermediate one.
+        """
+        ids = {
+            title: plot_orchestrator.add_grid(title=title, nrows=1, ncols=1)
+            for title in ('W', 'X', 'A', 'B', 'Y')
+        }
+        plot_orchestrator.set_grid_enabled(ids['W'], enabled=False)
+        for grid_id in ids.values():
+            _add_static_cell(plot_orchestrator, grid_id, _GEO)
+        _tick(plot_grid_tabs)
+        root = plot_grid_tabs.tabs.get_root(Document())
+        plot_grid_tabs.tabs.active = plot_grid_tabs._static_tabs_count + 1
+        _tick(plot_grid_tabs)
+        assert plot_grid_tabs._get_active_grid_id() == ids['A']
+
+        sent: set[str] = set()
+        root.on_change(
+            'tabs',
+            lambda attr, old, new: sent.update(
+                tab.title for tab in new if not isinstance(tab.child, Spacer)
+            ),
+        )
+        return ids, sent
+
+    @pytest.mark.parametrize(
+        'change', _SHIFTS_BEFORE_ACTIVE.values(), ids=_SHIFTS_BEFORE_ACTIVE
+    )
+    def test_shift_in_front_of_the_shown_grid_builds_no_other(
+        self, plot_orchestrator, plot_grid_tabs, sent_with_content, change
+    ):
+        ids, sent = sent_with_content
+
+        change(plot_orchestrator, ids)
+        _tick(plot_grid_tabs)
+
+        assert plot_grid_tabs._get_active_grid_id() == ids['A']
+        assert sent <= {'A'}
+
+    def test_index_past_the_old_last_tab(self, plot_orchestrator, plot_grid_tabs):
+        """Re-enabling a grid in front of the shown last one grows the index."""
+        ids = {
+            title: plot_orchestrator.add_grid(title=title, nrows=1, ncols=1)
+            for title in ('W', 'A')
+        }
+        plot_orchestrator.set_grid_enabled(ids['W'], enabled=False)
+        _tick(plot_grid_tabs)
+        _show_grid(plot_grid_tabs, ids['A'])
+        assert plot_grid_tabs.tabs.active == len(plot_grid_tabs.tabs) - 1
+
+        plot_orchestrator.set_grid_enabled(ids['W'], enabled=True)
+        _tick(plot_grid_tabs)
+
+        assert plot_grid_tabs._get_active_grid_id() == ids['A']
+
+    def test_created_grid_is_built_before_its_focus_materializes_it(
+        self, plot_orchestrator, plot_grid_tabs
+    ):
+        """A grid created here from a template or as a copy holds cells.
+
+        Focusing it must run the reveal hook before Panel builds its models,
+        as on a tab switch.
+        """
+        a_id = plot_orchestrator.add_grid(title='A', nrows=1, ncols=1)
+        _tick(plot_grid_tabs)
+        _show_grid(plot_grid_tabs, a_id)
+        new_id = plot_orchestrator.add_grid(title='N', nrows=1, ncols=1)
+        cell_id = _add_static_cell(plot_orchestrator, new_id, _GEO)
+        plot_grid_tabs._on_local_grid_created(new_id)
+        built = _built_at_materialization(
+            plot_grid_tabs, cell_id, plot_grid_tabs._static_tabs_count + 1
+        )
+
+        _tick(plot_grid_tabs)
+
+        assert plot_grid_tabs._get_active_grid_id() == new_id
+        assert built
+        assert all(built)
 
 
 def _static_plot_config(positions='10, 20'):
