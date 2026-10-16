@@ -322,6 +322,11 @@ class CurrentStateHoloViews(pn.pane.HoloViews):
     Dropping the cache before each render makes HoloViews evaluate the map
     afresh. Maps below it are re-evaluated through lookups, which HoloViews
     never serves from cache for a map driven by a ``Pipe``.
+
+    TODO(holoviz/holoviews#7116): drop this class for ``pn.pane.HoloViews`` once
+    the minimum holoviews version builds a second plot from current state.
+    ``test_second_render_seeds_the_edit_tool_from_current_state`` then passes
+    with the stock pane.
     """
 
     def _render(self, doc: Document, comm: Comm | None, root: Model) -> Plot:
