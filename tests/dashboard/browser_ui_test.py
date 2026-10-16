@@ -21,7 +21,9 @@ through the stable ``lt-*`` automation hooks:
 - a popped-out plot opens within the viewport, floats above other tabs and
   keeps updating there, and stops costing anything once minimized;
 - renaming a popped-out cell leaves its window the size and where the user
-  put it, and opening one adds no scrollable whitespace to the page.
+  put it, and opening one adds no scrollable whitespace to the page;
+- a drawn ROI survives its cell being rendered into a new figure, by a pop-out
+  or by a grid tab rebuilt for an unrelated grid.
 
 Each test launches its own dashboard for isolation, since grid topology changes
 are process-global; ports are allocated per launch, so concurrent runs of this
@@ -860,3 +862,114 @@ def test_popped_out_plot_stays_live_across_tabs_and_sleeps_when_minimized():
             lambda: page.locator(".lt-popout-r0c0").count() == 0,
             label="the pop-out window to close",
         )
+
+
+# The models reachable from the document roots, as a JS expression. Unlike
+# ``doc._all_models``, which never prunes, it excludes figures a re-render
+# replaced.
+_LIVE_MODELS_JS = """(() => {
+  const seen = new Set();
+  const stack = Bokeh.documents.flatMap(doc => [...doc.roots()]);
+  while (stack.length) {
+    const m = stack.pop();
+    if (seen.has(m)) continue;
+    seen.add(m);
+    for (const r of m.references()) stack.push(r);
+  }
+  return [...seen];
+})()"""
+
+# Each live figure with edit tools (BoxEditTool): its id, and per tool the boxes
+# it holds as [left, bottom, right, top].
+_ROI_FIGURES_JS = f"""() => {{
+  const figures = [];
+  for (const m of {_LIVE_MODELS_JS}) {{
+    if (m.type !== 'Figure') continue;
+    const tools = m.toolbar.tools.filter(t => t.type === 'BoxEditTool');
+    if (!tools.length) continue;
+    figures.push({{id: m.id, tools: tools.map(t => {{
+      const d = t.renderers[0].data_source.data;
+      return Array.from(
+        d.left, (_, i) => [d.left[i], d.bottom[i], d.right[i], d.top[i]]
+      );
+    }})}});
+  }}
+  return figures;
+}}"""
+
+# Draws a box as the BoxEditTool does: by writing its data source, which Bokeh
+# syncs to the server like a drag would. Returns whether a tool was found.
+_DRAW_BOX_JS = f"""(box) => {{
+  const tool = {_LIVE_MODELS_JS}.find(m => m.type === 'BoxEditTool');
+  if (tool === undefined) return false;
+  const src = tool.renderers[0].data_source;
+  const data = {{...src.data}};
+  const [left, bottom, right, top] = box;
+  for (const [k, v] of Object.entries({{left, bottom, right, top}}))
+    data[k] = [...data[k], v];
+  src.data = data;
+  return true;
+}}"""
+
+# The plotter's log line for each ROI request the dashboard publishes.
+_ROI_PUBLISHED = re.compile(r"Published (\d+) rectangle ROI\(s\) for source")
+
+
+def _add_unrelated_grid(dash: Dashboard) -> None:
+    dash.goto_tab("Manage Plots")
+    _add_grid(dash, "Unrelated")
+    dash.goto_tab("Detectors")
+
+
+def _pop_out_roi_cell(dash: Dashboard) -> None:
+    click_until(
+        dash,
+        ".lt-cell-r0c1.lt-tool-arrows-maximize",
+        lambda: dash.page.locator(".lt-popout-r0c1").count() == 1,
+        label="the pop-out window to open",
+    )
+
+
+@pytest.mark.browser
+@pytest.mark.parametrize(
+    ("rerender", "figures"),
+    [(_add_unrelated_grid, 1), (_pop_out_roi_cell, 2)],
+    ids=["unrelated-grid-added", "popped-out"],
+)
+def test_drawn_roi_survives_a_new_figure_for_its_cell(rerender, figures):
+    """A cell rendered into a new figure must show the ROIs drawn so far.
+
+    Adding a grid rebuilds the tab strip, after which Panel renders the cells
+    of a revealed grid into new figures; a pop-out renders its cell into a
+    second one. An edit tool built from a stale frame of the cell syncs it back
+    as an edit: the ROIs drawn since vanish, the deletion is published, and the
+    re-entrant update leaves the figure with a second edit tool.
+    """
+    box = [1.0, 1.0, 5.0, 5.0]
+    with fake_dashboard("dummy") as fake, Dashboard.connect(fake.url) as dash:
+        dash.goto_tab("Detectors")
+        wait_until(
+            dash,
+            lambda: [f["tools"] for f in dash.page.evaluate(_ROI_FIGURES_JS)] == [[[]]],
+            label="the ROI cell's edit tool",
+        )
+        before = {f["id"] for f in dash.page.evaluate(_ROI_FIGURES_JS)}
+        assert dash.page.evaluate(_DRAW_BOX_JS, box)
+        wait_until(
+            dash,
+            lambda: _ROI_PUBLISHED.findall(fake.log.read_text())[-1:] == ["1"],
+            label="the drawn box to be published",
+        )
+        log_offset = fake.log.stat().st_size
+
+        rerender(dash)
+
+        def new_figure_built() -> bool:
+            ids = [f["id"] for f in dash.page.evaluate(_ROI_FIGURES_JS)]
+            return len(ids) == figures and not set(ids) <= before
+
+        wait_until(dash, new_figure_built, label="the cell's new figure")
+        dash.settle()
+        shown = [f["tools"] for f in dash.page.evaluate(_ROI_FIGURES_JS)]
+        assert shown == [[[box]]] * figures
+        assert not _ROI_PUBLISHED.findall(fake.log.read_text()[log_offset:])
