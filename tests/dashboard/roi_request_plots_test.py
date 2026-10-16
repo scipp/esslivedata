@@ -2,9 +2,14 @@
 # Copyright (c) 2025 Scipp contributors (https://github.com/scipp)
 """Tests for interactive ROI request plotters."""
 
+import asyncio
+from typing import NamedTuple
+
 import holoviews as hv
 import numpy as np
 import pytest
+from bokeh.models import BoxEditTool, PolyDrawTool
+from holoviews.plotting.bokeh.callbacks import BoxEditCallback, PolyDrawCallback
 
 from ess.livedata.config.models import PolygonROI, RectangleROI
 from ess.livedata.config.workflow_spec import DataKey, WorkflowId
@@ -44,6 +49,26 @@ def _drawn_box() -> dict[str, list[float]]:
     return {'x0': [1.0], 'x1': [5.0], 'y0': [2.0], 'y1': [6.0]}
 
 
+_BOX_CDS_COLUMNS = {'x0': 'left', 'x1': 'right', 'y0': 'bottom', 'y1': 'top'}
+
+
+def _user_edit(presenter, data: dict) -> None:
+    """Deliver an edit as the browser does, to the edit callback of a figure.
+
+    ``data`` is in edit stream form. Its box columns are renamed to those of
+    the BoxEditTool's data source, which is what the browser sends.
+    """
+    plot = hv.renderer('bokeh').get_plot(presenter.present(hv.streams.Pipe(data=[])))
+    (callback,) = [
+        cb
+        for callbacks in plot.traverse(lambda p: p.callbacks)
+        for cb in callbacks
+        if isinstance(cb, BoxEditCallback | PolyDrawCallback)
+    ]
+    message = {_BOX_CDS_COLUMNS.get(k, k): v for k, v in data.items()}
+    asyncio.run(callback.on_msg({'data': message}))
+
+
 def test_first_presenter_publishes_initial_set_once(
     computed_plotter: RectanglesRequestPlotter,
 ) -> None:
@@ -79,7 +104,7 @@ def test_edit_persists_and_second_presenter_is_seeded_from_it(
     assert isinstance(publisher, FakeROIPublisher)
 
     presenter1 = computed_plotter.create_presenter()
-    presenter1._handle_edit(_drawn_box())
+    _user_edit(presenter1, _drawn_box())
 
     roi = computed_plotter._current_rois[0]
     assert (roi.x.min, roi.x.max, roi.y.min, roi.y.max) == (1.0, 5.0, 2.0, 6.0)
@@ -92,13 +117,8 @@ def test_edit_persists_and_second_presenter_is_seeded_from_it(
     assert publisher.published[0][2] == {}
     assert publisher.published[1][2] == computed_plotter._current_rois
 
-    # The new session's edit stream is seeded from the current (edited) ROIs.
-    assert presenter2._edit_stream.data == {
-        'x0': [1.0],
-        'y0': [2.0],
-        'x1': [5.0],
-        'y1': [6.0],
-    }
+    # The new session renders the current (edited) ROIs.
+    assert presenter2._pipe.data == [(1.0, 2.0, 5.0, 6.0)]
 
 
 @pytest.mark.parametrize('count', [0, 1, 2])
@@ -112,13 +132,14 @@ def test_edit_from_browser_synced_arrays_is_applied(
     """
     presenter = computed_plotter.create_presenter()
 
-    presenter._handle_edit(
+    _user_edit(
+        presenter,
         {
             'x0': np.arange(count, dtype=float),
             'x1': np.arange(count, dtype=float) + 4.0,
             'y0': np.arange(count, dtype=float),
             'y1': np.arange(count, dtype=float) + 4.0,
-        }
+        },
     )
 
     assert len(computed_plotter._current_rois) == count
@@ -165,7 +186,7 @@ def test_edit_is_written_back_into_params(
     persisting_plotter: RectanglesRequestPlotter,
     persisted_params: list[RectanglesRequestParams],
 ) -> None:
-    persisting_plotter.create_presenter()._handle_edit(_drawn_box())
+    _user_edit(persisting_plotter.create_presenter(), _drawn_box())
 
     assert len(persisted_params) == 1
     assert persisted_params[-1].geometry.coordinates == '[1,2,5,6]'
@@ -187,7 +208,7 @@ def test_rebuilt_plotter_seeds_from_persisted_edit(
     data_key: DataKey,
 ) -> None:
     """A dashboard restart must show the drawn ROIs, not the config-time set."""
-    persisting_plotter.create_presenter()._handle_edit(_drawn_box())
+    _user_edit(persisting_plotter.create_presenter(), _drawn_box())
     edited = persisting_plotter._current_rois
 
     rebuilt = _rebuild(persisted_params[-1], data_key)
@@ -201,7 +222,7 @@ def test_rebuilt_plotter_republishes_the_persisted_edit(
     data_key: DataKey,
 ) -> None:
     """The set published to a new job is what the user drew, not the config."""
-    persisting_plotter.create_presenter()._handle_edit(_drawn_box())
+    _user_edit(persisting_plotter.create_presenter(), _drawn_box())
     edited = persisting_plotter._current_rois
 
     rebuilt = _rebuild(persisted_params[-1], data_key)
@@ -218,8 +239,8 @@ def test_clearing_all_rois_survives_a_rebuild(
     data_key: DataKey,
 ) -> None:
     presenter = persisting_plotter.create_presenter()
-    presenter._handle_edit(_drawn_box())
-    presenter._handle_edit({'x0': [], 'x1': [], 'y0': [], 'y1': []})
+    _user_edit(presenter, _drawn_box())
+    _user_edit(presenter, {'x0': [], 'x1': [], 'y0': [], 'y1': []})
 
     assert persisted_params[-1].geometry.coordinates == ''
     assert _rebuild(persisted_params[-1], data_key)._current_rois == {}
@@ -251,8 +272,8 @@ def test_edit_on_a_physical_axis_round_trips_through_params(
     plotter = _rebuild(RectanglesRequestParams(), data_key, coord_units=units)
     plotter.set_params_persister(persisted.append)
 
-    plotter.create_presenter()._handle_edit(
-        {'x0': [0.1], 'x1': [0.5], 'y0': [0.2], 'y1': [0.6]}
+    _user_edit(
+        plotter.create_presenter(), {'x0': [0.1], 'x1': [0.5], 'y0': [0.2], 'y1': [0.6]}
     )
 
     rebuilt = _rebuild(persisted[-1], data_key, coord_units=units)
@@ -281,8 +302,8 @@ def test_polygon_edit_round_trips_through_params(data_key: DataKey) -> None:
     plotter = _computed_polygon_plotter(PolygonsRequestParams(), data_key)
     plotter.set_params_persister(persisted.append)
 
-    plotter.create_presenter()._handle_edit(
-        {'xs': [[0.0, 1.0, 0.5]], 'ys': [[0.0, 0.0, 1.0]]}
+    _user_edit(
+        plotter.create_presenter(), {'xs': [[0.0, 1.0, 0.5]], 'ys': [[0.0, 0.0, 1.0]]}
     )
 
     assert persisted[-1].geometry.coordinates == '[[0,0],[1,0],[0.5,1]]'
@@ -302,13 +323,14 @@ def test_stored_coordinates_drop_sub_pixel_float_noise(
     plotter = _rebuild(RectanglesRequestParams(), data_key)
     plotter.set_params_persister(persisted.append)
 
-    plotter.create_presenter()._handle_edit(
+    _user_edit(
+        plotter.create_presenter(),
         {
             'x0': [0.10000000000000003],
             'x1': [12.345678901234567],
             'y0': [0.20000000000000004],
             'y1': [6.000000000000001],
-        }
+        },
     )
 
     assert persisted[-1].geometry.coordinates == '[0.1,0.2,12.3457,6]'
@@ -321,8 +343,9 @@ def test_rounding_keeps_small_magnitude_axes_intact(data_key: DataKey) -> None:
     plotter = _rebuild(RectanglesRequestParams(), data_key, coord_units=units)
     plotter.set_params_persister(persisted.append)
 
-    plotter.create_presenter()._handle_edit(
-        {'x0': [1.2345678e-10], 'x1': [5.4321e-10], 'y0': [1e-10], 'y1': [2e-10]}
+    _user_edit(
+        plotter.create_presenter(),
+        {'x0': [1.2345678e-10], 'x1': [5.4321e-10], 'y0': [1e-10], 'y1': [2e-10]},
     )
 
     rebuilt = _rebuild(persisted[-1], data_key, coord_units=units)
@@ -338,13 +361,14 @@ def test_stored_geometry_is_a_fixed_point_of_the_round_trip(
     persisted: list[RectanglesRequestParams] = []
     plotter = _rebuild(RectanglesRequestParams(), data_key)
     plotter.set_params_persister(persisted.append)
-    plotter.create_presenter()._handle_edit(
+    _user_edit(
+        plotter.create_presenter(),
         {
             'x0': [0.10000000000000003],
             'x1': [12.345678901234567],
             'y0': [2.0],
             'y1': [6.0],
-        }
+        },
     )
     stored = persisted[-1]
 
@@ -360,11 +384,12 @@ def test_polygon_stored_geometry_is_a_fixed_point_of_the_round_trip(
     persisted: list[PolygonsRequestParams] = []
     plotter = _computed_polygon_plotter(PolygonsRequestParams(), data_key)
     plotter.set_params_persister(persisted.append)
-    plotter.create_presenter()._handle_edit(
+    _user_edit(
+        plotter.create_presenter(),
         {
             'xs': [[0.10000000000000003, 1.2345678901234567, 0.5]],
             'ys': [[0.0, 0.0, 1.0000000000000002]],
-        }
+        },
     )
     stored = persisted[-1]
 
@@ -400,8 +425,8 @@ def test_rendered_element_follows_the_drawn_rois(
     """
     presenter = computed_plotter.create_presenter()
 
-    presenter._handle_edit(_drawn_box())
-    presenter._handle_edit(_two_drawn_boxes())
+    _user_edit(presenter, _drawn_box())
+    _user_edit(presenter, _two_drawn_boxes())
 
     assert presenter._pipe.data == computed_plotter._converter.to_hv_data(
         computed_plotter._current_rois, index_to_color=None
@@ -413,10 +438,10 @@ def test_an_edit_that_changes_nothing_leaves_the_element_alone(
     computed_plotter: RectanglesRequestPlotter,
 ) -> None:
     presenter = computed_plotter.create_presenter()
-    presenter._handle_edit(_drawn_box())
+    _user_edit(presenter, _drawn_box())
     rendered = presenter._pipe.data
 
-    presenter._handle_edit(_drawn_box())
+    _user_edit(presenter, _drawn_box())
 
     assert presenter._pipe.data is rendered
 
@@ -425,7 +450,7 @@ def test_rendered_element_follows_a_drawn_polygon(data_key: DataKey) -> None:
     plotter = _computed_polygon_plotter(PolygonsRequestParams(), data_key)
     presenter = plotter.create_presenter()
 
-    presenter._handle_edit({'xs': [[0.0, 1.0, 0.5]], 'ys': [[0.0, 0.0, 1.0]]})
+    _user_edit(presenter, {'xs': [[0.0, 1.0, 0.5]], 'ys': [[0.0, 0.0, 1.0]]})
 
     assert presenter._pipe.data == plotter._converter.to_hv_data(
         plotter._current_rois, index_to_color=None
@@ -440,7 +465,7 @@ def test_a_polygon_still_being_drawn_does_not_reach_the_element(
     plotter = _computed_polygon_plotter(PolygonsRequestParams(), data_key)
     presenter = plotter.create_presenter()
 
-    presenter._handle_edit({'xs': [[0.0, 1.0, 1.0]], 'ys': [[0.0, 0.0, 0.0]]})
+    _user_edit(presenter, {'xs': [[0.0, 1.0, 1.0]], 'ys': [[0.0, 0.0, 0.0]]})
 
     assert presenter._pipe.data == []
 
@@ -463,7 +488,7 @@ def drawn_triangle_presenter(data_key: DataKey, publisher: FakeROIPublisher):
     plotter = _computed_polygon_plotter(PolygonsRequestParams(), data_key)
     plotter.set_roi_publisher(publisher)
     presenter = plotter.create_presenter()
-    presenter._handle_edit({'xs': [[0.0, 1.0, 0.5]], 'ys': [[0.0, 0.0, 1.0]]})
+    _user_edit(presenter, {'xs': [[0.0, 1.0, 0.5]], 'ys': [[0.0, 0.0, 1.0]]})
     publisher.reset()
     return presenter
 
@@ -475,7 +500,7 @@ def test_rendering_a_drawn_polygon_does_not_republish_it(
     rendered = _rendered_polygons(drawn_triangle_presenter)
     assert rendered['xs'] == [[0.0, 1.0, 0.5, 0.0]]
 
-    drawn_triangle_presenter._handle_edit(rendered)
+    _user_edit(drawn_triangle_presenter, rendered)
 
     assert publisher.published == []
 
@@ -491,7 +516,7 @@ def test_starting_a_second_polygon_keeps_it_in_the_browser(
     data['xs'].append([5.0, 5.0])
     data['ys'].append([5.0, 5.0])
 
-    drawn_triangle_presenter._handle_edit(data)
+    _user_edit(drawn_triangle_presenter, data)
 
     assert drawn_triangle_presenter._pipe.data is rendered
     assert publisher.published == []
@@ -507,10 +532,86 @@ def test_starting_a_polygon_that_evicts_the_oldest_is_not_published_yet(
     """
     rendered = drawn_triangle_presenter._pipe.data
 
-    drawn_triangle_presenter._handle_edit({'xs': [[5.0, 5.0]], 'ys': [[5.0, 5.0]]})
+    _user_edit(drawn_triangle_presenter, {'xs': [[5.0, 5.0]], 'ys': [[5.0, 5.0]]})
 
     assert drawn_triangle_presenter._pipe.data is rendered
     assert publisher.published == []
+
+
+class _ShapeCase(NamedTuple):
+    plotter: RectanglesRequestPlotter | PolygonsRequestPlotter
+    first: dict
+    """Edit stream data for one drawn shape."""
+    second: dict
+    """Edit stream data for a different drawn shape."""
+
+
+@pytest.fixture(params=['rectangles', 'polygons'])
+def shape_case(
+    request: pytest.FixtureRequest,
+    data_key: DataKey,
+    publisher: FakeROIPublisher,
+    persisted_params: list,
+) -> _ShapeCase:
+    """A computed plotter of either geometry that publishes and persists."""
+    if request.param == 'rectangles':
+        plotter = RectanglesRequestPlotter.from_params(RectanglesRequestParams())
+        first = _drawn_box()
+        second = {'x0': [10.0], 'x1': [15.0], 'y0': [12.0], 'y1': [16.0]}
+    else:
+        plotter = PolygonsRequestPlotter.from_params(PolygonsRequestParams())
+        first = {'xs': [[0.0, 1.0, 0.5]], 'ys': [[0.0, 0.0, 1.0]]}
+        second = {'xs': [[5.0, 6.0, 5.5]], 'ys': [[5.0, 5.0, 6.0]]}
+    plotter.set_roi_publisher(publisher)
+    plotter.set_params_persister(persisted_params.append)
+    plotter.compute({PRIMARY: {data_key: RectangleROI.to_concatenated_data_array({})}})
+    return _ShapeCase(plotter, first, second)
+
+
+def test_browser_edit_is_published_persisted_and_rendered(
+    shape_case: _ShapeCase, publisher: FakeROIPublisher, persisted_params: list
+) -> None:
+    presenter = shape_case.plotter.create_presenter()
+    publisher.reset()
+
+    _user_edit(presenter, shape_case.first)
+
+    assert len(shape_case.plotter._current_rois) == 1
+    assert publisher.published[-1][2] == shape_case.plotter._current_rois
+    assert len(persisted_params) == 1
+    assert len(presenter._pipe.data) == 1
+
+
+@pytest.mark.parametrize(
+    'lagging_has_edited', [True, False], ids=['edited-then-lagging', 'never-edited']
+)
+def test_building_a_figure_for_a_lagging_session_keeps_newer_edits(
+    shape_case: _ShapeCase,
+    publisher: FakeROIPublisher,
+    persisted_params: list,
+    lagging_has_edited: bool,
+) -> None:
+    """A session's element lags behind edits made in other sessions.
+
+    Building a figure from it, e.g. on a tab switch, must neither undo those
+    edits nor re-enter the figure under construction, which would leave it
+    with a second edit tool.
+    """
+    lagging = shape_case.plotter.create_presenter()
+    if lagging_has_edited:
+        _user_edit(lagging, shape_case.first)
+    _user_edit(shape_case.plotter.create_presenter(), shape_case.second)
+    edited = shape_case.plotter._current_rois
+    publisher.reset()
+    persisted_params.clear()
+
+    figure = hv.render(lagging.present(hv.streams.Pipe(data=[])))
+
+    assert shape_case.plotter._current_rois == edited
+    assert publisher.published == []
+    assert persisted_params == []
+    edit_tools = [t for t in figure.tools if isinstance(t, BoxEditTool | PolyDrawTool)]
+    assert len(edit_tools) == 1
 
 
 @pytest.mark.parametrize(
