@@ -320,7 +320,7 @@ class PlotOrchestrator:
     def topology_version(self) -> int:
         """Monotonic counter bumped on every grid/cell/layer topology change.
 
-        Sessions poll this to detect creation, removal, reorder, rename,
+        Sessions poll this to detect creation, removal, replacement, reorder,
         enable/disable, and cell/layer composition changes, then reconcile
         their widgets. It does *not* advance for pure data flow (frame
         flushes). See the class "Threading" docstring.
@@ -414,25 +414,6 @@ class PlotOrchestrator:
             self._bump_topology_version()
             self._persist_to_store()
             self._logger.info('Removed plot grid %s (%s)', grid_id, title)
-
-    def rename_grid(self, grid_id: GridId, new_title: str) -> None:
-        """
-        Rename a plot grid.
-
-        Parameters
-        ----------
-        grid_id
-            ID of the grid to rename.
-        new_title
-            New display title for the grid.
-        """
-        if grid_id not in self._grids:
-            return
-        grid = self._grids[grid_id]
-        grid.title = new_title
-        self._persist_to_store()
-        self._logger.info('Renamed grid %s to %s', grid_id, new_title)
-        self._bump_topology_version()
 
     def move_grid(self, grid_id: GridId, delta: int) -> None:
         """
