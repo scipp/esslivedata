@@ -1,0 +1,56 @@
+# Multiblade detector image and spectra. Blade and wire are flattened onto the
+# Y axis: the blades are stacked vertically and their inclined wires interleave
+# into one fine vertical axis (see get_multiblade_spectrum). The image has strip
+# (position 2 of blade, wire, strip) on X, the spectra the spectral axis. The
+# detector view is 3D, so it has no ROI support.
+title: Multiblade
+description: Multiblade detector image and per-blade, per-wire spectra since start.
+nrows: 2
+ncols: 1
+cells:
+- geometry:
+    row: 0
+    col: 0
+    row_span: 1
+    col_span: 1
+  layers:
+  - data_sources:
+      primary:
+        workflow_id: tbl/multiblade_detector_view/1
+        view_name: image
+        source_names:
+        - multiblade_detector
+    plot_name: flatten
+    params:
+      flatten:
+        axis_x_dims:
+        - 2
+      time_window:
+        mode: since_start
+      plot_scale:
+        x_scale: linear
+        y_scale: linear
+        color_scale: log
+- geometry:
+    row: 1
+    col: 0
+    row_span: 1
+    col_span: 1
+  layers:
+  - data_sources:
+      primary:
+        workflow_id: tbl/multiblade_detector_view/1
+        view_name: spectrum_view
+        source_names:
+        - multiblade_detector
+    plot_name: flatten
+    params:
+      flatten:
+        axis_x_dims:
+        - 2
+      time_window:
+        mode: since_start
+      plot_scale:
+        x_scale: linear
+        y_scale: linear
+        color_scale: log

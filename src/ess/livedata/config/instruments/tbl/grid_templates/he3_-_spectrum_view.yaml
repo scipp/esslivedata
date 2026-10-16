@@ -1,6 +1,7 @@
-# Per-tube, per-pixel spectra of both He3 banks, one slicer per bank.
+# Per-tube, per-pixel spectra of both He3 banks, one image per bank. Tube and
+# pixel are flattened onto the Y axis, the spectral axis (position 2) is on X.
 title: 'He3: Spectrum View'
-description: He3 per-tube, per-pixel spectra since start, one slicer per bank.
+description: He3 per-tube, per-pixel spectra since start, one image per bank.
 nrows: 2
 ncols: 1
 cells:
@@ -16,8 +17,11 @@ cells:
         view_name: spectrum_view
         source_names:
         - he3_detector_bank0
-    plot_name: slicer
+    plot_name: flatten
     params:
+      flatten:
+        axis_x_dims:
+        - 2
       time_window:
         mode: since_start
       plot_scale:
@@ -36,8 +40,11 @@ cells:
         view_name: spectrum_view
         source_names:
         - he3_detector_bank1
-    plot_name: slicer
+    plot_name: flatten
     params:
+      flatten:
+        axis_x_dims:
+        - 2
       time_window:
         mode: since_start
       plot_scale:
