@@ -307,15 +307,17 @@ class CurrentStateHoloViews(pn.pane.HoloViews):
     """HoloViews pane whose every render is built from the plot's current state.
 
     HoloViews seeds a new figure from the frame the rendered DynamicMap holds in
-    its cache (``.data``), not from its streams. In a server session that cache
-    has been observed to keep the frame of the map's first render while the
-    figure goes on updating, so rendering the same map again -- a pop-out
-    window, a grid tab Panel re-materializes, a re-enabled grid -- shows the
-    cell as it looked when first rendered. For a data layer that lasts until
-    the layer's next update. An edit tool (BoxEdit, PolyDraw) initialized from
-    the stale frame instead syncs it back as an edit: every ROI drawn since is
-    deleted and published as deleted, and the re-entrant update leaves the
-    figure with the tool twice.
+    its cache (``.data``), not from its streams, and for an overlay nothing
+    refreshes that cache after the first render: the figure updates through a
+    clone that shares the map's callback but not its cache. (A data compositor
+    would route updates through the map itself, but the one that applied to
+    our 2D layers is unregistered, see ``reduction``.) Rendering the same map
+    again -- a pop-out window, a grid tab Panel re-materializes, a re-enabled
+    grid -- therefore shows the cell as it looked when first rendered. For a
+    data layer that lasts until the layer's next update. An edit tool (BoxEdit,
+    PolyDraw) initialized from the stale frame instead syncs it back as an
+    edit: every ROI drawn since is deleted and published as deleted, and the
+    re-entrant update leaves the figure with the tool twice.
 
     Dropping the cache before each render makes HoloViews evaluate the map
     afresh. Maps below it are re-evaluated through lookups, which HoloViews

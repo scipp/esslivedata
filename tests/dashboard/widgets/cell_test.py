@@ -6,6 +6,9 @@ import holoviews as hv
 import numpy as np
 from bokeh.document import Document
 
+# Imported for its side effect: the compositor registry the dashboard runs with,
+# without which this overlay would update through the map and mask the bug.
+import ess.livedata.dashboard.reduction  # noqa: F401
 from ess.livedata.dashboard.widgets.cell import (
     CurrentStateHoloViews,
     format_error_html,
@@ -89,10 +92,7 @@ class TestCurrentStateHoloViews:
 
         async def render_twice() -> None:
             CurrentStateHoloViews(plot).get_root(Document())
-            first_frame = dict(plot.data)
             rois.send([(1.0, 2.0, 5.0, 6.0)])
-            # As observed in server sessions: the cache keeps the first frame.
-            plot.data = first_frame
             CurrentStateHoloViews(plot).get_root(Document())
 
         # The figures' data-source callbacks schedule tasks on the running loop.
