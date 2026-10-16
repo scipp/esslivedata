@@ -1,0 +1,28 @@
+# ORCA camera image. The area detector view has no ROI support.
+title: ORCA
+description: ORCA camera image since start.
+nrows: 1
+ncols: 1
+cells:
+- geometry:
+    row: 0
+    col: 0
+    row_span: 1
+    col_span: 1
+  layers:
+  - data_sources:
+      primary:
+        workflow_id: tbl/tbl_area_detector_orca/1
+        view_name: image
+        source_names:
+        - orca_detector
+    plot_name: image
+    params:
+      plot_aspect:
+        aspect_type: Square
+      time_window:
+        mode: since_start
+      plot_scale:
+        x_scale: linear
+        y_scale: linear
+        color_scale: log

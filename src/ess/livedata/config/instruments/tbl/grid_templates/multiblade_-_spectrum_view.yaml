@@ -1,0 +1,27 @@
+# Multiblade per-blade, per-wire spectra. The detector view is 3D, so it has
+# no ROI support.
+title: 'Multiblade: Spectrum View'
+description: Multiblade per-blade, per-wire spectra since start.
+nrows: 1
+ncols: 1
+cells:
+- geometry:
+    row: 0
+    col: 0
+    row_span: 1
+    col_span: 1
+  layers:
+  - data_sources:
+      primary:
+        workflow_id: tbl/multiblade_detector_view/1
+        view_name: spectrum_view
+        source_names:
+        - multiblade_detector
+    plot_name: slicer
+    params:
+      time_window:
+        mode: since_start
+      plot_scale:
+        x_scale: linear
+        y_scale: linear
+        color_scale: log

@@ -1,0 +1,92 @@
+# nGEM image with ROI editing, ROI spectra, and ROI totals.
+title: 'nGEM: ROI'
+description: nGEM image with ROI editing, ROI spectra, and ROI totals since start.
+nrows: 2
+ncols: 2
+cells:
+- geometry:
+    row: 0
+    col: 0
+    row_span: 2
+    col_span: 1
+  layers:
+  - data_sources:
+      primary:
+        workflow_id: tbl/ngem_detector_view/1
+        view_name: image
+        source_names:
+        - ngem_detector
+    plot_name: image
+    params:
+      plot_aspect:
+        aspect_type: Square
+      time_window:
+        mode: since_start
+      plot_scale:
+        x_scale: linear
+        y_scale: linear
+        color_scale: log
+  - data_sources:
+      primary:
+        workflow_id: tbl/ngem_detector_view/1
+        view_name: roi_rectangle
+        source_names:
+        - ngem_detector
+    plot_name: rectangles_readback
+    params: {}
+  - data_sources:
+      primary:
+        workflow_id: tbl/ngem_detector_view/1
+        view_name: roi_rectangle
+        source_names:
+        - ngem_detector
+    plot_name: rectangles_request
+    params: {}
+  - data_sources:
+      primary:
+        workflow_id: tbl/ngem_detector_view/1
+        view_name: roi_polygon
+        source_names:
+        - ngem_detector
+    plot_name: polygons_readback
+    params: {}
+  - data_sources:
+      primary:
+        workflow_id: tbl/ngem_detector_view/1
+        view_name: roi_polygon
+        source_names:
+        - ngem_detector
+    plot_name: polygons_request
+    params: {}
+- geometry:
+    row: 0
+    col: 1
+    row_span: 1
+    col_span: 1
+  layers:
+  - data_sources:
+      primary:
+        workflow_id: tbl/ngem_detector_view/1
+        view_name: roi_spectra
+        source_names:
+        - ngem_detector
+    plot_name: overlay_1d
+    params:
+      time_window:
+        mode: since_start
+- geometry:
+    row: 1
+    col: 1
+    row_span: 1
+    col_span: 1
+  layers:
+  - data_sources:
+      primary:
+        workflow_id: tbl/ngem_detector_view/1
+        view_name: roi_total_in_range
+        source_names:
+        - ngem_detector
+    plot_name: bars
+    params:
+      time_window:
+        mode: since_start
