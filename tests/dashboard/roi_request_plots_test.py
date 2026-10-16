@@ -393,7 +393,7 @@ def test_rendered_element_follows_the_drawn_rois(
 ) -> None:
     """Drawn ROIs must reach the element, not only the browser's edit tool.
 
-    A re-render (tab switch, cell rebuilt on job state change) rebuilds the
+    A re-render (cell rebuilt on job state change, pop-out) rebuilds the
     edit tool from the element. An element left at what the presenter was
     constructed with resyncs that stale set back as an edit, dropping the
     ROIs the user drew since.
