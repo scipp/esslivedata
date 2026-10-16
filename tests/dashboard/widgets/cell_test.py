@@ -1,12 +1,21 @@
 # SPDX-License-Identifier: BSD-3-Clause
 # Copyright (c) 2025 Scipp contributors (https://github.com/scipp)
+import asyncio
+
+import holoviews as hv
+import numpy as np
+from bokeh.document import Document
+
 from ess.livedata.dashboard.widgets.cell import (
+    CurrentStateHoloViews,
     format_error_html,
     format_freshness_html,
     format_layer_time_html,
     format_stopped_html,
 )
 from ess.livedata.dashboard.widgets.styles import StatusPill
+
+hv.extension('bokeh')
 
 
 class TestFreshnessPill:
@@ -62,3 +71,32 @@ class TestLayerTimeHtml:
         html = format_layer_time_html('14:35:01 - 14:35:07 (Lag: 2.3s)')
         assert '14:35:01 - 14:35:07 (Lag: 2.3s)' in html
         assert '<span' in html
+
+
+class TestCurrentStateHoloViews:
+    """A second render of a plot must be built from its current state."""
+
+    def test_second_render_seeds_the_edit_tool_from_current_state(self):
+        rois = hv.streams.Pipe(data=[])
+        roi_map = hv.DynamicMap(hv.Rectangles, streams=[rois])
+        box_edit = hv.streams.BoxEdit(source=roi_map)
+        image = hv.streams.Pipe(data=np.zeros((4, 4)))
+        plot = (
+            hv.Overlay([hv.DynamicMap(hv.Image, streams=[image]), roi_map])
+            .collate()
+            .opts(clone=True)
+        )
+
+        async def render_twice() -> None:
+            CurrentStateHoloViews(plot).get_root(Document())
+            first_frame = dict(plot.data)
+            rois.send([(1.0, 2.0, 5.0, 6.0)])
+            # As observed in server sessions: the cache keeps the first frame.
+            plot.data = first_frame
+            CurrentStateHoloViews(plot).get_root(Document())
+
+        # The figures' data-source callbacks schedule tasks on the running loop.
+        asyncio.run(render_twice())
+
+        assert list(box_edit.data['x0']) == [1.0]
+        assert list(box_edit.data['y1']) == [6.0]

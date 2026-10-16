@@ -18,6 +18,7 @@ from __future__ import annotations
 
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
+from typing import TYPE_CHECKING
 
 import holoviews as hv
 import panel as pn
@@ -54,6 +55,12 @@ from .plot_widgets import (
     get_plot_cell_display_info,
 )
 from .styles import Colors, StatusColors, StatusPill
+
+if TYPE_CHECKING:
+    from bokeh.document import Document
+    from bokeh.model import Model
+    from holoviews.plotting.plot import Plot
+    from pyviz_comms import Comm
 
 logger = structlog.get_logger(__name__)
 
@@ -294,6 +301,31 @@ def _place_colorbar(
         hv.opts.QuadMesh(colorbar_position=position),
         clone=True,
     )
+
+
+class CurrentStateHoloViews(pn.pane.HoloViews):
+    """HoloViews pane whose every render is built from the plot's current state.
+
+    HoloViews seeds a new figure from the frame the rendered DynamicMap holds in
+    its cache (``.data``), not from its streams. In a server session that cache
+    has been observed to keep the frame of the map's first render while the
+    figure goes on updating, so rendering the same map again -- a pop-out
+    window, a grid tab Panel re-materializes, a re-enabled grid -- shows the
+    cell as it looked when first rendered. For a data layer that lasts until
+    the layer's next update. An edit tool (BoxEdit, PolyDraw) initialized from
+    the stale frame instead syncs it back as an edit: every ROI drawn since is
+    deleted and published as deleted, and the re-entrant update leaves the
+    figure with the tool twice.
+
+    Dropping the cache before each render makes HoloViews evaluate the map
+    afresh. Maps below it are re-evaluated through lookups, which HoloViews
+    never serves from cache for a map driven by a ``Pipe``.
+    """
+
+    def _render(self, doc: Document, comm: Comm | None, root: Model) -> Plot:
+        if isinstance(self.object, hv.DynamicMap):
+            self.object.reset()
+        return super()._render(doc, comm, root)
 
 
 class CellWidget:
@@ -838,7 +870,7 @@ class CellWidget:
         # - Allows proper multi-layer composition via hv.Overlay
         # - Each grid cell's plot remains independent
         # A compact figure also drops the pane's default margin around it.
-        plot_pane_wrapper = pn.pane.HoloViews(
+        plot_pane_wrapper = CurrentStateHoloViews(
             self._plot,
             sizing_mode='stretch_both',
             linked_axes=False,
