@@ -536,7 +536,7 @@ class BaseROIRequestPresenter(PresenterBase, ABC):
         this session renders always matches the plotter's live ROIs. Without
         it the element stays at whatever this presenter was constructed with:
         drawn ROIs live only in the browser's edit tool, and the next
-        re-render -- a tab switch, a cell rebuilt on job state change --
+        re-render -- a cell rebuilt on job state change, a pop-out --
         rebuilds that tool from the stale element and syncs the difference
         back as an edit, silently dropping ROIs the user drew.
         """
