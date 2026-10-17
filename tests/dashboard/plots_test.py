@@ -26,6 +26,7 @@ from ess.livedata.dashboard import plots
 from ess.livedata.dashboard.data_roles import PRIMARY
 from ess.livedata.dashboard.extractors import WindowAggregatingExtractor
 from ess.livedata.dashboard.plot_params import (
+    ColorLimits,
     ErrorDisplay,
     LegendParams,
     LegendPosition,
@@ -409,7 +410,7 @@ class TestImagePlotter:
 
         params = PlotParams2d()
         params.plot_scale.color_scale = PlotScale.linear
-        params.plot_scale.manual_color_limits = True
+        params.plot_scale.color_limits = ColorLimits.manual
         params.plot_scale.color_min = 2.0
         params.plot_scale.color_max = 9.0
         plotter = plots.ImagePlotter.from_params(params)
@@ -497,7 +498,9 @@ class TestPlotScaleParams2dManualLimits:
         from pydantic import ValidationError
 
         with pytest.raises(ValidationError):
-            PlotScaleParams2d(manual_color_limits=True, color_min=5.0, color_max=5.0)
+            PlotScaleParams2d(
+                color_limits=ColorLimits.manual, color_min=5.0, color_max=5.0
+            )
 
     def test_rejects_nonpositive_min_on_log_scale(self):
         from pydantic import ValidationError
@@ -505,7 +508,7 @@ class TestPlotScaleParams2dManualLimits:
         with pytest.raises(ValidationError):
             PlotScaleParams2d(
                 color_scale=PlotScale.log,
-                manual_color_limits=True,
+                color_limits=ColorLimits.manual,
                 color_min=0.0,
                 color_max=10.0,
             )
@@ -513,7 +516,7 @@ class TestPlotScaleParams2dManualLimits:
     def test_allows_nonpositive_min_on_linear_scale(self):
         params = PlotScaleParams2d(
             color_scale=PlotScale.linear,
-            manual_color_limits=True,
+            color_limits=ColorLimits.manual,
             color_min=-5.0,
             color_max=10.0,
         )
@@ -522,7 +525,7 @@ class TestPlotScaleParams2dManualLimits:
     def test_limits_unvalidated_when_manual_off(self):
         # Limits are ignored when manual is off, so an inverted pair is allowed.
         params = PlotScaleParams2d(color_min=5.0, color_max=1.0)
-        assert params.manual_color_limits is False
+        assert params.color_limits == ColorLimits.data
 
 
 class TestLinePlotter:
