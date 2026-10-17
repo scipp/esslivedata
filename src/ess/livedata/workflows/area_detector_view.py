@@ -20,6 +20,20 @@ from ess.livedata.core.timestamp import Timestamp
 from .workflow_factory import Workflow
 
 
+def make_logical_view(
+    source_name: str,
+    transform: Callable[[sc.DataArray, str], sc.DataArray] | None,
+    reduction_dim: str | list[str] | None,
+) -> raw.LogicalView:
+    """Bind ``source_name`` into an instrument transform and wrap it as a view."""
+    bound = (
+        (lambda da: da)
+        if transform is None
+        else partial(transform, source_name=source_name)
+    )
+    return raw.LogicalView(transform=bound, reduction_dim=reduction_dim)
+
+
 class AreaDetectorView(Workflow):
     """
     Workflow for area detector image visualization.
@@ -148,12 +162,8 @@ class AreaDetectorView(Workflow):
         """
 
         def factory(source_name: str) -> AreaDetectorView:
-            bound = (
-                (lambda da: da)
-                if transform is None
-                else partial(transform, source_name=source_name)
+            return AreaDetectorView(
+                make_logical_view(source_name, transform, reduction_dim)
             )
-            logical_view = raw.LogicalView(transform=bound, reduction_dim=reduction_dim)
-            return AreaDetectorView(logical_view)
 
         return factory

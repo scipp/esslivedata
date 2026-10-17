@@ -7,6 +7,7 @@ from ..core.message import StreamId, StreamKind
 from ..core.preprocessor import Accumulator, JobBasedPreprocessorFactoryBase
 from .accumulators import Cumulative, LatestValueAccumulator
 from .detector_data import make_detector_event_preprocessor
+from .frame_batch import FrameBatchAccumulator
 from .to_nxevent_data import ToNXevent_data
 from .to_nxlog import nxlog_for_stream
 
@@ -33,7 +34,7 @@ class ReductionPreprocessorFactory(JobBasedPreprocessorFactoryBase):
                     self._instrument, key.name, group_by_pixel=self._group_by_pixel
                 )
             case StreamKind.AREA_DETECTOR:
-                return Cumulative(clear_on_get=True)
+                return FrameBatchAccumulator()
             case StreamKind.LIVEDATA_CONTEXT:
                 return LatestValueAccumulator()
             case _:
