@@ -40,10 +40,10 @@ from ess.livedata.dashboard.stream_manager import StreamManager
 from ess.livedata.dashboard.widgets.plot_config_modal import (
     STATIC_OVERLAY_GROUP,
     PlotConfigModal,
-    _build_timeseries_options,
     _inject_axis_source_titles,
     _resolve_axis_source_titles,
     _resolve_output_display_hints,
+    build_timeseries_options,
 )
 from ess.livedata.dashboard.widgets.plot_grid import PlotGrid
 
@@ -274,7 +274,7 @@ class TestBuildTimeseriesOptions:
         timeseries = [(wf_id, "mon1", "delta")]
         instrument = FakeInstrumentConfig({"mon1": "Monitor 1"})
 
-        options = _build_timeseries_options(timeseries, {wf_id: spec}, instrument)
+        options = build_timeseries_options(timeseries, {wf_id: spec}, instrument)
         display_names = list(options.keys())
         assert display_names == ["Timeseries data: Monitor 1"]
 
@@ -296,7 +296,7 @@ class TestBuildTimeseriesOptions:
         timeseries = [(wf_id, "mon1", "delta")]
         instrument = FakeInstrumentConfig({"mon1": "Monitor 1"})
 
-        options = _build_timeseries_options(timeseries, {wf_id: spec}, instrument)
+        options = build_timeseries_options(timeseries, {wf_id: spec}, instrument)
         display_names = list(options.keys())
         assert display_names == ["Monitor data: Monitor 1 (Delta)"]
 
@@ -311,7 +311,7 @@ class TestBuildTimeseriesOptions:
         spec = _make_workflow_spec("Timeseries data", SingleOutput)
         timeseries = [(wf_id, "raw_source", "delta")]
 
-        options = _build_timeseries_options(timeseries, {wf_id: spec}, None)
+        options = build_timeseries_options(timeseries, {wf_id: spec}, None)
         assert list(options.keys()) == ["Timeseries data: raw_source"]
 
 

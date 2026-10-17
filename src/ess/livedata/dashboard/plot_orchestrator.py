@@ -76,7 +76,7 @@ class JobOrchestratorProtocol(Protocol):
 class ResolvedDataSource:
     """A data source with its output view resolved to a backend field name.
 
-    Produced by :func:`_build_resolved_data_sources` from a
+    Produced by :func:`resolve_data_sources` from a
     :class:`DataSourceConfig`: ``output_name`` carries the backend pydantic
     field name selected for the current window mode, ready to key a
     :class:`DataKey`, and ``temporality`` what that field's messages mean.
@@ -100,11 +100,15 @@ def _windowing_for_role(role: str, params: pydantic.BaseModel) -> Windowing:
     return params.windowing() if isinstance(params, WindowModeMixin) else 'per_update'
 
 
-def _build_resolved_data_sources(
-    config: PlotConfig,
+def resolve_data_sources(
+    data_sources: Mapping[str, DataSourceConfig],
+    params: pydantic.BaseModel,
     registry: Mapping[WorkflowId, WorkflowSpec],
 ) -> dict[str, ResolvedDataSource]:
-    """Resolve ``config.data_sources`` view names to backend field names.
+    """Resolve the data sources' view names to backend field names.
+
+    The primary role's field follows the window mode of ``params`` (see
+    :func:`_windowing_for_role`).
 
     Falls back to the view name verbatim when the data source's workflow is
     not in the registry (lets a layer whose workflow has not been seen yet
@@ -112,13 +116,13 @@ def _build_resolved_data_sources(
     temporality is unknown in that case.
     """
     resolved: dict[str, ResolvedDataSource] = {}
-    for role, ds in config.data_sources.items():
+    for role, ds in data_sources.items():
         spec = registry.get(ds.workflow_id)
         if spec is None:
             output_name, temporality = ds.view_name, None
         else:
             output_name = spec.field_for(
-                ds.view_name, _windowing_for_role(role, config.params)
+                ds.view_name, _windowing_for_role(role, params)
             )
             # An unknown view resolves to its own name, which need not be a field.
             temporality = (
@@ -135,7 +139,7 @@ def _build_resolved_data_sources(
     return resolved
 
 
-def _build_subscription_keys(
+def build_subscription_keys(
     data_sources: dict[str, ResolvedDataSource],
 ) -> tuple[dict[str, list[DataKey]], dict[DataKey, Temporality | None]]:
     """Build stable DataKeys grouped by role, plus what each key's data means.
@@ -1174,8 +1178,10 @@ class PlotOrchestrator:
             self._persist_to_store()
             return
 
-        resolved_data_sources = _build_resolved_data_sources(
-            config, self._job_orchestrator.get_workflow_registry()
+        resolved_data_sources = resolve_data_sources(
+            config.data_sources,
+            config.params,
+            self._job_orchestrator.get_workflow_registry(),
         )
         workflow_ids = tuple(
             dict.fromkeys(ds.workflow_id for ds in resolved_data_sources.values())
@@ -1191,7 +1197,7 @@ class PlotOrchestrator:
             # Set up data pipeline - updates mark the layer dirty; flush_frames
             # pulls and rebuilds. The immediate mark covers retained data
             # already present, so the plot shows without waiting for a delta.
-            keys_by_role, temporality = _build_subscription_keys(resolved_data_sources)
+            keys_by_role, temporality = build_subscription_keys(resolved_data_sources)
             try:
                 subscriber = self._plotting_controller.setup_pipeline(
                     keys_by_role=keys_by_role,

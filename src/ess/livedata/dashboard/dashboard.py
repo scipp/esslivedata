@@ -4,6 +4,7 @@
 
 import logging
 from abc import ABC, abstractmethod
+from collections.abc import Callable, Sequence
 from contextlib import ExitStack
 from pathlib import Path
 
@@ -24,6 +25,7 @@ from .session_registry import SessionId
 from .session_updater import SessionUpdater
 from .theme import DEFAULT_THEME, THEMES, Theme
 from .transport import NullTransport, Transport
+from .widgets.data_export_modal import DataExportLauncher
 from .widgets.styles import PhoneLayout
 
 # Bokeh's own reaper, distinct from the registry's: seconds an unused Bokeh
@@ -36,6 +38,24 @@ pn.config.throttled = True
 _TEMPLATES_DIR = Path(__file__).parent / 'templates'
 _LOGIN_TEMPLATE = str(_TEMPLATES_DIR / 'login.html')
 _LOGOUT_TEMPLATE = str(_TEMPLATES_DIR / 'logout.html')
+
+# Matches the logout link: an outlined pill in the header's text color.
+_HEADER_BUTTON_CSS = """
+:host .bk-btn {
+    color: white;
+    background: none;
+    border: 1.5px solid rgba(255, 255, 255, 0.7);
+    border-radius: 20px;
+    font-size: 13px;
+    font-weight: 500;
+    letter-spacing: 0.5px;
+    padding: 6px 18px;
+}
+:host .bk-btn:hover {
+    background: rgba(255, 255, 255, 0.2);
+    border-color: white;
+}
+"""
 
 
 def _phone_template_css(theme: Theme) -> str:
@@ -187,7 +207,11 @@ class DashboardBase(ServiceBase, ABC):
 
     @abstractmethod
     def create_main_content(
-        self, session_updater: SessionUpdater, *, phone: bool
+        self,
+        session_updater: SessionUpdater,
+        *,
+        phone: bool,
+        overlays: Sequence[pn.viewable.Viewable],
     ) -> pn.viewable.Viewable:
         """
         Override this method to create the main dashboard content.
@@ -200,6 +224,10 @@ class DashboardBase(ServiceBase, ABC):
             in their constructor.
         phone:
             Whether this session asked for the phone layout (``?layout=phone``).
+        overlays:
+            Zero-height holders of modals opened from the header, to be placed
+            inside the main content: wrapping it to add them overflows the page,
+            and in the header the modals' content can stay invisible (#1154).
         """
 
     def get_dashboard_title(self) -> str:
@@ -279,8 +307,25 @@ class DashboardBase(ServiceBase, ABC):
         pn.state.on_session_destroyed(_cleanup_session)
         self._logger.info("Periodic updates started for session %s", session_id)
 
-    def _create_logout_header(self) -> list[pn.viewable.Viewable]:
-        """Create a logout button for the header when auth is enabled."""
+    def _create_header(
+        self, on_export: Callable[[], None]
+    ) -> list[pn.viewable.Viewable]:
+        """Create the header items: data export, and logout when auth is enabled."""
+        export_button = pn.widgets.Button(
+            label='Export data',
+            description='Save buffered data to a file',
+            stylesheets=[_HEADER_BUTTON_CSS],
+            css_classes=['lt-export-data'],
+            margin=(0, 8),
+        )
+        export_button.on_click(lambda _: on_export())
+        header = [pn.layout.HSpacer(), export_button]
+        if self._basic_auth_password:
+            header.append(self._create_logout_link())
+        return header
+
+    def _create_logout_link(self) -> pn.pane.HTML:
+        """Create a logout button for the header."""
         logout_link = pn.pane.HTML(
             """<div style="text-align: right; padding-right: 8px;">
             <a href="/logout" style="
@@ -300,9 +345,8 @@ class DashboardBase(ServiceBase, ABC):
                 onmouseout="this.style.background='none';
                             this.style.borderColor='rgba(255,255,255,0.7)'"
             >Log out</a></div>""",
-            sizing_mode='stretch_width',
         )
-        return [logout_link]
+        return logout_link
 
     def create_layout(self) -> pn.template.MaterialTemplate:
         """Create the basic dashboard layout."""
@@ -341,8 +385,16 @@ class DashboardBase(ServiceBase, ABC):
         # screen size, and a session never switches between layouts.
         phone = pn.state.session_args.get('layout') == [b'phone']
 
+        export_launcher = DataExportLauncher(
+            data_service=self._services.data_service,
+            workflow_registry=self._services.job_orchestrator.get_workflow_registry(),
+            instrument=self._instrument,
+            instrument_config=self._services.instrument_config,
+        )
         sidebar_content = self.create_sidebar_content(session_updater)
-        main_content = self.create_main_content(session_updater, phone=phone)
+        main_content = self.create_main_content(
+            session_updater, phone=phone, overlays=[export_launcher.panel]
+        )
 
         # Append heartbeat widget to sidebar (invisible but required for
         # browser heartbeat JavaScript to run). Placing it in the sidebar
@@ -359,7 +411,7 @@ class DashboardBase(ServiceBase, ABC):
             session_updater.heartbeat_widget,
         )
 
-        header = self._create_logout_header() if self._basic_auth_password else []
+        header = self._create_header(on_export=export_launcher.open)
 
         template = pn.template.MaterialTemplate(
             title=self.get_dashboard_title(),
