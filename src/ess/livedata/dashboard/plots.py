@@ -4,6 +4,7 @@
 
 from __future__ import annotations
 
+import functools
 import weakref
 from collections.abc import Callable, Iterable, Iterator, Sequence
 from dataclasses import dataclass
@@ -18,6 +19,7 @@ import numpy as np
 # before any render thread exists.
 import pandas  # noqa: F401
 import scipp as sc
+from bokeh.palettes import Viridis256
 from holoviews.core.util import range_pad
 from holoviews.plotting.util import get_axis_padding
 
@@ -442,6 +444,15 @@ def _spectral_unit(da: sc.DataArray) -> sc.Unit | None:
     if (dim := next((d for d in da.dims if d in SPECTRAL_DIMS), None)) is not None:
         return da.coords[dim].unit
     return da.coords[SPECTRAL_RANGE_LOW_COORD].unit
+
+
+#: HoloViews resolves a colormap given by name through matplotlib on every render,
+#: in every session: about 1 ms per image plot per frame. It uses a list as is.
+#: Resolving any name also imports colorcet, on the IOLoop of the first session
+#: to render: ~70 ms, or ~2.8 s with matplotlib < 3.11.2 (matplotlib#32172).
+#: Colormapped elements must therefore get a list, including those that would
+#: otherwise fall back to HoloViews' default colormap.
+_VIRIDIS = list(Viridis256)
 
 
 def _identity(x: str) -> str:
@@ -884,7 +895,7 @@ class Plotter:
         """
         opts: dict[str, Any] = {
             'colorbar': True,
-            'cmap': 'viridis',
+            'cmap': _VIRIDIS,
             'logx': scale_opts.x_scale == PlotScale.log,
             'logy': scale_opts.y_scale == PlotScale.log,
             'logz': scale_opts.color_scale == PlotScale.log,
@@ -1047,7 +1058,7 @@ class Plotter:
         self._publish_range_targets(
             self._pending_range_targets, self._pending_y_extents
         )
-        self._set_cached_state(result.opts(*self._frame_opts()))
+        self._set_cached_state(result.opts(*self._frame_opts))
 
     def _value_unit(self, da: sc.DataArray) -> str | None:
         """Unit label of the plotted values of normalized data ``da``.
@@ -1296,6 +1307,9 @@ class Plotter:
         Bokeh model instances: Bokeh lets a model belong to only one document, and
         the second session to render the frame would fail. Create such models
         inside a hook body, which runs for each session's plot.
+
+        Called once per plotter (see :attr:`_frame_opts`), so the result must
+        depend only on state set in the constructor.
         """
         # title='' stops Bokeh promoting a single overlaid element's label to the
         # plot title when there is no legend to carry it.
@@ -1312,7 +1326,7 @@ class Plotter:
     def applies_ranges(self) -> bool:
         """Whether HoloViews must compute this layer's axis bounds from its data.
 
-        False lets :meth:`_frame_opts` hand HoloViews ``apply_ranges=False``,
+        False lets :attr:`_frame_opts` hand HoloViews ``apply_ranges=False``,
         which skips computing bounds, deriving extents and writing the Bokeh
         ranges on every frame -- a third of a 1D layer's repaint. That work is
         per element, so it is not a fixed cost per layer: it grows both with the
@@ -1341,8 +1355,13 @@ class Plotter:
         writes_both_axes = {'x', 'y'} <= self.autoscale_axes and self.is_overlayable
         return not (self.IS_ANNOTATION or writes_both_axes)
 
+    @functools.cached_property
     def _frame_opts(self) -> list[hv.Options]:
         """:meth:`style_opts`, plus the range opt-out where it applies.
+
+        Built once per plotter, since :meth:`style_opts` depends only on the
+        constructor arguments. Rebuilding them on every compute would cost about
+        a fifth of an image layer's compute.
 
         The opt-out goes on the leaf element opts only. Ranges are a property of
         the elements, so opting the container out measures the same as not doing
