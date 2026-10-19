@@ -15,6 +15,7 @@ from ess.livedata.dashboard.widgets.cell import (
     format_freshness_html,
     format_layer_time_html,
     format_stopped_html,
+    with_figure_opts,
 )
 from ess.livedata.dashboard.widgets.styles import StatusPill
 
@@ -100,3 +101,95 @@ class TestCurrentStateHoloViews:
 
         assert list(box_edit.data['x0']) == [1.0]
         assert list(box_edit.data['y1']) == [6.0]
+
+
+def _frame(value: float) -> hv.Overlay:
+    return hv.Overlay(
+        [hv.Image(np.full((3, 3), value)).opts(cmap='viridis'), hv.Curve([0, value])]
+    )
+
+
+def _session_map(pipe: hv.streams.Pipe) -> hv.DynamicMap:
+    return hv.DynamicMap(lambda data: data, streams=[pipe])
+
+
+class FigureRecorder:
+    """Hook recording the figure of every render it runs on."""
+
+    def __init__(self) -> None:
+        self.figures: list[object] = []
+
+    def __call__(self, plot, element) -> None:
+        self.figures.append(plot.state)
+
+
+class TestWithFigureOpts:
+    """Options a session puts on the shared frames of a plot."""
+
+    @staticmethod
+    def render(plot: hv.DynamicMap | hv.Element) -> object:
+        return hv.renderer('bokeh').get_plot(plot, doc=Document()).state
+
+    def test_hook_runs_on_every_update(self) -> None:
+        pipe = hv.streams.Pipe(data=_frame(0.0))
+        recorder = FigureRecorder()
+        plot = with_figure_opts(_session_map(pipe), hooks=[recorder])
+        figure = self.render(plot)
+
+        pipe.send(_frame(1.0))
+        pipe.send(_frame(2.0))
+
+        assert recorder.figures == [figure] * 3
+
+    def test_hook_runs_on_every_update_of_collated_layers(self) -> None:
+        pipes = [hv.streams.Pipe(data=_frame(0.0)) for _ in range(2)]
+        layers = [_session_map(pipe) for pipe in pipes]
+        recorder = FigureRecorder()
+        plot = with_figure_opts(hv.Overlay(layers).collate(), hooks=[recorder])
+        figure = self.render(plot)
+
+        for pipe in pipes:
+            pipe.send(_frame(1.0))
+
+        assert recorder.figures == [figure] * 3
+
+    def test_hook_runs_on_static_element(self) -> None:
+        recorder = FigureRecorder()
+        figure = self.render(with_figure_opts(_frame(0.0), hooks=[recorder]))
+
+        assert recorder.figures == [figure]
+
+    def test_leaves_the_dynamicmap_unwrapped(self) -> None:
+        dmap = _session_map(hv.streams.Pipe(data=_frame(0.0)))
+
+        with_figure_opts(dmap, hooks=[FigureRecorder()])
+
+        assert dmap.callback.inputs == []
+
+    def test_frame_elements_are_shared_not_copied(self) -> None:
+        frame = _frame(0.0)
+        dmap = _session_map(hv.streams.Pipe(data=frame))
+
+        decorated = with_figure_opts(dmap, hooks=[FigureRecorder()])[()]
+
+        assert decorated is not frame
+        assert all(a is b for a, b in zip(decorated, frame, strict=True))
+
+    def test_sessions_sharing_a_frame_run_only_their_own_hooks(self) -> None:
+        shared = _frame(0.0)
+        recorders = [FigureRecorder(), FigureRecorder()]
+        figures = [
+            self.render(
+                with_figure_opts(
+                    _session_map(hv.streams.Pipe(data=shared)), hooks=[recorder]
+                )
+            )
+            for recorder in recorders
+        ]
+
+        # A hook left on the shared frame would run on this figure too.
+        self.render(shared)
+
+        assert [recorder.figures for recorder in recorders] == [
+            [figure] for figure in figures
+        ]

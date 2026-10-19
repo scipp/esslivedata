@@ -315,6 +315,40 @@ def _place_colorbar(
     )
 
 
+def with_figure_opts(
+    plot: hv.DynamicMap | hv.Element, **options: object
+) -> hv.DynamicMap | hv.Element:
+    """Apply options for the top-level frame to every frame of ``plot``.
+
+    The frames are shared by all sessions, so the options go on a shallow copy
+    of each frame: the copy gets its own options, its elements stay shared.
+    ``plot`` itself stays unwrapped, so it can be composed over again on a cell
+    rebuild (see :class:`~..session_layer.SessionComponents`).
+
+    ``DynamicMap.opts(..., clone=True)`` would do the same, but HoloViews passes
+    ``clone=True`` on to each frame's ``opts``, which copies every element of the
+    frame and validates it again, on every update, in every session. The array
+    data stays shared; the cost is rebuilding the elements.
+
+    Parameters
+    ----------
+    plot:
+        The plot to decorate. Not modified.
+    **options:
+        Keyword options for the type of the top-level frame, such as ``hooks``
+        on an ``Overlay``.
+    """
+
+    def apply(frame: hv.Overlay | hv.Element, **_: object) -> hv.Overlay | hv.Element:
+        return frame.clone().opts(clone=False, **options)
+
+    if not isinstance(plot, hv.DynamicMap):
+        return apply(plot)
+    return hv.util.Dynamic(
+        plot, operation=apply, streams=plot.streams, link_inputs=True
+    )
+
+
 class CurrentStateHoloViews(pn.pane.HoloViews):
     """HoloViews pane whose every render is built from the plot's current state.
 
@@ -1015,10 +1049,6 @@ class CellWidget:
             ),
             None,
         )
-        # ``clone=True``: ``DynamicMap.opts`` otherwise wraps the map in place,
-        # and a single-layer ``result`` is the session's own DynamicMap, which
-        # outlives this widget. Every rebuild would then stack one more wrap on
-        # it for the rest of the session.
-        return result.opts(
-            hooks=hooks, **legend_overlay_opts(legend_position), clone=True
+        return with_figure_opts(
+            result, hooks=hooks, **legend_overlay_opts(legend_position)
         )
