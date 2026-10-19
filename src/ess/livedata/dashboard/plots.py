@@ -448,6 +448,10 @@ def _spectral_unit(da: sc.DataArray) -> sc.Unit | None:
 
 #: HoloViews resolves a colormap given by name through matplotlib on every render,
 #: in every session: about 1 ms per image plot per frame. It uses a list as is.
+#: Resolving any name also imports colorcet, on the IOLoop of the first session
+#: to render: ~70 ms, or ~2.8 s with matplotlib < 3.11.2 (matplotlib#32172).
+#: Colormapped elements must therefore get a list, including those that would
+#: otherwise fall back to HoloViews' default colormap.
 _VIRIDIS = list(Viridis256)
 
 
