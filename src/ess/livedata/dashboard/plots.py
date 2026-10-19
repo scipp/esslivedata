@@ -19,8 +19,9 @@ import numpy as np
 # before any render thread exists.
 import pandas  # noqa: F401
 import scipp as sc
+from bokeh.palettes import Viridis256
 from holoviews.core.util import range_pad
-from holoviews.plotting.util import get_axis_padding, process_cmap
+from holoviews.plotting.util import get_axis_padding
 
 from ess.livedata.config.roi_names import DETECTOR_PIXELS_COORD
 from ess.livedata.config.spectral_coords import (
@@ -445,16 +446,9 @@ def _spectral_unit(da: sc.DataArray) -> sc.Unit | None:
     return da.coords[SPECTRAL_RANGE_LOW_COORD].unit
 
 
-@functools.cache
-def _viridis() -> list[str]:
-    """The viridis palette as a list of colors.
-
-    HoloViews resolves a colormap given by name through matplotlib on every
-    render, in every session: about 1 ms per image plot per frame. It uses a list
-    as is. Resolved on first use rather than at import, since resolving a
-    colormap imports colorcet (see ``reduction._warm_up_colormaps``).
-    """
-    return process_cmap('viridis')
+#: HoloViews resolves a colormap given by name through matplotlib on every render,
+#: in every session: about 1 ms per image plot per frame. It uses a list as is.
+_VIRIDIS = list(Viridis256)
 
 
 def _identity(x: str) -> str:
@@ -897,7 +891,7 @@ class Plotter:
         """
         opts: dict[str, Any] = {
             'colorbar': True,
-            'cmap': _viridis(),
+            'cmap': _VIRIDIS,
             'logx': scale_opts.x_scale == PlotScale.log,
             'logy': scale_opts.y_scale == PlotScale.log,
             'logz': scale_opts.color_scale == PlotScale.log,
