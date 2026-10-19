@@ -53,11 +53,23 @@ def stream_kind_to_topic(instrument: str, kind: StreamKind) -> str:
             raise ValueError(f'Unknown stream kind: {kind}')
 
 
-def get_stream_mapping(*, instrument: str, dev: bool) -> StreamMapping:
+def get_stream_mapping(
+    *, instrument: str, dev: bool, log_source_prefix: str = ''
+) -> StreamMapping:
     """
     Returns the stream mapping for the given instrument.
 
     Loads the stream_mapping from the instrument package.
+
+    Parameters
+    ----------
+    instrument:
+        Name of the instrument.
+    dev:
+        Use the development stream mapping.
+    log_source_prefix:
+        Prefix expected before every log source name, as a simulation of the
+        instrument publishes them.
     """
     import importlib
 
@@ -66,4 +78,6 @@ def get_stream_mapping(*, instrument: str, dev: bool) -> StreamMapping:
     instrument_module = importlib.import_module(
         f'.instruments.{instrument}', package='ess.livedata.config'
     )
-    return instrument_module.stream_mapping[env]
+    return instrument_module.stream_mapping[env].with_log_source_prefix(
+        log_source_prefix
+    )

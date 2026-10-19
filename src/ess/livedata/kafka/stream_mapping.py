@@ -172,6 +172,26 @@ class StreamMapping:
             keys |= set(self._logs.keys())
         return keys
 
+    def with_log_source_prefix(self, prefix: str) -> StreamMapping:
+        """Return copy whose log streams expect ``prefix`` before each source name.
+
+        A simulation that serves its process variables under a prefix (so that they
+        cannot be mistaken for the real instrument's) publishes its logs with that
+        prefix in front of every source name.
+        """
+        if not prefix or self._logs is None:
+            return self
+        return StreamMapping._from_luts(
+            topics=self._topics,
+            detectors=self._detectors,
+            monitors=self._monitors,
+            area_detectors=self._area_detectors,
+            logs={
+                InputStreamKey(topic=k.topic, source_name=prefix + k.source_name): v
+                for k, v in self._logs.items()
+            },
+        )
+
     def filtered(self, needed: set[str]) -> StreamMapping:
         """Return copy with only entries whose internal names are in ``needed``."""
         return StreamMapping._from_luts(

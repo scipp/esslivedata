@@ -20,9 +20,12 @@ def make_detector_service_builder(
     instrument: str,
     dev: bool = True,
     log_level: int = logging.INFO,
+    log_source_prefix: str = '',
     group_by_pixel: bool = True,
 ) -> DataServiceBuilder:
-    stream_mapping = get_stream_mapping(instrument=instrument, dev=dev)
+    stream_mapping = get_stream_mapping(
+        instrument=instrument, dev=dev, log_source_prefix=log_source_prefix
+    )
     instrument_obj = instrument_registry[instrument]
     instrument_obj.load_factories()
 

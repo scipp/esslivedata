@@ -309,6 +309,14 @@ class DataServiceRunner:
             ' batcher has proven itself in production.',
         )
         self._parser.add_argument(
+            '--log-source-prefix',
+            default='',
+            metavar='PREFIX',
+            help='Prefix before every log source name, e.g. "mcstas:" for a '
+            'simulation that serves its process variables under that prefix '
+            'so they cannot be mistaken for the real instrument\'s.',
+        )
+        self._parser.add_argument(
             '--check',
             action='store_true',
             default=False,

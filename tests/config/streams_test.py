@@ -100,3 +100,31 @@ class TestStreamMappingLogTopics:
         )
         assert mapping.log_topics == {'motion', 'sensors'}
         assert mapping.logs == logs
+
+
+def test_log_source_prefix_is_expected_before_every_log_source() -> None:
+    # A simulation serves its process variables under a prefix, so that they
+    # cannot be mistaken for the real instrument's, and its logs carry it.
+    plain = streams.get_stream_mapping(instrument='bifrost', dev=False)
+    prefixed = streams.get_stream_mapping(
+        instrument='bifrost', dev=False, log_source_prefix='mcstas:'
+    )
+
+    assert prefixed.logs == {
+        InputStreamKey(topic=k.topic, source_name=f'mcstas:{k.source_name}'): v
+        for k, v in plain.logs.items()
+    }
+    assert (
+        InputStreamKey(
+            topic='bifrost_motion', source_name='mcstas:BIFRO-SpRot:MC-RotZ-01:Mtr.RBV'
+        )
+        in prefixed.logs
+    )
+    assert prefixed.detectors == plain.detectors
+    assert prefixed.monitors == plain.monitors
+    assert prefixed.topics == plain.topics
+
+
+def test_no_log_source_prefix_leaves_the_mapping_as_it_is() -> None:
+    plain = streams.get_stream_mapping(instrument='bifrost', dev=False)
+    assert plain.with_log_source_prefix('') is plain
