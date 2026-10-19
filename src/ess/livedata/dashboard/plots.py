@@ -35,6 +35,7 @@ from .data_roles import PRIMARY
 from .frame_aspect import make_frame_aspect_opts
 from .image_hover import index_axis_hover_spec, make_hover_hook
 from .plot_params import (
+    ColorLimits,
     CombineMode,
     LayoutParams,
     LegendPosition,
@@ -192,6 +193,38 @@ def _finite_min_max(
         # non-ns datetime64 scalar, which converts to ``datetime.datetime``).
         finite = finite.astype('datetime64[ns]').astype('int64')
     return float(finite.min()), float(finite.max())
+
+
+# Values above which _color_range takes the percentile of a random sample. The
+# percentile of a 4096x4096 image would otherwise cost ~200 ms per update.
+_PERCENTILE_SAMPLE_SIZE = 1_000_000
+
+
+def _color_range(
+    values: np.ndarray, scale_opts: PlotScaleParams2d
+) -> tuple[float, float] | None:
+    """Return the color autoscale range of ``values``, or ``None`` if there is none.
+
+    The range spans the finite values (positive values on a log color scale). With
+    ``ColorLimits.percentile`` the upper limit is the ``color_percentile`` of those
+    values instead of their maximum, unless that does not exceed the minimum, as in
+    a mostly empty image.
+    """
+    log = scale_opts.color_scale == PlotScale.log
+    extent = _finite_min_max(values, log=log)
+    if extent is None or scale_opts.color_limits != ColorLimits.percentile:
+        return extent
+    sample = values.ravel()
+    if sample.size > _PERCENTILE_SAMPLE_SIZE:
+        # Fixed seed: identical data gives an identical range on every update.
+        rng = np.random.default_rng(0)
+        sample = sample[rng.integers(0, sample.size, _PERCENTILE_SAMPLE_SIZE)]
+    mask = np.isfinite(sample)
+    if log:
+        mask &= sample > 0
+    hi = float(np.percentile(sample[mask], scale_opts.color_percentile))
+    lo = extent[0]
+    return (lo, hi) if hi > lo else extent
 
 
 def _as_float(values: np.ndarray) -> np.ndarray:
@@ -856,7 +889,7 @@ class Plotter:
             'logy': scale_opts.y_scale == PlotScale.log,
             'logz': scale_opts.color_scale == PlotScale.log,
         }
-        if scale_opts.manual_color_limits:
+        if scale_opts.color_limits == ColorLimits.manual:
             opts['clim'] = (scale_opts.color_min, scale_opts.color_max)
         if tick_params is not None:
             if tick_params.custom_xticks:
@@ -1768,7 +1801,7 @@ class ImagePlotter(Plotter):
         super().__init__(**kwargs)
         self._scale_opts = scale_opts
         self._base_opts = self._make_2d_base_opts(scale_opts, tick_params)
-        if scale_opts.manual_color_limits:
+        if scale_opts.color_limits == ColorLimits.manual:
             self._autoscale_axes_override = self.AUTOSCALE_AXES - {'c'}
 
     @classmethod
@@ -1818,7 +1851,7 @@ class ImagePlotter(Plotter):
                 targets['x'] = _pad_range(*x_extent, pad=xpad, log=logx)
             if y_extent := _bounds_for_log(element.range(1), log=logy):
                 targets['y'] = _pad_range(*y_extent, pad=ypad, log=logy)
-        extent = _finite_min_max(plot_data.values, log=use_log_scale)
+        extent = _color_range(plot_data.values, self._scale_opts)
         if extent is not None:
             targets['c'] = _pad_range(*extent, pad=cpad, log=use_log_scale)
         return targets

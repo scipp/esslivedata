@@ -14,10 +14,17 @@ import scipp as sc
 from ess.livedata.config.workflow_spec import DataKey
 
 from .data_roles import PRIMARY
-from .plot_params import PlotParams3d, PlotScale, PlotScaleParams2d, TickParams
+from .plot_params import (
+    ColorLimits,
+    PlotParams3d,
+    PlotScale,
+    PlotScaleParams2d,
+    TickParams,
+)
 from .plots import (
     Plotter,
     PresenterBase,
+    _color_range,
     _hv_axis_padding,
     _pad_range,
 )
@@ -282,7 +289,7 @@ class SlicerPlotter(Plotter):
         super().__init__(**kwargs)
         self._scale_opts = scale_opts
         self._base_opts = self._make_2d_base_opts(scale_opts, tick_params)
-        if scale_opts.manual_color_limits:
+        if scale_opts.color_limits == ColorLimits.manual:
             self._autoscale_axes_override = self.AUTOSCALE_AXES - {'c'}
 
     @classmethod
@@ -320,7 +327,7 @@ class SlicerPlotter(Plotter):
         # slice nor produces a 'c' autoscale target.
         clim = (
             None
-            if self._scale_opts.manual_color_limits
+            if self._scale_opts.color_limits == ColorLimits.manual
             else self._compute_global_clim(data)
         )
         use_log_scale = self._scale_opts.color_scale == PlotScale.log
@@ -340,27 +347,10 @@ class SlicerPlotter(Plotter):
         self, data: dict[DataKey, sc.DataArray]
     ) -> tuple[float, float] | None:
         """Compute global color limits from all 3D data for consistent color scale."""
-        use_log_scale = self._scale_opts.color_scale == PlotScale.log
-
-        all_values = []
-        for da in data.values():
-            values = da.values.flatten()
-            if use_log_scale:
-                # For log scale, only consider positive values
-                values = values[values > 0]
-            else:
-                values = values[np.isfinite(values)]
-            if len(values) > 0:
-                all_values.append(values)
-
-        if not all_values:
+        if not data:
             return None
-
-        combined = np.concatenate(all_values)
-        if len(combined) == 0:
-            return None
-
-        return (float(np.nanmin(combined)), float(np.nanmax(combined)))
+        values = np.concatenate([da.values.ravel() for da in data.values()])
+        return _color_range(values, self._scale_opts)
 
     def create_presenter(self) -> SlicerPresenter:
         """Create a SlicerPresenter for per-session rendering."""
