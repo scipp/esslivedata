@@ -3,6 +3,7 @@
 import logging
 from pathlib import Path
 
+import panel as pn
 import pytest
 from bokeh.document import Document
 from panel.io.state import set_curdoc
@@ -31,3 +32,20 @@ def test_layout_build_leaves_no_document_hold(app: ReductionApp) -> None:
     with set_curdoc(doc):
         app.create_layout()
     assert doc.callbacks.hold_value is None
+
+
+def test_served_layout_does_not_subscribe_to_global_busy_state(
+    app: ReductionApp,
+) -> None:
+    """
+    A session must not mirror Panel's process-global busy state.
+
+    Panel writes ``pn.state.busy`` to every indicator in ``pn.state._indicators``,
+    and every session's callbacks toggle it, so one indicator per session costs
+    document patches quadratic in the number of sessions.
+    """
+    indicators = list(pn.state._indicators)
+    doc = Document()
+    with set_curdoc(doc):
+        app.create_layout().server_doc(doc)
+    assert pn.state._indicators == indicators

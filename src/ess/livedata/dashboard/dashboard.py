@@ -364,6 +364,12 @@ class DashboardBase(ServiceBase, ABC):
             main=main_content,
             header_background=self._theme.header_background,
             header=header,
+            # Panel writes the process-global ``pn.state.busy`` to the busy
+            # indicator of every open session. Every session's periodic callbacks
+            # and widget events set and clear it. So each session's 1 s tick
+            # patches every session's document twice, a cost quadratic in the
+            # number of sessions, for a spinner that tells the user nothing.
+            busy_indicator=None,
             # Without this a phone lays the page out at a desktop width and
             # scales it down, which makes every button too small to tap. Only
             # the phone layout is built to fit a phone-width page.
