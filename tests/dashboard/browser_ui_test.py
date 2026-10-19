@@ -10,6 +10,8 @@ through the stable ``lt-*`` automation hooks:
   live plot;
 - session reload restores tabs and live updates;
 - a grid created in one session appears in others without stealing focus;
+- a session viewing the last grid tab, removed in another session, lands on
+  the grid before it;
 - a cell title survives a no-op Save of the cell-properties modal;
 - a cell rebuilt in an open session renders its titlebar rather than an
   invisible one;
@@ -192,6 +194,47 @@ def test_grid_created_in_one_session_appears_in_other_without_stealing_focus():
             lambda: _active_tab(creator) == "Created Elsewhere",
             label="creating session to focus its new tab",
         )
+
+
+@pytest.mark.browser
+def test_session_viewing_a_grid_removed_elsewhere_lands_on_the_one_before():
+    """The session whose visible grid another session removes shows a tab.
+
+    Without clamping, removing the last grid tab would leave the active index
+    past the last tab, which the browser renders as no tab header highlighted
+    and no content.
+    """
+    with (
+        fake_dashboard("dummy") as fake,
+        Dashboard.connect_many(2, fake.url) as (remover, viewer),
+    ):
+        remover.goto_tab("Manage Plots")
+        _add_grid(remover, "Doomed")
+        wait_until(
+            viewer,
+            lambda: "Doomed" in viewer.tab_names(),
+            label="new grid tab in the viewing session",
+        )
+        viewer.goto_tab("Doomed")
+        assert viewer.tab_names()[-1] == "Doomed"
+        assert _active_tab(viewer) == "Doomed"
+
+        remover.goto_tab("Manage Plots")
+        remover.click(".lt-grid-doomed.lt-tool-x")
+        wait_until(
+            viewer,
+            lambda: "Doomed" not in viewer.tab_names(),
+            label="removed grid tab to vanish in the viewing session",
+        )
+
+        wait_until(
+            viewer,
+            lambda: viewer.page.locator(".bk-tab.bk-active").count() == 1,
+            label="an active tab in the viewing session",
+        )
+        assert _active_tab(viewer) == "Diagnostics"
+        viewer.settle()
+        assert viewer.page.locator(".lt-cell-r0c0").first.is_visible()
 
 
 @pytest.mark.browser
