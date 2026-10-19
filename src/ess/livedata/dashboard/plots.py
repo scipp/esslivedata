@@ -1039,15 +1039,23 @@ class Plotter:
             self._pending_y_extents = {}
             result = self._error_placeholder(f"Error: {e}")
 
-        # Time bounds drive the cell titlebar's freshness indicator; they are
-        # kept off the plot title to avoid minting an OptionTree entry per tick.
-        # Computed outside the try so a render failure still stamps the bounds
-        # of the data that was received.
-        self._time_bounds = _compute_time_bounds(data)
+        # Outside the try so a render failure still stamps the bounds of the
+        # data that was received.
+        self._refresh_time_bounds(data)
         self._publish_range_targets(
             self._pending_range_targets, self._pending_y_extents
         )
         self._set_cached_state(result.opts(*self._frame_opts()))
+
+    def _refresh_time_bounds(self, data: dict[DataKey, sc.DataArray]) -> None:
+        """Set :attr:`time_bounds` from the primary-role data of a frame.
+
+        Time bounds drive the cell titlebar's freshness indicator; they are kept
+        off the plot title to avoid minting an OptionTree entry per tick. A
+        subclass that skips :meth:`compute` for some data must still call this
+        with it, or the cell's freshness indicator ages while data arrives.
+        """
+        self._time_bounds = _compute_time_bounds(data)
 
     def _value_unit(self, da: sc.DataArray) -> str | None:
         """Unit label of the plotted values of normalized data ``da``.
