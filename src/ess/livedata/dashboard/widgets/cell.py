@@ -326,9 +326,9 @@ def with_figure_opts(
     rebuild (see :class:`~..session_layer.SessionComponents`).
 
     ``DynamicMap.opts(..., clone=True)`` would do the same, but HoloViews passes
-    ``clone=True`` on to each frame's ``opts``, which deep-copies the frame: every
-    element is copied and validated again, on every update, in every session.
-    For an image layer that is about 3 ms per frame.
+    ``clone=True`` on to each frame's ``opts``, which copies every element of the
+    frame and validates it again, on every update, in every session. The array
+    data stays shared; the cost is rebuilding the elements.
 
     Parameters
     ----------
@@ -339,7 +339,7 @@ def with_figure_opts(
         on an ``Overlay``.
     """
 
-    def apply(frame: hv.Element, **_: object) -> hv.Element:
+    def apply(frame: hv.Overlay | hv.Element, **_: object) -> hv.Overlay | hv.Element:
         return frame.clone().opts(clone=False, **options)
 
     if not isinstance(plot, hv.DynamicMap):
