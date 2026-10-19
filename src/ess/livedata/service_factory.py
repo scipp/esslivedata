@@ -317,6 +317,12 @@ class DataServiceRunner:
             'so they cannot be mistaken for the real instrument\'s.',
         )
         self._parser.add_argument(
+            '--monitor-sources-by-name',
+            action='store_true',
+            help='Expect beam monitor messages under the monitors\' internal '
+            'names (e.g. "psc_monitor") rather than "cbm1", "cbm2", ...',
+        )
+        self._parser.add_argument(
             '--check',
             action='store_true',
             default=False,

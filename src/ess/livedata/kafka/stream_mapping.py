@@ -192,6 +192,23 @@ class StreamMapping:
             },
         )
 
+    def with_monitor_sources_by_name(self) -> StreamMapping:
+        """Return copy whose monitor streams are expected under their internal names.
+
+        Monitor messages then carry the name of the monitor (e.g. its NeXus group)
+        as source name, on the same topics, in place of ``cbm{i}``.
+        """
+        return StreamMapping._from_luts(
+            topics=self._topics,
+            detectors=self._detectors,
+            monitors={
+                InputStreamKey(topic=k.topic, source_name=v): v
+                for k, v in self._monitors.items()
+            },
+            area_detectors=self._area_detectors,
+            logs=self._logs,
+        )
+
     def filtered(self, needed: set[str]) -> StreamMapping:
         """Return copy with only entries whose internal names are in ``needed``."""
         return StreamMapping._from_luts(

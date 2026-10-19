@@ -23,9 +23,13 @@ def make_timeseries_service_builder(
     dev: bool = True,
     log_level: int = logging.INFO,
     log_source_prefix: str = '',
+    monitor_sources_by_name: bool = False,
 ) -> DataServiceBuilder:
     stream_mapping = get_stream_mapping(
-        instrument=instrument, dev=dev, log_source_prefix=log_source_prefix
+        instrument=instrument,
+        dev=dev,
+        log_source_prefix=log_source_prefix,
+        monitor_sources_by_name=monitor_sources_by_name,
     )
     instrument_obj = instrument_registry[instrument]
     instrument_obj.load_factories()

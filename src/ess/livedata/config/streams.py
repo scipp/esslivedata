@@ -54,7 +54,11 @@ def stream_kind_to_topic(instrument: str, kind: StreamKind) -> str:
 
 
 def get_stream_mapping(
-    *, instrument: str, dev: bool, log_source_prefix: str = ''
+    *,
+    instrument: str,
+    dev: bool,
+    log_source_prefix: str = '',
+    monitor_sources_by_name: bool = False,
 ) -> StreamMapping:
     """
     Returns the stream mapping for the given instrument.
@@ -70,6 +74,9 @@ def get_stream_mapping(
     log_source_prefix:
         Prefix expected before every log source name, as a simulation of the
         instrument publishes them.
+    monitor_sources_by_name:
+        Expect monitor messages under the monitors' internal names rather than
+        ``cbm{i}``.
     """
     import importlib
 
@@ -78,6 +85,7 @@ def get_stream_mapping(
     instrument_module = importlib.import_module(
         f'.instruments.{instrument}', package='ess.livedata.config'
     )
-    return instrument_module.stream_mapping[env].with_log_source_prefix(
-        log_source_prefix
-    )
+    mapping = instrument_module.stream_mapping[env]
+    if monitor_sources_by_name:
+        mapping = mapping.with_monitor_sources_by_name()
+    return mapping.with_log_source_prefix(log_source_prefix)

@@ -128,3 +128,23 @@ def test_log_source_prefix_is_expected_before_every_log_source() -> None:
 def test_no_log_source_prefix_leaves_the_mapping_as_it_is() -> None:
     plain = streams.get_stream_mapping(instrument='bifrost', dev=False)
     assert plain.with_log_source_prefix('') is plain
+
+
+def test_monitor_sources_by_name_expects_each_monitor_under_its_own_name() -> None:
+    # A simulation names its monitor streams after the monitors' NeXus groups.
+    plain = streams.get_stream_mapping(instrument='bifrost', dev=False)
+    named = streams.get_stream_mapping(
+        instrument='bifrost', dev=False, monitor_sources_by_name=True
+    )
+
+    assert named.monitors == {
+        InputStreamKey(topic=k.topic, source_name=v): v
+        for k, v in plain.monitors.items()
+    }
+    assert (
+        InputStreamKey(topic='bifrost_beam_monitor', source_name='psc_monitor')
+        in named.monitors
+    )
+    assert named.detectors == plain.detectors
+    assert named.logs == plain.logs
+    assert named.topics == plain.topics

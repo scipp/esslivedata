@@ -21,10 +21,14 @@ def make_reduction_service_builder(
     dev: bool = True,
     log_level: int = logging.INFO,
     log_source_prefix: str = '',
+    monitor_sources_by_name: bool = False,
     group_by_pixel: bool = True,
 ) -> DataServiceBuilder:
     stream_mapping = get_stream_mapping(
-        instrument=instrument, dev=dev, log_source_prefix=log_source_prefix
+        instrument=instrument,
+        dev=dev,
+        log_source_prefix=log_source_prefix,
+        monitor_sources_by_name=monitor_sources_by_name,
     )
     instrument_config = instrument_registry[instrument]
     instrument_config.load_factories()
