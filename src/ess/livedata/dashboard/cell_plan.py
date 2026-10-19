@@ -67,12 +67,15 @@ class CellBuildInputs:
 
     ``portrait`` is the screen orientation the figure is laid out for, in a
     layout whose figures depend on it (the phone layout); None otherwise.
+
+    ``figure_toolbars`` is whether the figure shows its toolbar.
     """
 
     geometry: CellGeometry
     user_title: str | None
     layers: tuple[LayerBuildInput, ...]
     portrait: bool | None = None
+    figure_toolbars: bool = True
 
 
 def cell_build_inputs(
@@ -80,6 +83,7 @@ def cell_build_inputs(
     layer_snapshot: Callable[[LayerId], LayerSnapshot | None],
     *,
     portrait: bool | None = None,
+    figure_toolbars: bool = True,
 ) -> CellBuildInputs:
     """Sample a cell's build inputs as of right now.
 
@@ -106,6 +110,7 @@ def cell_build_inputs(
         user_title=cell.user_title,
         layers=tuple(layers),
         portrait=portrait,
+        figure_toolbars=figure_toolbars,
     )
 
 
@@ -139,11 +144,14 @@ class SessionView:
 
     ``portrait`` is the screen orientation, where figures are laid out for it
     (the phone layout), else None.
+
+    ``figure_toolbars`` is whether this session's figures show their toolbar.
     """
 
     active_grid_id: GridId | None
     live_cell_ids: frozenset[CellId] = frozenset()
     portrait: bool | None = None
+    figure_toolbars: bool = True
 
 
 def desired_cells(
@@ -213,6 +221,11 @@ def desired_cells(
             # the shown ones build figures, and rotating is rarer than opening.
             plans[cell_id] = CellPlan(
                 grid_id=grid_id,
-                inputs=cell_build_inputs(cell, layer_snapshot, portrait=view.portrait),
+                inputs=cell_build_inputs(
+                    cell,
+                    layer_snapshot,
+                    portrait=view.portrait,
+                    figure_toolbars=view.figure_toolbars,
+                ),
             )
     return plans

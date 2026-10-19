@@ -716,6 +716,90 @@ class TestComposeCellLegend:
         assert legend not in figure.right
 
 
+class TestFigureToolbars:
+    """The session's checkbox shows or hides the toolbar of every figure.
+
+    A hidden toolbar keeps its tools, which stay reachable from the figure's
+    right-click menu.
+    """
+
+    @staticmethod
+    def _config(workflow_id: WorkflowId, combine_mode):
+        from dataclasses import replace
+
+        from ess.livedata.dashboard.plot_params import LayoutParams
+        from ess.livedata.dashboard.plotter_registry import plotter_registry
+
+        return replace(
+            _workflow_plot_config(workflow_id),
+            params=plotter_registry.get_spec('lines').params(
+                layout=LayoutParams(combine_mode=combine_mode)
+            ),
+        )
+
+    @pytest.fixture(params=['overlay', 'layout'])
+    def shown_cell(
+        self,
+        request,
+        plot_orchestrator,
+        plot_grid_tabs,
+        job_orchestrator,
+        data_service,
+        workflow_id,
+    ) -> CellId:
+        """A visible cell with data, one figure or a layout-mode layer."""
+        from ess.livedata.dashboard.plot_params import CombineMode
+
+        job_orchestrator.commit_workflow(workflow_id)
+        grid_id = plot_orchestrator.add_grid(title='G', nrows=1, ncols=1)
+        cell_id = plot_orchestrator.add_cell(grid_id, _GEO)
+        plot_orchestrator.add_layer(
+            cell_id, self._config(workflow_id, CombineMode(request.param))
+        )
+        _publish_layer_data(data_service, workflow_id)
+        plot_orchestrator.flush_frames()
+        _tick(plot_grid_tabs)
+        _show_grid(plot_grid_tabs, grid_id)
+        return cell_id
+
+    @staticmethod
+    def _rendered(tabs: PlotGridTabs, cell_id: CellId):
+        """The rendered figure, or the grid holding a layout's shared toolbar."""
+        from bokeh.models import GridPlot, Plot
+
+        root = tabs._cells[cell_id].view.get_root()
+        (grid_or_figure,) = list(root.select({'type': GridPlot})) or list(
+            root.select({'type': Plot})
+        )
+        return grid_or_figure
+
+    def test_toolbars_are_shown_by_default(self, plot_grid_tabs, shown_cell):
+        assert plot_grid_tabs.figure_toolbar_toggle.value
+        assert self._rendered(plot_grid_tabs, shown_cell).toolbar_location is not None
+
+    def test_unchecking_hides_the_toolbar_but_keeps_the_tools(
+        self, plot_grid_tabs, shown_cell
+    ):
+        plot_grid_tabs.figure_toolbar_toggle.value = False
+
+        rendered = self._rendered(plot_grid_tabs, shown_cell)
+        assert rendered.toolbar_location is None
+        assert rendered.toolbar.tools
+
+    def test_rechecking_shows_the_toolbar_again(self, plot_grid_tabs, shown_cell):
+        plot_grid_tabs.figure_toolbar_toggle.value = False
+        plot_grid_tabs.figure_toolbar_toggle.value = True
+
+        assert self._rendered(plot_grid_tabs, shown_cell).toolbar_location is not None
+
+    def test_toggle_rebuilds_the_shown_cell(self, plot_grid_tabs, shown_cell):
+        before = plot_grid_tabs._cells[shown_cell]
+
+        plot_grid_tabs.figure_toolbar_toggle.value = False
+
+        assert plot_grid_tabs._cells[shown_cell] is not before
+
+
 class TestComposeTableLayer:
     """Composition of a cell containing a table layer.
 
@@ -3015,6 +3099,32 @@ class TestPhoneLayout:
         _tick(phone_tabs)
         assert phone_tabs._cells[closed] is not closed_before
         assert self._shows(phone_tabs, closed)
+
+    def test_open_plot_keeps_its_toolbar_when_toolbars_are_hidden(
+        self,
+        plot_orchestrator,
+        job_orchestrator,
+        data_service,
+        workflow_id,
+        phone_tabs,
+    ):
+        """A touch screen has no right-click menu to reach the tools from."""
+        from bokeh.models import Plot
+
+        phone_tabs.figure_toolbar_toggle.value = False
+        job_orchestrator.commit_workflow(workflow_id)
+        grid_id = plot_orchestrator.add_grid(title='G', nrows=2, ncols=2)
+        cell_id = _add_workflow_cell(plot_orchestrator, grid_id, _GEO, workflow_id)
+        _publish_layer_data(data_service, workflow_id)
+        plot_orchestrator.flush_frames()
+        self._show_plots_tab(phone_tabs)
+        _tick(phone_tabs)
+        phone_tabs._grid_widgets[grid_id].tap(cell_id)
+        _tick(phone_tabs)
+
+        root = phone_tabs._cells[cell_id].view.get_root()
+        (figure,) = root.select({'type': Plot})
+        assert figure.toolbar_location is not None
 
     def test_desktop_session_has_no_phone_widgets(self, plot_grid_tabs):
         assert plot_grid_tabs._plot_overview is None

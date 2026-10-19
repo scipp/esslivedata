@@ -191,30 +191,10 @@ class ReductionApp(DashboardBase):
         pn.state.add_periodic_callback(refresh, period=300_000)  # 5 minutes
         return pane
 
-    def create_sidebar_content(
-        self, session_updater: SessionUpdater
-    ) -> pn.viewable.Viewable:
-        """Create the sidebar content."""
-        # Create log producer widget only in dev mode (per-session)
-        dev_content = []
-        if self._dev:
-            dev_widget = LogProducerWidget(instrument=self._instrument)
-            # Release the per-session Kafka producer on session teardown. Routed
-            # through the session updater (not on_session_destroyed directly) so
-            # the heartbeat-based stale reaper also triggers cleanup when Panel's
-            # on_session_destroyed fails to fire.
-            session_updater.register_cleanup_handler(dev_widget.close)
-            dev_content = [dev_widget.panel, pn.layout.Divider()]
-
-        return pn.Column(
-            *dev_content,
-            self._create_announcements_pane(),
-        )
-
-    def create_main_content(
+    def create_session_content(
         self, session_updater: SessionUpdater, *, phone: bool
-    ) -> pn.viewable.Viewable:
-        """Create the main content area with plot grid tabs."""
+    ) -> tuple[pn.viewable.Viewable, pn.viewable.Viewable]:
+        """Create the sidebar and the main content area with plot grid tabs."""
         workflow_status_widget = WorkflowStatusListWidget(
             orchestrator=self._services.job_orchestrator,
             job_service=self._services.job_service,
@@ -240,6 +220,8 @@ class ReductionApp(DashboardBase):
             session_updater=session_updater,
             theme=self._theme,
             phone=phone,
+            # ``?toolbars=hidden`` lets a screen be bookmarked with toolbars off.
+            figure_toolbars=pn.state.session_args.get('toolbars') != [b'hidden'],
         )
 
         # PlotGridTabs registers its own two-tier teardown on the session
@@ -258,7 +240,23 @@ class ReductionApp(DashboardBase):
             is_visible=lambda: plot_grid_tabs.active_tab_index == 1,
         )
 
-        return plot_grid_tabs.panel
+        # Create log producer widget only in dev mode (per-session)
+        dev_content = []
+        if self._dev:
+            dev_widget = LogProducerWidget(instrument=self._instrument)
+            # Release the per-session Kafka producer on session teardown. Routed
+            # through the session updater (not on_session_destroyed directly) so
+            # the heartbeat-based stale reaper also triggers cleanup when Panel's
+            # on_session_destroyed fails to fire.
+            session_updater.register_cleanup_handler(dev_widget.close)
+            dev_content = [dev_widget.panel, pn.layout.Divider()]
+
+        sidebar = pn.Column(
+            plot_grid_tabs.figure_toolbar_toggle,
+            *dev_content,
+            self._create_announcements_pane(),
+        )
+        return sidebar, plot_grid_tabs.panel
 
 
 def get_arg_parser() -> argparse.ArgumentParser:
