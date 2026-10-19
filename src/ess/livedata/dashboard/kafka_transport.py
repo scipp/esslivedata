@@ -24,6 +24,25 @@ from .transport import DashboardResources, Transport
 
 logger = structlog.get_logger(__name__)
 
+_MAX_MESSAGES_PER_PASS = 2_000
+"""Cap on messages the ingestion loop takes from Kafka per pass.
+
+Each pass consumes, then rebuilds every changed visible plot, so the loop keeps
+up only while ``cap > input rate * pass duration``; otherwise messages pile up
+in Kafka, unseen by any backend metric. A larger cap tolerates longer passes,
+but a pass ingests its messages under the DataService lock, which session pulls
+wait for, so the cap also bounds how long a catch-up pass blocks sessions.
+
+``consume`` returns only what librdkafka has already fetched, which is bounded
+in bytes by ``queued.max.messages.kbytes``, so large payloads hit that bound
+before this one. ``consumer_lag`` in ``dashboard_ingest_metrics`` covers both.
+"""
+
+
+def _total_lag(source: KafkaMessageSource) -> int | None:
+    lag = source.get_consumer_lag()
+    return None if lag is None else lag['total_lag']
+
 
 class DashboardKafkaTransport(Transport[DashboardResources]):
     """
@@ -60,7 +79,7 @@ class DashboardKafkaTransport(Transport[DashboardResources]):
             )
 
             # Create message source
-            message_source = self._create_message_source(
+            message_source, kafka_source = self._create_message_source(
                 consumer_config=consumer_config,
                 kafka_config=kafka_config,
             )
@@ -89,6 +108,7 @@ class DashboardKafkaTransport(Transport[DashboardResources]):
                 message_source=message_source,
                 command_sink=command_sink,
                 roi_sink=roi_sink,
+                consumer_lag=lambda: _total_lag(kafka_source),
             )
 
         except Exception:
@@ -117,8 +137,12 @@ class DashboardKafkaTransport(Transport[DashboardResources]):
         *,
         consumer_config: dict,
         kafka_config: dict,
-    ) -> AdaptingMessageSource:
-        """Create unified Kafka consumer for all dashboard message streams."""
+    ) -> tuple[AdaptingMessageSource, KafkaMessageSource]:
+        """Create unified Kafka consumer for all dashboard message streams.
+
+        Returns the adapted source and the raw source it wraps, which reports
+        consumer lag.
+        """
         # Define topics to subscribe to
         topics = [
             stream_kind_to_topic(instrument=self._instrument, kind=kind)
@@ -138,7 +162,9 @@ class DashboardKafkaTransport(Transport[DashboardResources]):
             )
         )
 
-        source = KafkaMessageSource(consumer=consumer)
+        source = KafkaMessageSource(
+            consumer=consumer, num_messages=_MAX_MESSAGES_PER_PASS
+        )
 
         # Create adapter for message routing
         stream_mapping = get_stream_mapping(instrument=self._instrument, dev=self._dev)
@@ -150,4 +176,4 @@ class DashboardKafkaTransport(Transport[DashboardResources]):
             .build()
         )
 
-        return AdaptingMessageSource(source=source, adapter=adapter)
+        return AdaptingMessageSource(source=source, adapter=adapter), source

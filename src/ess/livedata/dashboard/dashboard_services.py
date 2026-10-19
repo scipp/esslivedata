@@ -22,6 +22,7 @@ from .command_service import CommandService
 from .config_store import ConfigStoreManager
 from .data_service import DataService
 from .frame_clock import FrameClock
+from .ingest_monitor import IngestMonitor
 from .job_orchestrator import JobOrchestrator
 from .job_service import JobService
 from .message_pump import MessagePump
@@ -174,6 +175,7 @@ class DashboardServices:
             start = time.monotonic()
             try:
                 consumed = self.message_pump.update()
+                pumped = time.monotonic()
                 # Expire pending commands whose acknowledgement never arrived, so
                 # a silently dropped send surfaces as an error toast rather than a
                 # workflow stuck waiting for the backend. Cheap scan of a tiny dict.
@@ -193,7 +195,13 @@ class DashboardServices:
                 # empty/hidden-only passes do not trigger session flushes.
                 # Inside the try: an escaping exception would kill this thread
                 # and silently freeze ingestion for every session.
+                flush_start = time.monotonic()
                 self.plot_orchestrator.flush_frames()
+                self._ingest_monitor.record_pass(
+                    consumed,
+                    pump_seconds=pumped - start,
+                    flush_seconds=time.monotonic() - flush_start,
+                )
                 # Wake sessions only after the drain's frames are committed,
                 # so a woken tick observes the new generations. Any consumed
                 # message may have changed session-visible state (data frames,
@@ -236,6 +244,9 @@ class DashboardServices:
         transport_resources = self._exit_stack.enter_context(self._transport)
 
         self.command_service = CommandService(sink=transport_resources.command_sink)
+        self._ingest_monitor = IngestMonitor(
+            consumer_lag=transport_resources.consumer_lag
+        )
 
         # da00 of backend services converted to scipp.DataArray
         ScippDataService = DataService[DataKey, sc.DataArray]

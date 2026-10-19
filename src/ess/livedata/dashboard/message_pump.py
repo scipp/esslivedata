@@ -52,21 +52,21 @@ class MessagePump:
         self._active_job_registry = active_job_registry
         self._logger = structlog.get_logger()
 
-    def update(self) -> bool:
+    def update(self) -> int:
         """
         Call this periodically to consume data and feed it into the dashboard.
 
         Returns
         -------
         :
-            True if any messages were consumed, i.e. shared state may have
+            Number of messages consumed. Non-zero means shared state may have
             changed and sessions are worth waking.
         """
         messages = self._message_source.get_messages()
         self._logger.debug("Consumed %d messages", len(messages))
 
         if not messages:
-            return False
+            return 0
 
         # The ingestion guard serializes message processing against generation
         # flips in ActiveJobRegistry.begin_generation() (called from the UI
@@ -93,7 +93,7 @@ class MessagePump:
                 self._forward_messages(
                     [m for m in messages if m.stream not in control_streams]
                 )
-        return True
+        return len(messages)
 
     def _forward_messages(self, messages: list[Message[Any]]) -> None:
         for message in messages:

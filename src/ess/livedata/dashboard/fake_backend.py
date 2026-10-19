@@ -512,6 +512,7 @@ class FakeBackendTransport(Transport[DashboardResources]):
             message_source=_FakeMessageSource(self._backend),
             command_sink=_FakeCommandSink(self._backend),
             roi_sink=_FakeROISink(self._backend),
+            consumer_lag=lambda: None,
         )
 
     def __exit__(
