@@ -202,6 +202,23 @@ class TestOrientation:
         assert plan(True) != plan(False)
 
 
+class TestFigureToolbars:
+    def test_planned_cell_is_built_with_the_sessions_toolbar_setting(self):
+        grid_id, layer_id, cell_id = _grid_id(), LayerId(uuid4()), CellId(uuid4())
+        snapshot = LayerSnapshot(state=LayerState.READY, version=1, plotter=_Plotter())
+        topology = _topology(grid_id, {cell_id: _cell(layer_id)})
+
+        def plan(figure_toolbars: bool) -> CellBuildInputs:
+            view = SessionView(active_grid_id=grid_id, figure_toolbars=figure_toolbars)
+            plans = desired_cells(
+                topology, {layer_id: snapshot}.get, view, watched=lambda _: False
+            )
+            return plans[cell_id].inputs
+
+        assert plan(False).figure_toolbars is False
+        assert plan(True) != plan(False)
+
+
 class TestTopologyFiltering:
     def test_disabled_grid_cells_are_omitted(self):
         grid_id, layer_id, cell_id = _grid_id(), LayerId(uuid4()), CellId(uuid4())

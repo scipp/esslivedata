@@ -92,6 +92,11 @@ From coarse to fine: **grid → cell → layer → plotter → presenter → fig
   (`dashboard/plots.py`).
 - **Figure** — the rendered HoloViews/Bokeh object placed in the document.
   Reserved for the rendered artifact; not a synonym for plotter or layer.
+- **Figure toolbar** — the Bokeh toolbar of a figure. A session can hide it
+  ("Show plot toolbars" in the sidebar, or the URL parameter
+  `?toolbars=hidden`); its tools stay in the figure's right-click menu. Not the
+  *layer toolbars*, the per-layer control rows of a cell
+  (`CellWidget.toolbars_shown`).
 - **PlotDataService / LayerState** — per-layer shared state machine
   (`WAITING_FOR_DATA`/`READY`/`STOPPED`/`ERROR`) with version counters, read by
   per-session pollers (`dashboard/plot_data_service.py`).

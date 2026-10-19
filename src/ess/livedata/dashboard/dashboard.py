@@ -171,35 +171,29 @@ class DashboardBase(ServiceBase, ABC):
             raise ValueError(f"Unknown transport type: {transport}")
 
     @abstractmethod
-    def create_sidebar_content(
-        self, session_updater: SessionUpdater
-    ) -> pn.viewable.Viewable:
-        """Override this method to create the sidebar content.
-
-        Parameters
-        ----------
-        session_updater:
-            The session updater for this browser session. Use
-            ``register_cleanup_handler`` to release per-session resources on
-            session teardown.
-        """
-        pass
-
-    @abstractmethod
-    def create_main_content(
+    def create_session_content(
         self, session_updater: SessionUpdater, *, phone: bool
-    ) -> pn.viewable.Viewable:
+    ) -> tuple[pn.viewable.Viewable, pn.viewable.Viewable]:
         """
-        Override this method to create the main dashboard content.
+        Override this method to create the sidebar and main dashboard content.
+
+        Both are created together so that they can share per-session widgets,
+        e.g. a sidebar control acting on the main content.
 
         Parameters
         ----------
         session_updater:
             The session updater for this browser session. Widgets that need
             to register handlers for periodic updates should receive this
-            in their constructor.
+            in their constructor. Use ``register_cleanup_handler`` to release
+            per-session resources on session teardown.
         phone:
             Whether this session asked for the phone layout (``?layout=phone``).
+
+        Returns
+        -------
+        :
+            The sidebar content and the main content.
         """
 
     def get_dashboard_title(self) -> str:
@@ -341,8 +335,9 @@ class DashboardBase(ServiceBase, ABC):
         # screen size, and a session never switches between layouts.
         phone = pn.state.session_args.get('layout') == [b'phone']
 
-        sidebar_content = self.create_sidebar_content(session_updater)
-        main_content = self.create_main_content(session_updater, phone=phone)
+        sidebar_content, main_content = self.create_session_content(
+            session_updater, phone=phone
+        )
 
         # Append heartbeat widget to sidebar (invisible but required for
         # browser heartbeat JavaScript to run). Placing it in the sidebar

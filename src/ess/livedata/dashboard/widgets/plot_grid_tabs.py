@@ -295,6 +295,8 @@ class PlotGridTabs:
         Use the phone layout: icon-only tabs, and a single "Plots" tab
         previewing all grids, from which one cell at a time is opened, in place
         of one tab per grid (see ``plot_overview``).
+    figure_toolbars
+        Initial state of :attr:`figure_toolbar_toggle`.
     """
 
     def __init__(
@@ -309,6 +311,7 @@ class PlotGridTabs:
         session_updater: SessionUpdater,
         theme: Theme = DEFAULT_THEME,
         phone: bool = False,
+        figure_toolbars: bool = True,
     ) -> None:
         self._orchestrator = plot_orchestrator
         self._workflow_registry = dict(workflow_registry)
@@ -383,6 +386,14 @@ class PlotGridTabs:
             self._orientation.param.watch(
                 lambda _: self._session_updater.request_tick(full=True), 'portrait'
             )
+        # Like the orientation, whether figures show their toolbar is a build
+        # input of the planned cells, so a toggle needs only a pass.
+        self._figure_toolbar_toggle = pn.widgets.Checkbox(
+            label='Show plot toolbars', value=figure_toolbars
+        )
+        self._figure_toolbar_toggle.param.watch(
+            lambda _: self._session_updater.request_tick(full=True), 'value'
+        )
 
         # Shared dependencies handed to every CellWidget. Built once; the
         # callbacks route modal interactions back here (modal container lives
@@ -1056,7 +1067,10 @@ class PlotGridTabs:
             toolbars_visible=toolbars_visible,
             grid_id=grid_id,
             build_inputs=cell_build_inputs(
-                cell, self._plot_data_service.get, portrait=portrait
+                cell,
+                self._plot_data_service.get,
+                portrait=portrait,
+                figure_toolbars=self._figure_toolbar_toggle.value,
             ),
         )
         self._cells[cell_id] = cell_widget
@@ -1375,6 +1389,7 @@ class PlotGridTabs:
                 active_grid_id=active_grid_id,
                 live_cell_ids=live_cells,
                 portrait=portrait,
+                figure_toolbars=self._figure_toolbar_toggle.value,
             ),
             viewed.__contains__,
         )
@@ -1541,6 +1556,16 @@ class PlotGridTabs:
     def panel(self) -> pn.Column:
         """Get the Panel viewable object for this widget."""
         return self._widget
+
+    @property
+    def figure_toolbar_toggle(self) -> pn.widgets.Checkbox:
+        """Checkbox showing or hiding this session's figure toolbars.
+
+        A hidden toolbar's tools stay reachable from the figure's right-click
+        menu. Has no effect in the phone layout, whose figures keep their
+        toolbar inside the plot (see ``CellDeps.compact_figures``).
+        """
+        return self._figure_toolbar_toggle
 
     @property
     def active_tab_index(self) -> int:

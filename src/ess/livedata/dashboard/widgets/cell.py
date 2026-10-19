@@ -229,7 +229,9 @@ class CellDeps:
     (:func:`_place_colorbar`). The orientation is a build input
     (``CellBuildInputs.portrait``), so a rotation rebuilds the cell. The
     toolbar of a layout-mode plot, shared by its sub-figures, stays where it
-    is.
+    is. Compact figures keep their toolbar regardless of
+    ``CellBuildInputs.figure_toolbars``: a touch screen has no right-click
+    menu to reach the tools from.
     """
 
     orchestrator: PlotOrchestrator
@@ -282,6 +284,16 @@ def _compact_figure_hook(plot, element) -> None:
             axis.axis_label_standoff = _COMPACT_AXIS_LABEL_STANDOFF
             axis.major_label_standoff = _COMPACT_MAJOR_LABEL_STANDOFF
             axis.axis_label_text_font_size = _COMPACT_AXIS_LABEL_FONT_SIZE
+
+
+def _hide_toolbar_hook(plot, element) -> None:
+    """Hide the figure's toolbar.
+
+    Only the toolbar goes: the tools stay on the figure, so the drag and scroll
+    gestures keep working and every tool is listed in the figure's right-click
+    menu, which Bokeh builds from the tools rather than from the toolbar.
+    """
+    plot.state.toolbar_location = None
 
 
 def _place_colorbar(
@@ -952,6 +964,9 @@ class CellWidget:
             # `Plotter.applies_ranges` is what keeps that off the layers whose
             # axes the cell writes itself.
 
+        hide_toolbar = (
+            not self.build_inputs.figure_toolbars and not self._deps.compact_figures
+        )
         # Skip the cell-level hooks for a non-overlayable layer: a Layout's
         # sub-figures each carry their own SaveTool, and a Table's DataTable
         # widget has no figure for the SaveTool/autoscale hooks to act on. The
@@ -961,11 +976,18 @@ class CellWidget:
         if self._deps.compact_figures:
             result = _place_colorbar(result, below=bool(self.build_inputs.portrait))
         if non_overlayable:
+            if hide_toolbar:
+                # A Layout draws one toolbar for its sub-figures, on the grid
+                # around them, out of reach of the figure hooks. The option
+                # targets Layouts only, so it leaves a Table untouched.
+                result = result.opts(hv.opts.Layout(toolbar=None), clone=True)
             return result
 
         hooks: list = [make_hover_suspend_hook()]
         if self._deps.compact_figures:
             hooks.append(_compact_figure_hook)
+        elif hide_toolbar:
+            hooks.append(_hide_toolbar_hook)
         filename = build_save_filename_from_cell(
             self._cell,
             self._deps.workflow_registry,
