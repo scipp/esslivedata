@@ -24,9 +24,11 @@ comments at the enforcement sites carry the details.
 - **Tabs assigned, never popped**: a topology change assigns all grid tabs in
   one ``objects`` update, so a grid that stays keeps its Bokeh models. Popping
   and re-appending makes Panel clean up every grid, which then rebuilds all
-  its figures on its next reveal (~50 ms per layer). A reused tab also keeps
-  the title it was built with, so changing a grid's title in place would need
-  a new tab (enforced in ``_reconcile_grid_tabs``).
+  its figures on its next reveal (~50 ms per layer), and severs the pop-out
+  of any of its cells, which never renders again (see ``plot_popout``,
+  holoviews#6988). A reused tab also keeps the title it was built with, so
+  changing a grid's title in place would need a new tab (enforced in
+  ``_reconcile_grid_tabs``).
 - **Modal container parenting**: the modal container is created once, lives
   at the top level wrapping the Tabs (never per tab — Panel components have
   one parent), and the outer Column is created once in ``__init__`` so the
