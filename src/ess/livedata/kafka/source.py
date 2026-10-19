@@ -62,6 +62,45 @@ class KafkaMessageSource(MessageSource[KafkaMessage]):
             data_messages.append(m)
         return data_messages
 
+    def get_consumer_lag(self) -> dict[str, Any] | None:
+        """Compute consumer lag per partition, or None if unsupported.
+
+        Uses cached watermark offsets to avoid issuing ListOffsetsRequests to
+        the broker: the high watermark is piggybacked on every FetchResponse
+        for partitions we actively consume, so no network round-trip is needed.
+        Querying the broker directly (cached=False) competes with long-poll
+        FetchRequests on the same broker connection and times out, producing
+        REQTMOUT log spam. Being broker-free, this is cheap enough to call
+        directly from the consume loop.
+        """
+        # The KafkaConsumer protocol only requires `consume`. `assignment` and
+        # `get_watermark_offsets` are provided by `confluent_kafka.Consumer`
+        # but not by minimal test consumers, in which case lag is unavailable.
+        if not hasattr(self._consumer, 'assignment') or not hasattr(
+            self._consumer, 'get_watermark_offsets'
+        ):
+            return None
+
+        try:
+            total_lag = 0
+            partitions: dict[str, int] = {}
+            assignment = self._consumer.assignment()
+
+            for tp in assignment:
+                try:
+                    _low, high = self._consumer.get_watermark_offsets(tp, cached=True)
+                    position = self._consumer.position([tp])[0].offset
+                    if position >= 0 and high >= 0:
+                        partition_lag = high - position
+                        total_lag += partition_lag
+                        partitions[f"{tp.topic}:{tp.partition}"] = partition_lag
+                except Exception:  # noqa: S112
+                    continue
+
+            return {"total_lag": total_lag, "partitions": partitions}
+        except Exception:
+            return None
+
 
 @dataclass
 class ConsumerHealthStatus:
@@ -348,42 +387,3 @@ class BackgroundMessageSource(KafkaMessageSource):
             total_batches_dropped=self._total_batches_dropped,
             failure_reason=self._failure_reason,
         )
-
-    def get_consumer_lag(self) -> dict[str, Any] | None:
-        """Compute consumer lag per partition, or None if unsupported.
-
-        Uses cached watermark offsets to avoid issuing ListOffsetsRequests to
-        the broker: the high watermark is piggybacked on every FetchResponse
-        for partitions we actively consume, so no network round-trip is needed.
-        Querying the broker directly (cached=False) competes with long-poll
-        FetchRequests on the same broker connection and times out, producing
-        REQTMOUT log spam. Being broker-free, this is cheap enough to call
-        directly from the consume loop.
-        """
-        # The KafkaConsumer protocol only requires `consume`. `assignment` and
-        # `get_watermark_offsets` are provided by `confluent_kafka.Consumer`
-        # but not by minimal test consumers, in which case lag is unavailable.
-        if not hasattr(self._consumer, 'assignment') or not hasattr(
-            self._consumer, 'get_watermark_offsets'
-        ):
-            return None
-
-        try:
-            total_lag = 0
-            partitions: dict[str, int] = {}
-            assignment = self._consumer.assignment()
-
-            for tp in assignment:
-                try:
-                    _low, high = self._consumer.get_watermark_offsets(tp, cached=True)
-                    position = self._consumer.position([tp])[0].offset
-                    if position >= 0 and high >= 0:
-                        partition_lag = high - position
-                        total_lag += partition_lag
-                        partitions[f"{tp.topic}:{tp.partition}"] = partition_lag
-                except Exception:  # noqa: S112
-                    continue
-
-            return {"total_lag": total_lag, "partitions": partitions}
-        except Exception:
-            return None

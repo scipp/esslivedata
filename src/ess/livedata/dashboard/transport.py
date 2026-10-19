@@ -2,7 +2,7 @@
 # Copyright (c) 2025 Scipp contributors (https://github.com/scipp)
 """Transport abstraction for message sources and sinks."""
 
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from types import TracebackType
 from typing import Protocol
@@ -85,11 +85,16 @@ class DashboardResources:
         Sink for publishing command messages.
     roi_sink:
         Sink for publishing ROI update messages.
+    consumer_lag:
+        Messages published but not yet returned by ``message_source``, summed
+        over its partitions; ``None`` where the transport has no such notion.
+        Called from the thread that consumes ``message_source``.
     """
 
     message_source: MessageSource
     command_sink: MessageSink
     roi_sink: MessageSink
+    consumer_lag: Callable[[], int | None]
 
 
 class NullMessageSource:
@@ -122,6 +127,7 @@ class NullTransport:
             message_source=NullMessageSource(),
             command_sink=NullMessageSink(),
             roi_sink=NullMessageSink(),
+            consumer_lag=lambda: None,
         )
 
     def __exit__(

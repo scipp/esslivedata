@@ -3,10 +3,12 @@
 """Tests for the dashboard update loop fail-fast behavior."""
 
 import threading
+from typing import Any
 
 from confluent_kafka import KafkaException
 
 from ess.livedata.dashboard.dashboard_services import DashboardServices
+from ess.livedata.dashboard.ingest_monitor import IngestMonitor
 
 
 class _FakeRegistry:
@@ -27,13 +29,14 @@ class _FakeMessagePump:
         self._exception = exception
         self.update_calls = 0
 
-    def update(self) -> None:
+    def update(self) -> int:
         self.update_calls += 1
         if self._exception is not None:
             raise self._exception
+        return 0
 
 
-def _make_loop_target(message_pump: _FakeMessagePump) -> DashboardServices:
+def _make_loop_target(message_pump: Any) -> DashboardServices:
     """Build a minimal stand-in with the attributes ``_update_loop`` needs."""
     target = DashboardServices.__new__(DashboardServices)
     target.message_pump = message_pump
@@ -41,6 +44,7 @@ def _make_loop_target(message_pump: _FakeMessagePump) -> DashboardServices:
     target._stop_event = threading.Event()
     target._update_interval = 0.01
     target.plot_orchestrator = _FakePlotOrchestrator()
+    target._ingest_monitor = IngestMonitor(consumer_lag=lambda: None)
     target.transport_failure_calls = 0
 
     def _on_transport_failure() -> None:
@@ -70,25 +74,15 @@ def test_update_loop_continues_on_generic_exception() -> None:
         def __init__(self) -> None:
             self.update_calls = 0
 
-        def update(self) -> None:
+        def update(self) -> int:
             self.update_calls += 1
             if self.update_calls == 1:
                 raised.set()
                 raise RuntimeError("transient widget bug")
+            return 0
 
     message_pump = FlakyMessagePump()
-    target = DashboardServices.__new__(DashboardServices)
-    target.message_pump = message_pump
-    target.session_registry = _FakeRegistry()
-    target._stop_event = threading.Event()
-    target._update_interval = 0.01
-    target.plot_orchestrator = _FakePlotOrchestrator()
-    target.transport_failure_calls = 0
-
-    def _on_transport_failure() -> None:
-        target.transport_failure_calls += 1
-
-    target._on_transport_failure = _on_transport_failure
+    target = _make_loop_target(message_pump)
 
     thread = threading.Thread(target=DashboardServices._update_loop, args=(target,))
     thread.start()
