@@ -1954,15 +1954,63 @@ class TestBarsPlotter:
         result = bars_plotter.plot(scalar_data, data_key)
         render_to_bokeh(result)
 
-    def test_layers_sharing_a_cell_get_distinct_colors(self, scalar_data):
-        layers = []
-        for source in ['source1', 'source2']:
-            plotter = plots.BarsPlotter.from_params(PlotParamsBars())
-            plotter.compute({PRIMARY: {make_data_key(source): scalar_data}})
-            layers.append(plotter.get_cached_state())
-        fig = render_to_bokeh(hv.Overlay(layers)).state
-        colors = {gr.glyph.fill_color for gr in fig.select({'type': GlyphRenderer})}
-        assert len(colors) == 2
+
+class TestBarsPlotterScalarOverlay:
+    """Overlaid 0D sources: one element, and so one glyph renderer, for all bars."""
+
+    @pytest.fixture
+    def plotter(self):
+        return plots.BarsPlotter.from_params(PlotParamsBars())
+
+    @pytest.fixture
+    def data(self):
+        return {
+            make_data_key(f'bank{i}'): sc.DataArray(sc.scalar(10.0 * i, unit='counts'))
+            for i in range(3)
+        }
+
+    def test_sources_are_bars_of_one_renderer(self, plotter, data):
+        fig, _ = _render(plotter, data)
+        (renderer,) = fig.select({'type': GlyphRenderer})
+        assert list(renderer.data_source.data['source']) == ['bank0', 'bank1', 'bank2']
+        assert list(renderer.data_source.data['test_result']) == [0.0, 10.0, 20.0]
+
+    def test_sources_get_distinct_colors_in_cycle_order(self, plotter, data):
+        fig, _ = _render(plotter, data)
+        (renderer,) = fig.select({'type': GlyphRenderer})
+        colors = hv.Cycle.default_cycles["default_colors"]
+        assert list(renderer.data_source.data['color']) == colors[:3]
+
+    def test_bars_are_labeled_by_source_display_name(self, plotter, data):
+        resolver = plots.TitleResolver(source=str.upper)
+        plotter.compute({PRIMARY: data}, title_resolver=resolver)
+        (bars,) = plotter.get_cached_state()
+        assert list(bars.dimension_values('source')) == ['BANK0', 'BANK1', 'BANK2']
+
+    def test_tooltips_show_source_and_value_but_not_the_color(self, plotter, data):
+        fig, _ = _render(plotter, data)
+        (hover,) = fig.select({'type': HoverTool})
+        assert [name for name, _ in hover.tooltips] == [
+            'source',
+            hv.Dimension('test_result', unit='counts').pprint_label,
+        ]
+
+    def test_values_update_on_next_compute(self, plotter, data):
+        fig, pipe = _render(plotter, data)
+        updated = {key: da * 2.0 for key, da in data.items()}
+        plotter.compute({PRIMARY: updated})
+        pipe.send(plotter.get_cached_state())
+        (renderer,) = fig.select({'type': GlyphRenderer})
+        assert list(renderer.data_source.data['test_result']) == [0.0, 20.0, 40.0]
+
+    def test_added_source_appears_on_next_compute(self, plotter, data):
+        first, *_ = data
+        fig, pipe = _render(plotter, {first: data[first]})
+        plotter.compute({PRIMARY: data})
+        pipe.send(plotter.get_cached_state())
+        (renderer,) = fig.select({'type': GlyphRenderer})
+        assert list(renderer.data_source.data['source']) == ['bank0', 'bank1', 'bank2']
+        assert fig.x_range.factors == ['bank0', 'bank1', 'bank2']
 
 
 class TestTablePlotter:
