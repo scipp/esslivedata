@@ -100,6 +100,7 @@ class PlotOverviewSection:
         self._order: list[CellId] = []
         self._composition: tuple | None = None
         self._heading = pn.pane.HTML(
+            f'<b>{title.upper()}</b>',
             sizing_mode='stretch_width',
             styles={'color': Colors.TEXT_MUTED, 'font-size': '13px'},
             margin=(12, 0, 2, 0),
@@ -111,15 +112,10 @@ class PlotOverviewSection:
             sizing_mode='stretch_width',
             stylesheets=[_SNAP_TARGET_CSS],
         )
-        self.set_title(title)
 
     @property
     def title(self) -> str:
         return self._title
-
-    def set_title(self, title: str) -> None:
-        self._title = title
-        self._heading.object = f'<b>{title.upper()}</b>'
 
     def sync(self, grid_config: PlotGridConfig) -> None:
         """Match the preview to the grid's cells."""
