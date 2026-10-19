@@ -1,0 +1,164 @@
+# He3 banks with ROI editing. Each bank gets its own image cell: both banks
+# share the tube/pixel index range, and ROIs are defined per bank.
+title: 'He3: ROI'
+description: He3 bank images with ROI editing, ROI spectra, and ROI totals since start.
+nrows: 3
+ncols: 3
+cells:
+- geometry:
+    row: 0
+    col: 0
+    row_span: 1
+    col_span: 3
+  layers:
+  - data_sources:
+      primary:
+        workflow_id: tbl/he3_detector_view/1
+        view_name: image
+        source_names:
+        - he3_detector_bank0
+    plot_name: image
+    params:
+      plot_aspect:
+        aspect_type: Free
+      time_window:
+        mode: since_start
+      plot_scale:
+        x_scale: linear
+        y_scale: linear
+        color_scale: log
+  - data_sources:
+      primary:
+        workflow_id: tbl/he3_detector_view/1
+        view_name: roi_rectangle
+        source_names:
+        - he3_detector_bank0
+    plot_name: rectangles_readback
+    params: {}
+  - data_sources:
+      primary:
+        workflow_id: tbl/he3_detector_view/1
+        view_name: roi_rectangle
+        source_names:
+        - he3_detector_bank0
+    plot_name: rectangles_request
+    params: {}
+  - data_sources:
+      primary:
+        workflow_id: tbl/he3_detector_view/1
+        view_name: roi_polygon
+        source_names:
+        - he3_detector_bank0
+    plot_name: polygons_readback
+    params: {}
+  - data_sources:
+      primary:
+        workflow_id: tbl/he3_detector_view/1
+        view_name: roi_polygon
+        source_names:
+        - he3_detector_bank0
+    plot_name: polygons_request
+    params: {}
+- geometry:
+    row: 1
+    col: 0
+    row_span: 1
+    col_span: 3
+  layers:
+  - data_sources:
+      primary:
+        workflow_id: tbl/he3_detector_view/1
+        view_name: image
+        source_names:
+        - he3_detector_bank1
+    plot_name: image
+    params:
+      plot_aspect:
+        aspect_type: Free
+      time_window:
+        mode: since_start
+      plot_scale:
+        x_scale: linear
+        y_scale: linear
+        color_scale: log
+  - data_sources:
+      primary:
+        workflow_id: tbl/he3_detector_view/1
+        view_name: roi_rectangle
+        source_names:
+        - he3_detector_bank1
+    plot_name: rectangles_readback
+    params: {}
+  - data_sources:
+      primary:
+        workflow_id: tbl/he3_detector_view/1
+        view_name: roi_rectangle
+        source_names:
+        - he3_detector_bank1
+    plot_name: rectangles_request
+    params: {}
+  - data_sources:
+      primary:
+        workflow_id: tbl/he3_detector_view/1
+        view_name: roi_polygon
+        source_names:
+        - he3_detector_bank1
+    plot_name: polygons_readback
+    params: {}
+  - data_sources:
+      primary:
+        workflow_id: tbl/he3_detector_view/1
+        view_name: roi_polygon
+        source_names:
+        - he3_detector_bank1
+    plot_name: polygons_request
+    params: {}
+- geometry:
+    row: 2
+    col: 0
+    row_span: 1
+    col_span: 1
+  layers:
+  - data_sources:
+      primary:
+        workflow_id: tbl/he3_detector_view/1
+        view_name: roi_spectra
+        source_names:
+        - he3_detector_bank0
+    plot_name: overlay_1d
+    params:
+      time_window:
+        mode: since_start
+- geometry:
+    row: 2
+    col: 1
+    row_span: 1
+    col_span: 1
+  layers:
+  - data_sources:
+      primary:
+        workflow_id: tbl/he3_detector_view/1
+        view_name: roi_spectra
+        source_names:
+        - he3_detector_bank1
+    plot_name: overlay_1d
+    params:
+      time_window:
+        mode: since_start
+- geometry:
+    row: 2
+    col: 2
+    row_span: 1
+    col_span: 1
+  layers:
+  - data_sources:
+      primary:
+        workflow_id: tbl/he3_detector_view/1
+        view_name: roi_total_in_range
+        source_names:
+        - he3_detector_bank0
+        - he3_detector_bank1
+    plot_name: bars
+    params:
+      time_window:
+        mode: since_start

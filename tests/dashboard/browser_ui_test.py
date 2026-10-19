@@ -10,6 +10,8 @@ through the stable ``lt-*`` automation hooks:
   live plot;
 - session reload restores tabs and live updates;
 - a grid created in one session appears in others without stealing focus;
+- a session viewing the last grid tab, removed in another session, lands on
+  the grid before it;
 - a cell title survives a no-op Save of the cell-properties modal;
 - a cell rebuilt in an open session renders its titlebar rather than an
   invisible one;
@@ -21,7 +23,9 @@ through the stable ``lt-*`` automation hooks:
 - a popped-out plot opens within the viewport, floats above other tabs and
   keeps updating there, and stops costing anything once minimized;
 - renaming a popped-out cell leaves its window the size and where the user
-  put it, and opening one adds no scrollable whitespace to the page.
+  put it, and opening one adds no scrollable whitespace to the page;
+- a drawn ROI survives its cell being rendered into a new figure, by a pop-out
+  or by a grid tab rebuilt for an unrelated grid.
 
 Each test launches its own dashboard for isolation, since grid topology changes
 are process-global; ports are allocated per launch, so concurrent runs of this
@@ -190,6 +194,47 @@ def test_grid_created_in_one_session_appears_in_other_without_stealing_focus():
             lambda: _active_tab(creator) == "Created Elsewhere",
             label="creating session to focus its new tab",
         )
+
+
+@pytest.mark.browser
+def test_session_viewing_a_grid_removed_elsewhere_lands_on_the_one_before():
+    """The session whose visible grid another session removes shows a tab.
+
+    Without clamping, removing the last grid tab would leave the active index
+    past the last tab, which the browser renders as no tab header highlighted
+    and no content.
+    """
+    with (
+        fake_dashboard("dummy") as fake,
+        Dashboard.connect_many(2, fake.url) as (remover, viewer),
+    ):
+        remover.goto_tab("Manage Plots")
+        _add_grid(remover, "Doomed")
+        wait_until(
+            viewer,
+            lambda: "Doomed" in viewer.tab_names(),
+            label="new grid tab in the viewing session",
+        )
+        viewer.goto_tab("Doomed")
+        assert viewer.tab_names()[-1] == "Doomed"
+        assert _active_tab(viewer) == "Doomed"
+
+        remover.goto_tab("Manage Plots")
+        remover.click(".lt-grid-doomed.lt-tool-x")
+        wait_until(
+            viewer,
+            lambda: "Doomed" not in viewer.tab_names(),
+            label="removed grid tab to vanish in the viewing session",
+        )
+
+        wait_until(
+            viewer,
+            lambda: viewer.page.locator(".bk-tab.bk-active").count() == 1,
+            label="an active tab in the viewing session",
+        )
+        assert _active_tab(viewer) == "Diagnostics"
+        viewer.settle()
+        assert viewer.page.locator(".lt-cell-r0c0").first.is_visible()
 
 
 @pytest.mark.browser
@@ -860,3 +905,162 @@ def test_popped_out_plot_stays_live_across_tabs_and_sleeps_when_minimized():
             lambda: page.locator(".lt-popout-r0c0").count() == 0,
             label="the pop-out window to close",
         )
+
+
+# The models reachable from the document roots, as a JS expression. Unlike
+# ``doc._all_models``, which never prunes, it excludes figures a re-render
+# replaced.
+_LIVE_MODELS_JS = """(() => {
+  const seen = new Set();
+  const stack = Bokeh.documents.flatMap(doc => [...doc.roots()]);
+  while (stack.length) {
+    const m = stack.pop();
+    if (seen.has(m)) continue;
+    seen.add(m);
+    for (const r of m.references()) stack.push(r);
+  }
+  return [...seen];
+})()"""
+
+# Each live figure with edit tools (BoxEditTool): its id, and per tool the boxes
+# it holds as [left, bottom, right, top].
+_ROI_FIGURES_JS = f"""() => {{
+  const figures = [];
+  for (const m of {_LIVE_MODELS_JS}) {{
+    if (m.type !== 'Figure') continue;
+    const tools = m.toolbar.tools.filter(t => t.type === 'BoxEditTool');
+    if (!tools.length) continue;
+    figures.push({{id: m.id, tools: tools.map(t => {{
+      const d = t.renderers[0].data_source.data;
+      return Array.from(
+        d.left, (_, i) => [d.left[i], d.bottom[i], d.right[i], d.top[i]]
+      );
+    }})}});
+  }}
+  return figures;
+}}"""
+
+# Draws a box as the BoxEditTool does: by writing its data source, which Bokeh
+# syncs to the server like a drag would. Returns whether a tool was found.
+_DRAW_BOX_JS = f"""(box) => {{
+  const tool = {_LIVE_MODELS_JS}.find(m => m.type === 'BoxEditTool');
+  if (tool === undefined) return false;
+  const src = tool.renderers[0].data_source;
+  const data = {{...src.data}};
+  const [left, bottom, right, top] = box;
+  for (const [k, v] of Object.entries({{left, bottom, right, top}}))
+    data[k] = [...data[k], v];
+  src.data = data;
+  return true;
+}}"""
+
+# The plotter's log line for each ROI request the dashboard publishes.
+_ROI_PUBLISHED = re.compile(r"Published (\d+) rectangle ROI\(s\) for source")
+
+
+_BOX = [1.0, 1.0, 5.0, 5.0]
+
+
+def _draw_box_in_roi_cell(dash: Dashboard, log: Path) -> tuple[set[str], int]:
+    """Draw ``_BOX`` in the Detectors tab's ROI cell and wait for its publish.
+
+    Returns the ids of the figures showing the cell, and the log offset past
+    the publish.
+    """
+    dash.goto_tab("Detectors")
+    wait_until(
+        dash,
+        lambda: [f["tools"] for f in dash.page.evaluate(_ROI_FIGURES_JS)] == [[[]]],
+        label="the ROI cell's edit tool",
+    )
+    figure_ids = {f["id"] for f in dash.page.evaluate(_ROI_FIGURES_JS)}
+    assert dash.page.evaluate(_DRAW_BOX_JS, _BOX)
+    wait_until(
+        dash,
+        lambda: _ROI_PUBLISHED.findall(log.read_text())[-1:] == ["1"],
+        label="the drawn box to be published",
+    )
+    return figure_ids, log.stat().st_size
+
+
+def _disable_and_re_enable_roi_grid(dash: Dashboard) -> None:
+    dash.goto_tab("Manage Plots")
+    click_until(
+        dash,
+        ".lt-grid-detectors.lt-tool-eye",
+        lambda: "Detectors" not in dash.tab_names(),
+        label="the Detectors grid to be disabled",
+    )
+    click_until(
+        dash,
+        ".lt-grid-detectors.lt-tool-eye-off",
+        lambda: "Detectors" in dash.tab_names(),
+        label="the Detectors grid to be re-enabled",
+    )
+    dash.goto_tab("Detectors")
+
+
+def _pop_out_roi_cell(dash: Dashboard) -> None:
+    click_until(
+        dash,
+        ".lt-cell-r0c1.lt-tool-arrows-maximize",
+        lambda: dash.page.locator(".lt-popout-r0c1").count() == 1,
+        label="the pop-out window to open",
+    )
+
+
+@pytest.mark.browser
+@pytest.mark.parametrize(
+    ("rerender", "figures"),
+    [(_disable_and_re_enable_roi_grid, 1), (_pop_out_roi_cell, 2)],
+    ids=["grid-re-enabled", "popped-out"],
+)
+def test_drawn_roi_survives_a_new_figure_for_its_cell(rerender, figures):
+    """A cell rendered into a new figure must show the ROIs drawn so far.
+
+    Disabling a grid takes its tab away, after which Panel renders the cells of
+    the re-enabled grid into new figures; a pop-out renders its cell into a
+    second one. An edit tool built from a stale frame of the cell syncs it back
+    as an edit: the ROIs drawn since vanish, the deletion is published, and the
+    re-entrant update leaves the figure with a second edit tool.
+    """
+    with fake_dashboard("dummy") as fake, Dashboard.connect(fake.url) as dash:
+        before, log_offset = _draw_box_in_roi_cell(dash, fake.log)
+
+        rerender(dash)
+
+        def new_figure_built() -> bool:
+            ids = [f["id"] for f in dash.page.evaluate(_ROI_FIGURES_JS)]
+            return len(ids) == figures and not set(ids) <= before
+
+        wait_until(dash, new_figure_built, label="the cell's new figure")
+        dash.settle()
+        shown = [f["tools"] for f in dash.page.evaluate(_ROI_FIGURES_JS)]
+        assert shown == [[[_BOX]]] * figures
+        assert not _ROI_PUBLISHED.findall(fake.log.read_text()[log_offset:])
+
+
+@pytest.mark.browser
+def test_adding_a_grid_keeps_the_figures_of_the_others():
+    """A grid's figures survive a change to the set of grids, ROIs included.
+
+    Rebuilding the figures of every viewed grid on each grid add costs ~50 ms
+    per layer on the next reveal (see ``plot_grid_tabs``).
+    """
+    with fake_dashboard("dummy") as fake, Dashboard.connect(fake.url) as dash:
+        before, log_offset = _draw_box_in_roi_cell(dash, fake.log)
+
+        dash.goto_tab("Manage Plots")
+        _add_grid(dash, "Unrelated")
+        dash.goto_tab("Detectors")
+
+        wait_until(
+            dash,
+            lambda: dash.page.evaluate(_ROI_FIGURES_JS),
+            label="the ROI cell's figure to be shown",
+        )
+        dash.settle()
+        shown = dash.page.evaluate(_ROI_FIGURES_JS)
+        assert {f["id"] for f in shown} == before
+        assert [f["tools"] for f in shown] == [[[_BOX]]]
+        assert not _ROI_PUBLISHED.findall(fake.log.read_text()[log_offset:])

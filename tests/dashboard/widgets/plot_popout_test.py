@@ -15,6 +15,7 @@ import holoviews as hv
 import panel as pn
 import pytest
 import scipp as sc
+from bokeh.document import Document
 
 from ess.livedata.config.workflow_spec import DataKey, WorkflowId
 from ess.livedata.dashboard.data_roles import PRIMARY
@@ -838,6 +839,49 @@ class TestClosingAWindowKeepsTheCellRendering:
         plot_grid_tabs._close_popout(line_cell)
 
         assert plot_grid_tabs._cells[line_cell] is before
+
+
+# Topology changes that leave the popped-out cell's grid ``G`` in place, given
+# the ids of ``G`` and of a second grid ``Other``.
+_GRID_CHANGES = {
+    'grid-added': lambda orch, ids: orch.add_grid(title='New', nrows=1, ncols=1),
+    'other-grid-removed': lambda orch, ids: orch.remove_grid(ids['Other']),
+    'other-grid-disabled': lambda orch, ids: orch.set_grid_enabled(
+        ids['Other'], enabled=False
+    ),
+    'grids-reordered': lambda orch, ids: orch.move_grid(ids['G'], 1),
+}
+
+
+class TestPopoutSurvivesGridChanges:
+    """A pop-out keeps updating when other grids are added, removed or moved.
+
+    A grid tab that leaves the ``Tabs`` list, even only to be re-appended, has
+    its panes cleaned up by Panel, which severs every plot on the cell's layer
+    pipes -- the pop-out's included (holoviews#6988). The grid cell recovers on
+    its next render; the window never renders again and would freeze, showing
+    data that looks current.
+    """
+
+    @pytest.mark.parametrize('change', _GRID_CHANGES.values(), ids=_GRID_CHANGES)
+    def test_popout_stays_subscribed(
+        self, plot_grid_tabs, plot_orchestrator, line_cell, change
+    ):
+        ids = {
+            'G': plot_grid_tabs._cells[line_cell].grid_id,
+            'Other': plot_orchestrator.add_grid(title='Other', nrows=1, ncols=1),
+        }
+        _tick(plot_grid_tabs)
+        plot_grid_tabs.tabs.get_root(Document())
+        plot_grid_tabs._show_popout(line_cell)
+        _open_windows(plot_grid_tabs)[0].get_root(Document())
+        pipe = _pipe(plot_grid_tabs)
+        subscribed = list(pipe.subscribers)
+
+        change(plot_orchestrator, ids)
+        _tick(plot_grid_tabs)
+
+        assert list(pipe.subscribers) == subscribed
 
 
 def _pipe(plot_grid_tabs):

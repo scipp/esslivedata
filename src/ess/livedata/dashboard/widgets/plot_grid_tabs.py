@@ -21,6 +21,21 @@ comments at the enforcement sites carry the details.
   ``batched_update()`` / ``pn.io.hold()`` — the poll pass via
   ``SessionUpdater``, tab switches via ``_BatchedTabs``, tab rebuilds via
   ``_reconcile_grid_tabs``.
+- **Tabs assigned, never popped**: a topology change assigns all grid tabs in
+  one ``objects`` update, so a grid that stays keeps its Bokeh models. Popping
+  and re-appending makes Panel clean up every grid, which then rebuilds all
+  its figures on its next reveal (~50 ms per layer), and severs the pop-out
+  of any of its cells, which never renders again (see ``plot_popout``,
+  holoviews#6988). A reused tab also keeps the title it was built with, so
+  changing a grid's title in place would need a new tab. Panel materializes
+  the tab at ``active`` while it processes ``objects``, before the reveal
+  hook can run. So an index that keeps the same grid shown is assigned in
+  one batch with ``objects`` (assigned afterwards, it builds whichever grid
+  shifted into the old position); an index that reveals a different grid --
+  the created grid a local creation focuses, or the one taking over from a
+  grid that lost its tab -- is a plain switch afterwards, with no tab active
+  during the assignment (see "Reveal ordering"; enforced in
+  ``_reconcile_grid_tabs`` and ``_reconcile_topology``).
 - **Modal container parenting**: the modal container is created once, lives
   at the top level wrapping the Tabs (never per tab — Panel components have
   one parent), and the outer Column is created once in ``__init__`` so the
@@ -50,6 +65,7 @@ from collections.abc import Callable, Mapping, Sequence
 from typing import NamedTuple
 
 import panel as pn
+import param
 import structlog
 
 from ess.livedata.config.workflow_spec import WorkflowId, WorkflowSpec
@@ -331,11 +347,12 @@ class PlotGridTabs:
 
         # Topology-version stamp gating the tab reconcile.
         self._last_topology_version: int | None = None
-        # Tab-level fingerprint of the topology (grid ids, titles, enabled, in
-        # order). Cell/layer changes bump the topology version too, but must
-        # not tear down and re-append the Tabs entries (Bokeh model churn and
-        # flicker on the active tab); the rebuild runs only when this changes.
-        self._tab_composition: tuple[tuple[GridId, str, bool], ...] | None = None
+        # Tab-level fingerprint of the topology (grid ids and enabled, in
+        # order; a grid's title changes only with its id, see
+        # ``replace_grid``). Cell/layer changes bump the topology version too,
+        # but must not reassign the Tabs entries (a tab-strip update for
+        # nothing); the reassignment runs only when this changes.
+        self._tab_composition: tuple[tuple[GridId, bool], ...] | None = None
         # Set by the local grid-creation callback; the creating session's next
         # poll focuses this grid's tab. Never shared across sessions.
         self._pending_focus_grid_id: GridId | None = None
@@ -493,15 +510,19 @@ class PlotGridTabs:
         session_updater.register_cleanup_handler(self.sever)
         session_updater.register_document_teardown_handler(self.dispose_widgets)
 
-    def _add_grid_tab(self, grid_id: GridId, grid_config: PlotGridConfig) -> None:
-        """Add a new grid tab after the Manage tab."""
+    def _create_grid_widget(
+        self, grid_id: GridId, grid_config: PlotGridConfig
+    ) -> PlotGrid | PlotOverviewSection:
+        """Create the widget for a grid this session has none for yet.
+
+        A ``PlotGrid`` for a grid tab, or in the phone layout a section of the
+        Plots tab. Cells are populated by the poll's cell reconcile, not here.
+        """
         if self._plot_overview is not None:
             section = self._plot_overview.section(grid_id, grid_config.title)
             section.sync(grid_config)
-            self._grid_widgets[grid_id] = section
-            return
+            return section
 
-        # Create grid-specific callback using closure to capture grid_id
         def grid_callback(geometry: CellGeometry) -> None:
             self._on_plot_requested(grid_id, geometry)
 
@@ -511,23 +532,12 @@ class PlotGridTabs:
                 return ()
             return tuple(cell.geometry for cell in config.cells.values())
 
-        # Create PlotGrid widget with grid-specific callback
-        plot_grid = PlotGrid(
+        return PlotGrid(
             nrows=grid_config.nrows,
             ncols=grid_config.ncols,
             plot_request_callback=grid_callback,
             occupied_geometries=occupied_geometries,
         )
-
-        # Store widget reference
-        self._grid_widgets[grid_id] = plot_grid
-
-        # Append grid directly to tabs (Manage tab is always first at index 0)
-        # NOTE: Do NOT wrap each grid with modal_container here. The modal
-        # container is shared across all tabs and lives at the top level
-        # (wrapping the entire Tabs widget). Cells are populated by the poll's
-        # cell reconcile, not here.
-        self._tabs.append((grid_config.title, plot_grid.panel))
 
     def _cell_title(self, cell: PlotCell) -> str:
         """The title a cell's widget shows: user-defined, else derived."""
@@ -624,100 +634,154 @@ class PlotGridTabs:
         self._pending_focus_grid_id = grid_id
 
     def _reconcile_topology(self) -> None:
-        """Rebuild grid tabs to match orchestrator topology, preserving focus.
+        """Assign grid tabs to match orchestrator topology, preserving focus.
 
-        Runs on this session's thread (constructor or poll). The tab rebuild
-        runs only when the tab-level composition (grid ids, titles, enabled,
-        order) changed -- cell/layer edits bump the topology version too but
-        must not churn the Tabs models. For a rebuild: captures the active tab
-        by identity first (bypassing ``_get_active_grid_id``'s modal guard,
-        which would misreport "no active grid" while a modal is open), rebuilds
-        all grid tabs, then restores the active tab by identity. A pending
-        local-creation focus overrides the restore. Cells are reconciled
-        separately by the poll loop.
+        Runs on this session's thread (constructor or poll). The tab assignment
+        runs only when the tab-level composition (grid ids, enabled, order)
+        changed -- cell/layer edits bump the topology version too but must not
+        touch the Tabs. For an assignment: captures the active grid by identity
+        first (bypassing ``_get_active_grid_id``'s modal guard, which would
+        misreport "no active grid" while a modal is open) and assigns all grid
+        tabs together with the index that keeps it active. If the active grid
+        lost its tab, a plain tab switch afterwards reveals the grid taking
+        over its position; a pending local-creation focus instead switches to
+        the created grid. Cells are reconciled separately by the poll loop.
         """
         all_grids = self._orchestrator.get_all_grids()
         composition = tuple(
-            (grid_id, config.title, config.enabled)
-            for grid_id, config in all_grids.items()
+            (grid_id, config.enabled) for grid_id, config in all_grids.items()
         )
+        # The tab a plain switch reveals after the assignment, if any.
+        reveal: int | None = None
         if composition != self._tab_composition:
-            # Capture the active tab by identity before the rebuild reorders
-            # tabs.
+            # Capture the active grid by identity before the assignment
+            # reorders tabs. None while a static tab is active.
             active_before = self._tabs.active
-            static_active = active_before < self._static_tabs_count
-            active_grid_id: GridId | None = None
-            if not static_active:
-                tabbed = self._tabbed_grid_ids()
-                idx = active_before - self._static_tabs_count
-                if 0 <= idx < len(tabbed):
-                    active_grid_id = tabbed[idx]
+            tabbed = self._tabbed_grid_ids()
+            idx = active_before - self._static_tabs_count
+            active_grid_id = tabbed[idx] if 0 <= idx < len(tabbed) else None
 
-            self._reconcile_grid_tabs(all_grids)
+            self._reconcile_grid_tabs(all_grids, active_grid_id)
 
-            # Restore the active tab by identity.
-            if static_active:
-                self._tabs.active = active_before
-            elif active_grid_id is not None:
-                tabbed = self._tabbed_grid_ids()
-                if active_grid_id in tabbed:
-                    self._tabs.active = self._static_tabs_count + tabbed.index(
-                        active_grid_id
-                    )
-                # else: the active grid was removed; leave Bokeh's clamped
-                # value.
+            if active_grid_id is not None and (
+                active_grid_id not in self._tabbed_grid_ids()
+            ):
+                # The active grid was removed, disabled or replaced: stay at
+                # its position, now held by its replacement or the grid that
+                # followed it, clamped to the last tab -- the grid that
+                # preceded it, or Manage Plots once no grid is left.
+                reveal = min(active_before, len(self._tabs) - 1)
 
-            # Recorded only after the rebuild succeeded: an exception above
-            # leaves the memo stale, so the retried pass rebuilds the tabs
-            # instead of skipping a half-applied composition.
+            # Recorded only after the assignment succeeded: an exception above
+            # leaves the memo stale, so the next pass runs the assignment
+            # again (Panel processes an ``objects`` list equal to the current
+            # one like any other) instead of skipping a half-applied
+            # composition.
             self._tab_composition = composition
 
-        # A locally-created grid overrides the restore and focuses its tab.
+        # A locally-created grid overrides the handover and focuses its tab,
+        # so the grid taking over is never revealed only to be hidden again.
         # Cleared unconditionally: if the grid vanished again before this poll,
         # the focus intent is dead.
         if self._pending_focus_grid_id is not None:
             tabbed = self._tabbed_grid_ids()
             if self._pending_focus_grid_id in tabbed:
-                self._tabs.active = self._static_tabs_count + tabbed.index(
+                reveal = self._static_tabs_count + tabbed.index(
                     self._pending_focus_grid_id
                 )
             self._pending_focus_grid_id = None
 
-    def _reconcile_grid_tabs(self, all_grids: dict[GridId, PlotGridConfig]) -> None:
-        """Rebuild grid tabs to match orchestrator state (order, titles, enabled)."""
-        # Rebuild _grid_widgets in orchestrator order, preserving existing widgets
-        old_widgets = self._grid_widgets
-        self._grid_widgets = {}
+        # A plain switch, not part of the assignment: the switch runs the
+        # reveal hook before Panel materializes the tab (see "Tabs assigned,
+        # never popped" in the module docstring).
+        if reveal is not None:
+            self._tabs.active = reveal
 
+    def _reconcile_grid_tabs(
+        self,
+        all_grids: dict[GridId, PlotGridConfig],
+        active_grid_id: GridId | None,
+    ) -> None:
+        """Assign grid tabs to match orchestrator state (order, enabled).
+
+        Parameters
+        ----------
+        all_grids:
+            The orchestrator's grids, in order.
+        active_grid_id:
+            The grid whose tab is active, kept active across the assignment.
+            None while a static tab is active.
+        """
+        # Widget map in orchestrator order, reusing existing widgets.
+        grid_widgets: dict[GridId, PlotGrid | PlotOverviewSection] = {}
+        grid_tabs: list[tuple[str, pn.viewable.Viewable]] = []
+        tabbed: list[GridId] = []
         with pn.io.hold():
-            # Remove all existing grid tabs
-            while len(self._tabs) > self._static_tabs_count:
-                self._tabs.pop(self._static_tabs_count)
-
             for grid_id, grid_config in all_grids.items():
+                widget = self._grid_widgets.get(grid_id)
                 if not grid_config.enabled:
-                    # Disabled grids are hidden from tabs but we keep the widget
-                    # reference so re-enabling doesn't lose state
-                    if grid_id in old_widgets:
-                        self._grid_widgets[grid_id] = old_widgets[grid_id]
+                    # Disabled grids are hidden from tabs but we keep the
+                    # widget reference so re-enabling doesn't lose state
+                    if widget is not None:
+                        grid_widgets[grid_id] = widget
                     continue
+                if widget is None:
+                    widget = self._create_grid_widget(grid_id, grid_config)
+                grid_widgets[grid_id] = widget
+                if isinstance(widget, PlotGrid):
+                    # Not wrapped with the modal container: that lives once at
+                    # the top level, wrapping the whole Tabs widget.
+                    grid_tabs.append((grid_config.title, widget.panel))
+                    tabbed.append(grid_id)
 
-                if grid_id in old_widgets:
-                    # Reuse existing widget, update tab title
-                    plot_grid = old_widgets[grid_id]
-                    self._grid_widgets[grid_id] = plot_grid
-                    if isinstance(plot_grid, PlotOverviewSection):
-                        plot_grid.set_title(grid_config.title)
-                    else:
-                        self._tabs.append((grid_config.title, plot_grid.panel))
-                else:
-                    # Grid was re-enabled or is new — create fresh tab
-                    self._add_grid_tab(grid_id, grid_config)
+            # Before the tabs: the reveal hook that a change of ``active`` runs
+            # maps tabs to grids through this map. A failure in the assignment
+            # leaves the composition memo stale, and the retried pass reuses
+            # the widgets created here.
+            self._grid_widgets = grid_widgets
 
             if self._plot_overview is not None:
                 self._plot_overview.set_listed(
                     [gid for gid, config in all_grids.items() if config.enabled]
                 )
+                return
+
+            if active_grid_id in tabbed:
+                active = self._static_tabs_count + tabbed.index(active_grid_id)
+            elif active_grid_id is not None:
+                # The active grid lost its tab. With no tab active, the
+                # assignment materializes none; the caller reveals the grid
+                # taking over with a plain switch afterwards.
+                active = -1
+            else:
+                # A static tab is active, which no assignment moves.
+                active = self._tabs.active
+
+            # IMPORTANT: assign all grid tabs in one ``objects`` update; never
+            # pop and re-append them. Panel cleans up every pane that leaves
+            # the list, discarding its Bokeh models, so a popped grid builds
+            # all its figures from scratch on its next reveal (~50 ms per
+            # layer). In one update, Panel reuses the models of every pane in
+            # both the old and the new list, so a grid that stays keeps its
+            # figures, as on a plain tab switch. Panel also keeps such a tab's
+            # title, so a title changed in place would never show; a grid's
+            # title changes only with its id (``replace_grid``), which makes a
+            # new tab.
+            # IMPORTANT: assign ``active`` in the same batch. Panel decides
+            # which tab to materialize from ``active`` while it processes
+            # ``objects``; with the index assigned afterwards, the grid that
+            # moved into the active grid's old position would be built (its
+            # full figures, for a re-enabled grid that kept its cells), only to
+            # be hidden again.
+            with param.parameterized.batch_call_watchers(self._tabs):
+                self._tabs[self._static_tabs_count :] = grid_tabs
+                if active != self._tabs.active:
+                    # Panel resizes the bounds to the new tab count only once
+                    # the batch dispatches, after ``active`` is validated:
+                    # without this, an index past the old last tab raises a
+                    # ValueError.
+                    self._tabs.param.active.bounds = (-1, len(self._tabs) - 1)
+                    self._tabs.active = active
 
     def _add_plot(
         self, grid_id: GridId, geometry: CellGeometry, plot_config: PlotConfig
@@ -1019,8 +1083,8 @@ class PlotGridTabs:
         materialization that follows is of the real content and the whole reveal
         is a single patch.
 
-        The topology reconcile is skipped: it may append to or pop from the tabs
-        we are currently inside a watcher of, and the tab structure is by
+        The topology reconcile is skipped: it may reassign the tabs we are
+        currently inside a watcher of, and the tab structure is by
         definition current at this point. A topology change pending from another
         session is picked up by the tick :meth:`_on_active_tab_changed`
         requests.
