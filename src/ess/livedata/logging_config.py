@@ -50,9 +50,11 @@ def configure_logging(
     root_logger = logging.getLogger()
     root_logger.handlers.clear()
 
-    # Add stdout handler with pretty console output (unless disabled)
+    # Add stdout handler with pretty console output (unless disabled).
+    # Colors only on a terminal: in containers stdout is a log file, where
+    # escape codes are noise.
     if not disable_stdout:
-        console_renderer = structlog.dev.ConsoleRenderer(colors=True)
+        console_renderer = structlog.dev.ConsoleRenderer(colors=sys.stdout.isatty())
         console_formatter = structlog.stdlib.ProcessorFormatter(
             foreign_pre_chain=shared_processors,
             processors=[
