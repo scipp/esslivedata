@@ -11,6 +11,7 @@ import pytest
 import scipp as sc
 from bokeh.document import Document
 from bokeh.models import (
+    ColorMapper,
     DatetimeAxis,
     FactorRange,
     GlyphRenderer,
@@ -18,6 +19,7 @@ from bokeh.models import (
     Plot,
     Whisker,
 )
+from bokeh.palettes import Viridis256
 from holoviews.plotting.bokeh import BokehRenderer
 
 from ess.livedata.config.workflow_spec import DataKey, WorkflowId
@@ -419,6 +421,15 @@ class TestImagePlotter:
         assert mappers
         assert mappers[0].low == 2.0
         assert mappers[0].high == 9.0
+
+    def test_color_mapper_uses_viridis_on_every_frame(
+        self, image_plotter, constant_nonzero_data, data_key
+    ):
+        """The palette is viridis, also on frames after the first compute."""
+        image_plotter.compute({'primary': {data_key: constant_nonzero_data}})
+        fig = present_figure(image_plotter, {data_key: constant_nonzero_data * 2.0})
+        (mapper,) = fig.select(ColorMapper)
+        assert [c.lower() for c in mapper.palette] == [c.lower() for c in Viridis256]
 
 
 class TestImagePlotterRenderedValues:

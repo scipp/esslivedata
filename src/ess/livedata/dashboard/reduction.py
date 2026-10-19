@@ -358,9 +358,9 @@ def _warm_up_colormaps() -> None:
     """Register colorcet's colormaps with matplotlib before serving.
 
     Resolving a colormap imports colorcet, which registers hundreds of colormaps with
-    matplotlib. Left lazy, that lands on a session's IOLoop during its first plot
-    render and blocks every request behind it. Pay it before the server starts, where
-    blocking is free. Costs ~70 ms; with matplotlib < 3.11.2 it is ~2.8 s, since each
+    matplotlib. Left lazy, that lands on the creation of the first image plot and
+    blocks every request behind it. Pay it before the server starts, where blocking is
+    free. Costs ~70 ms; with matplotlib < 3.11.2 it is ~2.8 s, since each
     registration pays difflib "did you mean" generation (matplotlib#32172). The warmup
     is worth keeping independent of that fix -- remove it only if first-render
     profiling says otherwise.
