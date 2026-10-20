@@ -91,8 +91,11 @@ jobs:
       - name: Report
         shell: bash
         run: |
+          # Also printed to the log: the run-level log archive is readable
+          # from places where job summaries and artifacts are not.
           python harness/scripts/perf/perf.py report perf/results.json \
-            | tee perf/report.md >> "$GITHUB_STEP_SUMMARY"
+            | tee perf/report.md
+          cat perf/report.md >> "$GITHUB_STEP_SUMMARY"
       - uses: actions/upload-artifact@v4
         if: always()
         with:
