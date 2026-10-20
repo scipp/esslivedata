@@ -79,12 +79,13 @@ module docstrings.
 - Markup panes built after page load can stay invisible forever (Panel's stylesheet
   reveal latch, #1154). `dashboard/design.py` overrides the latch app-wide; a
   template built without `LivedataDesign` brings the bug back.
-- Markup rewritten on every data frame or tick (pills, ages, rates) must not be a
-  `pn.pane.HTML`/`Markdown`: each changed `.object` makes Panel recompute all of the
-  pane's model properties (~0.5 ms), against ~0.02 ms for `.text` on a Bokeh `Div`
-  the widget owns (see `_create_live_markup_pane` in `widgets/cell.py`). Static or
-  user-action-driven markup can stay an HTML pane. Equal-value writes are skipped
-  either way, so `!=` guards are unnecessary.
+- Markup rewritten on every data frame or tick (pills, ages, rates) uses
+  `LiveMarkup` (`widgets/cell.py`). A `pn.pane.HTML`/`Markdown` makes Panel
+  recompute all of the pane's model properties on each changed `.object` (~0.5 ms
+  against ~0.02 ms). A Bokeh `Div` is cheap on the server, but each `.text` change
+  re-lays out the whole layout in the browser, every figure of the grid included.
+  Static or user-action-driven markup can stay an HTML pane. Equal-value writes are
+  skipped either way, so `!=` guards are unnecessary.
 - An invisible `ReactiveHTML` helper needs a public class name. A leading underscore
   gives `could not resolve type '_Foo1'` and the session fails to render.
 

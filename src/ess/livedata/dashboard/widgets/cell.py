@@ -18,12 +18,13 @@ from __future__ import annotations
 
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
+from html import escape, unescape
 from typing import TYPE_CHECKING
 
 import holoviews as hv
 import panel as pn
 import structlog
-from bokeh.models import Div
+from panel.models import HTML
 
 from ess.livedata.config.workflow_spec import WorkflowId, WorkflowSpec
 
@@ -150,27 +151,43 @@ def format_error_html() -> str:
     return _pill_html(StatusPill.ERROR, 'error')
 
 
-def _create_live_markup_pane(**layout: object) -> pn.pane.Bokeh:
-    """Wrap a Bokeh ``Div`` for markup rewritten on every data frame.
+class LiveMarkup:
+    """Markup rewritten on every data frame, such as the freshness pill.
 
-    The caller writes ``pane.object.text``. An HTML pane would be simpler, but
-    Panel recomputes all of its model properties (stylesheets, theme) on every
-    ``.object`` write: ~0.5 ms against ~0.02 ms for ``Div.text``, paid per cell
-    per frame in every session. Panel passes a wrapped model through as is, so
-    layout options go on the ``Div`` itself.
+    Owns a Panel ``HTML`` model, wrapped in :attr:`pane` for layouts, and writes
+    its ``text`` directly. Both obvious alternatives cost far more per write,
+    paid per cell per frame in every session:
+
+    - ``pn.pane.HTML``: Panel recomputes all of the pane's model properties
+      (stylesheets, theme) on every ``.object`` write, ~0.5 ms against ~0.02 ms.
+    - Bokeh's ``Div``: its browser view re-renders on every change and then
+      re-lays out the whole layout it sits in, every figure of the grid
+      included. Panel's ``HTML`` view only replaces its inner HTML.
+
+    The model expects HTML-escaped text, which :attr:`html` takes care of.
+    Panel passes a wrapped model through as is, so layout options go on the model.
     """
-    return pn.pane.Bokeh(Div(text='', **layout))
+
+    def __init__(self, **layout: object) -> None:
+        self._model = HTML(text='', **layout)
+        self.pane = pn.pane.Bokeh(self._model)
+
+    @property
+    def html(self) -> str:
+        return unescape(self._model.text)
+
+    @html.setter
+    def html(self, html: str) -> None:
+        self._model.text = escape(html)
 
 
-def create_freshness_pane() -> pn.pane.Bokeh:
+def create_freshness_markup() -> LiveMarkup:
     """Create the titlebar freshness/lag pane, updated in place.
 
     Content sizes to the pill; ``align='center'`` (``align-self:center``)
     vertically centers it against the title and buttons in the row.
     """
-    return _create_live_markup_pane(
-        align='center', margin=(0, 6), styles={'flex': '0 0 auto'}
-    )
+    return LiveMarkup(align='center', margin=(0, 6), styles={'flex': '0 0 auto'})
 
 
 def format_layer_time_html(text: str) -> str:
@@ -184,15 +201,13 @@ def format_layer_time_html(text: str) -> str:
     return f'<span style="{style}">{text}</span>'
 
 
-def create_layer_time_pane() -> pn.pane.Bokeh:
+def create_layer_time_markup() -> LiveMarkup:
     """Create a per-layer time-range pane, updated in place.
 
     Placed on its own line below the layer title/buttons row; indented and
     pulled up close to the title so it visually belongs to it.
     """
-    return _create_live_markup_pane(
-        align='start', margin=(-4, 6, 0, 14), styles={'flex': '0 0 auto'}
-    )
+    return LiveMarkup(align='start', margin=(-4, 6, 0, 14), styles={'flex': '0 0 auto'})
 
 
 def _build_error_panel(message: str) -> pn.Column:
@@ -435,10 +450,10 @@ class CellWidget:
         self.grid_id = grid_id
         self.build_inputs = build_inputs
         self._autoscale_controller: CellAutoscaleController | None = None
-        self._freshness_pane = create_freshness_pane()
+        self._freshness = create_freshness_markup()
         self._stopped_layers: frozenset[LayerId] = frozenset()
         self._pill_frozen = False
-        self._layer_time_panes: dict[LayerId, pn.pane.Bokeh] = {}
+        self._layer_time_markups: dict[LayerId, LiveMarkup] = {}
         # One pane per rendered view of the plot: the grid cell's, plus one
         # per pop-out window. Kept so dispose() can unsubscribe them all.
         self._plot_panes: list[pn.pane.HoloViews] = []
@@ -475,7 +490,7 @@ class CellWidget:
             self.dispose()
             # Nothing that follows is in the document, so freeze the panes the
             # poll loop would otherwise keep writing to.
-            self._layer_time_panes.clear()
+            self._layer_time_markups.clear()
             self._pill_frozen = True
             self._view = _build_error_panel(f'{type(exc).__name__}: {exc}')
 
@@ -505,14 +520,14 @@ class CellWidget:
         return self._toolbars_shown
 
     @property
-    def freshness_pane(self) -> pn.pane.Bokeh:
-        """The titlebar freshness/lag pill pane."""
-        return self._freshness_pane
+    def freshness(self) -> LiveMarkup:
+        """The titlebar freshness/lag pill."""
+        return self._freshness
 
     @property
-    def layer_time_panes(self) -> dict[LayerId, pn.pane.Bokeh]:
-        """The per-layer time-range panes, keyed by layer ID."""
-        return self._layer_time_panes
+    def layer_time_markups(self) -> dict[LayerId, LiveMarkup]:
+        """The per-layer time-range labels, keyed by layer ID."""
+        return self._layer_time_markups
 
     @property
     def autoscale_controller(self) -> CellAutoscaleController | None:
@@ -540,15 +555,15 @@ class CellWidget:
             b for lid, b in bounds_by_layer.items() if lid not in self._stopped_layers
         )
         age = merged.age_seconds() if merged is not None else None
-        self._freshness_pane.object.text = format_freshness_html(age)
+        self._freshness.html = format_freshness_html(age)
 
     def update_layer_time(self, layer_id: LayerId, bounds: TimeBounds | None) -> None:
-        """Update a layer toolbar's time-range pane from its time bounds."""
-        pane = self._layer_time_panes.get(layer_id)
-        if pane is None:
+        """Update a layer toolbar's time-range label from its time bounds."""
+        markup = self._layer_time_markups.get(layer_id)
+        if markup is None:
             return
         text = format_time_info(bounds) if bounds is not None else ''
-        pane.object.text = format_layer_time_html(text)
+        markup.html = format_layer_time_html(text)
 
     def dispose(self) -> None:
         """Release everything this widget attached to shared or session state.
@@ -639,7 +654,7 @@ class CellWidget:
             frozen = None
         self._pill_frozen = frozen is not None
         if frozen is not None:
-            self._freshness_pane.object.text = frozen
+            self._freshness.html = frozen
 
     def _build(self) -> pn.Column:
         """Assemble the cell widget: titlebar, layer toolbars, and content."""
@@ -742,7 +757,7 @@ class CellWidget:
                 else lambda: on_popout(self._cell_id)
             ),
             can_popout=self.has_plot,
-            freshness_pane=self._freshness_pane,
+            freshness_pane=self._freshness.pane,
             # Per-cell automation hook: a rebuilt cell's DOM position is not
             # stable, so the grid position addresses it (unique per grid, and
             # only the active tab's grid is rendered).
@@ -793,8 +808,8 @@ class CellWidget:
                 case LayerState.READY:
                     pass  # No extra description for ready state
 
-            time_pane = create_layer_time_pane()
-            self._layer_time_panes[layer_id] = time_pane
+            time_markup = create_layer_time_markup()
+            self._layer_time_markups[layer_id] = time_markup
             # Seed from the layer's current bounds: toolbars revealed between
             # frames would otherwise read blank until the next data flush.
             if state.plotter is not None:
@@ -805,7 +820,7 @@ class CellWidget:
                     title=title,
                     description=description,
                     badge=badge,
-                    time_pane=time_pane,
+                    time_pane=time_markup.pane,
                 )
             )
 

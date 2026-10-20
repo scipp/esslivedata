@@ -11,6 +11,7 @@ from bokeh.document import Document
 import ess.livedata.dashboard.reduction  # noqa: F401
 from ess.livedata.dashboard.widgets.cell import (
     CurrentStateHoloViews,
+    LiveMarkup,
     format_error_html,
     format_freshness_html,
     format_layer_time_html,
@@ -75,6 +76,16 @@ class TestLayerTimeHtml:
         html = format_layer_time_html('14:35:01 - 14:35:07 (Lag: 2.3s)')
         assert '14:35:01 - 14:35:07 (Lag: 2.3s)' in html
         assert '<span' in html
+
+
+class TestLiveMarkup:
+    def test_model_receives_escaped_html(self) -> None:
+        # Panel's HTML view decodes the text before rendering it; raw markup
+        # would show as its text content only.
+        markup = LiveMarkup()
+        markup.html = format_stopped_html()
+        assert '<' not in markup.pane.object.text
+        assert markup.html == format_stopped_html()
 
 
 class TestCurrentStateHoloViews:
