@@ -97,7 +97,10 @@ dashboard = [
   # relayout (bokeh#15011). The fixed-aspect letterbox has no other lever, so
   # below that floor it computes the right padding and the plot never moves
   # (see ``dashboard/frame_aspect.py``).
-  "bokeh>=3.9",
+  # Trial build: 3.9.2 plus a backport that skips producing default values
+  # during serialization (Bokeh 4.0 does the same), measured on grid tab
+  # reveals (#1401). Building from git needs Node.js for BokehJS.
+  "bokeh @ git+https://github.com/SimonHeybrock/bokeh@3.9-skip-unselected-defaults",
   "holoviews>=1.23.0",
   "panel>=1.9.3",
   "param",
