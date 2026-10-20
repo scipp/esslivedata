@@ -97,10 +97,10 @@ dashboard = [
   # relayout (bokeh#15011). The fixed-aspect letterbox has no other lever, so
   # below that floor it computes the right padding and the plot never moves
   # (see ``dashboard/frame_aspect.py``). The cap is ``dashboard/bokeh_serialization.py``,
-  # which patches Bokeh 3.9 internals and refuses to start on anything else.
-  "bokeh>=3.9,<3.10",
+  # which patches Bokeh 3.10 internals and refuses to start on anything else.
+  "bokeh>=3.10,<3.11",
   "holoviews>=1.23.0",
-  "panel>=1.9.3",
+  "panel>=1.10.0rc1",
   "param",
 ]
 

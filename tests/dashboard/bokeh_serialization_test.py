@@ -89,7 +89,7 @@ def test_skipped_defaults_are_not_produced(monkeypatch: pytest.MonkeyPatch) -> N
 @pytest.mark.usefixtures('stock')
 def test_install_refuses_other_bokeh_versions(monkeypatch: pytest.MonkeyPatch) -> None:
     stock_method = HasProps.query_properties_with_values
-    monkeypatch.setattr(bokeh, '__version__', '3.10.0')
-    with pytest.raises(RuntimeError, match=r'Bokeh 3\.10\.0'):
+    monkeypatch.setattr(bokeh, '__version__', '3.11.0')
+    with pytest.raises(RuntimeError, match=r'Bokeh 3\.11\.0'):
         bokeh_serialization.install()
     assert HasProps.query_properties_with_values is stock_method

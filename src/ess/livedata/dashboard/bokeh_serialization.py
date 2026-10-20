@@ -15,8 +15,8 @@ The replacement decides from the raw default instead, and keeps the stock result
 and side effects: a callable default is still produced, since Bokeh stores it on
 the model, and a property without a default still raises ``UnsetValueError``.
 
-It relies on Bokeh internals, so :func:`install` accepts Bokeh 3.9 only. Delete
-this module when moving to a newer Bokeh.
+It relies on Bokeh internals, so :func:`install` accepts Bokeh 3.10 only. Delete
+this module when moving to Bokeh 4.0.
 """
 
 from __future__ import annotations
@@ -38,7 +38,7 @@ def query_properties_with_values(
     include_defaults: bool = True,
     include_undefined: bool = False,
 ) -> dict[str, Any]:
-    """``HasProps.query_properties_with_values`` of Bokeh 3.9.2, reordered.
+    """``HasProps.query_properties_with_values`` of Bokeh 3.10.1, reordered.
 
     Identical to the original except for the early ``continue`` on keys that are
     neither set, themed, nor a materialized unstable default.
@@ -101,11 +101,11 @@ def install() -> None:
     Raises
     ------
     RuntimeError:
-        If Bokeh is not 3.9, whose internals the replacement was written against.
+        If Bokeh is not 3.10, whose internals the replacement was written against.
     """
-    if bokeh.__version__.split('.')[:2] != ['3', '9']:
+    if bokeh.__version__.split('.')[:2] != ['3', '10']:
         raise RuntimeError(
-            f'{__name__} patches Bokeh 3.9 internals, found Bokeh '
+            f'{__name__} patches Bokeh 3.10 internals, found Bokeh '
             f'{bokeh.__version__}. Bokeh 4.0 contains the fix (bokeh#15355); '
             'for any other version, delete the patch or port it.'
         )

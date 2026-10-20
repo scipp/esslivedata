@@ -57,8 +57,16 @@ ANNOUNCEMENTS_URL = (
     'https://public.esss.dk/groups/scipp/esslivedata/_static/announcements.md'
 )
 
+# Panel ships Bokeh's table bundle only to pages that show a table at first render.
+# Table plots (``table_plotter.py``) appear later, as grid cells are built or
+# revealed, and without the bundle the browser cannot resolve ``DataTable``.
 pn.extension(
-    'holoviews', 'modal', 'floatpanel', notifications=True, template='material'
+    'holoviews',
+    'modal',
+    'floatpanel',
+    'bokeh-tables',
+    notifications=True,
+    template='material',
 )
 hv.extension('bokeh')
 # Axis labels read "name [unit]" rather than HoloViews' default "name (unit)".
