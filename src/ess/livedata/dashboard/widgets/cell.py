@@ -23,6 +23,7 @@ from typing import TYPE_CHECKING
 import holoviews as hv
 import panel as pn
 import structlog
+from bokeh.models import Div
 
 from ess.livedata.config.workflow_spec import WorkflowId, WorkflowSpec
 
@@ -149,17 +150,26 @@ def format_error_html() -> str:
     return _pill_html(StatusPill.ERROR, 'error')
 
 
-def create_freshness_pane() -> pn.pane.HTML:
-    """Create the titlebar freshness/lag pane, updated in place via ``.object``.
+def _create_live_markup_pane(**layout: object) -> pn.pane.Bokeh:
+    """Wrap a Bokeh ``Div`` for markup rewritten on every data frame.
+
+    The caller writes ``pane.object.text``. An HTML pane would be simpler, but
+    Panel recomputes all of its model properties (stylesheets, theme) on every
+    ``.object`` write: ~0.5 ms against ~0.02 ms for ``Div.text``, paid per cell
+    per frame in every session. Panel passes a wrapped model through as is, so
+    layout options go on the ``Div`` itself.
+    """
+    return pn.pane.Bokeh(Div(text='', **layout))
+
+
+def create_freshness_pane() -> pn.pane.Bokeh:
+    """Create the titlebar freshness/lag pane, updated in place.
 
     Content sizes to the pill; ``align='center'`` (``align-self:center``)
     vertically centers it against the title and buttons in the row.
     """
-    return pn.pane.HTML(
-        '',
-        align='center',
-        margin=(0, 6),
-        styles={'flex': '0 0 auto'},
+    return _create_live_markup_pane(
+        align='center', margin=(0, 6), styles={'flex': '0 0 auto'}
     )
 
 
@@ -174,17 +184,14 @@ def format_layer_time_html(text: str) -> str:
     return f'<span style="{style}">{text}</span>'
 
 
-def create_layer_time_pane() -> pn.pane.HTML:
-    """Create a per-layer time-range pane, updated in place via ``.object``.
+def create_layer_time_pane() -> pn.pane.Bokeh:
+    """Create a per-layer time-range pane, updated in place.
 
     Placed on its own line below the layer title/buttons row; indented and
     pulled up close to the title so it visually belongs to it.
     """
-    return pn.pane.HTML(
-        '',
-        align='start',
-        margin=(-4, 6, 0, 14),
-        styles={'flex': '0 0 auto'},
+    return _create_live_markup_pane(
+        align='start', margin=(-4, 6, 0, 14), styles={'flex': '0 0 auto'}
     )
 
 
@@ -431,7 +438,7 @@ class CellWidget:
         self._freshness_pane = create_freshness_pane()
         self._stopped_layers: frozenset[LayerId] = frozenset()
         self._pill_frozen = False
-        self._layer_time_panes: dict[LayerId, pn.pane.HTML] = {}
+        self._layer_time_panes: dict[LayerId, pn.pane.Bokeh] = {}
         # One pane per rendered view of the plot: the grid cell's, plus one
         # per pop-out window. Kept so dispose() can unsubscribe them all.
         self._plot_panes: list[pn.pane.HoloViews] = []
@@ -498,12 +505,12 @@ class CellWidget:
         return self._toolbars_shown
 
     @property
-    def freshness_pane(self) -> pn.pane.HTML:
+    def freshness_pane(self) -> pn.pane.Bokeh:
         """The titlebar freshness/lag pill pane."""
         return self._freshness_pane
 
     @property
-    def layer_time_panes(self) -> dict[LayerId, pn.pane.HTML]:
+    def layer_time_panes(self) -> dict[LayerId, pn.pane.Bokeh]:
         """The per-layer time-range panes, keyed by layer ID."""
         return self._layer_time_panes
 
@@ -533,9 +540,7 @@ class CellWidget:
             b for lid, b in bounds_by_layer.items() if lid not in self._stopped_layers
         )
         age = merged.age_seconds() if merged is not None else None
-        html = format_freshness_html(age)
-        if self._freshness_pane.object != html:
-            self._freshness_pane.object = html
+        self._freshness_pane.object.text = format_freshness_html(age)
 
     def update_layer_time(self, layer_id: LayerId, bounds: TimeBounds | None) -> None:
         """Update a layer toolbar's time-range pane from its time bounds."""
@@ -543,9 +548,7 @@ class CellWidget:
         if pane is None:
             return
         text = format_time_info(bounds) if bounds is not None else ''
-        html = format_layer_time_html(text)
-        if pane.object != html:
-            pane.object = html
+        pane.object.text = format_layer_time_html(text)
 
     def dispose(self) -> None:
         """Release everything this widget attached to shared or session state.
@@ -636,7 +639,7 @@ class CellWidget:
             frozen = None
         self._pill_frozen = frozen is not None
         if frozen is not None:
-            self._freshness_pane.object = frozen
+            self._freshness_pane.object.text = frozen
 
     def _build(self) -> pn.Column:
         """Assemble the cell widget: titlebar, layer toolbars, and content."""
