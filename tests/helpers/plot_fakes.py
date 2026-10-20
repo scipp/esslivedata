@@ -65,7 +65,8 @@ class FakePlotter:
     @property
     def is_overlayable(self) -> bool:
         # Mirror a real plotter: a Layout cannot share a figure with siblings.
-        return not isinstance(self.get_cached_state(), hv.Layout)
+        frame = self.get_frame()
+        return frame is None or not isinstance(frame.element, hv.Layout)
 
     @property
     def autoscale_axes(self) -> frozenset[Axis]:
@@ -95,14 +96,8 @@ class FakePlotter:
         self._frame = Frame.from_element(data)
         self.mark_presenters_dirty()
 
-    def get_cached_state(self) -> Any:
-        return None if self._frame is None else self._frame.element
-
     def get_frame(self) -> Frame | None:
         return self._frame
-
-    def has_cached_state(self) -> bool:
-        return self._frame is not None
 
     def create_presenter(self, *, owner: Any = None) -> PresenterBase:
         presenter = self._presenter_cls(self, owner=owner)

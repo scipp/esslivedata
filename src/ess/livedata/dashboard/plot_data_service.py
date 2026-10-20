@@ -218,11 +218,11 @@ class LayerSnapshot:
         Check if the layer has a displayable plot.
 
         Returns True if in READY or STOPPED state with a plotter that has
-        cached state.
+        computed a frame.
         """
         if self.state not in {LayerState.READY, LayerState.STOPPED}:
             return False
-        return self.plotter is not None and self.plotter.has_cached_state()
+        return self.plotter is not None and self.plotter.get_frame() is not None
 
 
 LayerId = NewType('LayerId', UUID)
@@ -258,7 +258,7 @@ class PlotDataService:
     (Bokeh main); on the 0→1 transition it returns True and the orchestrator
     rebuilds the layer from a fresh DataService snapshot, synchronously on the
     polling thread — deliberately, so the same poll pass's component rebuild
-    observes fresh ``has_cached_state``.
+    observes a fresh ``get_frame``.
 
     Thread-safe: can be called from background threads and periodic callbacks.
     Snapshots are replaced wholesale under the lock, so readers never need it.

@@ -5,19 +5,22 @@ Pop-out windows: a cell's plot shown large in a draggable floating window.
 
 A pop-out is a *temporary second view* of a cell, for inspecting detail that
 the grid cell is too small to show. The cell itself is untouched: it keeps its
-plot, its toolbars, and its place in the grid. The window renders the cell's
-own composition a second time rather than composing its own, so the two views
-repaint from one layer ``Pipe`` — the pop-out is live, not a snapshot — and
-share one autoscale controller, so turning a toggle off in the window turns it
-off in the cell. The ``CellWidget`` owns both panes and severs both on
-disposal; a window only ever borrows one.
+plot, its toolbars, and its place in the grid. The window shows a view the
+cell widget builds (``CellWidget.build_plot_pane``), so both views follow the
+cell's layers -- the pop-out is live, not a snapshot -- and share one autoscale
+controller, so turning a toggle off in the window turns it off in the cell.
+The ``CellWidget`` owns both views and releases both on disposal; a window
+only ever borrows one.
 
-That shared ownership is not a nicety: tearing down *any* plot on a layer's
-pipe severs *every* plot on it (holoviews#6988, see ``CellWidget.dispose``).
-Closing a window therefore stops the grid cell updating too, which is why
-``PlotGridTabs`` rebuilds the cell behind a window it closes — see
-``PlotGridTabs._close_popout``. Opening one needs no such repair: an extra
-subscriber costs the existing ones nothing.
+That shared ownership is not a nicety. In a cell drawn through HoloViews both
+views repaint from one layer ``Pipe``, and tearing down *any* plot on a pipe
+severs *every* plot on it (holoviews#6988, see ``CellWidget.dispose``). Closing
+a window therefore stops the grid cell updating too, which is why
+``PlotGridTabs`` rebuilds the cell behind a window it closes -- see
+``PlotGridTabs._close_popout``. A cell whose frames are written directly has a
+figure per view and loses nothing, but the rebuild releases the window's
+figure, which the cell widget owns. Opening a window needs no repair: an extra
+view costs the existing ones nothing.
 
 Deliberately a ``FloatPanel`` and not a ``pn.Modal``: a modal would block the
 grid underneath, and several pop-outs can usefully be open at once (comparing

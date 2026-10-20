@@ -51,7 +51,7 @@ def _figures(hv_obj) -> list[Plot]:
 def _present_figures(plotter, data: dict) -> list[Plot]:
     plotter.compute({'primary': data})
     presenter = plotter.create_presenter()
-    rendered = presenter.present(hv.streams.Pipe(data=plotter.get_cached_state()))
+    rendered = presenter.present(hv.streams.Pipe(data=plotter.get_frame().element))
     figures = _figures(rendered)
     # compute() turns any failure into a Text placeholder (wrapped in the plotter's
     # container), which would render a single default-sized figure and make the
@@ -179,7 +179,7 @@ def test_computed_frames_are_styled_before_they_reach_a_session(
     plotter = plotter_cls.from_params(params)
     plotter.compute({'primary': make_data(2)})
 
-    figures = _figures(plotter.get_cached_state())
+    figures = _figures(plotter.get_frame().element)
 
     assert figures
     for fig in figures:
@@ -211,7 +211,7 @@ def test_frame_without_data_is_sized_like_the_frames_that_follow(
 
     plotter.compute({'primary': {}})
 
-    figures = _figures(plotter.get_cached_state())
+    figures = _figures(plotter.get_frame().element)
     assert len(figures) == 1
     assert figures[0].sizing_mode == 'stretch_both'
     assert figures[0].js_property_callbacks

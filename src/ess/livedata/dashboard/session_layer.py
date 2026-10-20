@@ -12,16 +12,18 @@ session's viewer-interest token.
 from __future__ import annotations
 
 from collections.abc import Callable, Hashable
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 
 import holoviews as hv
+import structlog
 
 from .frame import Frame
 from .plot_data_service import LayerId, LayerSnapshot
 from .plots import Plotter, PresenterBase
 
+logger = structlog.get_logger(__name__)
 
-@dataclass
+
 class SessionComponents:
     """
     Session-bound state for rendering a layer.
@@ -45,13 +47,12 @@ class SessionComponents:
         instead, creating new components (see :meth:`is_valid_for`).
     """
 
-    presenter: PresenterBase
-    frame: Frame
-    _subscribers: list[Callable[[Frame], None]] = field(
-        default_factory=list, init=False
-    )
-    _pipe: hv.streams.Pipe | None = field(default=None, init=False)
-    _dmap: hv.DynamicMap | hv.Element | None = field(default=None, init=False)
+    def __init__(self, presenter: PresenterBase, frame: Frame) -> None:
+        self.presenter = presenter
+        self.frame = frame
+        self._subscribers: list[Callable[[Frame], None]] = []
+        self._pipe: hv.streams.Pipe | None = None
+        self._dmap: hv.DynamicMap | hv.Element | None = None
 
     @property
     def spec(self) -> Hashable:
@@ -108,7 +109,13 @@ class SessionComponents:
             return False
         self.frame = frame
         for callback in list(self._subscribers):
-            callback(frame)
+            # One failing figure must not stop the others, nor the session's
+            # pass, which pushes the frames of every layer (#1276). HoloViews
+            # logs the failures of its own updates the same way.
+            try:
+                callback(frame)
+            except Exception:
+                logger.exception("Writing a frame into a figure failed")
         if self._pipe is not None:
             self._pipe.send(frame.element)
         return True
@@ -172,11 +179,6 @@ class SessionLayer:
 
     layer_id: LayerId
     components: SessionComponents | None = None
-
-    @property
-    def dmap(self) -> hv.DynamicMap | hv.Element | None:
-        """The DynamicMap or Element for rendering, or None if not available."""
-        return self.components.dmap if self.components else None
 
     def push_update(self) -> bool:
         """

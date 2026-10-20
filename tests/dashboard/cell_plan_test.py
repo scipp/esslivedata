@@ -40,11 +40,8 @@ class _Plotter:
         self.cached = cached
         self.spec: object = None
 
-    def has_cached_state(self) -> bool:
-        return self.cached
-
     def get_frame(self) -> object:
-        return SimpleNamespace(spec=self.spec)
+        return SimpleNamespace(spec=self.spec) if self.cached else None
 
 
 def _grid_id() -> GridId:

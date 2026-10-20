@@ -8,6 +8,7 @@ import uuid
 import pydantic
 import pytest
 
+from ess.livedata.dashboard.frame import Frame
 from ess.livedata.dashboard.plot_data_service import (
     LayerId,
     LayerState,
@@ -55,7 +56,7 @@ class FakePlotter:
     def __init__(self):
         self.kdims = None
         self._initialized_data = None
-        self._cached_state = None
+        self._frame = None
         self.compute_calls: list[dict] = []
         # Invoked at the start of compute(); lets tests simulate concurrent
         # events (plotter swap, layer removal) landing mid-build.
@@ -75,17 +76,14 @@ class FakePlotter:
             self.on_compute()
         self.compute_calls.append({'data': data, **kwargs})
         result = FakePlot()
-        self._cached_state = result
+        self._frame = Frame.from_element(result)
         return result
 
     def mark_presenters_dirty(self):
         pass
 
-    def get_cached_state(self):
-        return self._cached_state
-
-    def has_cached_state(self):
-        return self._cached_state is not None
+    def get_frame(self):
+        return self._frame
 
     def __call__(self, data):
         return self.compute(data)
@@ -1442,7 +1440,7 @@ class TestCellRetrieval:
         # PlotDataService should have data for the layer
         state = plot_data_service.get(layer_id)
         assert state is not None
-        assert state.plotter.has_cached_state()  # Has computed data
+        assert state.plotter.get_frame() is not None  # Has computed data
         assert state.error_message is None
 
     def test_plot_data_service_has_error_when_plot_creation_fails(
@@ -1562,7 +1560,7 @@ class TestCellRetrieval:
                 state = plot_data_service.get(layer.layer_id)
                 assert state is not None
                 assert state.error_message is None
-                assert state.plotter.has_cached_state()  # Has computed data
+                assert state.plotter.get_frame() is not None  # Has computed data
 
     def test_layer_config_update_recreates_plotter_with_running_workflow(
         self,
@@ -1608,7 +1606,7 @@ class TestCellRetrieval:
         # Verify layer has data in PlotDataService
         state1 = plot_data_service.get(layer_id)
         assert state1 is not None
-        assert state1.plotter.has_cached_state()
+        assert state1.plotter.get_frame() is not None
 
         # Update layer config while workflow is still running
         new_config = make_plot_config(
@@ -1673,7 +1671,7 @@ class TestCellRetrieval:
         # Verify layer has data in PlotDataService
         state = plot_data_service.get(layer_id)
         assert state is not None
-        assert state.plotter.has_cached_state()
+        assert state.plotter.get_frame() is not None
 
         # Remove cell
         plot_orchestrator.remove_cell(cell_id)
@@ -2074,7 +2072,7 @@ class TestPlotAfterWorkflowStopped:
         assert state is not None
         assert state.state == LayerState.STOPPED
         assert state.plotter is not None
-        assert state.plotter.has_cached_state()
+        assert state.plotter.get_frame() is not None
 
     def test_update_layer_config_after_stop_displays_retained_data(
         self,
@@ -2110,7 +2108,7 @@ class TestPlotAfterWorkflowStopped:
         state = plot_data_service.get(new_layer_id)
         assert state is not None
         assert state.state == LayerState.STOPPED
-        assert state.plotter.has_cached_state()
+        assert state.plotter.get_frame() is not None
 
     def test_new_layer_with_workflow_never_run_is_stopped_without_plot(
         self,
@@ -3282,7 +3280,7 @@ class TestSyncJobStates:
         state = plot_data_service.get(layer_id)
         assert state.state == LayerState.WAITING_FOR_DATA
         assert state.plotter is not old_plotter
-        assert not state.plotter.has_cached_state()
+        assert state.plotter.get_frame() is None
 
     def test_reset_preserves_data_pipeline(
         self,
@@ -3391,7 +3389,7 @@ class TestSyncJobStates:
         state = plot_data_service.get(layer_id)
         assert state.state == LayerState.WAITING_FOR_DATA
         assert state.plotter is not stopped_plotter
-        assert not state.plotter.has_cached_state()
+        assert state.plotter.get_frame() is None
 
     def test_failed_setup_layer_keeps_error_state_on_commit(
         self,

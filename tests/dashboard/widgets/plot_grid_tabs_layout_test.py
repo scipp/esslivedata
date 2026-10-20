@@ -153,7 +153,7 @@ class TestPollHandlesLayoutPlotters:
 
         session_layer = plot_grid_tabs._session_layers.get(layer_id)
         assert session_layer is not None
-        assert session_layer.dmap is not None
+        assert session_layer.components is not None
 
     def test_plotter_swap_rebuilds_a_rendered_layout_cell(
         self, plot_orchestrator, plot_data_service, plot_grid_tabs

@@ -92,10 +92,6 @@ class StaticPlotter(ABC):
         for presenter in list(self._presenters):
             presenter._mark_dirty()
 
-    def get_cached_state(self) -> hv.Element | None:
-        """Get the last computed state, or None if not yet computed."""
-        return None if self._frame is None else self._frame.element
-
     def get_frame(self) -> Frame | None:
         """The last computed frame, or None if not yet computed."""
         return self._frame
@@ -104,10 +100,6 @@ class StaticPlotter(ABC):
     def time_bounds(self) -> None:
         """Static plots carry no time data, so they never contribute lag."""
         return None
-
-    def has_cached_state(self) -> bool:
-        """Check if state has been computed."""
-        return self._frame is not None
 
     def mark_presenters_dirty(self) -> None:
         """Mark all registered presenters as having pending updates."""

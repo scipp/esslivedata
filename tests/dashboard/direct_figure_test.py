@@ -7,8 +7,11 @@ import weakref
 from typing import Any
 
 import holoviews as hv
+import panel as pn
 import pytest
 from bokeh.document import Document
+from bokeh.themes import Theme
+from panel.io.state import set_curdoc
 
 from ess.livedata.dashboard.direct_figure import DirectFigure
 from ess.livedata.dashboard.session_layer import SessionComponents
@@ -41,7 +44,6 @@ def _figure(*layers: _Layer, update_hooks=()) -> DirectFigure:
     return DirectFigure(
         hv.Overlay(frames),
         [layer.components for layer in layers],
-        doc=Document(),
         margin=0,
         update_hooks=update_hooks,
     )
@@ -104,4 +106,16 @@ def test_figure_needs_one_subplot_per_element():
     layer = _Layer(1.0, 2.0)
 
     with pytest.raises(RuntimeError, match='subplots'):
-        DirectFigure(_curves(1.0), [layer.components], doc=Document(), margin=0)
+        DirectFigure(_curves(1.0), [layer.components], margin=0)
+
+
+def test_figure_keeps_its_documents_theme():
+    """The dashboard template themes the document; a figure must not replace it."""
+    doc = Document()
+    theme = Theme(json={'attrs': {'Axis': {'axis_label_text_font_style': 'normal'}}})
+    doc.theme = theme
+    with set_curdoc(doc):  # as in a session's pass
+        figure = _figure(_Layer(1.0))
+        pn.pane.Bokeh(figure.figure).get_root(doc)
+
+    assert doc.theme is theme

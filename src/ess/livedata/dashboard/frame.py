@@ -148,12 +148,17 @@ _COLUMNS: dict[type, Callable[[Any], Columns]] = {
     hv.Spread: _spread_columns,
 }
 
-# Plot options under which HoloViews derives columns the functions above do
-# not mirror, so that the element cannot be written directly. On a log y-axis,
-# HoloViews adds a ``bottom`` column to a histogram when building the figure,
-# filled with the start of the y-range at that time, which a frame cannot know.
-_UNMIRRORED_OPTIONS: dict[type, tuple[str, ...]] = {hv.Histogram: ('logy',)}
-_UNMIRRORED_OPTIONS_ALL_TYPES = ('invert_axes',)
+# Plot option values the column functions assume. HoloViews derives other
+# columns for other values, so an element with one cannot be written directly.
+# On a log y-axis, for example, HoloViews adds a ``bottom`` column to a
+# histogram when building the figure, filled with the start of the y-range at
+# that time, which a frame cannot know.
+_ASSUMED_OPTIONS: dict[type, dict[str, Any]] = {
+    hv.Curve: {'interpolation': 'linear'},
+    hv.Scatter: {'jitter': None},
+    hv.Histogram: {'logy': False},
+}
+_ASSUMED_OPTIONS_ALL_TYPES: dict[str, Any] = {'invert_axes': False}
 
 # Element types drawn from their spec alone: their content is small and rarely
 # changes (the "No data" and error placeholders), so a change rebuilds the
@@ -254,13 +259,30 @@ def _columns(element: hv.Element, plot_options: dict[str, Any]) -> Columns | Non
     if type(element) in _SPEC_ONLY:
         return {}
     columns = _COLUMNS.get(type(element))
-    unmirrored = (
-        *_UNMIRRORED_OPTIONS_ALL_TYPES,
-        *_UNMIRRORED_OPTIONS.get(type(element), ()),
-    )
-    if columns is None or any(plot_options.get(name) for name in unmirrored):
+    if columns is None or not _is_mirrored(element, plot_options):
         return None
     return columns(element)
+
+
+def _is_mirrored(element: hv.Element, plot_options: dict[str, Any]) -> bool:
+    """Whether the column function of ``element`` reproduces HoloViews' columns."""
+    assumed = {
+        **_ASSUMED_OPTIONS_ALL_TYPES,
+        **_ASSUMED_OPTIONS.get(type(element), {}),
+    }
+    if any(plot_options.get(name, value) != value for name, value in assumed.items()):
+        return False
+    # HoloViews sets the factors of a categorical axis on every update.
+    if any(_kind(element, dim) in 'USO' for dim in element.kdims):
+        return False
+    if isinstance(element, hv.Image):
+        # HoloViews draws further value dims in the hover only, and booleans as
+        # integers.
+        return len(element.vdims) == 1 and _kind(element, element.vdims[0]) != 'b'
+    if isinstance(element, hv.ErrorBars):  # including Spread
+        # Symmetric and vertical.
+        return len(element.vdims) == 2 and not element.horizontal
+    return True
 
 
 def _element_spec(element: hv.Element, options: Options) -> Hashable:
@@ -285,8 +307,12 @@ def _value_kinds(element: hv.Element) -> Hashable:
     Bokeh picks the axis type (linear, datetime, categorical) when the figure is
     built. Integer and float values share an axis type.
     """
-    kinds = (element.interface.dtype(element, dim).kind for dim in element.dimensions())
+    kinds = (_kind(element, dim) for dim in element.dimensions())
     return tuple(kind if kind in 'MmUSOb' else 'number' for kind in kinds)
+
+
+def _kind(element: hv.Element, dim: hv.Dimension) -> str:
+    return element.interface.dtype(element, dim).kind
 
 
 def _options_spec(options: Options) -> Hashable:
@@ -299,11 +325,16 @@ def _options_spec(options: Options) -> Hashable:
 
 
 def _freeze(value: Any) -> Hashable:
-    """A hashable value comparing equal exactly when ``value`` does.
+    """A hashable value comparing equal when ``value`` does.
 
-    Raises ``TypeError`` for a value that is neither hashable nor a container
-    this knows how to convert: comparing it by identity would make every frame
-    look different, and rebuild every figure on every update.
+    Containers, arrays and dataclasses are compared by value, other hashable
+    values as they hash, which for functions and most objects is by identity.
+    Such an option must therefore be the same object in every frame: a function
+    created per frame would rebuild the figure on every update. The registry
+    test ``test_frame_spec_does_not_change_with_values`` guards each plotter
+    against that, and the session pass logs each rebuild a spec change causes.
+
+    Raises ``TypeError`` for a value that is neither hashable nor converted here.
     """
     if isinstance(value, dict):
         return tuple(sorted((k, _freeze(v)) for k, v in value.items()))

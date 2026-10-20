@@ -292,10 +292,10 @@ class TestPopoutRendersTheCellsPlotAgain:
         callback once per figure holding it, so a toggle shared by two
         toolbars flips twice per click and never changes.
         """
-        plot = plot_grid_tabs._cells[line_cell]._plot
+        cell_widget = plot_grid_tabs._cells[line_cell]
 
-        cell_tools = _autoscale_tools(_render(plot))
-        popout_tools = _autoscale_tools(_render(plot))
+        cell_tools = _autoscale_tools_of(_view_figure(cell_widget))
+        popout_tools = _autoscale_tools_of(_view_figure(cell_widget))
 
         assert _FIT in cell_tools
         assert cell_tools.keys() > {_FIT}  # at least one axis toggle too
@@ -305,9 +305,9 @@ class TestPopoutRendersTheCellsPlotAgain:
     def test_toggling_autoscale_in_one_view_shows_in_the_other(
         self, plot_grid_tabs, line_cell
     ):
-        plot = plot_grid_tabs._cells[line_cell]._plot
-        cell_tools = _autoscale_tools(_render(plot))
-        popout_tools = _autoscale_tools(_render(plot))
+        cell_widget = plot_grid_tabs._cells[line_cell]
+        cell_tools = _autoscale_tools_of(_view_figure(cell_widget))
+        popout_tools = _autoscale_tools_of(_view_figure(cell_widget))
         toggle = next(name for name in cell_tools if name != _FIT)
         assert popout_tools[toggle].active
 
@@ -317,8 +317,8 @@ class TestPopoutRendersTheCellsPlotAgain:
 
     def test_fit_reaches_every_rendered_figure(self, plot_grid_tabs, line_cell):
         """A Fit click fits both views at once, without waiting for data."""
-        plot = plot_grid_tabs._cells[line_cell]._plot
-        figures = [_render(plot).state for _ in range(2)]
+        cell_widget = plot_grid_tabs._cells[line_cell]
+        figures = [_view_figure(cell_widget) for _ in range(2)]
         tools = _autoscale_tools_of(figures[0])
         for name, tool in tools.items():
             if name != _FIT:
@@ -365,14 +365,14 @@ def _publish_frame(plot_grid_tabs, cell_id, line_plotter, frame_clock) -> None:
     _tick(plot_grid_tabs)
 
 
-def _render(plot):
-    """Render a composed plot into a fresh Bokeh figure, as a view would."""
-    return hv.renderer('bokeh').get_plot(plot)
+def _view_figure(cell_widget):
+    """The figure of a new view of the cell, as a pop-out window builds one."""
+    from bokeh.plotting import figure as Figure
 
-
-def _autoscale_tools(rendered) -> dict[str, object]:
-    """The controller's toolbar tools on a rendered plot, keyed by tooltip."""
-    return _autoscale_tools_of(rendered.state)
+    (figure,) = (
+        cell_widget.build_plot_pane().get_root(Document()).select({'type': Figure})
+    )
+    return figure
 
 
 def _autoscale_tools_of(figure) -> dict[str, object]:

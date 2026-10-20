@@ -541,7 +541,10 @@ class PresenterBase:
     """Whether :meth:`present` shows each frame's element as it is.
 
     Only then can a session write the frames into a figure directly, without
-    the presenter (see :class:`~.frame.Frame`).
+    the presenter (see :class:`~.frame.Frame`). The presenters that change
+    frames today (slicer, ROI requests) hold states that are no HoloViews
+    elements, which can never be written directly; this keeps it that way for
+    a presenter that changes an element.
     """
 
     def __init__(self, plotter: Plotter, *, owner: Plotter | None = None) -> None:
@@ -1221,11 +1224,6 @@ class Plotter:
         for presenter in list(self._presenters):
             presenter._mark_dirty()
 
-    def get_cached_state(self) -> Any | None:
-        """Get the last computed state, or None if not yet computed."""
-        frame = self._frame
-        return None if frame is None else frame.element
-
     def get_frame(self) -> Frame | None:
         """The last computed frame, or None if not yet computed."""
         return self._frame
@@ -1243,10 +1241,6 @@ class Plotter:
         the one shared point the per-session titlebar polls can pull from.
         """
         return self._time_bounds
-
-    def has_cached_state(self) -> bool:
-        """Check if state has been computed."""
-        return self._frame is not None
 
     def _publish_range_targets(
         self,

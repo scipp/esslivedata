@@ -4,6 +4,7 @@
 
 from uuid import uuid4
 
+from ess.livedata.dashboard.frame import Frame
 from ess.livedata.dashboard.plot_data_service import (
     LayerId,
     LayerSnapshot,
@@ -16,18 +17,15 @@ class FakePlotter:
     """Minimal fake plotter for testing state machine transitions."""
 
     def __init__(self):
-        self._cached_state = None
+        self._frame = None
         self.compute_calls: list[tuple[dict, dict]] = []
 
     def compute(self, data, **kwargs):
-        self._cached_state = data
+        self._frame = Frame.from_element(data)
         self.compute_calls.append((data, kwargs))
 
-    def get_cached_state(self):
-        return self._cached_state
-
-    def has_cached_state(self):
-        return self._cached_state is not None
+    def get_frame(self):
+        return self._frame
 
     def mark_presenters_dirty(self):
         pass

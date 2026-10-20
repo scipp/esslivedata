@@ -21,24 +21,15 @@ from __future__ import annotations
 import functools
 from collections.abc import Callable, Sequence
 from itertools import accumulate
-from typing import Any, Protocol
+from typing import Any
 
 import holoviews as hv
 from bokeh.document import Document
 
 from .frame import Frame
+from .session_layer import SessionComponents
 
 Hook = Callable[[Any, Any], None]
-
-
-class FrameSource(Protocol):
-    """A layer's frames, as a session sees them (``SessionComponents``)."""
-
-    frame: Frame
-
-    def subscribe(self, callback: Callable[[Frame], None]) -> None: ...
-
-    def unsubscribe(self, callback: Callable[[Frame], None]) -> None: ...
 
 
 class DirectFigure:
@@ -53,8 +44,6 @@ class DirectFigure:
         The layers drawn, whose later frames are written into the figure until
         :meth:`dispose`. HoloViews draws each element of a frame with its own
         subplot, in the order of the overlay.
-    doc:
-        The document the figure is built for.
     margin:
         The figure's margin, as Panel's ``margin``.
     update_hooks:
@@ -64,31 +53,36 @@ class DirectFigure:
     def __init__(
         self,
         element: hv.Element | hv.Overlay,
-        layers: Sequence[FrameSource],
+        layers: Sequence[SessionComponents],
         *,
-        doc: Document,
         margin: int | tuple[int, ...],
         update_hooks: Sequence[Hook] = (),
     ) -> None:
-        # The configured renderer (see ``reduction``), in the mode Panel's
-        # HoloViews pane uses: only server mode attaches the plot to ``doc``.
+        # The configured renderer (see ``reduction``). In server mode it
+        # attaches the plot to the document passed, and gives that document
+        # its own theme. A document of its own keeps the session's theme, which
+        # the template set; Panel puts the figure into the session's document
+        # when it renders the pane.
         renderer = hv.renderer('bokeh').instance(mode='server')
-        self.plot = renderer.get_plot(element, doc=doc, margin=margin)
-        layer_sizes = [len(layer.frame.columns) for layer in layers]
+        self.plot = renderer.get_plot(element, doc=Document(), margin=margin)
+        frames = [layer.frame for layer in layers]
         subplots = (
             list(self.plot.subplots.values())
             if isinstance(element, hv.Overlay)
             else [self.plot]
         )
-        if len(subplots) != sum(layer_sizes):
+        columns = [c for frame in frames for c in frame.columns]
+        if len(subplots) != len(columns):
             raise RuntimeError(
-                f"Figure has {len(subplots)} subplots for {sum(layer_sizes)} elements"
+                f"Figure has {len(subplots)} subplots for {len(columns)} elements"
             )
         sources = [subplot.handles.get('source') for subplot in subplots]
-        ends = list(accumulate(layer_sizes))
+        if any(s is None for s, c in zip(sources, columns, strict=True) if c):
+            raise RuntimeError("Figure has no data source for an element to write")
+        sizes = [len(frame.columns) for frame in frames]
         self._layer_sources = [
             sources[end - size : end]
-            for size, end in zip(layer_sizes, ends, strict=True)
+            for size, end in zip(sizes, accumulate(sizes), strict=True)
         ]
         self._update_hooks = list(update_hooks)
         self._subscriptions = [
@@ -104,11 +98,7 @@ class DirectFigure:
         return self.plot.state
 
     def dispose(self) -> None:
-        """Stop showing the layers' frames, and release the figure.
-
-        Building it registered the plot with its document, which holds it for
-        the life of the session unless it is cleaned up.
-        """
+        """Stop showing the layers' frames, and release the figure."""
         for layer, callback in self._subscriptions:
             layer.unsubscribe(callback)
         self._subscriptions.clear()

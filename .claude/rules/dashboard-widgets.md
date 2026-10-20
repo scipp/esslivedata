@@ -58,12 +58,14 @@ module docstrings.
 ### Frames: written directly or drawn through HoloViews
 
 A plotter's computed state is a `Frame` (`dashboard/frame.py`): the element, a
-spec, and per-element data-source columns. A cell whose layers' frames all have
-columns is drawn as a `DirectFigure`: HoloViews builds it once, and later frames
-are written into its data sources. Only the autoscale hook runs per update; all
-other hooks run once at the build, so a hook must not rely on running per
-update. Everything else falls back to a session `DynamicMap`, and the rules
-below apply to it.
+spec, and per-element data-source columns. A cell is drawn as a `DirectFigure`
+when its layers' frames all have columns, its presenters pass frames through
+(`PresenterBase.PASSES_FRAMES_THROUGH`) and no layer has HoloViews compute its
+ranges (`Plotter.applies_ranges`): HoloViews builds the figure once, and later
+frames are written into its data sources. Only the autoscale hook runs per
+update; all other hooks run once at the build, so a hook must not rely on
+running per update. Everything else falls back to a session `DynamicMap`, and
+the rules below apply to it.
 
 - A spec change rebuilds the cell in every session (logged by the session
   pass). The spec is inferred from element types, dimensions and options, so

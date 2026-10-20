@@ -87,10 +87,11 @@ From coarse to fine: **grid → cell → layer → plotter → presenter → fig
   counts outputs whose template declares the coords or bin edges along a
   spectral dim. See
   *spectral range coords* in `src/ess/livedata/glossary.md`.
-- **Frame** — what a plotter computes once per update for all sessions: the
-  HoloViews element, its **frame spec** (everything a figure is built from
-  except the data arrays) and the data-source columns of each element
-  (`dashboard/frame.py`). Frames of equal spec can be shown by one figure.
+- **Frame** — what a plotter computes for one update (one flush cycle, see
+  *FrameClock*), once for all sessions: the HoloViews element, its **frame
+  spec** (everything a figure is built from except the data arrays) and the
+  data-source columns of each element (`dashboard/frame.py`). Frames of equal
+  spec can be shown by one figure.
 - **Presenter** — per-session handle on a plotter's frames; carries the dirty
   flag, and for frames drawn through HoloViews creates the `DynamicMap` fed by
   an `hv.streams.Pipe` (`dashboard/plots.py`).
@@ -99,7 +100,9 @@ From coarse to fine: **grid → cell → layer → plotter → presenter → fig
 - **Direct figure** — a figure HoloViews builds once from a frame, into whose
   data sources later frames of the same spec are written directly, skipping
   HoloViews' per-update rendering (`dashboard/direct_figure.py`). A cell gets
-  one when the frames of all its layers have columns.
+  one per view when the frames of all its layers have columns, all its
+  presenters pass frames through unchanged, and all its layers leave their
+  axis ranges to the cell's autoscale controller.
 - **Figure toolbar** — the Bokeh toolbar of a figure. A session can hide it
   ("Show plot toolbars" in the sidebar, or the URL parameter
   `?toolbars=hidden`); its tools stay in the figure's right-click menu. Not the
@@ -163,9 +166,10 @@ From coarse to fine: **grid → cell → layer → plotter → presenter → fig
   Never a timestamp, and never ordered or subtracted: a session asks "did this
   move since I rendered it?", not "by how much" or "when". Python ints are
   unbounded, so there is no wrap-around to handle.
-- **Frame** (dashboard) / **FrameClock** — the frame-gated flush cycle batching
-  plot updates per session (`dashboard/frame_clock.py`, ADR 0005). Unrelated to
-  the neutron pulse-frame sense.
+- **FrameClock** — the frame-gated flush cycle batching plot updates per
+  session (`dashboard/frame_clock.py`, ADR 0005). Each completed cycle commits
+  a frame for a grid, for which its layers' plotters compute a *Frame*.
+  Unrelated to the neutron pulse-frame sense.
 - **Reaper** — background teardown of dead browser sessions off their own IOLoop
   (`dashboard/session_updater.py`, ADR 0007).
 

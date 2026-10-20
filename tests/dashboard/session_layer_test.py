@@ -12,6 +12,8 @@ from ess.livedata.dashboard.plot_data_service import LayerId, PlotDataService
 from ess.livedata.dashboard.session_layer import SessionComponents, SessionLayer
 from tests.helpers.plot_fakes import FakePlotter
 
+hv.extension('bokeh')
+
 
 def _curves(*values: float) -> hv.Overlay:
     """A frame that can be written directly, with one curve per value."""
@@ -102,6 +104,20 @@ class TestSessionComponentsPushUpdate:
         assert received == []
         assert components.frame is original
 
+    def test_failing_subscriber_does_not_stop_the_others(
+        self, plotter, components, received
+    ):
+        def fail(frame: Frame) -> None:
+            raise RuntimeError('broken figure')
+
+        components.unsubscribe(received.append)
+        components.subscribe(fail)
+        components.subscribe(received.append)
+        plotter.compute(_curves(1))
+
+        assert components.push_update() is True
+        assert received == [plotter.get_frame()]
+
     def test_unsubscribed_callback_gets_no_frames(self, plotter, components, received):
         components.unsubscribe(received.append)
         plotter.compute(_curves(1))
@@ -184,9 +200,6 @@ class TestSessionComponentsLayoutShape:
 
 
 class TestSessionLayer:
-    def test_dmap_is_none_without_components(self, layer_id):
-        assert SessionLayer(layer_id=layer_id).dmap is None
-
     def test_push_update_returns_false_without_components(self, layer_id):
         assert SessionLayer(layer_id=layer_id).push_update() is False
 

@@ -1009,10 +1009,9 @@ class PlotGridTabs:
     def _show_popout(self, cell_id: CellId) -> None:
         """Open the cell's plot in a floating window (see ``plot_popout``).
 
-        Needs no repair pass of its own: the extra pane simply subscribes to
-        the layer pipes the cell already renders from, and the button that got
-        us here lives in a titlebar, so the cell is on the visible tab and
-        already live.
+        Needs no repair pass of its own: the extra view simply follows the
+        layers the cell already shows, and the button that got us here lives
+        in a titlebar, so the cell is on the visible tab and already live.
 
         A window already open for the cell is closed the way the user closes
         it, rebuilding the cell: the cell widget owns the window's view and

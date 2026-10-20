@@ -297,7 +297,7 @@ def test_computed_frame_renders_in_several_sessions(
     pipes = []
     for _ in range(2):
         doc = Document()
-        pipe = hv.streams.Pipe(data=plotter.get_cached_state())
+        pipe = hv.streams.Pipe(data=plotter.get_frame().element)
         dmap = plotter.create_presenter().present(pipe)
         # get_plot(doc=...) does not attach the models yet; add_root does.
         doc.add_root(BokehRenderer.instance().get_plot(dmap, doc=doc).state)
@@ -308,7 +308,7 @@ def test_computed_frame_renders_in_several_sessions(
     # Sessions keep receiving frames, and HoloViews runs hooks on each update.
     plotter.compute(data)
     for pipe in pipes:
-        pipe.send(plotter.get_cached_state())
+        pipe.send(plotter.get_frame().element)
 
 
 def test_session_test_covers_every_plotter() -> None:
@@ -450,7 +450,6 @@ def _direct_figure(plotter: Any) -> tuple[DirectFigure, SessionComponents]:
     figure = DirectFigure(
         components.frame.element,
         [components],
-        doc=Document(),
         margin=pn.pane.HoloViews.param.margin.default,
     )
     return figure, components

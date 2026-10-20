@@ -647,7 +647,8 @@ class TestComposeCellLegend:
     def _figure(self, plot_grid_tabs, plot_orchestrator, layers):
         from uuid import uuid4
 
-        from holoviews.plotting.bokeh import BokehRenderer
+        from bokeh.document import Document
+        from bokeh.plotting import figure as Figure
 
         from ess.livedata.dashboard.plot_orchestrator import PlotCell
         from ess.livedata.dashboard.widgets.plot_grid_tabs import CellId
@@ -656,7 +657,9 @@ class TestComposeCellLegend:
         grid_id = plot_orchestrator.add_grid(title='Test', nrows=1, ncols=1)
         cell_widget = plot_grid_tabs._build_cell(CellId(uuid4()), cell, grid_id)
         assert cell_widget.has_plot
-        return BokehRenderer.instance().get_plot(cell_widget._plot).state
+        root = cell_widget.build_plot_pane().get_root(Document())
+        (figure,) = root.select({'type': Figure})
+        return figure
 
     def test_fused_layers_keep_the_legend_beside_the_plot(
         self, plot_grid_tabs, plot_data_service, plot_orchestrator
@@ -851,7 +854,7 @@ class TestComposeTableLayer:
             output_name=output,
         )
         plotter.compute({PRIMARY: {key: sc.DataArray(sc.scalar(1.0, unit='counts'))}})
-        assert isinstance(plotter.get_cached_state(), hv.Table)
+        assert isinstance(plotter.get_frame().element, hv.Table)
 
         plot_data_service.job_started(layer.layer_id, plotter)
         plot_data_service.data_arrived(layer.layer_id)

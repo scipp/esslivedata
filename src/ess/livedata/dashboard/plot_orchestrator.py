@@ -1036,7 +1036,7 @@ class PlotOrchestrator:
         0→1 transition the layer is rebuilt from a DataService pull,
         synchronously on the caller's thread (the polling thread). This keeps
         the same poll pass's component rebuild seeing fresh
-        ``has_cached_state``.
+        ``get_frame``.
         """
         if self._plot_data_service.set_active(layer_id, token, active):
             self._refresh_layer(layer_id)

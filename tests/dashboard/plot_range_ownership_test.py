@@ -92,7 +92,7 @@ def _rendered_figures(plotter, data: dict) -> list[Plot]:
     """
     plotter.compute({'primary': data})
     obj = plotter.create_presenter().present(
-        hv.streams.Pipe(data=plotter.get_cached_state())
+        hv.streams.Pipe(data=plotter.get_frame().element)
     )
     if plotter.is_overlayable:
         obj = obj.opts(hooks=[build_controller_from_layers([plotter]).make_hook()])
