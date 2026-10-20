@@ -18,6 +18,7 @@ from holoviews.plotting.bokeh import BokehRenderer
 from ess.livedata.config.models import Interval, PolygonROI, RectangleROI
 from ess.livedata.config.workflow_spec import DataKey, WorkflowId
 from ess.livedata.dashboard.data_roles import PRIMARY, X_AXIS, Y_AXIS
+from ess.livedata.dashboard.direct_figure import DirectFigure
 from ess.livedata.dashboard.extractors import FullHistoryExtractor
 from ess.livedata.dashboard.plot_params import PlotAspectType
 from ess.livedata.dashboard.plots import TitleResolver
@@ -293,3 +294,100 @@ class TestPerEntryPlotters:
     ):
         compatible = plotter_registry.get_compatible_plotters({_key('det'): data})
         assert set(compatible) == {'lines'}
+
+
+# Plotters that draw coord values into the hover tool of the figure, so new
+# coords rebuild it. Detector coords do not change between updates.
+_COORDS_IN_SPEC = {'flatten'}
+
+
+def _vary(data: RoleData, *, coords: bool = True) -> RoleData:
+    """``data`` with other values, and unless disabled coords, of the same structure.
+
+    Float coords are shifted and datetimes advanced; integer coords label
+    entries (ROI indices), so they are kept.
+    """
+
+    def shift(coord: sc.Variable) -> sc.Variable:
+        if not coords:
+            return coord
+        if coord.dtype == sc.DType.datetime64:
+            return coord + sc.scalar(1, unit='s').to(unit=coord.unit)
+        if coord.dtype == sc.DType.float64:
+            return coord + sc.scalar(0.5, unit=coord.unit)
+        return coord
+
+    return {
+        role: {
+            key: (3 * da).assign_coords({n: shift(c) for n, c in da.coords.items()})
+            for key, da in arrays.items()
+        }
+        for role, arrays in data.items()
+    }
+
+
+def _computed_plotter(
+    plotter_name: str, make_data: Callable[[], RoleData], aspect: PlotAspectType | None
+) -> Any:
+    data = make_data()
+    dims = next((da.dims for da in data.get(PRIMARY, {}).values()), ())
+    plotter = plotter_registry[plotter_name].factory(
+        _make_params(plotter_name, aspect, dims)
+    )
+    plotter.compute(data)
+    return plotter
+
+
+@pytest.mark.parametrize(('plotter_name', 'make_data', 'aspect'), _session_cases())
+def test_frame_spec_does_not_change_with_values(
+    plotter_name: str,
+    make_data: Callable[[], RoleData],
+    aspect: PlotAspectType | None,
+) -> None:
+    """New values in the same structure must not rebuild the figure.
+
+    Each spec change rebuilds the cell in every session. A spec holding a value
+    that changes with the data (a per-frame closure, a data-dependent option)
+    would rebuild it on every update.
+    """
+    plotter = _computed_plotter(plotter_name, make_data, aspect)
+    spec = plotter.frame_spec()
+
+    plotter.compute(_vary(make_data(), coords=plotter_name not in _COORDS_IN_SPEC))
+
+    assert plotter.frame_spec() == spec
+
+
+def _source_data(figure: DirectFigure) -> list[dict[str, Any] | None]:
+    return [
+        None if source is None else dict(source.data)
+        for sources in figure._layer_sources
+        for source in sources
+    ]
+
+
+@pytest.mark.parametrize(('plotter_name', 'make_data', 'aspect'), _session_cases())
+def test_written_frame_matches_a_figure_built_from_it(
+    plotter_name: str,
+    make_data: Callable[[], RoleData],
+    aspect: PlotAspectType | None,
+) -> None:
+    """Writing a frame's columns gives the data sources HoloViews builds from it."""
+    plotter = _computed_plotter(plotter_name, make_data, aspect)
+    first = plotter.get_frame()
+    if first.columns is None:
+        pytest.skip('drawn through HoloViews')
+    figure = DirectFigure(first.element, [len(first.columns)], doc=Document())
+
+    plotter.compute(_vary(make_data(), coords=plotter_name not in _COORDS_IN_SPEC))
+    second = plotter.get_frame()
+    figure.write(0, second)
+
+    expected = DirectFigure(second.element, [len(second.columns)], doc=Document())
+    written, built = _source_data(figure), _source_data(expected)
+    assert [d is None or d.keys() for d in written] == [
+        d is None or d.keys() for d in built
+    ]
+    for got, want in zip(written, built, strict=True):
+        for name in want or {}:
+            np.testing.assert_array_equal(got[name], want[name], strict=True)

@@ -2,375 +2,235 @@
 # Copyright (c) 2025 Scipp contributors (https://github.com/scipp)
 """Tests for SessionLayer and SessionComponents."""
 
-import weakref
 from uuid import uuid4
 
 import holoviews as hv
 import pytest
 
+from ess.livedata.dashboard.frame import Frame
 from ess.livedata.dashboard.plot_data_service import LayerId, PlotDataService
-from ess.livedata.dashboard.plots import PresenterBase
 from ess.livedata.dashboard.session_layer import SessionComponents, SessionLayer
-from tests.helpers.plot_fakes import FakePlotter as EchoPlotter
+from tests.helpers.plot_fakes import FakePlotter
 
 
-class FakePlot:
-    """Fake plot state for testing."""
-
-    pass
-
-
-class FakePlotter:
-    """Fake plotter for testing."""
-
-    def __init__(self, *, scale: str = 'linear'):
-        self.scale = scale
-        self._cached_state = None
-        self._presenters: weakref.WeakSet = weakref.WeakSet()
-
-    def compute(self, data):
-        result = FakePlot()
-        self._cached_state = result
-        self.mark_presenters_dirty()
-
-    def get_cached_state(self):
-        return self._cached_state
-
-    def has_cached_state(self):
-        return self._cached_state is not None
-
-    def layout_shape(self):
-        return None
-
-    def create_presenter(self, *, owner=None):
-        presenter = FakePresenter(self, scale=self.scale, owner=owner)
-        self._presenters.add(presenter)
-        return presenter
-
-    def mark_presenters_dirty(self):
-        """Mark all registered presenters as having pending updates."""
-        for presenter in self._presenters:
-            presenter._mark_dirty()
+def _curves(*values: float) -> hv.Overlay:
+    """A frame that can be written directly, with one curve per value."""
+    return hv.Overlay([hv.Curve([v, v + 1], label=f'c{v}') for v in values])
 
 
-class FakePresenter(PresenterBase):
-    """Fake presenter for testing."""
-
-    def __init__(self, plotter, *, scale: str = 'linear', owner=None):
-        super().__init__(plotter, owner=owner)
-        self.scale = scale
-
-    def present(self, pipe: hv.streams.Pipe) -> hv.DynamicMap:
-        def render(data):
-            return hv.Curve([])
-
-        return hv.DynamicMap(render, streams=[pipe], cache_size=1)
+def _layout(n: int) -> hv.Layout:
+    """A frame drawn through HoloViews, of layout shape ``n`` curves."""
+    return hv.Layout([hv.Curve([i, i + 1]) for i in range(n)])
 
 
 @pytest.fixture
-def plot_data_service():
-    """Create a PlotDataService instance."""
+def plot_data_service() -> PlotDataService:
     return PlotDataService()
 
 
+@pytest.fixture
+def layer_id() -> LayerId:
+    return LayerId(uuid4())
+
+
+def _ready(
+    plot_data_service: PlotDataService, layer_id: LayerId, plotter: FakePlotter
+) -> None:
+    plot_data_service.job_started(layer_id, plotter)
+    plot_data_service.data_arrived(layer_id)
+
+
 class TestSessionComponentsCreate:
-    """Tests for SessionComponents.create() class method."""
-
-    def test_create_returns_components_when_data_available(self, plot_data_service):
-        """Test that create() returns components when data is available."""
-        layer_id = LayerId(uuid4())
-        plotter = FakePlotter()
-        plotter.compute({'data': 1})
-        plot_data_service.job_started(layer_id, plotter)
-        plot_data_service.data_arrived(layer_id)
-
-        state = plot_data_service.get(layer_id)
-        components = SessionComponents.create(state)
-
-        assert components is not None
-        assert isinstance(components.dmap, hv.DynamicMap)
-        assert components.presenter is not None
-        assert components.pipe is not None
-
-    def test_create_returns_none_when_no_displayable_plot(self, plot_data_service):
-        """Test that create() returns None when layer has no displayable plot."""
-        layer_id = LayerId(uuid4())
-        plotter = FakePlotter()
-        plot_data_service.job_started(layer_id, plotter)
-
-        state = plot_data_service.get(layer_id)
-        components = SessionComponents.create(state)
-
-        assert components is None
-
-
-class TestSessionComponentsUpdatePipe:
-    """Tests for SessionComponents.update_pipe() method."""
-
-    def test_update_pipe_returns_false_when_no_pending_update(self, plot_data_service):
-        """Test that update_pipe() returns False when no update pending."""
-        layer_id = LayerId(uuid4())
-        plotter = FakePlotter()
-        plotter.compute({'data': 1})
-        plot_data_service.job_started(layer_id, plotter)
-        plot_data_service.data_arrived(layer_id)
-
-        state = plot_data_service.get(layer_id)
-        components = SessionComponents.create(state)
-
-        result = components.update_pipe()
-
-        assert result is False
-
-    def test_update_pipe_returns_true_and_sends_when_pending_update(
-        self, plot_data_service
+    def test_create_starts_from_the_plotters_current_frame(
+        self, plot_data_service, layer_id
     ):
-        """Test that update_pipe() sends data and returns True when update pending."""
-        layer_id = LayerId(uuid4())
-        plotter = FakePlotter()
-        plotter.compute({'data': 1})
-        plot_data_service.job_started(layer_id, plotter)
-        plot_data_service.data_arrived(layer_id)
+        plotter = FakePlotter(cached_state=_curves(1))
+        _ready(plot_data_service, layer_id, plotter)
 
-        state = plot_data_service.get(layer_id)
-        components = SessionComponents.create(state)
+        components = SessionComponents.create(plot_data_service.get(layer_id))
 
-        plotter.compute({'data': 2})
+        assert components.frame is plotter.get_frame()
+        assert isinstance(components.dmap, hv.DynamicMap)
 
-        result = components.update_pipe()
+    def test_create_returns_none_when_no_displayable_plot(
+        self, plot_data_service, layer_id
+    ):
+        plot_data_service.job_started(layer_id, FakePlotter())
 
-        assert result is True
+        assert SessionComponents.create(plot_data_service.get(layer_id)) is None
 
-    def test_update_pipe_clears_dirty_flag(self, plot_data_service):
-        """Test that update_pipe() clears the dirty flag after sending."""
-        layer_id = LayerId(uuid4())
-        plotter = FakePlotter()
-        plotter.compute({'data': 1})
-        plot_data_service.job_started(layer_id, plotter)
-        plot_data_service.data_arrived(layer_id)
 
-        state = plot_data_service.get(layer_id)
-        components = SessionComponents.create(state)
+class TestSessionComponentsPushUpdate:
+    @pytest.fixture
+    def plotter(self) -> FakePlotter:
+        return FakePlotter(cached_state=_curves(1))
 
-        plotter.compute({'data': 2})
+    @pytest.fixture
+    def components(self, plotter, plot_data_service, layer_id) -> SessionComponents:
+        _ready(plot_data_service, layer_id, plotter)
+        return SessionComponents.create(plot_data_service.get(layer_id))
 
-        assert components.update_pipe() is True
-        assert components.update_pipe() is False
+    @pytest.fixture
+    def received(self, components) -> list[Frame]:
+        frames: list[Frame] = []
+        components.subscribe(frames.append)
+        return frames
+
+    def test_returns_false_when_no_pending_update(self, components):
+        assert components.push_update() is False
+
+    def test_pushes_frame_of_same_spec_to_subscribers(
+        self, plotter, components, received
+    ):
+        plotter.compute(_curves(1))
+
+        assert components.push_update() is True
+        assert received == [plotter.get_frame()]
+        assert components.frame is plotter.get_frame()
+
+    def test_clears_the_pending_update(self, plotter, components):
+        plotter.compute(_curves(1))
+
+        assert components.push_update() is True
+        assert components.push_update() is False
+
+    def test_frame_of_other_spec_is_not_pushed(self, plotter, components, received):
+        original = components.frame
+        plotter.compute(_curves(1, 2))
+
+        assert components.push_update() is False
+        assert received == []
+        assert components.frame is original
+
+    def test_unsubscribed_callback_gets_no_frames(self, plotter, components, received):
+        components.unsubscribe(received.append)
+        plotter.compute(_curves(1))
+
+        components.push_update()
+
+        assert received == []
+
+    def test_dynamicmap_shows_frames_pushed_after_it_was_created(
+        self, plotter, components
+    ):
+        dmap = components.dmap
+        frame = _curves(1)
+        plotter.compute(frame)
+
+        components.push_update()
+
+        assert dmap.streams[0].data is frame
+
+    def test_dynamicmap_starts_from_the_last_pushed_frame(self, plotter, components):
+        frame = _curves(1)
+        plotter.compute(frame)
+        components.push_update()
+
+        assert components.dmap.streams[0].data is frame
 
 
 class TestSessionComponentsIsValidFor:
-    """Tests for SessionComponents.is_valid_for() method."""
+    @pytest.fixture
+    def plotter(self) -> FakePlotter:
+        return FakePlotter(cached_state=_curves(1))
 
-    def test_is_valid_for_returns_true_for_same_plotter(self, plot_data_service):
-        """Test that is_valid_for() returns True for the original plotter."""
-        layer_id = LayerId(uuid4())
-        plotter = FakePlotter()
-        plotter.compute({'data': 1})
-        plot_data_service.job_started(layer_id, plotter)
-        plot_data_service.data_arrived(layer_id)
+    @pytest.fixture
+    def components(self, plotter, plot_data_service, layer_id) -> SessionComponents:
+        _ready(plot_data_service, layer_id, plotter)
+        return SessionComponents.create(plot_data_service.get(layer_id))
 
-        state = plot_data_service.get(layer_id)
-        components = SessionComponents.create(state)
-
+    def test_valid_for_the_same_plotter(self, plotter, components):
         assert components.is_valid_for(plotter) is True
 
-    def test_is_valid_for_returns_false_for_different_plotter(self, plot_data_service):
-        """Test that is_valid_for() returns False when plotter is replaced."""
-        layer_id = LayerId(uuid4())
-        plotter_a = FakePlotter()
-        plotter_a.compute({'data': 1})
-        plot_data_service.job_started(layer_id, plotter_a)
-        plot_data_service.data_arrived(layer_id)
+    def test_invalid_for_a_replaced_plotter(self, components):
+        assert components.is_valid_for(FakePlotter(cached_state=_curves(1))) is False
 
-        state = plot_data_service.get(layer_id)
-        components = SessionComponents.create(state)
-
-        plotter_b = FakePlotter()
-        plotter_b.compute({'data': 2})
-
-        assert components.is_valid_for(plotter_b) is False
-
-    def test_is_valid_for_returns_false_for_none(self, plot_data_service):
-        """Test that is_valid_for() returns False when plotter is None."""
-        layer_id = LayerId(uuid4())
-        plotter = FakePlotter()
-        plotter.compute({'data': 1})
-        plot_data_service.job_started(layer_id, plotter)
-        plot_data_service.data_arrived(layer_id)
-
-        state = plot_data_service.get(layer_id)
-        components = SessionComponents.create(state)
-
+    def test_invalid_for_none(self, components):
         assert components.is_valid_for(None) is False
 
+    def test_spec_change_invalidates_components(self, plotter, components):
+        plotter.compute(_curves(1, 2))
 
-class TestSessionLayer:
-    """Tests for SessionLayer."""
-
-    def test_dmap_returns_none_without_components(self):
-        """Test that dmap is None when no components exist."""
-        layer_id = LayerId(uuid4())
-        session_layer = SessionLayer(layer_id=layer_id)
-
-        assert session_layer.dmap is None
-
-    def test_dmap_returns_dmap_with_components(self, plot_data_service):
-        """Test that dmap returns the component's dmap when available."""
-        layer_id = LayerId(uuid4())
-        plotter = FakePlotter()
-        plotter.compute({'data': 1})
-        plot_data_service.job_started(layer_id, plotter)
-        plot_data_service.data_arrived(layer_id)
-
-        state = plot_data_service.get(layer_id)
-        components = SessionComponents.create(state)
-        session_layer = SessionLayer(layer_id=layer_id, components=components)
-
-        assert session_layer.dmap is components.dmap
-
-    def test_update_pipe_returns_false_without_components(self):
-        """Test that update_pipe() returns False when no components exist."""
-        layer_id = LayerId(uuid4())
-        session_layer = SessionLayer(layer_id=layer_id)
-
-        assert session_layer.update_pipe() is False
-
-
-class TestSessionLayerEnsureComponents:
-    """Tests for SessionLayer.ensure_components() method."""
-
-    def test_ensure_components_creates_when_data_available(self, plot_data_service):
-        """Test that ensure_components() creates components when data is available."""
-        layer_id = LayerId(uuid4())
-        plotter = FakePlotter()
-        plotter.compute({'data': 1})
-        plot_data_service.job_started(layer_id, plotter)
-        plot_data_service.data_arrived(layer_id)
-
-        state = plot_data_service.get(layer_id)
-        session_layer = SessionLayer(layer_id=layer_id)
-
-        assert session_layer.components is None
-
-        result = session_layer.ensure_components(state)
-
-        assert result is True
-        assert session_layer.components is not None
-        assert session_layer.dmap is not None
-
-    def test_ensure_components_returns_false_when_no_data(self, plot_data_service):
-        """Test that ensure_components() returns False when no displayable data."""
-        layer_id = LayerId(uuid4())
-        plotter = FakePlotter()
-        plot_data_service.job_started(layer_id, plotter)
-
-        state = plot_data_service.get(layer_id)
-        session_layer = SessionLayer(layer_id=layer_id)
-
-        result = session_layer.ensure_components(state)
-
-        assert result is False
-        assert session_layer.components is None
-
-    def test_ensure_components_keeps_valid_components(self, plot_data_service):
-        """Test that ensure_components() keeps existing valid components."""
-        layer_id = LayerId(uuid4())
-        plotter = FakePlotter()
-        plotter.compute({'data': 1})
-        plot_data_service.job_started(layer_id, plotter)
-        plot_data_service.data_arrived(layer_id)
-
-        state = plot_data_service.get(layer_id)
-        components = SessionComponents.create(state)
-        session_layer = SessionLayer(layer_id=layer_id, components=components)
-
-        original_components = session_layer.components
-
-        result = session_layer.ensure_components(state)
-
-        assert result is True
-        assert session_layer.components is original_components
-
-    def test_ensure_components_invalidates_on_plotter_change(self, plot_data_service):
-        """Test that ensure_components() invalidates components when plotter changes."""
-        layer_id = LayerId(uuid4())
-        plotter_a = FakePlotter()
-        plotter_a.compute({'data': 1})
-        plot_data_service.job_started(layer_id, plotter_a)
-        plot_data_service.data_arrived(layer_id)
-
-        state = plot_data_service.get(layer_id)
-        components = SessionComponents.create(state)
-        session_layer = SessionLayer(layer_id=layer_id, components=components)
-
-        # Simulate plotter replacement
-        plotter_b = FakePlotter()
-        plotter_b.compute({'data': 2})
-        plot_data_service.job_started(layer_id, plotter_b)
-        plot_data_service.data_arrived(layer_id)
-
-        new_state = plot_data_service.get(layer_id)
-        result = session_layer.ensure_components(new_state)
-
-        assert result is True
-        assert session_layer.components is not components  # New components created
-
-
-class TestSessionLayerWithStoppedState:
-    """Tests for SessionLayer with STOPPED state (workflow ended)."""
-
-    def test_ensure_components_works_with_stopped_state(self, plot_data_service):
-        """Test that ensure_components() works when layer is in STOPPED state."""
-        layer_id = LayerId(uuid4())
-        plotter = FakePlotter()
-        plotter.compute({'data': 1})
-        plot_data_service.job_started(layer_id, plotter)
-        plot_data_service.data_arrived(layer_id)
-        plot_data_service.job_stopped(layer_id)
-
-        state = plot_data_service.get(layer_id)
-        session_layer = SessionLayer(layer_id=layer_id)
-
-        result = session_layer.ensure_components(state)
-
-        assert result is True
-        assert session_layer.components is not None
-        assert isinstance(session_layer.dmap, hv.DynamicMap)
+        assert components.is_valid_for(plotter) is False
 
 
 class TestSessionComponentsLayoutShape:
-    """Components display only frames of the layout shape they were built with."""
-
-    @staticmethod
-    def _layout(n: int) -> hv.Layout:
-        return hv.Layout([hv.Curve([i, i + 1]) for i in range(n)])
+    """A DynamicMap of a layout accepts only frames of the shape it was built with."""
 
     @pytest.fixture
-    def plotter(self):
-        return EchoPlotter(cached_state=self._layout(1))
+    def plotter(self) -> FakePlotter:
+        return FakePlotter(cached_state=_layout(1))
 
     @pytest.fixture
-    def components(self, plotter, plot_data_service):
-        layer_id = LayerId(uuid4())
-        plot_data_service.job_started(layer_id, plotter)
-        plot_data_service.data_arrived(layer_id)
+    def components(self, plotter, plot_data_service, layer_id) -> SessionComponents:
+        _ready(plot_data_service, layer_id, plotter)
         return SessionComponents.create(plot_data_service.get(layer_id))
 
     def test_frame_of_same_shape_is_sent(self, plotter, components):
-        frame = self._layout(1)
+        pipe = components.dmap.streams[0]
+        frame = _layout(1)
         plotter.compute(frame)
 
-        assert components.update_pipe() is True
-        assert components.pipe.data is frame
+        assert components.push_update() is True
+        assert pipe.data is frame
 
     def test_frame_of_different_shape_is_not_sent(self, plotter, components):
-        original = components.pipe.data
-        plotter.compute(self._layout(2))
+        pipe = components.dmap.streams[0]
+        original = pipe.data
+        plotter.compute(_layout(2))
 
-        assert components.update_pipe() is False
-        assert components.pipe.data is original
+        assert components.push_update() is False
+        assert pipe.data is original
 
-    def test_shape_change_invalidates_components(self, plotter, components):
-        plotter.compute(self._layout(2))
 
-        assert components.is_valid_for(plotter) is False
+class TestSessionLayer:
+    def test_dmap_is_none_without_components(self, layer_id):
+        assert SessionLayer(layer_id=layer_id).dmap is None
+
+    def test_push_update_returns_false_without_components(self, layer_id):
+        assert SessionLayer(layer_id=layer_id).push_update() is False
+
+
+class TestSessionLayerEnsureComponents:
+    def test_creates_components_when_data_available(self, plot_data_service, layer_id):
+        _ready(plot_data_service, layer_id, FakePlotter(cached_state=_curves(1)))
+        session_layer = SessionLayer(layer_id=layer_id)
+
+        assert session_layer.ensure_components(plot_data_service.get(layer_id))
+        assert session_layer.components is not None
+
+    def test_returns_false_when_no_data(self, plot_data_service, layer_id):
+        plot_data_service.job_started(layer_id, FakePlotter())
+        session_layer = SessionLayer(layer_id=layer_id)
+
+        assert not session_layer.ensure_components(plot_data_service.get(layer_id))
+        assert session_layer.components is None
+
+    def test_keeps_valid_components(self, plot_data_service, layer_id):
+        _ready(plot_data_service, layer_id, FakePlotter(cached_state=_curves(1)))
+        state = plot_data_service.get(layer_id)
+        session_layer = SessionLayer(layer_id=layer_id)
+        session_layer.ensure_components(state)
+        original = session_layer.components
+
+        assert session_layer.ensure_components(state)
+        assert session_layer.components is original
+
+    def test_replaces_components_on_plotter_change(self, plot_data_service, layer_id):
+        _ready(plot_data_service, layer_id, FakePlotter(cached_state=_curves(1)))
+        session_layer = SessionLayer(layer_id=layer_id)
+        session_layer.ensure_components(plot_data_service.get(layer_id))
+        original = session_layer.components
+
+        _ready(plot_data_service, layer_id, FakePlotter(cached_state=_curves(1)))
+
+        assert session_layer.ensure_components(plot_data_service.get(layer_id))
+        assert session_layer.components is not original
+
+    def test_creates_components_for_stopped_layer(self, plot_data_service, layer_id):
+        _ready(plot_data_service, layer_id, FakePlotter(cached_state=_curves(1)))
+        plot_data_service.job_stopped(layer_id)
+        session_layer = SessionLayer(layer_id=layer_id)
+
+        assert session_layer.ensure_components(plot_data_service.get(layer_id))
+        assert session_layer.components is not None

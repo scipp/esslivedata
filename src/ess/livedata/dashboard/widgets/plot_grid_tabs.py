@@ -1396,14 +1396,14 @@ class PlotGridTabs:
 
         # 3 · Flush pending data to the figures this session renders: the
         # visible grid's cells, plus any cell a pop-out window keeps on
-        # screen, and only for a grid whose frame generation moved. Pipes are
-        # session state, independent of the widgets rendering them, and this is
-        # the only push of data into a session's pipes in the codebase — so it
-        # runs before the widget surgery below rather than behind it, where a
-        # cell disposal or build could starve every layer of the session at
-        # once (#1276). A layer whose components are created by a build below
-        # keeps its pending update; its fresh pipe already carries the same
-        # cached state, so nothing is missed.
+        # screen, and only for a grid whose frame generation moved. Session
+        # layers are session state, independent of the widgets rendering them,
+        # and this is the only push of frames into a session's figures in the
+        # codebase — so it runs before the widget surgery below rather than
+        # behind it, where a cell disposal or build could starve every layer of
+        # the session at once (#1276). A layer whose components are created by
+        # a build below keeps its pending update; its fresh components already
+        # start from the same frame, so nothing is missed.
         for cell_id, plan in plans.items():
             rendered = plan.grid_id == active_grid_id or cell_id in live_cells
             if not (rendered and plan.grid_id in stale_grids):
@@ -1411,7 +1411,7 @@ class PlotGridTabs:
             for layer_input in plan.inputs.layers:
                 session_layer = self._session_layers.get(layer_input.layer_id)
                 if session_layer is not None:
-                    session_layer.update_pipe()
+                    session_layer.push_update()
 
         # 4 · Act. First sweep cells that vanished from topology (cell or grid
         # removed). Membership is checked against the orchestrator directly,

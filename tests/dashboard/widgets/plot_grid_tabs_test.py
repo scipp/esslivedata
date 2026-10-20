@@ -1424,8 +1424,10 @@ _WORKFLOW_SOURCE = 'source1'
 _WORKFLOW_VIEW = 'result'
 
 
-def _workflow_plot_config(workflow_id: WorkflowId, *, view: str = _WORKFLOW_VIEW):
-    """A workflow-backed lines plot config subscribing to ``view``."""
+def _workflow_plot_config(
+    workflow_id: WorkflowId, *, view: str = _WORKFLOW_VIEW, plot_name: str = 'lines'
+):
+    """A workflow-backed plot config subscribing to ``view``."""
     from ess.livedata.dashboard.data_roles import PRIMARY
     from ess.livedata.dashboard.plot_orchestrator import DataSourceConfig, PlotConfig
     from ess.livedata.dashboard.plotter_registry import plotter_registry
@@ -1438,8 +1440,8 @@ def _workflow_plot_config(workflow_id: WorkflowId, *, view: str = _WORKFLOW_VIEW
                 view_name=view,
             )
         },
-        plot_name='lines',
-        params=plotter_registry.get_spec('lines').params(),
+        plot_name=plot_name,
+        params=plotter_registry.get_spec(plot_name).params(),
     )
 
 
@@ -1448,15 +1450,19 @@ def _add_workflow_cell(
     grid_id: GridId,
     geometry: CellGeometry,
     workflow_id: WorkflowId,
+    *,
+    plot_name: str = 'lines',
 ) -> CellId:
-    """Add a cell with a single workflow-backed lines layer.
+    """Add a cell with a single workflow-backed layer, lines by default.
 
     Unlike a static overlay, such a layer computes only once data has been
     pulled through its subscription, so it stays un-READY until the first
     viewer activates it.
     """
     cell_id = plot_orchestrator.add_cell(grid_id, geometry)
-    plot_orchestrator.add_layer(cell_id, _workflow_plot_config(workflow_id))
+    plot_orchestrator.add_layer(
+        cell_id, _workflow_plot_config(workflow_id, plot_name=plot_name)
+    )
     return cell_id
 
 
@@ -1465,8 +1471,14 @@ def _publish_layer_data(
     workflow_id: WorkflowId,
     *,
     view: str = _WORKFLOW_VIEW,
+    dims: tuple[str, ...] = ('x',),
+    scale: float = 1.0,
 ) -> None:
-    """Publish one result on the key a ``_add_workflow_cell`` layer subscribes to."""
+    """Publish one result on the key a ``_add_workflow_cell`` layer subscribes to.
+
+    Values are ``scale`` times 1, 2, 3, ... along ``dims``, each of length 3.
+    """
+    import numpy as np
     import scipp as sc
 
     from ess.livedata.config.workflow_spec import DataKey
@@ -1476,9 +1488,10 @@ def _publish_layer_data(
         source_name=_WORKFLOW_SOURCE,
         output_name=view,
     )
+    values = scale * np.arange(1.0, 3 ** len(dims) + 1).reshape((3,) * len(dims))
     data_service[key] = sc.DataArray(
-        sc.array(dims=['x'], values=[1.0, 2.0, 3.0]),
-        coords={'x': sc.array(dims=['x'], values=[0.0, 1.0, 2.0])},
+        sc.array(dims=list(dims), values=values),
+        coords={dim: sc.array(dims=[dim], values=[0.0, 1.0, 2.0]) for dim in dims},
     )
 
 
@@ -2230,14 +2243,16 @@ class TestDisposeSeversPipeSubscribers:
             layers=[layer],
         )
         plotter = FakePlotter(presenter_cls=CurvePresenter)
-        plotter.compute(hv.Curve([1, 2, 3]))
+        # Not a HoloViews element, so not writable directly: the cell renders
+        # the presenter's DynamicMap, which draws a curve whatever the state.
+        plotter.compute({'drawn': 'through HoloViews'})
         plot_data_service.job_started(layer.layer_id, plotter)
         plot_data_service.data_arrived(layer.layer_id)
         state = plot_data_service.get(layer.layer_id)
         session_layer = SessionLayer(layer_id=layer.layer_id)
         session_layer.ensure_components(state)
         plot_grid_tabs._session_layers[layer.layer_id] = session_layer
-        return cell, session_layer.components.pipe
+        return cell, _pipe(session_layer)
 
     def test_dispose_unsubscribes_rendered_plot(
         self, plot_grid_tabs, plot_data_service, plot_orchestrator
@@ -2274,39 +2289,12 @@ class TestDisposeSeversPipeSubscribers:
 
     # -- Poll-driven variants: the tests above drive _build_cell directly;
     # these route through _poll_for_plot_updates, covering the sweep's and the
-    # reconcile's own dispose ordering.
-
-    @staticmethod
-    def _revealed_workflow_cell(
-        plot_orchestrator,
-        plot_grid_tabs,
-        job_orchestrator,
-        data_service,
-        workflow_id,
-        *,
-        second_view: str | None = None,
-    ) -> CellId:
-        """Build (via the poll) an active-grid workflow cell with computed data."""
-        job_orchestrator.commit_workflow(workflow_id)
-        grid_id = plot_orchestrator.add_grid(title='G', nrows=2, ncols=2)
-        cell_id = _add_workflow_cell(plot_orchestrator, grid_id, _GEO, workflow_id)
-        if second_view is not None:
-            plot_orchestrator.add_layer(
-                cell_id, _workflow_plot_config(workflow_id, view=second_view)
-            )
-            _publish_layer_data(data_service, workflow_id, view=second_view)
-        _publish_layer_data(data_service, workflow_id)
-        plot_orchestrator.flush_frames()
-        _tick(plot_grid_tabs)
-        # The reveal's 0->1 activation computes the layers, so the build
-        # creates real session components (and their pipes).
-        plot_grid_tabs.tabs.active = plot_grid_tabs._static_tabs_count
-        assert plot_grid_tabs._cells[cell_id].has_plot
-        return cell_id
+    # reconcile's own dispose ordering. The slicer is drawn through a
+    # DynamicMap for good, so its cells keep a pipe.
 
     def _layer_pipes(self, plot_orchestrator, plot_grid_tabs, cell_id: CellId):
         return [
-            plot_grid_tabs._session_layers[layer.layer_id].components.pipe
+            _pipe(plot_grid_tabs._session_layers[layer.layer_id])
             for layer in plot_orchestrator.get_cell(cell_id).layers
         ]
 
@@ -2318,12 +2306,13 @@ class TestDisposeSeversPipeSubscribers:
         data_service,
         workflow_id,
     ):
-        cell_id = self._revealed_workflow_cell(
+        cell_id = _revealed_workflow_cell(
             plot_orchestrator,
             plot_grid_tabs,
             job_orchestrator,
             data_service,
             workflow_id,
+            plot_name='slicer',
         )
         (pipe,) = self._layer_pipes(plot_orchestrator, plot_grid_tabs, cell_id)
         plot_grid_tabs._cells[cell_id].view.get_root()
@@ -2349,12 +2338,13 @@ class TestDisposeSeversPipeSubscribers:
         stack one more operation on the long-lived session DynamicMap. A
         kdim-carrying DynamicMap (the slicer) fails from the second wrap on.
         """
-        cell_id = self._revealed_workflow_cell(
+        cell_id = _revealed_workflow_cell(
             plot_orchestrator,
             plot_grid_tabs,
             job_orchestrator,
             data_service,
             workflow_id,
+            plot_name='slicer',
         )
         (layer,) = plot_orchestrator.get_cell(cell_id).layers
         dmap = plot_grid_tabs._session_layers[layer.layer_id].components.dmap
@@ -2372,12 +2362,13 @@ class TestDisposeSeversPipeSubscribers:
         data_service,
         workflow_id,
     ):
-        cell_id = self._revealed_workflow_cell(
+        cell_id = _revealed_workflow_cell(
             plot_orchestrator,
             plot_grid_tabs,
             job_orchestrator,
             data_service,
             workflow_id,
+            plot_name='slicer',
         )
         (pipe,) = self._layer_pipes(plot_orchestrator, plot_grid_tabs, cell_id)
         baseline = len(pipe.subscribers)
@@ -2398,12 +2389,13 @@ class TestDisposeSeversPipeSubscribers:
         data_service,
         workflow_id,
     ):
-        cell_id = self._revealed_workflow_cell(
+        cell_id = _revealed_workflow_cell(
             plot_orchestrator,
             plot_grid_tabs,
             job_orchestrator,
             data_service,
             workflow_id,
+            plot_name='slicer',
             second_view='result2',
         )
         pipes = self._layer_pipes(plot_orchestrator, plot_grid_tabs, cell_id)
@@ -2416,6 +2408,150 @@ class TestDisposeSeversPipeSubscribers:
         plot_grid_tabs._cells[cell_id].view.get_root()
 
         assert [len(pipe.subscribers) for pipe in pipes] == settled
+
+
+def _pipe(session_layer) -> hv.streams.Pipe:
+    """The pipe feeding a session layer's DynamicMap."""
+    return next(
+        stream
+        for stream in session_layer.components.dmap.streams
+        if isinstance(stream, hv.streams.Pipe)
+    )
+
+
+def _revealed_workflow_cell(
+    plot_orchestrator,
+    plot_grid_tabs,
+    job_orchestrator,
+    data_service,
+    workflow_id,
+    *,
+    plot_name: str = 'lines',
+    second_view: str | None = None,
+) -> CellId:
+    """Build (via the poll) an active-grid workflow cell with computed data."""
+    dims = ('z', 'y', 'x') if plot_name == 'slicer' else ('x',)
+    job_orchestrator.commit_workflow(workflow_id)
+    grid_id = plot_orchestrator.add_grid(title='G', nrows=2, ncols=2)
+    cell_id = _add_workflow_cell(
+        plot_orchestrator, grid_id, _GEO, workflow_id, plot_name=plot_name
+    )
+    if second_view is not None:
+        plot_orchestrator.add_layer(
+            cell_id,
+            _workflow_plot_config(workflow_id, view=second_view, plot_name=plot_name),
+        )
+        _publish_layer_data(data_service, workflow_id, view=second_view, dims=dims)
+    _publish_layer_data(data_service, workflow_id, dims=dims)
+    plot_orchestrator.flush_frames()
+    _tick(plot_grid_tabs)
+    # The reveal's 0->1 activation computes the layers, so the build creates
+    # real session components.
+    plot_grid_tabs.tabs.active = plot_grid_tabs._static_tabs_count
+    assert plot_grid_tabs._cells[cell_id].has_plot
+    return cell_id
+
+
+def _shown_values(view) -> list[list[float]]:
+    """The values each curve of a rendered Panel view shows."""
+    from bokeh.models import ColumnDataSource
+
+    root = view.get_root()
+    return [
+        list(source.data['values'])
+        for source in root.select({'type': ColumnDataSource})
+        if 'values' in source.data
+    ]
+
+
+class TestDisposeStopsDirectWrites:
+    """A rebuilt or removed cell's figure must stop receiving frames.
+
+    A cell whose frames are written directly subscribes each of its figures to
+    its layers. A subscription left behind would write every later frame into a
+    figure nobody sees, for the rest of the session.
+    """
+
+    def _publish(self, plot_orchestrator, plot_grid_tabs, data_service, workflow_id):
+        for view in (_WORKFLOW_VIEW, 'result2'):
+            _publish_layer_data(data_service, workflow_id, view=view, scale=10.0)
+        plot_orchestrator.flush_frames()
+        _tick(plot_grid_tabs)
+
+    def test_figure_shows_new_frames(
+        self,
+        plot_orchestrator,
+        plot_grid_tabs,
+        job_orchestrator,
+        data_service,
+        workflow_id,
+    ):
+        cell_id = _revealed_workflow_cell(
+            plot_orchestrator,
+            plot_grid_tabs,
+            job_orchestrator,
+            data_service,
+            workflow_id,
+        )
+        view = plot_grid_tabs._cells[cell_id].view
+
+        self._publish(plot_orchestrator, plot_grid_tabs, data_service, workflow_id)
+
+        assert _shown_values(view) == [[10.0, 20.0, 30.0]]
+
+    def test_title_change_rebuild_stops_writes_to_the_old_figure(
+        self,
+        plot_orchestrator,
+        plot_grid_tabs,
+        job_orchestrator,
+        data_service,
+        workflow_id,
+    ):
+        cell_id = _revealed_workflow_cell(
+            plot_orchestrator,
+            plot_grid_tabs,
+            job_orchestrator,
+            data_service,
+            workflow_id,
+            second_view='result2',
+        )
+        old_view = plot_grid_tabs._cells[cell_id].view
+        plot_orchestrator.set_cell_title(cell_id, 'Renamed')
+        _tick(plot_grid_tabs)
+
+        self._publish(plot_orchestrator, plot_grid_tabs, data_service, workflow_id)
+
+        assert _shown_values(old_view) == [[1.0, 2.0, 3.0]] * 2
+        new_view = plot_grid_tabs._cells[cell_id].view
+        assert _shown_values(new_view) == [[10.0, 20.0, 30.0]] * 2
+
+    def test_cell_removal_stops_writes_to_its_figure(
+        self,
+        plot_orchestrator,
+        plot_grid_tabs,
+        job_orchestrator,
+        data_service,
+        workflow_id,
+    ):
+        cell_id = _revealed_workflow_cell(
+            plot_orchestrator,
+            plot_grid_tabs,
+            job_orchestrator,
+            data_service,
+            workflow_id,
+        )
+        (layer,) = plot_orchestrator.get_cell(cell_id).layers
+        components = plot_grid_tabs._session_layers[layer.layer_id].components
+        view = plot_grid_tabs._cells[cell_id].view
+
+        plot_orchestrator.remove_cell(cell_id)
+        _tick(plot_grid_tabs)
+        components.subscribe(lambda frame: None)  # the components outlive the cell
+        _publish_layer_data(data_service, workflow_id, scale=10.0)
+        plot_orchestrator.flush_frames()
+        components.push_update()
+
+        assert _shown_values(view) == [[1.0, 2.0, 3.0]]
 
 
 @pytest.fixture

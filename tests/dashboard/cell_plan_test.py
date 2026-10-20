@@ -33,17 +33,17 @@ from ess.livedata.dashboard.plot_orchestrator import (
 
 
 class _Plotter:
-    """Sentinel plotter: identity plus settable cached-state flag and shape."""
+    """Sentinel plotter: identity plus settable cached-state flag and frame spec."""
 
     def __init__(self, *, cached: bool = True) -> None:
         self.cached = cached
-        self.shape: tuple[type, ...] | None = None
+        self.spec: object = None
 
     def has_cached_state(self) -> bool:
         return self.cached
 
-    def layout_shape(self) -> tuple[type, ...] | None:
-        return self.shape
+    def frame_spec(self) -> object:
+        return self.spec
 
 
 def _grid_id() -> GridId:
@@ -285,16 +285,16 @@ class TestBuildInputs:
         after = cell_build_inputs(cell, {layer_id: snapshot}.get)
         assert before != after
 
-    def test_layout_shape_change_changes_inputs_without_a_transition(self):
-        """A layout gaining an item has no version bump; the input must still
-        change so the widget gets a DynamicMap that accepts the new shape."""
+    def test_frame_spec_change_changes_inputs_without_a_transition(self):
+        """A source gaining data has no version bump; the input must still
+        change so the widget gets a figure that accepts the new spec."""
         layer_id = LayerId(uuid4())
         plotter = _Plotter()
-        plotter.shape = (int,)
+        plotter.spec = ('one source',)
         snapshot = LayerSnapshot(state=LayerState.READY, version=4, plotter=plotter)
         cell = _cell(layer_id)
         before = cell_build_inputs(cell, {layer_id: snapshot}.get)
-        plotter.shape = (int, int)
+        plotter.spec = ('one source', 'another source')
         after = cell_build_inputs(cell, {layer_id: snapshot}.get)
         assert before != after
 

@@ -10,8 +10,9 @@ from typing import Any, ClassVar
 import holoviews as hv
 import pydantic
 
+from ess.livedata.dashboard.frame import Frame
 from ess.livedata.dashboard.plot_params import LegendPosition
-from ess.livedata.dashboard.plots import PresenterBase, TimeBounds, layout_shape
+from ess.livedata.dashboard.plots import PresenterBase, TimeBounds
 from ess.livedata.dashboard.range_hook import Axis
 
 
@@ -56,7 +57,7 @@ class FakePlotter:
         presenter_cls: type[PresenterBase] = EchoPresenter,
     ) -> None:
         self.name = name
-        self._cached_state = cached_state
+        self._frame = None if cached_state is None else Frame.from_element(cached_state)
         self._time_bounds = time_bounds
         self._presenter_cls = presenter_cls
         self._presenters: list[PresenterBase] = []
@@ -64,7 +65,7 @@ class FakePlotter:
     @property
     def is_overlayable(self) -> bool:
         # Mirror a real plotter: a Layout cannot share a figure with siblings.
-        return not isinstance(self._cached_state, hv.Layout)
+        return not isinstance(self.get_cached_state(), hv.Layout)
 
     @property
     def autoscale_axes(self) -> frozenset[Axis]:
@@ -86,17 +87,20 @@ class FakePlotter:
         self._time_bounds = value
 
     def compute(self, data: Any) -> None:
-        self._cached_state = data
+        self._frame = Frame.from_element(data)
         self.mark_presenters_dirty()
 
     def get_cached_state(self) -> Any:
-        return self._cached_state
+        return None if self._frame is None else self._frame.element
+
+    def get_frame(self) -> Frame | None:
+        return self._frame
 
     def has_cached_state(self) -> bool:
-        return self._cached_state is not None
+        return self._frame is not None
 
-    def layout_shape(self) -> tuple[type, ...] | None:
-        return layout_shape(self._cached_state)
+    def frame_spec(self) -> Any:
+        return None if self._frame is None else self._frame.spec
 
     def create_presenter(self, *, owner: Any = None) -> PresenterBase:
         presenter = self._presenter_cls(self, owner=owner)

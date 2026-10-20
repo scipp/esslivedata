@@ -16,9 +16,10 @@ disposal to the widget.
 
 from __future__ import annotations
 
+import functools
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 import holoviews as hv
 import panel as pn
@@ -28,6 +29,7 @@ from ess.livedata.config.workflow_spec import WorkflowId, WorkflowSpec
 
 from ..cell_autoscale import CellAutoscaleController, build_controller_from_layers
 from ..cell_plan import CellBuildInputs
+from ..direct_figure import DirectFigure, Hook
 from ..format_utils import extract_error_summary
 from ..hover_suspend import make_hover_suspend_hook
 from ..plot_data_service import LayerSnapshot, LayerState, PlotDataService
@@ -46,7 +48,7 @@ from ..plots import (
     merge_time_bounds,
 )
 from ..save_filename import build_save_filename_from_cell, make_save_filename_hook
-from ..session_layer import SessionLayer
+from ..session_layer import SessionComponents, SessionLayer
 from .plot_grid import GridCellStyles
 from .plot_widgets import (
     create_cell_titlebar,
@@ -435,6 +437,17 @@ class CellWidget:
         # One pane per rendered view of the plot: the grid cell's, plus one
         # per pop-out window. Kept so dispose() can unsubscribe them all.
         self._plot_panes: list[pn.pane.HoloViews] = []
+        # The same for views drawn as DirectFigures: each one's subscription
+        # to each layer's frames.
+        self._subscriptions: list[tuple[SessionComponents, Callable]] = []
+        # Set by _compose_plot when the cell has a plot.
+        self._layers: list[SessionComponents] = []
+        self._direct = False
+        # Hooks on the figure, or None for a non-overlayable layer, which
+        # has no single figure (see _compose_plot).
+        self._figure_hooks: list[Hook] | None = None
+        self._legend_opts: dict[str, Any] = {}
+        self._update_hooks: list[Hook] = []
         self._build_error: str | None = None
         self._title = (
             cell.user_title
@@ -577,6 +590,9 @@ class CellWidget:
         if self._autoscale_controller is not None:
             self._autoscale_controller.dispose()
             self._autoscale_controller = None
+        for components, callback in self._subscriptions:
+            components.unsubscribe(callback)
+        self._subscriptions.clear()
         for pane in self._plot_panes:
             # TODO(holoviz/panel#8710): delete this block once the minimum
             # panel version cleans up displaced GridSpec children itself, and
@@ -883,9 +899,14 @@ class CellWidget:
 
         Called once for the grid cell's own content and once more per pop-out
         window: a Panel component has a single parent, so a second view of the
-        cell needs its own pane over the same HoloViews object. Both then
-        repaint from the layers' single ``Pipe`` and share the cell's autoscale
-        controller, which installs its tools on both toolbars.
+        cell needs its own pane. All views share the cell's autoscale
+        controller, which installs its tools on each toolbar.
+
+        A cell whose layers' frames can all be written directly gets a
+        :class:`~..direct_figure.DirectFigure` per view, built from the frames
+        the layers currently show and subscribed to their later frames. Other
+        cells get a pane over the composed HoloViews object, repainting from the
+        layers' single ``Pipe``.
 
         Every pane built here is owned by this widget and severed by
         :meth:`dispose`; only call it for views the widget outlives.
@@ -895,6 +916,19 @@ class CellWidget:
         :
             Layout containing the plot pane and any DynamicMap kdim widgets.
         """
+        margin = {'margin': 0} if self._deps.compact_figures else {}
+        if self._direct:
+            figure = DirectFigure(
+                self._compose(),
+                [len(components.frame.columns) for components in self._layers],
+                doc=pn.state.curdoc,
+                update_hooks=self._update_hooks,
+            )
+            for index, components in enumerate(self._layers):
+                callback = functools.partial(figure.write, index)
+                components.subscribe(callback)
+                self._subscriptions.append((components, callback))
+            return pn.pane.Bokeh(figure.figure, sizing_mode='stretch_both', **margin)
         # Use .layout to preserve widgets for DynamicMaps with kdims.
         # When pn.pane.HoloViews wraps a DynamicMap with kdims, it generates
         # widgets. However, these widgets don't render when the pane is placed
@@ -924,10 +958,7 @@ class CellWidget:
         # - Each grid cell's plot remains independent
         # A compact figure also drops the pane's default margin around it.
         plot_pane_wrapper = CurrentStateHoloViews(
-            self._plot,
-            sizing_mode='stretch_both',
-            linked_axes=False,
-            **({'margin': 0} if self._deps.compact_figures else {}),
+            self._plot, sizing_mode='stretch_both', linked_axes=False, **margin
         )
         # Kept so dispose() can unsubscribe the rendered plots from the layer
         # pipes; see dispose().
@@ -936,9 +967,10 @@ class CellWidget:
 
     def _compose_plot(self) -> hv.DynamicMap | hv.Element | None:
         """
-        Compose the cell's plot from session-local DynamicMaps or static elements.
+        Compose the cell's plot from its layers' frames or DynamicMaps.
 
-        Ensures session components exist when data is available. Sets a
+        Ensures session components exist when data is available, and decides
+        whether the cell is drawn directly (see :meth:`build_plot_pane`). Sets a
         descriptive SaveTool filename on the result so that browser "Save"
         downloads get a meaningful name, suspends hover while an ROI edit tool
         is active, and builds the cell's autoscale controller as a side effect.
@@ -946,9 +978,9 @@ class CellWidget:
         Returns
         -------
         :
-            Composed plot from session DMaps/elements, or None if none available.
+            Composed plot, or None if no layer has data yet.
         """
-        plots = []
+        layers: list[SessionComponents] = []
         non_overlayable = False
         cell_plotters: list = []
         for layer in self._cell.layers:
@@ -974,53 +1006,29 @@ class CellWidget:
                 ):
                     non_overlayable = True
 
-            dmap = session_layer.dmap
-            if dmap is not None:
-                plots.append(dmap)
+            if session_layer.components is not None:
+                layers.append(session_layer.components)
 
-        if not plots:
+        if not layers:
             return None
-
-        result: hv.DynamicMap | hv.Element
-        if len(plots) == 1:
-            result = plots[0]
-        else:
-            # Collate so hooks survive for any number of DynamicMap layers.
-            # Without collation, HoloViews drops overlay-level opts (including
-            # hooks) when an Overlay contains 3+ DynamicMaps.  Collating first
-            # produces a single DynamicMap whose outputs are plain Overlays;
-            # opts applied afterwards land on the OverlayPlot and persist.
-            result = hv.Overlay(plots).collate()
-            # Sharing one figure also fuses the layers' update cost: a send on
-            # any one layer re-runs the OverlayPlot's range machinery over every
-            # subplot, so a layer's repaint grows with the number of layers in
-            # its cell. Only the data push stays proportional to the sender.
-            # `Plotter.applies_ranges` is what keeps that off the layers whose
-            # axes the cell writes itself.
-
-        hide_toolbar = (
-            not self.build_inputs.figure_toolbars and not self._deps.compact_figures
+        self._layers = layers
+        self._direct = all(
+            components.frame.columns is not None for components in layers
         )
+
         # Skip the cell-level hooks for a non-overlayable layer: a Layout's
         # sub-figures each carry their own SaveTool, and a Table's DataTable
         # widget has no figure for the SaveTool/autoscale hooks to act on. The
         # frame-aspect hook is not among these — it is declared per element type
         # by the plotter (see Plotter._sizing_opts), so it reaches every
         # sub-figure of a Layout regardless.
-        if self._deps.compact_figures:
-            result = _place_colorbar(result, below=bool(self.build_inputs.portrait))
         if non_overlayable:
-            if hide_toolbar:
-                # A Layout draws one toolbar for its sub-figures, on the grid
-                # around them, out of reach of the figure hooks. The option
-                # targets Layouts only, so it leaves a Table untouched.
-                result = result.opts(hv.opts.Layout(toolbar=None), clone=True)
-            return result
+            return self._compose()
 
         hooks: list = [make_hover_suspend_hook()]
         if self._deps.compact_figures:
             hooks.append(_compact_figure_hook)
-        elif hide_toolbar:
+        elif self._hides_toolbar:
             hooks.append(_hide_toolbar_hook)
         filename = build_save_filename_from_cell(
             self._cell,
@@ -1036,7 +1044,11 @@ class CellWidget:
         controller = build_controller_from_layers(cell_plotters)
         if controller is not None:
             self._autoscale_controller = controller
-            hooks.append(controller.make_hook())
+            autoscale_hook = controller.make_hook()
+            hooks.append(autoscale_hook)
+            # HoloViews runs hooks on every update; a DirectFigure runs only
+            # these after a write. The rest set up the figure once.
+            self._update_hooks = [autoscale_hook]
         # Collating hands the legend to the outer OverlayPlot, which does not
         # inherit the collated layers' legend opts, so the cell re-applies the
         # setting. Only layers that draw a legend declare one; the first such
@@ -1049,6 +1061,48 @@ class CellWidget:
             ),
             None,
         )
-        return with_figure_opts(
-            result, hooks=hooks, **legend_overlay_opts(legend_position)
-        )
+        self._figure_hooks = hooks
+        self._legend_opts = legend_overlay_opts(legend_position)
+        return self._compose()
+
+    @property
+    def _hides_toolbar(self) -> bool:
+        """Whether the figure hides its toolbar; compact figures keep theirs."""
+        return not self.build_inputs.figure_toolbars and not self._deps.compact_figures
+
+    def _compose(self) -> hv.DynamicMap | hv.Element:
+        """Overlay the layers' current frames or DynamicMaps, with the cell opts."""
+        result = self._overlay_layers()
+        if self._deps.compact_figures:
+            result = _place_colorbar(result, below=bool(self.build_inputs.portrait))
+        if self._figure_hooks is not None:
+            return with_figure_opts(
+                result, hooks=self._figure_hooks, **self._legend_opts
+            )
+        if self._hides_toolbar:
+            # A Layout draws one toolbar for its sub-figures, on the grid
+            # around them, out of reach of the figure hooks. The option targets
+            # Layouts only, so it leaves a Table untouched.
+            result = result.opts(hv.opts.Layout(toolbar=None), clone=True)
+        return result
+
+    def _overlay_layers(self) -> hv.DynamicMap | hv.Element:
+        if self._direct:
+            frames = [components.frame.element for components in self._layers]
+            # An Overlay of overlays flattens into one.
+            return frames[0] if len(frames) == 1 else hv.Overlay(frames)
+        plots = [components.dmap for components in self._layers]
+        if len(plots) == 1:
+            return plots[0]
+        # Collate so hooks survive for any number of DynamicMap layers.
+        # Without collation, HoloViews drops overlay-level opts (including
+        # hooks) when an Overlay contains 3+ DynamicMaps.  Collating first
+        # produces a single DynamicMap whose outputs are plain Overlays;
+        # opts applied afterwards land on the OverlayPlot and persist.
+        # Sharing one figure also fuses the layers' update cost: a send on
+        # any one layer re-runs the OverlayPlot's range machinery over every
+        # subplot, so a layer's repaint grows with the number of layers in
+        # its cell. Only the data push stays proportional to the sender.
+        # `Plotter.applies_ranges` is what keeps that off the layers whose
+        # axes the cell writes itself.
+        return hv.Overlay(plots).collate()

@@ -13,7 +13,7 @@ Correlation histograms receive pre-structured data from DataSubscriber:
 
 from __future__ import annotations
 
-from collections.abc import Iterator
+from collections.abc import Hashable, Iterator
 from dataclasses import dataclass
 from typing import Any, ClassVar
 
@@ -23,6 +23,7 @@ import scipp as sc
 from ess.livedata.config.workflow_spec import DataKey
 
 from .data_roles import PRIMARY, X_AXIS, Y_AXIS
+from .frame import Frame
 from .plot_params import (
     LegendPosition,
     Line1dParams,
@@ -305,9 +306,13 @@ class CorrelationHistogramPlotter:
         """Check if the renderer has computed state."""
         return self._renderer.has_cached_state()
 
-    def layout_shape(self) -> tuple[type, ...] | None:
+    def get_frame(self) -> Frame | None:
         """Delegate to the inner renderer, which holds the computed frame."""
-        return self._renderer.layout_shape()
+        return self._renderer.get_frame()
+
+    def frame_spec(self) -> Hashable:
+        """Delegate to the inner renderer, which holds the computed frame."""
+        return self._renderer.frame_spec()
 
     @property
     def is_overlayable(self) -> bool:

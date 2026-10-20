@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import json
 from abc import ABC, abstractmethod
+from collections.abc import Hashable
 from enum import StrEnum
 
 import holoviews as hv
@@ -18,6 +19,7 @@ import pydantic
 from pydantic_core import core_schema
 
 from ..parameter_models import parse_number_list
+from .frame import Frame
 
 
 class LineDash(StrEnum):
@@ -70,7 +72,7 @@ class StaticPlotter(ABC):
         from .plots import PresenterBase
 
         self._presenters: weakref.WeakSet[PresenterBase] = weakref.WeakSet()
-        self._cached_state: hv.Element | None = None
+        self._frame: Frame | None = None
 
     @abstractmethod
     def create_static_plot(self) -> hv.Element:
@@ -86,14 +88,22 @@ class StaticPlotter(ABC):
 
     def _set_cached_state(self, state: hv.Element) -> None:
         """Store computed state and mark all presenters dirty."""
-        self._cached_state = state
+        self._frame = Frame.from_element(state)
         # Convert to list to avoid RuntimeError if WeakSet is modified during iteration
         for presenter in list(self._presenters):
             presenter._mark_dirty()
 
     def get_cached_state(self) -> hv.Element | None:
         """Get the last computed state, or None if not yet computed."""
-        return self._cached_state
+        return None if self._frame is None else self._frame.element
+
+    def get_frame(self) -> Frame | None:
+        """The last computed frame, or None if not yet computed."""
+        return self._frame
+
+    def frame_spec(self) -> Hashable:
+        """Spec of the last computed frame, or None if not yet computed."""
+        return None if self._frame is None else self._frame.spec
 
     @property
     def time_bounds(self) -> None:
@@ -102,11 +112,7 @@ class StaticPlotter(ABC):
 
     def has_cached_state(self) -> bool:
         """Check if state has been computed."""
-        return self._cached_state is not None
-
-    def layout_shape(self) -> None:
-        """Static plots are single elements, never a layout."""
-        return None
+        return self._frame is not None
 
     def mark_presenters_dirty(self) -> None:
         """Mark all registered presenters as having pending updates."""

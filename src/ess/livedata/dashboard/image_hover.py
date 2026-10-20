@@ -10,7 +10,7 @@ index of the pixel under the cursor, so such axes are formatted by a
 
 from __future__ import annotations
 
-from collections.abc import Callable
+from dataclasses import dataclass
 from typing import Any
 
 import holoviews as hv
@@ -81,18 +81,30 @@ def axis_hover_formatter_args(
     }
 
 
-def make_hover_hook(
-    tooltips: list[tuple[str, str]], formatter_args: dict[str, dict[str, list]]
-) -> Callable[[Any, hv.Element], None]:
+@dataclass(frozen=True)
+class ImageHoverHook:
     """HoloViews hook giving the element's renderer a custom HoverTool.
 
     The hook creates the HoverTool and its formatters itself, so each session's
     figure gets its own models (see :meth:`Plotter.style_opts`). The tool is
     scoped to the element's own renderer, so overlaid layers keep their hover.
     Idempotent across re-renders: the arguments of the first render stay.
+
+    A value rather than a closure, so that the hooks of two frames compare
+    equal when their arguments do (see :class:`~.frame.Frame`).
+
+    Parameters
+    ----------
+    tooltips:
+        The HoverTool's tooltips.
+    formatter_args:
+        ``CustomJSHover`` args per formatted tooltip field.
     """
 
-    def hook(plot: Any, _element: hv.Element) -> None:
+    tooltips: list[tuple[str, str]]
+    formatter_args: dict[str, dict[str, list]]
+
+    def __call__(self, plot: Any, _element: hv.Element) -> None:
         if plot.handles.get('image_hover_installed'):
             return
         fig = plot.handles['plot']
@@ -105,14 +117,14 @@ def make_hover_hook(
                     fig.toolbar.tools = [t for t in fig.toolbar.tools if t is not tool]
         formatters = {
             field: CustomJSHover(args=args, code=AXIS_HOVER_FORMATTER_JS)
-            for field, args in formatter_args.items()
+            for field, args in self.formatter_args.items()
         }
         fig.add_tools(
-            HoverTool(tooltips=tooltips, formatters=formatters, renderers=[renderer])
+            HoverTool(
+                tooltips=self.tooltips, formatters=formatters, renderers=[renderer]
+            )
         )
         plot.handles['image_hover_installed'] = True
-
-    return hook
 
 
 def is_index_axis(data: sc.DataArray, dim: str) -> bool:

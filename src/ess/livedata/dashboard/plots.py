@@ -6,7 +6,7 @@ from __future__ import annotations
 
 import functools
 import weakref
-from collections.abc import Callable, Iterable, Iterator, Sequence
+from collections.abc import Callable, Hashable, Iterable, Iterator, Sequence
 from dataclasses import dataclass
 from typing import Any, ClassVar, Self
 
@@ -34,8 +34,9 @@ from ess.livedata.config.workflow_spec import DataKey
 from ess.livedata.core.timestamp import Timestamp
 
 from .data_roles import PRIMARY
+from .frame import Frame
 from .frame_aspect import make_frame_aspect_opts
-from .image_hover import index_axis_hover_spec, make_hover_hook
+from .image_hover import ImageHoverHook, index_axis_hover_spec
 from .plot_params import (
     ColorLimits,
     CombineMode,
@@ -554,14 +555,10 @@ class PresenterBase:
         """Check if there is a pending update to present."""
         return self._dirty
 
-    def consume_update(self) -> Any:
-        """
-        Consume the pending update and return the cached state.
-
-        Clears the dirty flag and returns the plotter's cached state.
-        """
+    def consume_update(self) -> Frame:
+        """Clear the dirty flag and return the plotter's current frame."""
         self._dirty = False
-        return self._plotter.get_cached_state()
+        return self._plotter.get_frame()
 
     def present(self, pipe: hv.streams.Pipe) -> hv.DynamicMap | hv.Element:
         """Create a DynamicMap or Element for this session from a data pipe."""
@@ -713,20 +710,6 @@ def _is_element_opt(opt: hv.Options) -> bool:
     return isinstance(element, type) and issubclass(element, hv.Element)
 
 
-def layout_shape(frame: Any) -> tuple[type, ...] | None:
-    """Types of a layout frame's items in order, or None for any other frame.
-
-    A DynamicMap returning ``hv.Layout`` is split into one sub-map per item of
-    the first frame it renders. Every later frame must have the same number of
-    items of each type; HoloViews logs any other frame as an error instead of
-    raising, and the plot stops updating for good (#1301). Frames with a
-    different shape therefore need a new DynamicMap, not a pipe send.
-    """
-    if not isinstance(frame, hv.Layout):
-        return None
-    return tuple(type(item) for item in frame)
-
-
 class Plotter:
     """
     Base class for plots that support autoscaling.
@@ -824,7 +807,7 @@ class Plotter:
         self._normalize_per_spectral_unit = normalize_per_spectral_unit
         self._normalize_to_rate = normalize_to_rate
         self._legend_position = legend_position
-        self._cached_state: Any | None = None
+        self._frame: Frame | None = None
         self._time_bounds: TimeBounds | None = None
         # Range targets, and the y-extents to fit them to an x-window (1-D
         # plotters only), set by _publish_range_targets.
@@ -1211,8 +1194,13 @@ class Plotter:
         return presenter
 
     def _set_cached_state(self, state: Any) -> None:
-        """Store computed state and mark all presenters dirty."""
-        self._cached_state = state
+        """Store computed state and mark all presenters dirty.
+
+        The state's :class:`~.frame.Frame` is derived here, once for every
+        session, and published in a single assignment: ``compute()`` runs on the
+        ingestion thread while sessions read the frame on the IOLoop.
+        """
+        self._frame = Frame.from_element(state)
         self.mark_presenters_dirty()
 
     def mark_presenters_dirty(self) -> None:
@@ -1224,7 +1212,17 @@ class Plotter:
 
     def get_cached_state(self) -> Any | None:
         """Get the last computed state, or None if not yet computed."""
-        return self._cached_state
+        frame = self._frame
+        return None if frame is None else frame.element
+
+    def get_frame(self) -> Frame | None:
+        """The last computed frame, or None if not yet computed."""
+        return self._frame
+
+    def frame_spec(self) -> Hashable:
+        """Spec of the last computed frame, or None if not yet computed."""
+        frame = self._frame
+        return None if frame is None else frame.spec
 
     @property
     def time_bounds(self) -> TimeBounds | None:
@@ -1242,11 +1240,7 @@ class Plotter:
 
     def has_cached_state(self) -> bool:
         """Check if state has been computed."""
-        return self._cached_state is not None
-
-    def layout_shape(self) -> tuple[type, ...] | None:
-        """:func:`layout_shape` of the cached state."""
-        return layout_shape(self.get_cached_state())
+        return self._frame is not None
 
     def _publish_range_targets(
         self,
@@ -1913,7 +1907,7 @@ class ImagePlotter(Plotter):
         # declares them next to it instead.
         hooks = list(self._sizing_opts.get('hooks', ()))
         if (spec := index_axis_hover_spec(histogram, plot_data)) is not None:
-            hooks.append(make_hover_hook(*spec))
+            hooks.append(ImageHoverHook(*spec))
         return histogram.opts(hooks=hooks) if hooks else histogram
 
     def _image_opts(self) -> dict[str, Any]:

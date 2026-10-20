@@ -19,7 +19,7 @@ import scipp as sc
 
 from ess.livedata.config.workflow_spec import DataKey
 
-from .image_hover import axis_hover_formatter_args, make_hover_hook
+from .image_hover import ImageHoverHook, axis_hover_formatter_args
 from .plot_params import PlotDisplayParams2d, RateMixin, TimeWindowMixin
 from .plots import ImagePlotter
 
@@ -265,7 +265,7 @@ class FlattenPlotter(ImagePlotter):
         )
 
         tooltips, formatter_args = self._build_hover_spec(data, x_names, y_names)
-        hover_hook = make_hover_hook(tooltips, formatter_args)
+        hover_hook = ImageHoverHook(tooltips, formatter_args)
         # Replaces the hooks of ImagePlotter.plot, including its own hover hook.
         return image.opts(hooks=[*self._sizing_opts.get('hooks', ()), hover_hook])
 
