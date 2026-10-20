@@ -269,14 +269,16 @@ class ReadbackCase:
     roi_type: type[RectangleROI] | type[PolygonROI]
     rois: dict[int, RectangleROI] | dict[int, PolygonROI]
 
-    def compute(self, rois: dict, *, end_ns: int, key: DataKey) -> None:
-        """Feed a readback with the time coords of one update into the plotter."""
-        readback = self.roi_type.to_concatenated_data_array(rois).assign_coords(
+    def readback(self, rois: dict, *, end_ns: int) -> sc.DataArray:
+        """A readback with the time coords of one update."""
+        return self.roi_type.to_concatenated_data_array(rois).assign_coords(
             start_time=sc.scalar(end_ns - 1_000_000_000, unit='ns'),
             time=sc.scalar(end_ns, unit='ns'),
             end_time=sc.scalar(end_ns, unit='ns'),
         )
-        self.plotter.compute({PRIMARY: {key: readback}})
+
+    def compute(self, rois: dict, *, end_ns: int, key: DataKey) -> None:
+        self.plotter.compute({PRIMARY: {key: self.readback(rois, end_ns=end_ns)}})
 
     def drawn(self) -> hv.Rectangles | hv.Polygons:
         (element,) = self.plotter.get_cached_state().values()
@@ -377,6 +379,48 @@ class TestSkipUnchangedReadback:
         case.compute(case.rois, end_ns=_T2, key=other_key)
 
         assert presenter.has_pending_update()
+
+    def test_readback_changed_in_place_marks_presenter_dirty(
+        self, case: ReadbackCase, result_key: DataKey
+    ):
+        # The input can be a view into a buffer that is overwritten in place, e.g.
+        # when another layer keeps a history of the same output.
+        presenter = case.plotter.create_presenter()
+        readback = case.readback(case.rois, end_ns=_T1)
+        case.plotter.compute({PRIMARY: {result_key: readback}})
+        presenter.consume_update()
+
+        readback.coords['x'].values[0] += 1.0
+        case.plotter.compute({PRIMARY: {result_key: readback}})
+
+        assert presenter.has_pending_update()
+
+    def test_changed_unit_marks_presenter_dirty(
+        self, case: ReadbackCase, presenter: PresenterBase, result_key: DataKey
+    ):
+        readback = case.readback(case.rois, end_ns=_T2)
+        readback.coords['x'].unit = 'mm'
+
+        case.plotter.compute({PRIMARY: {result_key: readback}})
+
+        assert presenter.has_pending_update()
+
+    def test_malformed_readback_draws_error_and_valid_one_redraws(
+        self, case: ReadbackCase, presenter: PresenterBase, result_key: DataKey
+    ):
+        malformed = case.readback(case.rois, end_ns=_T2).drop_coords('roi_index')
+
+        case.plotter.compute({PRIMARY: {result_key: malformed}})
+
+        assert presenter.has_pending_update()
+        (element,) = case.plotter.get_cached_state().values()
+        assert isinstance(element, hv.Text)
+        presenter.consume_update()
+
+        case.compute(case.rois, end_ns=_T2, key=result_key)
+
+        assert presenter.has_pending_update()
+        assert len(case.drawn()) == len(case.rois)
 
 
 class TestDataRequirementsDenyCoords:

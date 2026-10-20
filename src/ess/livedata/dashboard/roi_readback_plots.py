@@ -8,6 +8,7 @@ workflow outputs, with per-shape colors based on ROI index.
 
 from __future__ import annotations
 
+import threading
 from typing import Any, ClassVar
 
 import holoviews as hv
@@ -23,8 +24,6 @@ from ess.livedata.config.workflow_spec import DataKey
 
 from .data_roles import PRIMARY
 from .plots import Plotter, TitleResolver
-
-_TIME_COORDS = ('time', 'start_time', 'end_time')
 
 
 class ROIReadbackStyle(pydantic.BaseModel):
@@ -71,29 +70,19 @@ class _ROIReadbackPlotter(Plotter):
 
     The backend publishes the readback with every workflow update, also when the
     ROI geometry is unchanged. Recomputing would mark the presenters dirty, and
-    every session would re-send the layer each frame. In a cell that collates
-    several layers, each send is a separate HoloViews refresh that repeats the
-    figure-level overlay update (options, ranges over all subplots, hooks), whose
-    cost grows with the cell's layer count. An unchanged readback would cost one
-    such update per frame and session, plus its own subplot update.
-
-    The input counts as unchanged if it is identical to the last computed one
-    apart from its time coords. This is a superset of what the plot draws
-    (shapes, units, ROI indices for the colors). Sessions created later still
-    get the current state, as presenters start from :meth:`get_cached_state`.
-
-    Ignoring the time coords is specific to readbacks. In other outputs they are
-    drawn: ``time`` is the axis of a timeseries, and ``start_time``/``end_time``
-    scale the values of rate-normalized plots. Data layers also change on almost
-    every update and can be large, so copying and comparing their input would
-    cost more than it saves.
+    every session would re-send and redraw the layer each frame.
     """
 
     IS_ANNOTATION: ClassVar[bool] = True
 
     def __init__(self) -> None:
         super().__init__()
-        self._last_input: dict[DataKey, sc.DataArray] | None = None
+        self._last_rois: dict[DataKey, dict[int, ROI]] | None = None
+        # The ingest thread and a session revealing its grid can compute at the
+        # same time. Without the lock, an older readback could be drawn last
+        # while the newer one is recorded as drawn, so the older one would stay
+        # on screen until the ROIs change.
+        self._lock = threading.Lock()
 
     def compute(
         self,
@@ -102,30 +91,30 @@ class _ROIReadbackPlotter(Plotter):
         title_resolver: TitleResolver | None = None,
         **kwargs,
     ) -> None:
-        """Compute the plot, unless the readback is unchanged since the last call.
+        """Compute the plot, unless the ROIs are unchanged since the last call.
+
+        The ROIs are compared after parsing, as values: shapes, units and ROI
+        indices, which pick the colors. The parsed ROIs share no buffers with the
+        input, which may be a view into a buffer that is overwritten in place.
 
         The time bounds are refreshed either way: the readback layer counts
         towards its cell's freshness indicator, which would otherwise age while
         unchanged readbacks keep arriving.
         """
         primary = data.get(PRIMARY, {})
-        # Deep copy: the input may be a view into a buffer that is later
-        # overwritten in place, which would make every later readback compare
-        # equal to the stored one.
-        current = {
-            key: da.drop_coords([c for c in _TIME_COORDS if c in da.coords]).copy()
-            for key, da in primary.items()
-        }
-        last = self._last_input
-        if (
-            last is not None
-            and current.keys() == last.keys()
-            and all(sc.identical(da, last[key]) for key, da in current.items())
-        ):
-            self._refresh_time_bounds(primary)
-            return
-        super().compute(data, title_resolver=title_resolver, **kwargs)
-        self._last_input = current
+        try:
+            rois = {
+                key: ROI.from_concatenated_data_array(da) for key, da in primary.items()
+            }
+        except Exception:
+            # The base class draws the error placeholder for malformed input.
+            rois = None
+        with self._lock:
+            if rois is not None and rois == self._last_rois:
+                self._refresh_time_bounds(primary)
+                return
+            super().compute(data, title_resolver=title_resolver, **kwargs)
+            self._last_rois = rois
 
 
 class RectanglesReadbackPlotter(_ROIReadbackPlotter):
