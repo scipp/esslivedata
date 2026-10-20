@@ -1992,6 +1992,15 @@ class BarsPlotter(Plotter):
         resolver: TitleResolver,
         **kwargs,
     ) -> hv.Element:
+        """Draw overlaid 0D sources as one element, anything else per source.
+
+        One element per source makes each source a subplot of the overlay, with
+        its own glyph renderer, hover tool and range computation on every frame in
+        every session. Overlaid 0D sources therefore share one element. 1D sources
+        keep one element each: for a single element HoloViews draws every source
+        with every entry, adding empty slots for entries a source does not have.
+        A layout draws one figure per source, so it keeps one element per source.
+        """
         # Bokeh validates the axis factors of 0D bars (source) and 1D bars
         # (source, entry) together and fails when rendering, so mixed ranks are
         # rejected here, where the failure becomes an error frame.
@@ -2001,7 +2010,48 @@ class BarsPlotter(Plotter):
                 f"Cannot draw {' and '.join(f'{r}D' for r in ranks)} data as bars "
                 "in one plot."
             )
+        if ranks == [0] and self.layout_params.combine_mode == 'overlay':
+            return self._combine([self._scalar_bars(data, resolver)])
         return super()._build_result(data, resolver, **kwargs)
+
+    def _scalar_bars(
+        self, data: dict[DataKey, sc.DataArray], resolver: TitleResolver
+    ) -> hv.Bars:
+        """One bar per source of 0D ``data``, colored by source index."""
+        first_key, first = next(iter(data.items()))
+        vdim = self._vdim(
+            first, first_key, resolver.get_axis_label(first_key.output_name)
+        )
+        columns = (
+            [resolver.source(key.source_name) or key.source_name for key in data],
+            [float(da.value) for da in data.values()],
+            [self._colors[i % len(self._colors)] for i in range(len(data))],
+        )
+        return self._colored_bars(columns, ['source'], vdim)
+
+    def _vdim(
+        self, data: sc.DataArray, data_key: DataKey, output_display_name: str
+    ) -> hv.Dimension:
+        """Value dimension of bars drawn from ``data``, named after the output."""
+        return hv.Dimension(
+            data_key.output_name or 'values',
+            label=output_display_name or data_key.output_name or 'values',
+            unit=self._value_unit(data),
+        )
+
+    @staticmethod
+    def _colored_bars(
+        columns: tuple[Sequence[Any], ...], kdims: list[str], vdim: hv.Dimension
+    ) -> hv.Bars:
+        """Bars from ``columns`` (kdims..., value, color), colored per bar.
+
+        These opts are set per element rather than in :meth:`style_opts`: 0D bars
+        in a layout have no color column, and the tooltips name this element's
+        dims but leave out the color column.
+        """
+        return hv.Bars(columns, kdims=kdims, vdims=[vdim, 'color']).opts(
+            color='color', hover_tooltips=[*kdims, vdim.name]
+        )
 
     def plot(
         self,
@@ -2018,11 +2068,7 @@ class BarsPlotter(Plotter):
             raise ValueError(f"Expected 0D or 1D data, got {data.ndim}D")
 
         bar_label = source_display_name or data_key.source_name
-        unit = self._value_unit(data)
-        vdim_label = output_display_name or data_key.output_name or 'values'
-        vdim = hv.Dimension(
-            data_key.output_name or 'values', label=vdim_label, unit=unit
-        )
+        vdim = self._vdim(data, data_key, output_display_name)
         if data.ndim == 0:
             return hv.Bars(
                 [(bar_label, float(data.value))],
@@ -2041,17 +2087,9 @@ class BarsPlotter(Plotter):
         else:
             entries = [f'{dim}={v}' for v in coord]
             values, colors = data.values, _entry_colors(coord, self._colors)
-        kdims = ['source', dim]
-        # Static opts are declared once in style_opts(). These two stay per
-        # element: only 1D bars carry a 'color' column, since an explicit color on
-        # 0D bars would override HoloViews' color cycle, which tells sources and
-        # layers sharing a cell apart. The tooltips leave out that column and name
-        # the vdim, which is named after the output.
-        return hv.Bars(
-            ([bar_label] * len(entries), entries, values, colors),
-            kdims=kdims,
-            vdims=[vdim, 'color'],
-        ).opts(color='color', hover_tooltips=[*kdims, vdim.name])
+        return self._colored_bars(
+            ([bar_label] * len(entries), entries, values, colors), ['source', dim], vdim
+        )
 
     def style_opts(self) -> list[hv.Options]:
         return [
