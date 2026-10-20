@@ -11,6 +11,7 @@ essdiffraction>=26.5.0
 essreflectometry>=26.9.1
 esssans
 essspectroscopy>=26.9.0
+bokeh>=3.9,<3.10
 holoviews>=1.23.0
 panel>=1.9.3
 param
