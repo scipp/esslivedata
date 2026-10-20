@@ -2,12 +2,17 @@
 # Copyright (c) 2025 Scipp contributors (https://github.com/scipp)
 """Tests for ROI readback plotters."""
 
+from dataclasses import dataclass
+
 import holoviews as hv
 import pytest
 import scipp as sc
 
 from ess.livedata.config.models import Interval, PolygonROI, RectangleROI
 from ess.livedata.config.workflow_spec import DataKey, WorkflowId
+from ess.livedata.core.timestamp import Timestamp
+from ess.livedata.dashboard.data_roles import PRIMARY
+from ess.livedata.dashboard.plots import PresenterBase
 from ess.livedata.dashboard.plotter_registry import DataRequirements, plotter_registry
 from ess.livedata.dashboard.roi_readback_plots import (
     PolygonsReadbackParams,
@@ -252,6 +257,170 @@ class TestPolygonsReadbackPlotter:
 
         # Should render without error
         hv.render(result, backend='bokeh')
+
+
+_T1 = 1_700_000_000_000_000_000
+_T2 = _T1 + 1_000_000_000
+
+
+@dataclass
+class ReadbackCase:
+    plotter: RectanglesReadbackPlotter | PolygonsReadbackPlotter
+    roi_type: type[RectangleROI] | type[PolygonROI]
+    rois: dict[int, RectangleROI] | dict[int, PolygonROI]
+
+    def readback(self, rois: dict, *, end_ns: int) -> sc.DataArray:
+        """A readback with the time coords of one update."""
+        return self.roi_type.to_concatenated_data_array(rois).assign_coords(
+            start_time=sc.scalar(end_ns - 1_000_000_000, unit='ns'),
+            time=sc.scalar(end_ns, unit='ns'),
+            end_time=sc.scalar(end_ns, unit='ns'),
+        )
+
+    def compute(self, rois: dict, *, end_ns: int, key: DataKey) -> None:
+        self.plotter.compute({PRIMARY: {key: self.readback(rois, end_ns=end_ns)}})
+
+    def drawn(self) -> hv.Rectangles | hv.Polygons:
+        (element,) = self.plotter.get_cached_state().values()
+        return element
+
+    def drawn_colors(self) -> list[str]:
+        return list(self.drawn().dimension_values('color', expanded=False))
+
+
+class TestSkipUnchangedReadback:
+    """Unchanged readbacks must not trigger a re-send to every session."""
+
+    @pytest.fixture(params=['rectangles', 'polygons'])
+    def case(
+        self,
+        request: pytest.FixtureRequest,
+        rectangle_rois: dict[int, RectangleROI],
+        polygon_rois: dict[int, PolygonROI],
+    ) -> ReadbackCase:
+        if request.param == 'rectangles':
+            return ReadbackCase(
+                RectanglesReadbackPlotter.from_params(RectanglesReadbackParams()),
+                RectangleROI,
+                rectangle_rois,
+            )
+        return ReadbackCase(
+            PolygonsReadbackPlotter.from_params(PolygonsReadbackParams()),
+            PolygonROI,
+            polygon_rois,
+        )
+
+    @pytest.fixture
+    def presenter(self, case: ReadbackCase, result_key: DataKey) -> PresenterBase:
+        """A presenter that has consumed the first readback."""
+        presenter = case.plotter.create_presenter()
+        case.compute(case.rois, end_ns=_T1, key=result_key)
+        presenter.consume_update()
+        return presenter
+
+    def test_identical_readback_does_not_mark_presenter_dirty(
+        self, case: ReadbackCase, presenter: PresenterBase, result_key: DataKey
+    ):
+        case.compute(case.rois, end_ns=_T2, key=result_key)
+
+        assert not presenter.has_pending_update()
+        assert len(case.drawn()) == len(case.rois)
+
+    def test_identical_readback_refreshes_time_bounds(
+        self, case: ReadbackCase, presenter: PresenterBase, result_key: DataKey
+    ):
+        # The readback layer counts towards its cell's freshness indicator, which
+        # shows the oldest layer (merge_time_bounds), so a skipped update must
+        # still advance the bounds.
+        case.compute(case.rois, end_ns=_T2, key=result_key)
+
+        assert case.plotter.time_bounds.min_end == Timestamp.from_ns(_T2)
+
+    def test_changed_geometry_marks_presenter_dirty(
+        self, case: ReadbackCase, presenter: PresenterBase, result_key: DataKey
+    ):
+        _, *rest = sorted(case.rois)
+        fewer = {idx: case.rois[idx] for idx in rest}
+
+        case.compute(fewer, end_ns=_T2, key=result_key)
+
+        assert presenter.has_pending_update()
+        assert len(case.drawn()) == len(fewer)
+
+    def test_changed_roi_index_marks_presenter_dirty(
+        self, case: ReadbackCase, presenter: PresenterBase, result_key: DataKey
+    ):
+        # The same shapes under other indices are drawn in other colors.
+        colors_before = case.drawn_colors()
+        reindexed = {idx + 1: roi for idx, roi in case.rois.items()}
+
+        case.compute(reindexed, end_ns=_T2, key=result_key)
+
+        assert presenter.has_pending_update()
+        assert case.drawn_colors() != colors_before
+
+    def test_empty_readback_after_non_empty_clears_display(
+        self, case: ReadbackCase, presenter: PresenterBase, result_key: DataKey
+    ):
+        case.compute({}, end_ns=_T2, key=result_key)
+
+        assert presenter.has_pending_update()
+        assert len(case.drawn()) == 0
+
+    def test_readback_under_another_key_marks_presenter_dirty(
+        self, case: ReadbackCase, presenter: PresenterBase, result_key: DataKey
+    ):
+        other_key = DataKey(
+            workflow_id=result_key.workflow_id,
+            source_name='other_source',
+            output_name=result_key.output_name,
+        )
+
+        case.compute(case.rois, end_ns=_T2, key=other_key)
+
+        assert presenter.has_pending_update()
+
+    def test_readback_changed_in_place_marks_presenter_dirty(
+        self, case: ReadbackCase, result_key: DataKey
+    ):
+        # The input can be a view into a buffer that is overwritten in place, e.g.
+        # when another layer keeps a history of the same output.
+        presenter = case.plotter.create_presenter()
+        readback = case.readback(case.rois, end_ns=_T1)
+        case.plotter.compute({PRIMARY: {result_key: readback}})
+        presenter.consume_update()
+
+        readback.coords['x'].values[0] += 1.0
+        case.plotter.compute({PRIMARY: {result_key: readback}})
+
+        assert presenter.has_pending_update()
+
+    def test_changed_unit_marks_presenter_dirty(
+        self, case: ReadbackCase, presenter: PresenterBase, result_key: DataKey
+    ):
+        readback = case.readback(case.rois, end_ns=_T2)
+        readback.coords['x'].unit = 'mm'
+
+        case.plotter.compute({PRIMARY: {result_key: readback}})
+
+        assert presenter.has_pending_update()
+
+    def test_malformed_readback_draws_error_and_valid_one_redraws(
+        self, case: ReadbackCase, presenter: PresenterBase, result_key: DataKey
+    ):
+        malformed = case.readback(case.rois, end_ns=_T2).drop_coords('roi_index')
+
+        case.plotter.compute({PRIMARY: {result_key: malformed}})
+
+        assert presenter.has_pending_update()
+        (element,) = case.plotter.get_cached_state().values()
+        assert isinstance(element, hv.Text)
+        presenter.consume_update()
+
+        case.compute(case.rois, end_ns=_T2, key=result_key)
+
+        assert presenter.has_pending_update()
+        assert len(case.drawn()) == len(case.rois)
 
 
 class TestDataRequirementsDenyCoords:

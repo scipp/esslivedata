@@ -8,6 +8,7 @@ workflow outputs, with per-shape colors based on ROI index.
 
 from __future__ import annotations
 
+import threading
 from typing import Any, ClassVar
 
 import holoviews as hv
@@ -21,7 +22,10 @@ from ess.livedata.config.models import (
 )
 from ess.livedata.config.workflow_spec import DataKey
 
-from .plots import Plotter
+from .data_roles import PRIMARY
+from .plots import Plotter, TitleResolver
+
+_TIME_COORDS = ('time', 'start_time', 'end_time')
 
 
 class ROIReadbackStyle(pydantic.BaseModel):
@@ -63,15 +67,72 @@ class PolygonsReadbackParams(pydantic.BaseModel):
     )
 
 
-class RectanglesReadbackPlotter(Plotter):
+class _ROIReadbackPlotter(Plotter):
+    """Base for ROI readback plotters, which skip readbacks that did not change.
+
+    The backend publishes the readback with every workflow update, also when the
+    ROI geometry is unchanged. Recomputing would mark the presenters dirty, and
+    every session would re-send and redraw the layer each frame.
+    """
+
+    IS_ANNOTATION: ClassVar[bool] = True
+
+    def __init__(self) -> None:
+        super().__init__()
+        self._last_input: dict[DataKey, sc.DataArray] | None = None
+        # The ingest thread and a session revealing its grid can compute at the
+        # same time. Without the lock, an older readback could be drawn last
+        # while the newer one is recorded as drawn, so the older one would stay
+        # on screen until the ROIs change.
+        self._lock = threading.Lock()
+
+    def compute(
+        self,
+        data: dict[str, dict[DataKey, sc.DataArray]],
+        *,
+        title_resolver: TitleResolver | None = None,
+        **kwargs,
+    ) -> None:
+        """Compute the plot, unless the readback is unchanged since the last call.
+
+        The readback counts as unchanged if it is identical to the last computed
+        one apart from its time coords. This is a superset of what is drawn
+        (shapes, units, ROI indices for the colors), so a change in anything else
+        only costs a redundant redraw. Comparing the data arrays is much cheaper
+        than parsing them into ROIs.
+
+        The time bounds are refreshed either way: the readback layer counts
+        towards its cell's freshness indicator, which would otherwise age while
+        unchanged readbacks keep arriving.
+        """
+        primary = data.get(PRIMARY, {})
+        current = {
+            key: da.drop_coords([c for c in _TIME_COORDS if c in da.coords])
+            for key, da in primary.items()
+        }
+        with self._lock:
+            last = self._last_input
+            if (
+                last is not None
+                and current.keys() == last.keys()
+                and all(sc.identical(da, last[key]) for key, da in current.items())
+            ):
+                self._refresh_time_bounds(primary)
+                return
+            super().compute(data, title_resolver=title_resolver, **kwargs)
+            # Deep copy: the input may be a view into a buffer that is later
+            # overwritten in place, which would make every later readback
+            # compare equal to the stored one.
+            self._last_input = {key: da.copy() for key, da in current.items()}
+
+
+class RectanglesReadbackPlotter(_ROIReadbackPlotter):
     """
     Plotter for ROI rectangle readback data from workflows.
 
     Takes ROI readback DataArrays with roi_index coordinate and renders
     rectangles with per-shape colors based on the ROI index.
     """
-
-    IS_ANNOTATION: ClassVar[bool] = True
 
     def __init__(self, params: RectanglesReadbackParams) -> None:
         super().__init__()
@@ -174,15 +235,13 @@ class RectanglesReadbackPlotter(Plotter):
         return rectangles
 
 
-class PolygonsReadbackPlotter(Plotter):
+class PolygonsReadbackPlotter(_ROIReadbackPlotter):
     """
     Plotter for ROI polygon readback data from workflows.
 
     Takes ROI readback DataArrays with roi_index coordinate and renders
     polygons with per-shape colors based on the ROI index.
     """
-
-    IS_ANNOTATION: ClassVar[bool] = True
 
     def __init__(self, params: PolygonsReadbackParams) -> None:
         super().__init__()
