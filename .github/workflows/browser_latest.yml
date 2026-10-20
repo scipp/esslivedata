@@ -1,0 +1,52 @@
+name: Browser tests on latest Panel/HoloViews/Bokeh
+
+# Production installs from pyproject.toml, not the lock files, so a new Panel,
+# HoloViews or Bokeh release reaches the dashboard image before the locks move.
+# This job runs the browser tests against the newest releases, pre-releases
+# included, to see what such an upgrade breaks before it ships (#1419).
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - '.github/workflows/browser_latest.yml'
+
+jobs:
+  browser-latest:
+    name: Browser tests (latest Panel/HoloViews/Bokeh)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version-file: '.github/workflows/python-version-ci'
+          cache: 'pip'
+          cache-dependency-path: 'requirements/*.txt'
+      - run: python -m pip install --upgrade pip
+      - name: Install the locked test environment
+        run: |
+          python -m pip install -r requirements/test.txt playwright
+          python -m pip install --no-deps -e .
+      - name: Upgrade Panel, HoloViews and Bokeh
+        # Ignores the caps in pyproject.toml on purpose: pip reports the
+        # conflict and installs anyway. Bokeh follows Panel's own bound.
+        run: python -m pip install --pre --upgrade panel holoviews bokeh
+      - name: Report resolved versions
+        run: |
+          python -m pip list --format=freeze \
+            | grep -iE '^(bokeh|panel|holoviews|param|pyviz.comms)==' | tee versions.txt
+          {
+            echo '### Resolved versions'
+            echo '```'
+            cat versions.txt
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+      - name: Install chromium
+        # As in ci.yml: the runner image already has chromium's shared
+        # libraries, so a failing apt mirror only costs fonts.
+        run: |
+          timeout -k 30 180 playwright install-deps chromium || echo \
+            "::warning title=install-deps::apt failed or timed out; continuing without extra fonts."
+          playwright install chromium
+      - name: Run browser tests
+        run: python -m pytest -m browser -n 2 tests/dashboard/

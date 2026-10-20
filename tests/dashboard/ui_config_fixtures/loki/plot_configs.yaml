@@ -1,0 +1,167 @@
+plot_grids:
+  grids:
+  - cells:
+    - geometry:
+        col: 0
+        col_span: 1
+        row: 0
+        row_span: 1
+      layers:
+      - data_sources:
+          primary:
+            source_names:
+            - loki_detector_0
+            view_name: image
+            workflow_id: loki/detector_xy_projection/1
+        params: {}
+        plot_name: image
+    - geometry:
+        col: 1
+        col_span: 1
+        row: 0
+        row_span: 1
+      layers:
+      - data_sources:
+          primary:
+            source_names:
+            - loki_detector_1
+            view_name: image
+            workflow_id: loki/detector_xy_projection/1
+        params: {}
+        plot_name: image
+    - geometry:
+        col: 2
+        col_span: 1
+        row: 0
+        row_span: 1
+      layers:
+      - data_sources:
+          primary:
+            source_names:
+            - loki_detector_2
+            view_name: image
+            workflow_id: loki/detector_xy_projection/1
+        params: {}
+        plot_name: image
+    - geometry:
+        col: 3
+        col_span: 1
+        row: 0
+        row_span: 1
+      layers:
+      - data_sources:
+          primary:
+            source_names:
+            - loki_detector_3
+            view_name: image
+            workflow_id: loki/detector_xy_projection/1
+        params: {}
+        plot_name: image
+    - geometry:
+        col: 0
+        col_span: 1
+        row: 1
+        row_span: 1
+      layers:
+      - data_sources:
+          primary:
+            source_names:
+            - loki_detector_4
+            view_name: image
+            workflow_id: loki/detector_xy_projection/1
+        params: {}
+        plot_name: image
+    - geometry:
+        col: 1
+        col_span: 1
+        row: 1
+        row_span: 1
+      layers:
+      - data_sources:
+          primary:
+            source_names:
+            - loki_detector_5
+            view_name: image
+            workflow_id: loki/detector_xy_projection/1
+        params: {}
+        plot_name: image
+    - geometry:
+        col: 2
+        col_span: 1
+        row: 1
+        row_span: 1
+      layers:
+      - data_sources:
+          primary:
+            source_names:
+            - loki_detector_6
+            view_name: image
+            workflow_id: loki/detector_xy_projection/1
+        params: {}
+        plot_name: image
+    - geometry:
+        col: 3
+        col_span: 1
+        row: 1
+        row_span: 1
+      layers:
+      - data_sources:
+          primary:
+            source_names:
+            - loki_detector_7
+            view_name: image
+            workflow_id: loki/detector_xy_projection/1
+        params: {}
+        plot_name: image
+    - geometry:
+        col: 0
+        col_span: 1
+        row: 2
+        row_span: 1
+      layers:
+      - data_sources:
+          primary:
+            source_names:
+            - loki_detector_8
+            view_name: image
+            workflow_id: loki/detector_xy_projection/1
+        params: {}
+        plot_name: image
+    - geometry:
+        col: 1
+        col_span: 1
+        row: 2
+        row_span: 1
+      layers:
+      - data_sources:
+          primary:
+            source_names: &id001
+            - loki_detector_0
+            - loki_detector_1
+            - loki_detector_2
+            - loki_detector_3
+            - loki_detector_4
+            - loki_detector_5
+            - loki_detector_6
+            - loki_detector_7
+            - loki_detector_8
+            view_name: total_counts
+            workflow_id: loki/detector_xy_projection/1
+        params: {}
+        plot_name: timeseries
+    - geometry:
+        col: 2
+        col_span: 1
+        row: 2
+        row_span: 1
+      layers:
+      - data_sources:
+          primary:
+            source_names: *id001
+            view_name: total_counts
+            workflow_id: loki/detector_xy_projection/1
+        params: {}
+        plot_name: bars
+    ncols: 4
+    nrows: 3
+    title: Banks
