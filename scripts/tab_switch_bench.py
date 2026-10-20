@@ -23,7 +23,19 @@ Per branch under test (``[test]`` is what registers the LOKI workflows)::
     git switch <branch> && pip install -e ".[test,dashboard]"
     python ~/tsb.py run --repo . --out <branch>.json
 
-then ``python ~/tsb.py compare main.json <branch>.json``. The driver needs
+then ``python ~/tsb.py compare main.json <branch>.json``.
+
+``run --trace DIR`` also records a Chrome trace (with the V8 sampling profiler)
+of the baseline window and of every grid reveal into ``DIR``, and prints where
+the browser main thread spent its time: per category (scripting, style, layout,
+paint, ...), and the JavaScript functions with the most time inside tasks over
+50 ms. On real hardware the 1 Hz data updates stay below 50 ms, so these tasks
+are the reveal itself; compare with the baseline window to check. ``python
+~/tsb.py trace DIR`` repeats that analysis, and each file in
+``DIR`` opens in the Performance panel of Chrome DevTools. Tracing slows the
+browser down, so do not compare the numbers of a traced run with untraced ones.
+
+The driver needs
 ``pip install playwright && playwright install chromium`` in the environment
 that runs this script (or ``PLAYWRIGHT_CHROMIUM_EXECUTABLE`` pointing at a
 Chromium); ``--python`` selects a different environment for the dashboard.
@@ -32,6 +44,8 @@ Chromium); ``--python`` selects a different environment for the dashboard.
 from __future__ import annotations
 
 import argparse
+import bisect
+import gzip
 import json
 import os
 import socket
@@ -169,6 +183,51 @@ new PerformanceObserver((list) => {
 }).observe({type: 'longtask', buffered: true});
 '''
 
+TRACE_CATEGORIES = [
+    'toplevel',
+    'devtools.timeline',
+    'disabled-by-default-devtools.timeline',
+    'v8.execute',
+    'disabled-by-default-v8.cpu_profiler',
+    'blink.user_timing',
+]
+LONG_TASK_US = 50_000
+
+# Trace event name -> category. An unlisted event inherits the category of the
+# nearest listed ancestor, as in the DevTools summary.
+EVENT_CATEGORY = {
+    'RunTask': 'other',
+    'ThreadControllerImpl::RunTask': 'other',
+    **dict.fromkeys(
+        (
+            'FunctionCall',
+            'EvaluateScript',
+            'TimerFire',
+            'EventDispatch',
+            'FireAnimationFrame',
+            'FireIdleCallback',
+            'RunMicrotasks',
+            'v8.run',
+            'v8.callFunction',
+            'v8.compile',
+            'v8.compileModule',
+            'V8.CompileCode',
+            'V8.Execute',
+        ),
+        'scripting',
+    ),
+    **dict.fromkeys(
+        ('UpdateLayoutTree', 'RecalculateStyles', 'ParseAuthorStyleSheet'), 'style'
+    ),
+    'Layout': 'layout',
+    **dict.fromkeys(('PrePaint', 'Paint', 'PaintImage', 'Decode Image'), 'paint'),
+    **dict.fromkeys(
+        ('UpdateLayerTree', 'Layerize', 'CompositeLayers', 'Commit'), 'composite'
+    ),
+}
+GC_PREFIXES = ('MinorGC', 'MajorGC', 'V8.GC', 'BlinkGC', 'CppGC')
+TRACE_GROUPS = ('scripting', 'style', 'layout', 'paint', 'composite', 'gc', 'other')
+
 
 def _free_port() -> int:
     with socket.socket() as s:
@@ -203,6 +262,8 @@ def run(args: argparse.Namespace) -> None:
     from playwright.sync_api import sync_playwright
 
     repo = args.repo.resolve()
+    if args.trace:
+        args.trace.mkdir(parents=True, exist_ok=True)
     tmp = Path(tempfile.mkdtemp(prefix='tab-switch-bench-'))
     (tmp / 'site').mkdir()
     (tmp / 'site' / 'sitecustomize.py').write_text(SITECUSTOMIZE)
@@ -271,7 +332,9 @@ def run(args: argparse.Namespace) -> None:
                 metrics = cdp.send('Performance.getMetrics')['metrics']
                 return next(m['value'] for m in metrics if m['name'] == 'TaskDuration')
 
-            def window(label: str, action) -> None:
+            def window(label: str, action, trace: str | None = None) -> None:
+                if trace and args.trace:
+                    browser.start_tracing(page=page, categories=TRACE_CATEGORIES)
                 b0, t0 = busy_s(), time.time()
                 p0 = page.evaluate('performance.now()')
                 action()
@@ -291,11 +354,14 @@ def run(args: argparse.Namespace) -> None:
                         'longtask_max_ms': max(tasks, default=0),
                     }
                 )
+                if trace and args.trace:
+                    data = browser.stop_tracing()
+                    (args.trace / f'{trace}.json.gz').write_bytes(gzip.compress(data))
 
             def click(name: str) -> None:
                 page.locator('.bk-tab', has_text=name).first.click()
 
-            window(f'Workflows -> {GRID} (first)', lambda: click(GRID))
+            window(f'Workflows -> {GRID} (first)', lambda: click(GRID), 'reveal-first')
             time.sleep(args.settle)
             asset = min(
                 (
@@ -309,11 +375,16 @@ def run(args: argparse.Namespace) -> None:
                 key=len,
             ).split(str(port), 1)[1]
             threading.Thread(target=poll_static, args=(asset,), daemon=True).start()
-            window(f'baseline ({GRID})', lambda: None)
+            window(f'baseline ({GRID})', lambda: None, 'baseline')
             current = GRID
+            reveals = 0
             for _ in range(args.reps):
                 for name in SEQUENCE:
-                    window(f'{current} -> {name}', lambda name=name: click(name))
+                    trace = None
+                    if name == GRID:
+                        reveals += 1
+                        trace = f'reveal-{reveals:02d}'
+                    window(f'{current} -> {name}', lambda name=name: click(name), trace)
                     current = name
             browser.close()
     finally:
@@ -334,6 +405,7 @@ def run(args: argparse.Namespace) -> None:
         'bokeh': env.get('bokeh'),
         'query_impl': env.get('query_impl'),
         'headless': args.headless,
+        'traced': args.trace is not None,
         'marks': marks,
         'events': events,
         'probe': probe,
@@ -341,6 +413,8 @@ def run(args: argparse.Namespace) -> None:
     args.out.write_text(json.dumps(result))
     print(f'wrote {args.out} (server log: {log})')
     summarize(result, args.out.name)
+    if args.trace:
+        analyze_traces(args.trace)
 
 
 def _rows(result: dict) -> dict[str, dict[str, float]]:
@@ -392,6 +466,7 @@ def summarize(result: dict, name: str) -> None:
         f"\n{name}: {result['branch']} @ {result['commit']}, bokeh {result['bokeh']}, "
         f"serialization by {result['query_impl']}"
         f"{' (headless)' if result['headless'] else ''}"
+        f"{' (traced)' if result.get('traced') else ''}"
     )
     print('medians in ms over each window; n = repetitions')
     print(f"{'transition':34s}{'n':>3s}" + ''.join(f'{h:>14s}' for _, h in COLUMNS))
@@ -405,6 +480,202 @@ def summarize(result: dict, name: str) -> None:
 def compare(args: argparse.Namespace) -> None:
     for path in args.results:
         summarize(json.loads(path.read_text()), path.name)
+
+
+def _event_category(name: str) -> str | None:
+    if name.startswith(GC_PREFIXES):
+        return 'gc'
+    return EVENT_CATEGORY.get(name)
+
+
+def _load_trace(path: Path) -> list[dict]:
+    data = json.loads(gzip.decompress(path.read_bytes()))
+    return data['traceEvents'] if isinstance(data, dict) else data
+
+
+def _main_thread(events: list[dict]) -> tuple[int, int]:
+    """(pid, tid) of the renderer main thread that ran the most task time."""
+    mains = {
+        (e['pid'], e['tid'])
+        for e in events
+        if e.get('ph') == 'M'
+        and e.get('name') == 'thread_name'
+        and e['args'].get('name') == 'CrRendererMain'
+    }
+    busy = dict.fromkeys(mains, 0.0)
+    for e in events:
+        key = (e.get('pid'), e.get('tid'))
+        if key in busy and e.get('ph') == 'X' and e['name'] == 'RunTask':
+            busy[key] += e.get('dur', 0)
+    return max(busy, key=busy.get)
+
+
+def _thread_breakdown(
+    events: list[dict], thread: tuple[int, int]
+) -> tuple[dict[str, dict[str, float]], list[tuple[float, float]]]:
+    """Self time per category on one thread, and the long tasks.
+
+    Returns ``{'all' | 'long' | 'forced': {category: us}}``: all tasks, tasks over
+    50 ms, and style/layout run synchronously from JavaScript (e.g. by
+    ``getComputedStyle``). The second item lists the long tasks as (start, end).
+    """
+    spans = sorted(
+        (
+            (e['ts'], e['ts'] + e.get('dur', 0), e['name'])
+            for e in events
+            if (e.get('pid'), e.get('tid')) == thread and e.get('ph') == 'X'
+        ),
+        key=lambda s: (s[0], -s[1]),
+    )
+    totals = {k: dict.fromkeys(TRACE_GROUPS, 0.0) for k in ('all', 'long', 'forced')}
+    long_tasks: list[tuple[float, float]] = []
+    # Stack entries: [end, category, child time, is long task, under scripting].
+    stack: list[list] = []
+
+    def close(entry: list, start: float) -> None:
+        end, category, children, long_task, under_js = entry
+        self_us = end - start - children
+        totals['all'][category] += self_us
+        if long_task:
+            totals['long'][category] += self_us
+        if under_js and category in ('style', 'layout'):
+            totals['forced'][category] += self_us
+
+    starts: list[float] = []
+    for start, end, name in spans:
+        while stack and stack[-1][0] <= start:
+            close(stack.pop(), starts.pop())
+        parent = stack[-1] if stack else None
+        if parent is None and end - start <= 0:
+            continue
+        category = _event_category(name) or (parent[1] if parent else 'other')
+        if parent is not None:
+            end = min(end, parent[0])
+            parent[2] += end - start
+            long_task = parent[3]
+            under_js = parent[4] or parent[1] == 'scripting'
+        else:
+            long_task = end - start > LONG_TASK_US
+            if long_task:
+                long_tasks.append((start, end))
+            under_js = False
+        stack.append([end, category, 0.0, long_task, under_js])
+        starts.append(start)
+    while stack:
+        close(stack.pop(), starts.pop())
+    return totals, long_tasks
+
+
+def _frame_key(frame: dict) -> str:
+    name = frame.get('functionName') or '(anonymous)'
+    url = frame.get('url', '').rsplit('/', 1)[-1].split('?')[0]
+    if not url:
+        return name
+    return f"{name} {url}:{frame['lineNumber'] + 1}:{frame['columnNumber'] + 1}"
+
+
+def _profile_times(
+    events: list[dict], thread: tuple[int, int], long_tasks: list[tuple[float, float]]
+) -> tuple[dict[str, float], dict[str, float]]:
+    """Self and inclusive sampled time (us) per JS function inside long tasks."""
+    profiles: dict[str, dict] = {}
+    for e in events:
+        if e.get('pid') != thread[0] or e.get('ph') != 'P':
+            continue
+        data = e.get('args', {}).get('data', {})
+        prof = profiles.setdefault(
+            e['id'], {'tid': None, 'start': None, 'nodes': {}, 'samples': []}
+        )
+        if e['name'] == 'Profile':
+            prof['tid'], prof['start'] = e['tid'], data['startTime']
+        elif e['name'] == 'ProfileChunk':
+            cpu = data.get('cpuProfile', {})
+            for node in cpu.get('nodes', []):
+                prof['nodes'][node['id']] = node
+            prof['samples'].extend(
+                zip(cpu.get('samples', []), data.get('timeDeltas', []), strict=False)
+            )
+    prof = next(
+        (p for p in profiles.values() if p['tid'] == thread[1]),
+        max(profiles.values(), key=lambda p: len(p['samples']), default=None),
+    )
+    self_us: dict[str, float] = {}
+    incl_us: dict[str, float] = {}
+    if prof is None or prof['start'] is None:
+        return self_us, incl_us
+    starts = [s for s, _ in long_tasks]
+    times, ts = [], prof['start']
+    for _, delta in prof['samples']:
+        ts += delta
+        times.append(ts)
+    for i, (node_id, _) in enumerate(prof['samples'][:-1]):
+        ts, weight = times[i], times[i + 1] - times[i]
+        k = bisect.bisect_right(starts, ts) - 1
+        if k < 0 or ts >= long_tasks[k][1]:
+            continue
+        node = prof['nodes'].get(node_id)
+        if node is None:
+            continue
+        key = _frame_key(node['callFrame'])
+        self_us[key] = self_us.get(key, 0.0) + weight
+        seen = set()
+        while node is not None:
+            key = _frame_key(node['callFrame'])
+            if key not in seen:
+                seen.add(key)
+                incl_us[key] = incl_us.get(key, 0.0) + weight
+            node = prof['nodes'].get(node.get('parent'))
+    return self_us, incl_us
+
+
+def analyze_traces(directory: Path) -> None:
+    """Print the main-thread breakdown of the traces written by ``run --trace``."""
+    kinds = {'baseline': [], 'reveal-first': [], 'reveal': []}
+    for path in sorted(directory.glob('*.json.gz')):
+        stem = path.name.removesuffix('.json.gz')
+        kinds['reveal' if stem.removeprefix('reveal-').isdigit() else stem].append(path)
+    functions: dict[str, tuple[dict[str, float], dict[str, float]]] = {}
+    print(f'\n{directory}: browser main thread, ms per window (mean)')
+    header = f"{'':22s}" + ''.join(f'{g:>11s}' for g in (*TRACE_GROUPS, 'total'))
+    for kind, paths in kinds.items():
+        if not paths:
+            continue
+        sums = {k: dict.fromkeys(TRACE_GROUPS, 0.0) for k in ('all', 'long', 'forced')}
+        self_sum: dict[str, float] = {}
+        incl_sum: dict[str, float] = {}
+        for path in paths:
+            events = _load_trace(path)
+            thread = _main_thread(events)
+            totals, long_tasks = _thread_breakdown(events, thread)
+            for part, groups in totals.items():
+                for g, us in groups.items():
+                    sums[part][g] += us
+            s, i = _profile_times(events, thread, long_tasks)
+            for src, dst in ((s, self_sum), (i, incl_sum)):
+                for key, us in src.items():
+                    dst[key] = dst.get(key, 0.0) + us
+        n = len(paths)
+        functions[kind] = (
+            {k: v / n for k, v in self_sum.items()},
+            {k: v / n for k, v in incl_sum.items()},
+        )
+        print(f'\n{kind} (n={n})')
+        print(header)
+        for part, label in (
+            ('all', 'all tasks'),
+            ('long', 'tasks over 50 ms'),
+            ('forced', 'forced by JS'),
+        ):
+            row = [sums[part][g] / n / 1e3 for g in TRACE_GROUPS]
+            print(f'{label:22s}' + ''.join(f'{v:11.0f}' for v in (*row, sum(row))))
+    for kind in ('reveal', 'reveal-first', 'baseline'):
+        if kind not in functions:
+            continue
+        self_ms, incl_ms = functions[kind]
+        for title, table in (('self', self_ms), ('inclusive', incl_ms)):
+            print(f'\n{kind}: JS functions inside tasks over 50 ms, {title} ms')
+            for key, us in sorted(table.items(), key=lambda kv: -kv[1])[:25]:
+                print(f'{us / 1e3:8.1f}  {key}')
 
 
 def main() -> None:
@@ -425,10 +696,16 @@ def main() -> None:
     p_run.add_argument(
         '--channel', default=None, help="Playwright browser channel, e.g. 'chrome'"
     )
+    p_run.add_argument(
+        '--trace', type=Path, default=None, help='Directory for Chrome traces'
+    )
     p_run.set_defaults(func=run)
     p_cmp = sub.add_parser('compare', help='Print the summaries of result files')
     p_cmp.add_argument('results', type=Path, nargs='+')
     p_cmp.set_defaults(func=compare)
+    p_trace = sub.add_parser('trace', help='Analyze the traces of a run --trace')
+    p_trace.add_argument('dir', type=Path)
+    p_trace.set_defaults(func=lambda args: analyze_traces(args.dir))
     args = parser.parse_args()
     args.func(args)
 
