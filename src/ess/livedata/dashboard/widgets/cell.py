@@ -273,8 +273,9 @@ def _compact_figure_hook(plot, element) -> None:
     font for them. The tick labels keep their size, since they carry the
     values. The empty border above and right of the frame is narrowed.
 
-    Runs on every update, after HoloViews has applied its own axis styling,
-    which is what makes these settings stick. Idempotent.
+    For a figure drawn through HoloViews it runs on every update, after
+    HoloViews has applied its own axis styling, which is what makes these
+    settings stick. A direct figure keeps them from its build. Idempotent.
     """
     figure = plot.state
     figure.toolbar_inner = True

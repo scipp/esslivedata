@@ -14,8 +14,9 @@ A :class:`Frame` splits a computed HoloViews element into what a figure is
 
 Sessions write ``columns`` into figures they built from an earlier frame of the
 same spec, which skips HoloViews' per-update machinery entirely (#1407). A frame
-holding an element type without a column function here has no ``columns``; its
-spec then is only the frame's layout shape, and sessions render it through a
+holding an element type without a column function here, or with options its
+column function cannot mirror (a log-y histogram), has no ``columns``; its spec
+then is only the frame's layout shape, and sessions render it through a
 HoloViews ``DynamicMap`` instead.
 
 The arrays in ``columns`` are shared by every session's figure, so they must
@@ -30,6 +31,7 @@ from typing import Any
 
 import holoviews as hv
 import numpy as np
+from holoviews.core.util import dimension_sanitizer, isfinite
 
 Columns = dict[str, Any]
 
@@ -53,10 +55,85 @@ def _image_columns(image: hv.Image) -> Columns:
     }
 
 
-def _curve_columns(curve: hv.Curve) -> Columns:
-    """Columns of ``CurvePlot.get_data`` for a non-inverted, linear curve."""
-    x, y = curve.dimensions()[:2]
-    return {x.name: curve.dimension_values(0), y.name: curve.dimension_values(1)}
+def _values(element: hv.Element, index: int) -> np.ndarray:
+    """``element.dimension_values(index)`` without its per-call overhead.
+
+    ``dimension_values`` runs through HoloViews' data pipeline, which creates
+    param objects on every call and costs about 0.4 ms. It differs from this
+    only for dimensions with ``nodata`` set, which no plotter sets.
+    """
+    return element.interface.values(element, element.get_dimension(index))
+
+
+def _with_hover_columns(element: hv.Element, columns: Columns) -> Columns:
+    """``columns`` plus a column per dimension, as added for the hover tool.
+
+    Mirrors ``ElementPlot._get_hover_data`` for an element with a hover tool,
+    drawn on its own (not as part of an ``NdOverlay``).
+    """
+    for index, dim in enumerate(element.dimensions()):
+        name = dimension_sanitizer(dim.name)
+        if name not in columns:
+            columns[name] = _values(element, index)
+    return columns
+
+
+def _xy_columns(element: hv.Curve | hv.Scatter) -> Columns:
+    """Columns of ``CurvePlot.get_data`` or ``PointPlot.get_data``.
+
+    For a non-inverted element with a hover tool: a curve with linear
+    interpolation, or a scatter without jitter.
+    """
+    x, y = element.dimensions()[:2]
+    return _with_hover_columns(
+        element, {x.name: _values(element, 0), y.name: _values(element, 1)}
+    )
+
+
+def _histogram_columns(histogram: hv.Histogram) -> Columns | None:
+    """Columns of ``HistogramPlot.get_data`` for a non-inverted, linear-y histogram.
+
+    For a histogram with a hover tool. None on a log y-axis, where HoloViews adds
+    a ``bottom`` column when building the figure, filled with the start of the
+    y-range at that time, which a frame cannot know.
+    """
+    if hv.Store.lookup_options('bokeh', histogram, 'plot').kwargs.get('logy'):
+        return None
+    edges = histogram.interface.coords(histogram, histogram.kdims[0], edges=True)
+    columns = {'top': _values(histogram, 1), 'left': edges[:-1], 'right': edges[1:]}
+    return _with_hover_columns(histogram, columns)
+
+
+def _error_bars_columns(error_bars: hv.ErrorBars) -> Columns:
+    """Columns of ``ErrorPlot.get_data`` for vertical, symmetric error bars.
+
+    For error bars on a numeric or datetime (not categorical) x-axis.
+    """
+    base, value, error = (_values(error_bars, i) for i in range(3))
+    return {'base': base, 'lower': value - error, 'upper': value + error}
+
+
+def _spread_columns(spread: hv.Spread) -> Columns:
+    """Columns of ``SpreadPlot.get_data`` for a non-inverted, symmetric spread.
+
+    The band is a polygon running along the lower edge and back along the upper
+    one. As in ``SpreadPlot._split_area``, points with a non-finite coordinate,
+    lower or upper value are dropped and split the band into one polygon per run
+    of finite points, separated by a NaN (NaT for datetimes) point.
+    """
+    x, value, error = (_values(spread, i) for i in range(3))
+    lower, upper = value - error, value + error
+    finite = np.flatnonzero(isfinite(x) & isfinite(lower) & isfinite(upper))
+    if len(finite) == 0:
+        return {'x': [], 'y': []}
+    x_gap = (
+        np.array(['nat'], dtype=x.dtype) if x.dtype.kind in 'mM' else np.array([np.nan])
+    )
+    xs, ys = [], []
+    for run in np.split(finite, np.flatnonzero(np.diff(finite) > 1) + 1):
+        xs += [x[run], x[run][::-1], x_gap]
+        ys += [lower[run], upper[run][::-1], [np.nan]]
+    return {'x': np.concatenate(xs[:-1]), 'y': np.concatenate(ys[:-1])}
 
 
 def _text_spec(text: hv.Text) -> Hashable:
@@ -64,11 +141,15 @@ def _text_spec(text: hv.Text) -> Hashable:
 
 
 # Element types whose updates can be written directly, with the function
-# deriving their columns. Data the figure is built from goes into the spec
-# instead (see ``_SPEC_ONLY``).
-_COLUMNS: dict[type, Callable[[Any], Columns]] = {
+# deriving their columns, or returning None for options under which they cannot.
+# Data the figure is built from goes into the spec instead (see ``_SPEC_ONLY``).
+_COLUMNS: dict[type, Callable[[Any], Columns | None]] = {
     hv.Image: _image_columns,
-    hv.Curve: _curve_columns,
+    hv.Curve: _xy_columns,
+    hv.Scatter: _xy_columns,
+    hv.Histogram: _histogram_columns,
+    hv.ErrorBars: _error_bars_columns,
+    hv.Spread: _spread_columns,
 }
 
 # Element types drawn from their spec alone: their content is small and rarely
@@ -93,8 +174,7 @@ class Frame:
         docstring).
     columns:
         The columns of each element of ``element``, in order, or None if any of
-        them has a type that cannot be written directly. Spec-only elements
-        have empty columns.
+        them cannot be written directly. Spec-only elements have empty columns.
     """
 
     element: Any
@@ -105,17 +185,12 @@ class Frame:
     def from_element(cls, element: Any) -> Frame:
         """Derive the spec and columns of ``element``."""
         leaves = _leaves(element)
-        if leaves is None or not all(
-            type(leaf) in _COLUMNS or type(leaf) in _SPEC_ONLY for leaf in leaves
-        ):
+        columns = None if leaves is None else tuple(map(_columns, leaves))
+        if columns is None or None in columns:
             return cls(element=element, spec=layout_shape(element), columns=None)
         spec = (
             _options_spec(element) if isinstance(element, hv.Overlay) else None,
             tuple(_element_spec(leaf) for leaf in leaves),
-        )
-        columns = tuple(
-            _COLUMNS[type(leaf)](leaf) if type(leaf) in _COLUMNS else {}
-            for leaf in leaves
         )
         return cls(element=element, spec=spec, columns=columns)
 
@@ -132,6 +207,14 @@ def layout_shape(frame: Any) -> tuple[type, ...] | None:
     if not isinstance(frame, hv.Layout):
         return None
     return tuple(type(item) for item in frame)
+
+
+def _columns(element: hv.Element) -> Columns | None:
+    """Columns of ``element``, empty if spec-only, None if it cannot be written."""
+    if type(element) in _SPEC_ONLY:
+        return {}
+    columns = _COLUMNS.get(type(element))
+    return None if columns is None else columns(element)
 
 
 def _leaves(element: Any) -> list[hv.Element] | None:

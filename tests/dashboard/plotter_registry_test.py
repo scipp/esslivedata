@@ -20,7 +20,12 @@ from ess.livedata.config.workflow_spec import DataKey, WorkflowId
 from ess.livedata.dashboard.data_roles import PRIMARY, X_AXIS, Y_AXIS
 from ess.livedata.dashboard.direct_figure import DirectFigure
 from ess.livedata.dashboard.extractors import FullHistoryExtractor
-from ess.livedata.dashboard.plot_params import PlotAspectType
+from ess.livedata.dashboard.plot_params import (
+    ErrorDisplay,
+    Line1dRenderMode,
+    PlotAspectType,
+    PlotScale,
+)
 from ess.livedata.dashboard.plots import TitleResolver
 from ess.livedata.dashboard.plotter_registry import plotter_registry
 
@@ -68,11 +73,14 @@ def _key(source_name: str) -> DataKey:
     )
 
 
-def _array(sizes: dict[str, int], *, variances: bool = False) -> sc.DataArray:
+def _array(
+    sizes: dict[str, int], *, variances: bool = False, edges: str | None = None
+) -> sc.DataArray:
     """Counts on evenly spaced 1-D coords, as the slicer requires.
 
     With ``variances`` the 1-D line plotters draw error bars, whose endcaps are
-    Bokeh models of their own.
+    Bokeh models of their own. The coord of the ``edges`` dim holds bin edges,
+    which the 1-D line plotters need to draw a histogram.
     """
     values = np.arange(1.0, math.prod(sizes.values()) + 1).reshape(
         tuple(sizes.values())
@@ -85,7 +93,8 @@ def _array(sizes: dict[str, int], *, variances: bool = False) -> sc.DataArray:
             unit='counts',
         ),
         coords={
-            dim: sc.arange(dim, float(size), unit='m') for dim, size in sizes.items()
+            dim: sc.arange(dim, float(size + (dim == edges)), unit='m')
+            for dim, size in sizes.items()
         },
     )
 
@@ -110,7 +119,7 @@ def _roi_values() -> sc.DataArray:
 def _roi_history(n: int = 10) -> sc.DataArray:
     """Per-ROI output history shaped like the output of FullHistoryExtractor."""
     time = _history(n).coords['time']
-    return _array({'time': n, 'roi': 3}).assign_coords(
+    return _array({'time': n, 'roi': 3}, variances=True).assign_coords(
         time=time,
         start_time=time[0],
         end_time=time[-1],
@@ -134,18 +143,34 @@ _POLYGONS = PolygonROI.to_concatenated_data_array(
     {4: PolygonROI(x=[0.0, 2.0, 1.0], y=[0.0, 0.0, 1.0], x_unit='m', y_unit='m')}
 )
 
-# Input to every registered plotter that makes it draw its full frame.
+
+def _with_nan(da: sc.DataArray) -> sc.DataArray:
+    """``da`` with a NaN value, which splits an error band into two polygons."""
+    da = da.copy()
+    da.values[1] = np.nan
+    return da
+
+
+# Input to every registered plotter that makes it draw its full frame. The 1-D
+# line plotters draw a histogram only for data with bin edges.
 _DATA: dict[str, Callable[[], RoleData]] = {
     'image': lambda: _primary(_array({'y': 3, 'x': 4})),
     'lines': lambda: _primary(
-        _array({'x': 5}, variances=True), _array({'x': 5}, variances=True)
+        _with_nan(_array({'x': 5}, variances=True)),
+        _array({'x': 5}, variances=True, edges='x'),
     ),
     'timeseries': lambda: _primary(_history(), _history()),
     'bars': lambda: _primary(_array({}), _array({})),
     'table': lambda: _primary(_array({}), _array({})),
     'slicer': lambda: _primary(_array({'z': 2, 'y': 3, 'x': 4})),
     'flatten': lambda: _primary(_array({'a': 2, 'b': 3, 'c': 4})),
-    'overlay_1d': lambda: _primary(_array({'roi': 2, 'x': 5}, variances=True)),
+    # Integer entry coords such as ROI indices, which label the curves; ``_vary``
+    # keeps them.
+    'overlay_1d': lambda: _primary(
+        _array({'roi': 2, 'x': 5}, variances=True, edges='x').assign_coords(
+            roi=sc.array(dims=['roi'], values=[0, 4], dtype='int32', unit=None)
+        )
+    ),
     'timeseries_overlay': lambda: _primary(_roi_history(), _roi_history()),
     'correlation_histogram_1d': lambda: {
         **_primary(_history()),
@@ -182,45 +207,74 @@ _PARAMS: dict[str, dict[str, Any]] = {
 }
 
 
+def _line_variants(*log_axes: str) -> dict[str, dict[str, Any]]:
+    """Each line mode with each error display, and a log scale per axis.
+
+    Each mode and error display draws its own element type.
+    """
+    return {
+        f'{mode}-{errors}': {'line': {'mode': mode, 'errors': errors}}
+        for mode in Line1dRenderMode
+        for errors in ErrorDisplay
+    } | {f'log-{axis}': {'plot_scale': {axis: PlotScale.log}} for axis in log_axes}
+
+
+# Further params, each drawn with the input in ``_DATA``. A timeseries has a
+# datetime x-axis, which cannot be logarithmic.
+_PARAMS_VARIANTS: dict[str, dict[str, dict[str, Any]]] = {
+    'lines': _line_variants('x_scale', 'y_scale'),
+    'overlay_1d': _line_variants('x_scale', 'y_scale'),
+    'correlation_histogram_1d': _line_variants('x_scale', 'y_scale'),
+    'timeseries': _line_variants('y_scale'),
+    'timeseries_overlay': _line_variants('y_scale'),
+}
+
+
 def _session_cases() -> list:
-    """Each plotter and input, per aspect where it has one: a fixed aspect adds
-    hooks."""
+    """Each plotter and input, per aspect where it has one (a fixed aspect adds
+    hooks), and each params variant."""
     cases = []
     for name, entry in plotter_registry.items():
         inputs = {name: _DATA[name]} | {
             f'{name}-{variant}': make_data
             for variant, make_data in _DATA_VARIANTS.get(name, {}).items()
         }
-        for case_id, make_data in inputs.items():
-            if 'plot_aspect' in entry.spec.params.model_fields:
-                cases += [
-                    pytest.param(name, make_data, aspect, id=f'{case_id}-{aspect.name}')
-                    for aspect in (PlotAspectType.free, PlotAspectType.square)
-                ]
-            else:
-                cases.append(pytest.param(name, make_data, None, id=case_id))
+        aspects = (
+            {
+                f'-{aspect.name}': {'plot_aspect': {'aspect_type': aspect}}
+                for aspect in (PlotAspectType.free, PlotAspectType.square)
+            }
+            if 'plot_aspect' in entry.spec.params.model_fields
+            else {'': {}}
+        )
+        cases += [
+            pytest.param(name, make_data, params, id=case_id + suffix)
+            for case_id, make_data in inputs.items()
+            for suffix, params in aspects.items()
+        ]
+        cases += [
+            pytest.param(name, _DATA[name], params, id=f'{name}-{variant}')
+            for variant, params in _PARAMS_VARIANTS.get(name, {}).items()
+        ]
     return cases
 
 
 def _make_params(
-    plotter_name: str, aspect: PlotAspectType | None, dims: tuple[str, ...]
+    plotter_name: str, params: dict[str, Any], dims: tuple[str, ...]
 ) -> pydantic.BaseModel:
     """Params as the plot config modal builds them for data with ``dims``."""
     entry = plotter_registry[plotter_name]
     params_cls = (
         entry.params_factory(dims) if entry.params_factory else entry.spec.params
     )
-    params = _PARAMS.get(plotter_name, {})
-    if aspect is not None:
-        params = {**params, 'plot_aspect': {'aspect_type': aspect}}
-    return params_cls.model_validate(params)
+    return params_cls.model_validate({**_PARAMS.get(plotter_name, {}), **params})
 
 
-@pytest.mark.parametrize(('plotter_name', 'make_data', 'aspect'), _session_cases())
+@pytest.mark.parametrize(('plotter_name', 'make_data', 'params'), _session_cases())
 def test_computed_frame_renders_in_several_sessions(
     plotter_name: str,
     make_data: Callable[[], RoleData],
-    aspect: PlotAspectType | None,
+    params: dict[str, Any],
 ) -> None:
     """Every browser session renders the one frame that compute() shares.
 
@@ -231,8 +285,9 @@ def test_computed_frame_renders_in_several_sessions(
     """
     data = make_data()
     dims = next((da.dims for da in data.get(PRIMARY, {}).values()), ())
-    params = _make_params(plotter_name, aspect, dims)
-    plotter = plotter_registry[plotter_name].factory(params)
+    plotter = plotter_registry[plotter_name].factory(
+        _make_params(plotter_name, params, dims)
+    )
     plotter.compute(data)
 
     pipes = []
@@ -257,6 +312,7 @@ def test_session_test_covers_every_plotter() -> None:
     assert set(_DATA) == set(plotter_registry.keys())
     assert set(_PARAMS) <= set(plotter_registry.keys())
     assert set(_DATA_VARIANTS) <= set(plotter_registry.keys())
+    assert set(_PARAMS_VARIANTS) <= set(plotter_registry.keys())
 
 
 class TestPerEntryPlotters:
@@ -327,22 +383,22 @@ def _vary(data: RoleData, *, coords: bool = True) -> RoleData:
 
 
 def _computed_plotter(
-    plotter_name: str, make_data: Callable[[], RoleData], aspect: PlotAspectType | None
+    plotter_name: str, make_data: Callable[[], RoleData], params: dict[str, Any]
 ) -> Any:
     data = make_data()
     dims = next((da.dims for da in data.get(PRIMARY, {}).values()), ())
     plotter = plotter_registry[plotter_name].factory(
-        _make_params(plotter_name, aspect, dims)
+        _make_params(plotter_name, params, dims)
     )
     plotter.compute(data)
     return plotter
 
 
-@pytest.mark.parametrize(('plotter_name', 'make_data', 'aspect'), _session_cases())
+@pytest.mark.parametrize(('plotter_name', 'make_data', 'params'), _session_cases())
 def test_frame_spec_does_not_change_with_values(
     plotter_name: str,
     make_data: Callable[[], RoleData],
-    aspect: PlotAspectType | None,
+    params: dict[str, Any],
 ) -> None:
     """New values in the same structure must not rebuild the figure.
 
@@ -350,7 +406,7 @@ def test_frame_spec_does_not_change_with_values(
     that changes with the data (a per-frame closure, a data-dependent option)
     would rebuild it on every update.
     """
-    plotter = _computed_plotter(plotter_name, make_data, aspect)
+    plotter = _computed_plotter(plotter_name, make_data, params)
     spec = plotter.frame_spec()
 
     plotter.compute(_vary(make_data(), coords=plotter_name not in _COORDS_IN_SPEC))
@@ -366,14 +422,14 @@ def _source_data(figure: DirectFigure) -> list[dict[str, Any] | None]:
     ]
 
 
-@pytest.mark.parametrize(('plotter_name', 'make_data', 'aspect'), _session_cases())
+@pytest.mark.parametrize(('plotter_name', 'make_data', 'params'), _session_cases())
 def test_written_frame_matches_a_figure_built_from_it(
     plotter_name: str,
     make_data: Callable[[], RoleData],
-    aspect: PlotAspectType | None,
+    params: dict[str, Any],
 ) -> None:
     """Writing a frame's columns gives the data sources HoloViews builds from it."""
-    plotter = _computed_plotter(plotter_name, make_data, aspect)
+    plotter = _computed_plotter(plotter_name, make_data, params)
     first = plotter.get_frame()
     if first.columns is None:
         pytest.skip('drawn through HoloViews')

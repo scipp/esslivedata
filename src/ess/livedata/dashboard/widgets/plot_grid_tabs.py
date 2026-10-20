@@ -71,7 +71,12 @@ import structlog
 from ess.livedata.config.workflow_spec import WorkflowId, WorkflowSpec
 
 from ..batched_update import batched_update
-from ..cell_plan import SessionView, cell_build_inputs, desired_cells
+from ..cell_plan import (
+    CellBuildInputs,
+    SessionView,
+    cell_build_inputs,
+    desired_cells,
+)
 from ..notifications import show_error
 from ..plot_data_service import PlotDataService
 from ..plot_orchestrator import (
@@ -152,6 +157,41 @@ _PHONE_TAB_CSS = f"""
         margin-right: 0 !important;
     }}
 """
+
+
+def _log_frame_spec_changes(
+    cell_id: CellId, old: CellBuildInputs, new: CellBuildInputs
+) -> None:
+    """Log each layer whose frame spec alone changed between two builds of a cell.
+
+    Such a rebuild follows the data, not anything a user or a job did. A spec
+    that changes on most updates rebuilds the cell on most updates in every
+    session, at the cost of a full figure build each time, and this log is
+    where that shows.
+    """
+    old_layers = {layer.layer_id: layer for layer in old.layers}
+    for layer in new.layers:
+        before = old_layers.get(layer.layer_id)
+        if (
+            before is not None
+            and before.snapshot == layer.snapshot
+            and before.frame_spec != layer.frame_spec
+        ):
+            logger.info(
+                "Rebuilding cell %s: frame spec of layer %s changed %s",
+                cell_id,
+                layer.layer_id,
+                _first_difference(before.frame_spec, layer.frame_spec),
+            )
+
+
+def _first_difference(old: object, new: object, path: tuple[int, ...] = ()) -> str:
+    """Where two nested tuples first differ, and the values there, shortened."""
+    if isinstance(old, tuple) and isinstance(new, tuple) and len(old) == len(new):
+        for index, (a, b) in enumerate(zip(old, new, strict=True)):
+            if a != b:
+                return _first_difference(a, b, (*path, index))
+    return f'at {list(path)}: {old!r:.200} -> {new!r:.200}'
 
 
 def _phone_reload_button(theme: Theme) -> ReloadButton:
@@ -1446,6 +1486,8 @@ class PlotGridTabs:
             applied = self._cells.get(cell_id)
             if applied is not None and applied.build_inputs == plan.inputs:
                 continue
+            if applied is not None:
+                _log_frame_spec_changes(cell_id, applied.build_inputs, plan.inputs)
             self._insert_cell(
                 cell_id,
                 grids[plan.grid_id].cells[cell_id],

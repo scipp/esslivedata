@@ -87,11 +87,19 @@ From coarse to fine: **grid → cell → layer → plotter → presenter → fig
   counts outputs whose template declares the coords or bin edges along a
   spectral dim. See
   *spectral range coords* in `src/ess/livedata/glossary.md`.
-- **Presenter** — per-session bridge from a plotter's cached state to a
-  HoloViews `DynamicMap` via an `hv.streams.Pipe`; carries the dirty flag
-  (`dashboard/plots.py`).
+- **Frame** — what a plotter computes once per update for all sessions: the
+  HoloViews element, its **frame spec** (everything a figure is built from
+  except the data arrays) and the data-source columns of each element
+  (`dashboard/frame.py`). Frames of equal spec can be shown by one figure.
+- **Presenter** — per-session handle on a plotter's frames; carries the dirty
+  flag, and for frames drawn through HoloViews creates the `DynamicMap` fed by
+  an `hv.streams.Pipe` (`dashboard/plots.py`).
 - **Figure** — the rendered HoloViews/Bokeh object placed in the document.
   Reserved for the rendered artifact; not a synonym for plotter or layer.
+- **Direct figure** — a figure HoloViews builds once from a frame, into whose
+  data sources later frames of the same spec are written directly, skipping
+  HoloViews' per-update rendering (`dashboard/direct_figure.py`). A cell gets
+  one when the frames of all its layers have columns.
 - **Figure toolbar** — the Bokeh toolbar of a figure. A session can hide it
   ("Show plot toolbars" in the sidebar, or the URL parameter
   `?toolbars=hidden`); its tools stay in the figure's right-click menu. Not the
