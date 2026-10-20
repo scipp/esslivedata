@@ -23,6 +23,7 @@ import scipp as sc
 from ess.livedata.config.workflow_spec import DataKey
 
 from .data_roles import PRIMARY, X_AXIS, Y_AXIS
+from .frame import Frame
 from .plot_params import (
     LegendPosition,
     Line1dParams,
@@ -292,22 +293,19 @@ class CorrelationHistogramPlotter:
 
         self._renderer.compute({PRIMARY: histograms}, title_resolver=title_resolver)
 
-    def get_cached_state(self) -> Any | None:
-        """Get the last computed state from the renderer."""
-        return self._renderer.get_cached_state()
-
     @property
     def time_bounds(self) -> TimeBounds | None:
         """Time bounds of the most recently computed data (from the renderer)."""
         return self._renderer.time_bounds
 
-    def has_cached_state(self) -> bool:
-        """Check if the renderer has computed state."""
-        return self._renderer.has_cached_state()
-
-    def layout_shape(self) -> tuple[type, ...] | None:
+    def get_frame(self) -> Frame | None:
         """Delegate to the inner renderer, which holds the computed frame."""
-        return self._renderer.layout_shape()
+        return self._renderer.get_frame()
+
+    @property
+    def applies_ranges(self) -> bool:
+        """Delegate to the inner renderer, which draws the figure."""
+        return self._renderer.applies_ranges
 
     @property
     def is_overlayable(self) -> bool:

@@ -5,8 +5,13 @@ Behavior tests for plot pop-out windows.
 
 A pop-out is a second, independent view of a cell's plot in a floating window.
 The tests cover the two properties that make it useful -- the cell is left
-alone, and both views stay live off the same data pipe -- plus the lifecycle
-rules that keep a window from outliving the cell it shows.
+alone, and both views stay live -- plus the lifecycle rules that keep a window
+from outliving the cell it shows.
+
+Both views of a cell drawn through HoloViews repaint from the layer's one data
+pipe, and removing any view severs every plot on it (holoviews#6988). The
+slicer is drawn that way for good, so those tests use a slicer cell. A line
+cell's frames are written into each view's figure directly.
 """
 
 from __future__ import annotations
@@ -26,11 +31,13 @@ from ess.livedata.dashboard.plot_orchestrator import (
     PlotConfig,
     PlotOrchestrator,
 )
-from ess.livedata.dashboard.plot_params import PlotParams1d
+from ess.livedata.dashboard.plot_params import PlotParams1d, PlotParams3d
 from ess.livedata.dashboard.plots import LinePlotter
 from ess.livedata.dashboard.session_layer import SessionLayer
+from ess.livedata.dashboard.slicer_plotter import SlicerPlotter
 from ess.livedata.dashboard.static_plots import LinesCoordinates, VLinesParams
 from ess.livedata.dashboard.theme import DEFAULT_THEME
+from tests.helpers.plot_views import shown_values
 
 hv.extension('bokeh')
 
@@ -85,6 +92,18 @@ def _line_config() -> PlotConfig:
     )
 
 
+def _slicer_config() -> PlotConfig:
+    return PlotConfig(
+        data_sources={
+            PRIMARY: DataSourceConfig(
+                workflow_id=_WORKFLOW, source_names=['s1'], view_name='out'
+            )
+        },
+        plot_name='slicer',
+        params=PlotParams3d(),
+    )
+
+
 def _static_config() -> PlotConfig:
     return PlotConfig(
         data_sources={
@@ -119,9 +138,47 @@ def _add_line_cell(
     plot_orchestrator, plot_grid_tabs, plot_data_service, plotter, *, title
 ):
     """Add a 1x1 grid holding one built cell showing a live 1-D line plot."""
+    return _add_cell(
+        plot_orchestrator,
+        plot_grid_tabs,
+        plot_data_service,
+        plotter,
+        _line_config(),
+        title=title,
+    )
+
+
+def _volume(scale: float) -> sc.DataArray:
+    sizes = {'z': 2, 'y': 3, 'x': 4}
+    return sc.DataArray(
+        scale * sc.ones(sizes=sizes, unit='counts'),
+        coords={dim: sc.arange(dim, float(n), unit='m') for dim, n in sizes.items()},
+    )
+
+
+@pytest.fixture
+def slicer_cell(plot_orchestrator, plot_grid_tabs, plot_data_service):
+    """A built cell showing a live slicer, drawn through a HoloViews pipe."""
+    plotter = SlicerPlotter.from_params(PlotParams3d())
+    key = DataKey(workflow_id=_WORKFLOW, source_name='s1', output_name='out')
+    plotter.compute({PRIMARY: {key: _volume(1.0)}})
+    return _add_cell(
+        plot_orchestrator,
+        plot_grid_tabs,
+        plot_data_service,
+        plotter,
+        _slicer_config(),
+        title='G',
+    )
+
+
+def _add_cell(
+    plot_orchestrator, plot_grid_tabs, plot_data_service, plotter, config, *, title
+):
+    """Add a 1x1 grid holding one built cell showing ``plotter``."""
     grid_id = plot_orchestrator.add_grid(title=title, nrows=1, ncols=1)
     cell_id = plot_orchestrator.add_cell(grid_id, _GEOMETRY)
-    layer_id = plot_orchestrator.add_layer(cell_id, _line_config())
+    layer_id = plot_orchestrator.add_layer(cell_id, config)
 
     plot_data_service.job_started(layer_id, plotter)
     plot_data_service.data_arrived(layer_id)
@@ -215,15 +272,15 @@ class TestPopoutRendersTheCellsPlotAgain:
         assert plot_grid_tabs._cells[line_cell] is cell_widget
         assert cell_widget.autoscale_controller is cell_controller
 
-    def test_both_views_show_the_same_composed_plot(self, plot_grid_tabs, line_cell):
+    def test_both_views_show_the_same_composed_plot(self, plot_grid_tabs, slicer_cell):
         """One composition, rendered twice — not two compositions.
 
         Sharing is what links the two views: one ``Pipe`` feeds both figures,
         and one autoscale controller drives both toolbars.
         """
-        cell_widget = plot_grid_tabs._cells[line_cell]
+        cell_widget = plot_grid_tabs._cells[slicer_cell]
 
-        plot_grid_tabs._show_popout(line_cell)
+        plot_grid_tabs._show_popout(slicer_cell)
 
         window = _open_windows(plot_grid_tabs)[0]
         assert _rendered_plot(window) is cell_widget._plot
@@ -235,10 +292,10 @@ class TestPopoutRendersTheCellsPlotAgain:
         callback once per figure holding it, so a toggle shared by two
         toolbars flips twice per click and never changes.
         """
-        plot = plot_grid_tabs._cells[line_cell]._plot
+        cell_widget = plot_grid_tabs._cells[line_cell]
 
-        cell_tools = _autoscale_tools(_render(plot))
-        popout_tools = _autoscale_tools(_render(plot))
+        cell_tools = _autoscale_tools_of(_view_figure(cell_widget))
+        popout_tools = _autoscale_tools_of(_view_figure(cell_widget))
 
         assert _FIT in cell_tools
         assert cell_tools.keys() > {_FIT}  # at least one axis toggle too
@@ -248,9 +305,9 @@ class TestPopoutRendersTheCellsPlotAgain:
     def test_toggling_autoscale_in_one_view_shows_in_the_other(
         self, plot_grid_tabs, line_cell
     ):
-        plot = plot_grid_tabs._cells[line_cell]._plot
-        cell_tools = _autoscale_tools(_render(plot))
-        popout_tools = _autoscale_tools(_render(plot))
+        cell_widget = plot_grid_tabs._cells[line_cell]
+        cell_tools = _autoscale_tools_of(_view_figure(cell_widget))
+        popout_tools = _autoscale_tools_of(_view_figure(cell_widget))
         toggle = next(name for name in cell_tools if name != _FIT)
         assert popout_tools[toggle].active
 
@@ -260,8 +317,8 @@ class TestPopoutRendersTheCellsPlotAgain:
 
     def test_fit_reaches_every_rendered_figure(self, plot_grid_tabs, line_cell):
         """A Fit click fits both views at once, without waiting for data."""
-        plot = plot_grid_tabs._cells[line_cell]._plot
-        figures = [_render(plot).state for _ in range(2)]
+        cell_widget = plot_grid_tabs._cells[line_cell]
+        figures = [_view_figure(cell_widget) for _ in range(2)]
         tools = _autoscale_tools_of(figures[0])
         for name, tool in tools.items():
             if name != _FIT:
@@ -274,26 +331,48 @@ class TestPopoutRendersTheCellsPlotAgain:
         for figure in figures:
             assert (figure.x_range.start, figure.x_range.end) != (-999.0, 999.0)
 
-    def test_both_views_repaint_from_the_same_pipe(self, plot_grid_tabs, line_cell):
+    def test_both_views_repaint_from_the_same_pipe(self, plot_grid_tabs, slicer_cell):
         """The pop-out is live, not a snapshot: one pipe drives both figures."""
-        cell_widget = plot_grid_tabs._cells[line_cell]
-        session_layer = next(iter(plot_grid_tabs._session_layers.values()))
+        cell_widget = plot_grid_tabs._cells[slicer_cell]
 
-        plot_grid_tabs._show_popout(line_cell)
+        plot_grid_tabs._show_popout(slicer_cell)
 
-        pipe = session_layer.components.pipe
+        pipe = _pipe(plot_grid_tabs)
         assert pipe in cell_widget._plot.streams
         assert pipe in _rendered_plot(_open_windows(plot_grid_tabs)[0]).streams
 
+    def test_both_views_show_new_frames(
+        self, plot_grid_tabs, line_cell, line_plotter, frame_clock
+    ):
+        """The pop-out is live, not a snapshot: frames reach both figures."""
+        plot_grid_tabs._show_popout(line_cell)
+        window = _open_windows(plot_grid_tabs)[0]
 
-def _render(plot):
-    """Render a composed plot into a fresh Bokeh figure, as a view would."""
-    return hv.renderer('bokeh').get_plot(plot)
+        _publish_frame(plot_grid_tabs, line_cell, line_plotter, frame_clock)
+
+        assert shown_values(plot_grid_tabs._cells[line_cell].view) == [_NEW_VALUES]
+        assert shown_values(window) == [_NEW_VALUES]
 
 
-def _autoscale_tools(rendered) -> dict[str, object]:
-    """The controller's toolbar tools on a rendered plot, keyed by tooltip."""
-    return _autoscale_tools_of(rendered.state)
+_NEW_VALUES = [4.0, 5.0, 6.0]
+
+
+def _publish_frame(plot_grid_tabs, cell_id, line_plotter, frame_clock) -> None:
+    """Compute a frame of :data:`_NEW_VALUES` and let the session push it."""
+    key = DataKey(workflow_id=_WORKFLOW, source_name='s1', output_name='out')
+    line_plotter.compute({PRIMARY: {key: _curve(_NEW_VALUES)}})
+    frame_clock.commit(plot_grid_tabs._cells[cell_id].grid_id)
+    _tick(plot_grid_tabs)
+
+
+def _view_figure(cell_widget):
+    """The figure of a new view of the cell, as a pop-out window builds one."""
+    from bokeh.plotting import figure as Figure
+
+    (figure,) = (
+        cell_widget.build_plot_pane().get_root(Document()).select({'type': Figure})
+    )
+    return figure
 
 
 def _autoscale_tools_of(figure) -> dict[str, object]:
@@ -319,6 +398,19 @@ class TestPopoutLifecycle:
 
         assert len(_open_windows(plot_grid_tabs)) == 1
 
+    def test_reopening_releases_the_replaced_windows_figure(
+        self, plot_grid_tabs, line_cell, line_plotter, frame_clock
+    ):
+        plot_grid_tabs._show_popout(line_cell)
+        replaced = _open_windows(plot_grid_tabs)[0]
+        plot_grid_tabs._show_popout(line_cell)
+
+        _publish_frame(plot_grid_tabs, line_cell, line_plotter, frame_clock)
+
+        assert shown_values(replaced) == [[1.0, 2.0, 3.0]]
+        assert shown_values(_open_windows(plot_grid_tabs)[0]) == [_NEW_VALUES]
+        assert shown_values(plot_grid_tabs._cells[line_cell].view) == [_NEW_VALUES]
+
     def test_the_window_wears_the_shell_header_color(self, plot_grid_tabs, line_cell):
         """A window floating over the dashboard is part of the shell, and the
         shell's chrome color is the theme's to pick."""
@@ -343,7 +435,7 @@ class TestPopoutLifecycle:
         assert len(_open_windows(plot_grid_tabs)) == 1
 
     def test_cell_rebuild_carries_the_window_along(
-        self, plot_grid_tabs, plot_orchestrator, line_cell
+        self, plot_grid_tabs, plot_orchestrator, line_cell, line_plotter, frame_clock
     ):
         """A rebuilt cell composes fresh plots; the window must show those.
 
@@ -361,7 +453,8 @@ class TestPopoutLifecycle:
         (window,) = _open_windows(plot_grid_tabs)
         assert window is window_before
         assert window.name == 'Renamed'
-        assert _rendered_plot(window) is plot_grid_tabs._cells[line_cell]._plot
+        _publish_frame(plot_grid_tabs, line_cell, line_plotter, frame_clock)
+        assert shown_values(window) == [_NEW_VALUES]
 
     def test_cell_removal_closes_the_window(
         self, plot_grid_tabs, plot_orchestrator, line_cell
@@ -810,18 +903,28 @@ class TestClosingAWindowKeepsTheCellRendering:
     """
 
     def test_cell_plot_stays_subscribed_after_its_window_closes(
-        self, plot_grid_tabs, line_cell
+        self, plot_grid_tabs, slicer_cell
     ):
         pipe = _pipe(plot_grid_tabs)
-        plot_grid_tabs._cells[line_cell].view.get_root()
+        plot_grid_tabs._cells[slicer_cell].view.get_root()
         subscribed = len(pipe.subscribers)
 
-        plot_grid_tabs._show_popout(line_cell)
+        plot_grid_tabs._show_popout(slicer_cell)
         _open_windows(plot_grid_tabs)[0].get_root()
         _open_windows(plot_grid_tabs)[0].status = 'closed'
-        plot_grid_tabs._cells[line_cell].view.get_root()
+        plot_grid_tabs._cells[slicer_cell].view.get_root()
 
         assert len(pipe.subscribers) == subscribed
+
+    def test_cell_shows_new_frames_after_its_window_closes(
+        self, plot_grid_tabs, line_cell, line_plotter, frame_clock
+    ):
+        plot_grid_tabs._show_popout(line_cell)
+        _open_windows(plot_grid_tabs)[0].status = 'closed'
+
+        _publish_frame(plot_grid_tabs, line_cell, line_plotter, frame_clock)
+
+        assert shown_values(plot_grid_tabs._cells[line_cell].view) == [_NEW_VALUES]
 
     def test_closing_a_window_rebuilds_the_cell(self, plot_grid_tabs, line_cell):
         """The visible half of the sever repair, stated directly."""
@@ -865,15 +968,15 @@ class TestPopoutSurvivesGridChanges:
 
     @pytest.mark.parametrize('change', _GRID_CHANGES.values(), ids=_GRID_CHANGES)
     def test_popout_stays_subscribed(
-        self, plot_grid_tabs, plot_orchestrator, line_cell, change
+        self, plot_grid_tabs, plot_orchestrator, slicer_cell, change
     ):
         ids = {
-            'G': plot_grid_tabs._cells[line_cell].grid_id,
+            'G': plot_grid_tabs._cells[slicer_cell].grid_id,
             'Other': plot_orchestrator.add_grid(title='Other', nrows=1, ncols=1),
         }
         _tick(plot_grid_tabs)
         plot_grid_tabs.tabs.get_root(Document())
-        plot_grid_tabs._show_popout(line_cell)
+        plot_grid_tabs._show_popout(slicer_cell)
         _open_windows(plot_grid_tabs)[0].get_root(Document())
         pipe = _pipe(plot_grid_tabs)
         subscribed = list(pipe.subscribers)
@@ -883,7 +986,37 @@ class TestPopoutSurvivesGridChanges:
 
         assert list(pipe.subscribers) == subscribed
 
+    @pytest.mark.parametrize('change', _GRID_CHANGES.values(), ids=_GRID_CHANGES)
+    def test_popout_shows_new_frames(
+        self,
+        plot_grid_tabs,
+        plot_orchestrator,
+        line_cell,
+        line_plotter,
+        frame_clock,
+        change,
+    ):
+        ids = {
+            'G': plot_grid_tabs._cells[line_cell].grid_id,
+            'Other': plot_orchestrator.add_grid(title='Other', nrows=1, ncols=1),
+        }
+        _tick(plot_grid_tabs)
+        plot_grid_tabs.tabs.get_root(Document())
+        plot_grid_tabs._show_popout(line_cell)
+        window = _open_windows(plot_grid_tabs)[0]
+
+        change(plot_orchestrator, ids)
+        _tick(plot_grid_tabs)
+        _publish_frame(plot_grid_tabs, line_cell, line_plotter, frame_clock)
+
+        assert shown_values(window) == [_NEW_VALUES]
+
 
 def _pipe(plot_grid_tabs):
     """The one session layer's data pipe, which every view subscribes to."""
-    return next(iter(plot_grid_tabs._session_layers.values())).components.pipe
+    session_layer = next(iter(plot_grid_tabs._session_layers.values()))
+    return next(
+        stream
+        for stream in session_layer.components.dmap.streams
+        if isinstance(stream, hv.streams.Pipe)
+    )

@@ -71,7 +71,12 @@ import structlog
 from ess.livedata.config.workflow_spec import WorkflowId, WorkflowSpec
 
 from ..batched_update import batched_update
-from ..cell_plan import SessionView, cell_build_inputs, desired_cells
+from ..cell_plan import (
+    CellBuildInputs,
+    SessionView,
+    cell_build_inputs,
+    desired_cells,
+)
 from ..notifications import show_error
 from ..plot_data_service import PlotDataService
 from ..plot_orchestrator import (
@@ -152,6 +157,41 @@ _PHONE_TAB_CSS = f"""
         margin-right: 0 !important;
     }}
 """
+
+
+def _log_frame_spec_changes(
+    cell_id: CellId, old: CellBuildInputs, new: CellBuildInputs
+) -> None:
+    """Log each layer whose frame spec alone changed between two builds of a cell.
+
+    Such a rebuild follows the data, not anything a user or a job did. A spec
+    that changes on most updates rebuilds the cell on most updates in every
+    session, at the cost of a full figure build each time, and this log is
+    where that shows.
+    """
+    old_layers = {layer.layer_id: layer for layer in old.layers}
+    for layer in new.layers:
+        before = old_layers.get(layer.layer_id)
+        if (
+            before is not None
+            and before.snapshot == layer.snapshot
+            and before.frame_spec != layer.frame_spec
+        ):
+            logger.info(
+                "Rebuilding cell %s: frame spec of layer %s changed %s",
+                cell_id,
+                layer.layer_id,
+                _first_difference(before.frame_spec, layer.frame_spec),
+            )
+
+
+def _first_difference(old: object, new: object, path: tuple[int, ...] = ()) -> str:
+    """Where two nested tuples first differ, and the values there, shortened."""
+    if isinstance(old, tuple) and isinstance(new, tuple) and len(old) == len(new):
+        for index, (a, b) in enumerate(zip(old, new, strict=True)):
+            if a != b:
+                return _first_difference(a, b, (*path, index))
+    return f'at {list(path)}: {old!r:.200} -> {new!r:.200}'
 
 
 def _phone_reload_button(theme: Theme) -> ReloadButton:
@@ -969,11 +1009,15 @@ class PlotGridTabs:
     def _show_popout(self, cell_id: CellId) -> None:
         """Open the cell's plot in a floating window (see ``plot_popout``).
 
-        Needs no repair pass of its own: the extra pane simply subscribes to
-        the layer pipes the cell already renders from, and the button that got
-        us here lives in a titlebar, so the cell is on the visible tab and
-        already live.
+        Needs no repair pass of its own: the extra view simply follows the
+        layers the cell already shows, and the button that got us here lives
+        in a titlebar, so the cell is on the visible tab and already live.
+
+        A window already open for the cell is closed the way the user closes
+        it, rebuilding the cell: the cell widget owns the window's view and
+        releases it only when disposed.
         """
+        self._close_popout(cell_id)
         cell_widget = self._cells.get(cell_id)
         if cell_widget is not None:
             self._popouts.open(cell_id, cell_widget)
@@ -1396,14 +1440,14 @@ class PlotGridTabs:
 
         # 3 · Flush pending data to the figures this session renders: the
         # visible grid's cells, plus any cell a pop-out window keeps on
-        # screen, and only for a grid whose frame generation moved. Pipes are
-        # session state, independent of the widgets rendering them, and this is
-        # the only push of data into a session's pipes in the codebase — so it
-        # runs before the widget surgery below rather than behind it, where a
-        # cell disposal or build could starve every layer of the session at
-        # once (#1276). A layer whose components are created by a build below
-        # keeps its pending update; its fresh pipe already carries the same
-        # cached state, so nothing is missed.
+        # screen, and only for a grid whose frame generation moved. Session
+        # layers are session state, independent of the widgets rendering them,
+        # and this is the only push of frames into a session's figures in the
+        # codebase — so it runs before the widget surgery below rather than
+        # behind it, where a cell disposal or build could starve every layer of
+        # the session at once (#1276). A layer whose components are created by
+        # a build below keeps its pending update; its fresh components already
+        # start from the same frame, so nothing is missed.
         for cell_id, plan in plans.items():
             rendered = plan.grid_id == active_grid_id or cell_id in live_cells
             if not (rendered and plan.grid_id in stale_grids):
@@ -1411,7 +1455,7 @@ class PlotGridTabs:
             for layer_input in plan.inputs.layers:
                 session_layer = self._session_layers.get(layer_input.layer_id)
                 if session_layer is not None:
-                    session_layer.update_pipe()
+                    session_layer.push_update()
 
         # 4 · Act. First sweep cells that vanished from topology (cell or grid
         # removed). Membership is checked against the orchestrator directly,
@@ -1446,6 +1490,8 @@ class PlotGridTabs:
             applied = self._cells.get(cell_id)
             if applied is not None and applied.build_inputs == plan.inputs:
                 continue
+            if applied is not None:
+                _log_frame_spec_changes(cell_id, applied.build_inputs, plan.inputs)
             self._insert_cell(
                 cell_id,
                 grids[plan.grid_id].cells[cell_id],

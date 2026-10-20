@@ -18,6 +18,7 @@ import pydantic
 from pydantic_core import core_schema
 
 from ..parameter_models import parse_number_list
+from .frame import Frame
 
 
 class LineDash(StrEnum):
@@ -70,7 +71,7 @@ class StaticPlotter(ABC):
         from .plots import PresenterBase
 
         self._presenters: weakref.WeakSet[PresenterBase] = weakref.WeakSet()
-        self._cached_state: hv.Element | None = None
+        self._frame: Frame | None = None
 
     @abstractmethod
     def create_static_plot(self) -> hv.Element:
@@ -86,26 +87,18 @@ class StaticPlotter(ABC):
 
     def _set_cached_state(self, state: hv.Element) -> None:
         """Store computed state and mark all presenters dirty."""
-        self._cached_state = state
+        self._frame = Frame.from_element(state)
         # Convert to list to avoid RuntimeError if WeakSet is modified during iteration
         for presenter in list(self._presenters):
             presenter._mark_dirty()
 
-    def get_cached_state(self) -> hv.Element | None:
-        """Get the last computed state, or None if not yet computed."""
-        return self._cached_state
+    def get_frame(self) -> Frame | None:
+        """The last computed frame, or None if not yet computed."""
+        return self._frame
 
     @property
     def time_bounds(self) -> None:
         """Static plots carry no time data, so they never contribute lag."""
-        return None
-
-    def has_cached_state(self) -> bool:
-        """Check if state has been computed."""
-        return self._cached_state is not None
-
-    def layout_shape(self) -> None:
-        """Static plots are single elements, never a layout."""
         return None
 
     def mark_presenters_dirty(self) -> None:

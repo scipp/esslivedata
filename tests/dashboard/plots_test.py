@@ -171,13 +171,13 @@ def present_figure(plotter, data_dict):
     """
     plotter.compute({'primary': data_dict})
     presenter = plotter.create_presenter()
-    pipe = hv.streams.Pipe(data=plotter.get_cached_state())
+    pipe = hv.streams.Pipe(data=plotter.get_frame().element)
     return render_to_bokeh(presenter.present(pipe)).state
 
 
 def single_layer(plotter) -> hv.Element:
     """The one element of a plotter's cached single-layer Overlay."""
-    (layer,) = plotter.get_cached_state()
+    (layer,) = plotter.get_frame().element
     return layer
 
 
@@ -190,7 +190,7 @@ def present_figure_with_cell_hooks(plotter, data_dict):
     """
     plotter.compute({'primary': data_dict})
     presenter = plotter.create_presenter()
-    pipe = hv.streams.Pipe(data=plotter.get_cached_state())
+    pipe = hv.streams.Pipe(data=plotter.get_frame().element)
     composed = presenter.present(pipe).opts(hooks=[lambda plot, element: None])
     return render_to_bokeh(composed).state
 
@@ -600,7 +600,7 @@ class TestLinePlotter:
             source=lambda _: 'Friendly Name', include_output_in_label=True
         )
         line_plotter.compute({'primary': {data_key: data}}, title_resolver=resolver)
-        result = line_plotter.get_cached_state()
+        result = line_plotter.get_frame().element
         assert result.label == 'Friendly Name/test_result'
 
     def test_compute_uses_output_title_in_overlay_label(self, line_plotter, data_key):
@@ -617,7 +617,7 @@ class TestLinePlotter:
             include_output_in_label=True,
         )
         line_plotter.compute({'primary': {data_key: data}}, title_resolver=resolver)
-        result = line_plotter.get_cached_state()
+        result = line_plotter.get_frame().element
         assert result.label == 'Source/I(d)'
 
     def test_compute_strips_output_from_label_when_not_included(
@@ -636,7 +636,7 @@ class TestLinePlotter:
             include_output_in_label=False,
         )
         line_plotter.compute({'primary': {data_key: data}}, title_resolver=resolver)
-        result = line_plotter.get_cached_state()
+        result = line_plotter.get_frame().element
         assert result.label == 'Monitor 1'
 
     def test_compute_falls_back_to_source_name_without_title(
@@ -648,7 +648,7 @@ class TestLinePlotter:
             coords={'x': sc.array(dims=['x'], values=[10.0, 20.0], unit='m')},
         )
         line_plotter.compute({'primary': {data_key: data}})
-        result = line_plotter.get_cached_state()
+        result = line_plotter.get_frame().element
         assert result.label == 'test_source/test_result'
 
     def test_plot_applies_dim_label_to_axis(self, line_plotter, data_key):
@@ -894,7 +894,7 @@ class TestLinePlotter:
         )
         plotter.compute({'primary': {data_key: data, data_key2: data}})
 
-        fig = hv.render(plotter.get_cached_state())
+        fig = hv.render(plotter.get_frame().element)
         line_colors = [
             r.glyph.line_color
             for r in fig.select(GlyphRenderer)
@@ -920,7 +920,7 @@ class TestLinePlotter:
         presenter = plotter.create_presenter()
         for _ in range(2):
             doc = Document()
-            pipe = hv.streams.Pipe(data=plotter.get_cached_state())
+            pipe = hv.streams.Pipe(data=plotter.get_frame().element)
             plot = BokehRenderer.instance().get_plot(presenter.present(pipe), doc=doc)
             doc.add_root(plot.state)
             _assert_error_bar_endcaps_colored(plot.state, {_FIRST_CYCLE_COLOR})
@@ -960,7 +960,7 @@ class TestLinePlotter:
         layer_b.compute({'primary': {data_key: data}})
 
         composed = hv.Overlay(
-            [layer_a.get_cached_state(), layer_b.get_cached_state()]
+            [layer_a.get_frame().element, layer_b.get_frame().element]
         ).collate()
         fig = hv.render(composed)
         line_colors = [
@@ -1161,7 +1161,7 @@ class TestSlicerPlotter:
         """Test that compute() returns a SlicerState with prepared data and clim."""
         data_dict = {data_key: data_3d}
         slicer_plotter.compute({'primary': data_dict})
-        result = slicer_plotter.get_cached_state()
+        result = slicer_plotter.get_frame().element
 
         assert isinstance(result, SlicerState)
         # Data should have same keys
@@ -1178,7 +1178,7 @@ class TestSlicerPlotter:
 
         data_dict = {data_key: data_3d}
         plotter.compute({'primary': data_dict})
-        result = plotter.get_cached_state()
+        result = plotter.get_frame().element
 
         # clim should span the full range of data
         expected_min = float(data_3d.values.min())
@@ -1193,7 +1193,7 @@ class TestSlicerPlotter:
 
         data_dict = {data_key: data_3d}
         plotter.compute({'primary': data_dict})
-        result = plotter.get_cached_state()
+        result = plotter.get_frame().element
 
         # data_3d starts at 0 (from arange), so min should be > 0
         assert result.clim is not None
@@ -1307,7 +1307,7 @@ class TestSlicerPlotter:
 
         data_dict = {data_key: data_3d}
         plotter.compute({'primary': data_dict})
-        result = plotter.get_cached_state()
+        result = plotter.get_frame().element
 
         # First value (0) should be NaN in log scale (data_3d starts at 0 from arange)
         prepared_data = result.data[data_key]
@@ -1326,7 +1326,7 @@ class TestSlicerPlotter:
         """Test that SlicerPresenter creates kdims from SlicerState."""
         data_dict = {data_key: data_3d}
         slicer_plotter.compute({'primary': data_dict})
-        state = slicer_plotter.get_cached_state()
+        state = slicer_plotter.get_frame().element
 
         presenter = slicer_plotter.create_presenter()
         pipe = hv.streams.Pipe(data=state)
@@ -1340,7 +1340,7 @@ class TestSlicerPlotter:
         """Test that presenter kdims use coordinate values when available."""
         data_dict = {data_key: data_3d}
         slicer_plotter.compute({'primary': data_dict})
-        state = slicer_plotter.get_cached_state()
+        state = slicer_plotter.get_frame().element
 
         presenter = slicer_plotter.create_presenter()
         pipe = hv.streams.Pipe(data=state)
@@ -1360,7 +1360,7 @@ class TestSlicerPlotter:
         """Test that presenter kdims fall back to indices without coordinates."""
         data_dict = {data_key: data_3d_no_coords}
         slicer_plotter.compute({'primary': data_dict})
-        state = slicer_plotter.get_cached_state()
+        state = slicer_plotter.get_frame().element
 
         presenter = slicer_plotter.create_presenter()
         pipe = hv.streams.Pipe(data=state)
@@ -1374,7 +1374,7 @@ class TestSlicerPlotter:
         """Test that presenter's DynamicMap can render slices."""
         data_dict = {data_key: data_3d}
         slicer_plotter.compute({'primary': data_dict})
-        state = slicer_plotter.get_cached_state()
+        state = slicer_plotter.get_frame().element
 
         presenter = slicer_plotter.create_presenter()
         pipe = hv.streams.Pipe(data=state)
@@ -1403,7 +1403,7 @@ class TestSlicerPlotter:
         attaches its hooks with another; each wraps the DynamicMap once more.
         """
         slicer_plotter.compute({'primary': {data_key: data_3d}})
-        pipe = hv.streams.Pipe(data=slicer_plotter.get_cached_state())
+        pipe = hv.streams.Pipe(data=slicer_plotter.get_frame().element)
         composed = (
             slicer_plotter.create_presenter()
             .present(pipe)
@@ -1413,7 +1413,7 @@ class TestSlicerPlotter:
         bokeh_plot = render_to_bokeh(composed)
 
         slicer_plotter.compute({'primary': {data_key: data_3d * 2.0}})
-        pipe.send(slicer_plotter.get_cached_state())
+        pipe.send(slicer_plotter.get_frame().element)
 
         rendered = bokeh_plot.handles['source'].data['image'][0]
         np.testing.assert_array_equal(rendered, 2.0 * data_3d['z', 0].values)
@@ -1433,7 +1433,7 @@ class TestSlicerPlotter:
 
         data_dict = {data_key: data}
         slicer_plotter.compute({'primary': data_dict})
-        state = slicer_plotter.get_cached_state()
+        state = slicer_plotter.get_frame().element
 
         presenter = slicer_plotter.create_presenter()
         pipe = hv.streams.Pipe(data=state)
@@ -1468,7 +1468,7 @@ class TestSlicerPlotter:
 
         data_dict = {data_key: data}
         slicer_plotter.compute({'primary': data_dict})
-        state = slicer_plotter.get_cached_state()
+        state = slicer_plotter.get_frame().element
 
         presenter = slicer_plotter.create_presenter()
         pipe = hv.streams.Pipe(data=state)
@@ -1507,7 +1507,7 @@ class TestPlotterLabelChanges:
         data_dict = {data_key_with_output_name: simple_data}
 
         plotter.compute({'primary': data_dict})
-        result = plotter.get_cached_state()
+        result = plotter.get_frame().element
 
         # Result should have label that includes output_name
         # Label format: "detector/roi_current_0"
@@ -1568,7 +1568,7 @@ class TestPlotterOverlayMode:
         data_dict = {data_key_1: simple_data_1}
 
         plotter.compute({'primary': data_dict})
-        result = plotter.get_cached_state()
+        result = plotter.get_frame().element
 
         # Should return Overlay, not raw Curve
         assert isinstance(result, hv.Overlay)
@@ -1586,7 +1586,7 @@ class TestPlotterOverlayMode:
         data_dict = {data_key_1: simple_data_1, data_key_2: simple_data_2}
 
         plotter.compute({'primary': data_dict})
-        result = plotter.get_cached_state()
+        result = plotter.get_frame().element
 
         # Should return Overlay
         assert isinstance(result, hv.Overlay)
@@ -1608,7 +1608,7 @@ class TestPlotterOverlayMode:
         data_dict = {data_key_1: simple_data_1}
 
         plotter.compute({'primary': data_dict})
-        result = plotter.get_cached_state()
+        result = plotter.get_frame().element
 
         assert isinstance(result, hv.Layout)
         assert len(result) == 1
@@ -1641,7 +1641,7 @@ class TestPlotterOverlayMode:
         plotter.compute(
             {'primary': {data_key_1: simple_data_1, data_key_2: simple_data_2}}
         )
-        result = plotter.get_cached_state()
+        result = plotter.get_frame().element
         assert isinstance(result, hv.Layout)
 
         presenter = plotter.create_presenter()
@@ -1662,7 +1662,7 @@ class TestPlotterOverlayMode:
         data_dict = {}
 
         plotter.compute(data_dict)
-        result = plotter.get_cached_state()
+        result = plotter.get_frame().element
 
         # With overlay mode and empty data, returns Overlay containing Text
         assert isinstance(result, hv.Overlay)
@@ -1681,7 +1681,7 @@ class TestPlotterOverlayMode:
         data_dict = {}
 
         plotter.compute(data_dict)
-        result = plotter.get_cached_state()
+        result = plotter.get_frame().element
 
         # Layout mode always wraps in a Layout, even the 'No data' placeholder.
         assert isinstance(result, hv.Layout)
@@ -1716,7 +1716,7 @@ class TestRenderErrorPlaceholder:
         plotter = plots.LinePlotter.from_params(params)
 
         plotter.compute({'primary': {data_key: poison_data}})
-        result = plotter.get_cached_state()
+        result = plotter.get_frame().element
 
         assert isinstance(result, container)
         text_element = next(iter(result))
@@ -1740,17 +1740,17 @@ class TestRenderErrorPlaceholder:
         }
         plotter = plots.LinePlotter.from_params(PlotParams1d())
         plotter.compute({'primary': good})
-        pipe = hv.streams.Pipe(data=plotter.get_cached_state())
+        pipe = hv.streams.Pipe(data=plotter.get_frame().element)
         dmap = plotter.create_presenter().present(pipe)
         plot = render_to_bokeh(dmap)
 
         plotter.compute({'primary': {data_key: poison_data}})
-        pipe.send(plotter.get_cached_state())
+        pipe.send(plotter.get_frame().element)
         (error_frame,) = plot.current_frame
         assert isinstance(error_frame, hv.Text)
 
         plotter.compute({'primary': good})
-        pipe.send(plotter.get_cached_state())
+        pipe.send(plotter.get_frame().element)
         (recovered_frame,) = plot.current_frame
         assert isinstance(recovered_frame, hv.Curve)
 
@@ -1774,7 +1774,7 @@ class TestOverlayUnitConsistency:
                 }
             }
         )
-        return plotter.get_cached_state()
+        return plotter.get_frame().element
 
     @pytest.mark.xfail(
         reason='#870: coordinate units are never reconciled across layers. A fix '
@@ -1955,7 +1955,7 @@ class TestBarsPlotter:
         }
 
         plotter.compute({'primary': data})
-        result = plotter.get_cached_state()
+        result = plotter.get_frame().element
         # With layout mode and 2 sources, should return Layout
         assert isinstance(result, hv.Layout)
         assert len(result) == 2
@@ -1995,7 +1995,7 @@ class TestBarsPlotterScalarOverlay:
     def test_bars_are_labeled_by_source_display_name(self, plotter, data):
         resolver = plots.TitleResolver(source=str.upper)
         plotter.compute({PRIMARY: data}, title_resolver=resolver)
-        (bars,) = plotter.get_cached_state()
+        (bars,) = plotter.get_frame().element
         assert list(bars.dimension_values('source')) == ['BANK0', 'BANK1', 'BANK2']
 
     def test_tooltips_show_source_and_value_but_not_the_color(self, plotter, data):
@@ -2010,7 +2010,7 @@ class TestBarsPlotterScalarOverlay:
         fig, pipe = _render(plotter, data)
         updated = {key: da * 2.0 for key, da in data.items()}
         plotter.compute({PRIMARY: updated})
-        pipe.send(plotter.get_cached_state())
+        pipe.send(plotter.get_frame().element)
         (renderer,) = fig.select({'type': GlyphRenderer})
         assert list(renderer.data_source.data['test_result']) == [0.0, 20.0, 40.0]
 
@@ -2018,7 +2018,7 @@ class TestBarsPlotterScalarOverlay:
         first, *_ = data
         fig, pipe = _render(plotter, {first: data[first]})
         plotter.compute({PRIMARY: data})
-        pipe.send(plotter.get_cached_state())
+        pipe.send(plotter.get_frame().element)
         (renderer,) = fig.select({'type': GlyphRenderer})
         assert list(renderer.data_source.data['source']) == ['bank0', 'bank1', 'bank2']
         assert fig.x_range.factors == ['bank0', 'bank1', 'bank2']
@@ -2048,7 +2048,7 @@ class TestTablePlotter:
         table_plotter.compute(
             {'primary': {key: sc.DataArray(sc.scalar(42.0, unit='counts'))}}
         )
-        result = table_plotter.get_cached_state()
+        result = table_plotter.get_frame().element
         assert isinstance(result, hv.Table)
         assert list(result.data['source']) == ['bank0']
         assert list(result.data['counts']) == [42.0]
@@ -2060,7 +2060,7 @@ class TestTablePlotter:
             self._key('bank2', 'counts'): sc.DataArray(sc.scalar(30.0, unit='counts')),
         }
         table_plotter.compute({'primary': data})
-        result = table_plotter.get_cached_state()
+        result = table_plotter.get_frame().element
         assert isinstance(result, hv.Table)
         assert list(result.data['source']) == ['bank0', 'bank1', 'bank2']
         assert list(result.data['counts']) == [10.0, 20.0, 30.0]
@@ -2076,7 +2076,7 @@ class TestTablePlotter:
             {'primary': {key: sc.DataArray(sc.scalar(42.0, unit='counts'))}},
             title_resolver=resolver,
         )
-        result = table_plotter.get_cached_state()
+        result = table_plotter.get_frame().element
         assert list(result.data['source']) == ['Bank 0']
         vdim = result.vdims[0]
         assert vdim.label == 'Total counts'
@@ -2090,7 +2090,7 @@ class TestTablePlotter:
             self._key('bank1', 'counts'): sc.DataArray(sc.scalar(20.0, unit='counts')),
         }
         table_plotter.compute({'primary': data})
-        result = table_plotter.get_cached_state()
+        result = table_plotter.get_frame().element
         assert [d.name for d in result.vdims] == ['counts']
         assert result.vdims[0].unit == 'counts'
 
@@ -2103,7 +2103,7 @@ class TestTablePlotter:
             self._key('temperature', 'delta'): sc.DataArray(sc.scalar(298.0, unit='K')),
         }
         table_plotter.compute({'primary': data})
-        result = table_plotter.get_cached_state()
+        result = table_plotter.get_frame().element
         assert [d.name for d in result.vdims] == ['delta', 'unit']
         assert result.vdims[0].unit is None
         assert list(result.data['source']) == ['motor', 'temperature']
@@ -2130,7 +2130,7 @@ class TestTablePlotter:
         data_2d = sc.DataArray(sc.zeros(dims=['y', 'x'], shape=[2, 3]))
         table_plotter.compute({'primary': {key: data_2d}})
         # Errors are surfaced in-band as a Text element, matching other plotters.
-        assert isinstance(table_plotter.get_cached_state(), hv.Text)
+        assert isinstance(table_plotter.get_frame().element, hv.Text)
 
     def test_1d_data_gives_a_row_per_source_and_entry(self, table_plotter):
         data = {
@@ -2138,7 +2138,7 @@ class TestTablePlotter:
             self._key('bank1', 'counts'): _per_roi([0], values=[3.0]),
         }
         table_plotter.compute({'primary': data})
-        result = table_plotter.get_cached_state()
+        result = table_plotter.get_frame().element
         assert [d.name for d in result.kdims] == ['source', 'roi']
         assert list(result.data['source']) == ['bank0', 'bank0', 'bank1']
         assert list(result.data['roi']) == ['0', '3', '0']
@@ -2148,7 +2148,7 @@ class TestTablePlotter:
     def test_1d_data_without_entries_keeps_a_row_for_the_source(self, table_plotter):
         key = self._key('bank0', 'counts')
         table_plotter.compute({'primary': {key: _per_roi([], values=[])}})
-        result = table_plotter.get_cached_state()
+        result = table_plotter.get_frame().element
         assert list(result.data['source']) == ['bank0']
         assert list(result.data['roi']) == ['no roi']
         assert np.isnan(result.data['counts'][0])
@@ -2168,7 +2168,7 @@ class TestTablePlotter:
     def test_bin_edge_coord_labels_rows_by_midpoint(self, table_plotter):
         key = self._key('bank0', 'counts')
         table_plotter.compute({'primary': {key: _with_edges()}})
-        result = table_plotter.get_cached_state()
+        result = table_plotter.get_frame().element
         assert list(result.data['x']) == ['1.0', '3.0']
         assert list(result.data['counts']) == [1.0, 2.0]
 
@@ -2178,11 +2178,11 @@ class TestTablePlotter:
             self._key('bank1', 'counts'): sc.DataArray(sc.scalar(1.0, unit='counts')),
         }
         table_plotter.compute({'primary': data})
-        assert isinstance(table_plotter.get_cached_state(), hv.Text)
+        assert isinstance(table_plotter.get_frame().element, hv.Text)
 
     def test_empty_data_shows_no_data(self, table_plotter):
         table_plotter.compute({'primary': {}})
-        assert isinstance(table_plotter.get_cached_state(), hv.Text)
+        assert isinstance(table_plotter.get_frame().element, hv.Text)
 
     def test_renders_single_datatable(self, table_plotter):
         from bokeh.models import DataTable
@@ -2283,7 +2283,7 @@ class TestTablePlotter:
                 }
             }
         )
-        result = plotter.get_cached_state()
+        result = plotter.get_frame().element
         assert list(result.data['counts']) == [140000.0]
 
     def test_negative_precision_ignored_outside_decimal_mode(self):
@@ -2299,7 +2299,7 @@ class TestTablePlotter:
                 }
             }
         )
-        result = plotter.get_cached_state()
+        result = plotter.get_frame().element
         # Value is untouched; rounding only applies to decimal notation.
         assert list(result.data['counts']) == [140235.0]
 
@@ -2343,7 +2343,7 @@ class TestTablePlotter:
             }
         )
         presenter = plotter.create_presenter()
-        pipe = hv.streams.Pipe(data=plotter.get_cached_state())
+        pipe = hv.streams.Pipe(data=plotter.get_frame().element)
         bokeh_plot = render_to_bokeh(presenter.present(pipe))
 
         # Stream a new value, triggering update_frame's column rebuild.
@@ -2356,7 +2356,7 @@ class TestTablePlotter:
                 }
             }
         )
-        pipe.send(plotter.get_cached_state())
+        pipe.send(plotter.get_frame().element)
 
         table = next(
             m for m in bokeh_plot.state.references() if isinstance(m, DataTable)
@@ -2835,7 +2835,7 @@ class TestOverlay1DPlotter:
 def _render(plotter, data):
     """Compute ``data`` and render it as a session does; returns (figure, pipe)."""
     plotter.compute({PRIMARY: data})
-    pipe = hv.streams.Pipe(data=plotter.get_cached_state())
+    pipe = hv.streams.Pipe(data=plotter.get_frame().element)
     dmap = plotter.create_presenter().present(pipe)
     return BokehRenderer.instance().get_plot(dmap).state, pipe
 
@@ -2894,7 +2894,7 @@ class TestBarsPlotterPerRoi:
         assert isinstance(fig.x_range, FactorRange)
 
         plotter.compute({PRIMARY: {data_key: _per_roi([0, 3])}})
-        pipe.send(plotter.get_cached_state())
+        pipe.send(plotter.get_frame().element)
 
         assert [f[1] for f in fig.x_range.factors] == ['roi=0', 'roi=3']
 
@@ -2912,7 +2912,7 @@ class TestBarsPlotterPerRoi:
             make_data_key('other_source'): sc.DataArray(sc.scalar(1.0)),
         }
         plotter.compute({PRIMARY: data})
-        result = plotter.get_cached_state()
+        result = plotter.get_frame().element
         assert [t.text for t in result.traverse(specs=[hv.Text])] == [
             "Error: Cannot draw 0D and 1D data as bars in one plot."
         ]
@@ -2930,7 +2930,7 @@ def _with_edges():
 def _error_texts(plotter, data, data_key):
     """Compute ``data``; the texts of the 'Error: ...' frame, if it was drawn."""
     plotter.compute({PRIMARY: {data_key: data}})
-    return [t.text for t in plotter.get_cached_state().traverse(specs=[hv.Text])]
+    return [t.text for t in plotter.get_frame().element.traverse(specs=[hv.Text])]
 
 
 class TestEntryLimit:
@@ -3046,7 +3046,7 @@ class TestOverlay1DPlotterHistory:
 
         # A later update, as the timeseries plotter throttles repeated times.
         plotter.compute({PRIMARY: {data_key: _roi_history(start=100)}})
-        pipe.send(plotter.get_cached_state())
+        pipe.send(plotter.get_frame().element)
 
         assert isinstance(fig.xaxis[0], DatetimeAxis)
 
@@ -3328,7 +3328,7 @@ class TestTwoStageArchitecture:
         data_dict = {data_key: simple_data}
         # With new architecture, pipe receives pre-computed elements
         plotter.compute({'primary': data_dict})
-        computed = plotter.get_cached_state()
+        computed = plotter.get_frame().element
 
         presenter = plotter.create_presenter()
         pipe = hv.streams.Pipe(data=computed)
@@ -3356,7 +3356,7 @@ class TestTwoStageArchitecture:
 
         # Compute returns SlicerState
         plotter.compute({'primary': data_dict})
-        state = plotter.get_cached_state()
+        state = plotter.get_frame().element
         assert isinstance(state, SlicerState)
 
         # Presenter creates DynamicMap with kdims
@@ -3378,7 +3378,7 @@ class TestTwoStageArchitecture:
         data_dict = {data_key: simple_data}
         # With new architecture, compute() is called once and result is passed to pipe
         plotter.compute({'primary': data_dict})
-        computed = plotter.get_cached_state()
+        computed = plotter.get_frame().element
 
         presenter = plotter.create_presenter()
         pipe = hv.streams.Pipe(data=computed)
@@ -3433,7 +3433,7 @@ class TestSaveFilenameHookOnDynamicMap:
         plotter.compute({'primary': {key: self._make_2d_data()}})
 
         presenter = plotter.create_presenter()
-        pipe = hv.streams.Pipe(data=plotter.get_cached_state())
+        pipe = hv.streams.Pipe(data=plotter.get_frame().element)
         dmap = presenter.present(pipe)
         dmap = dmap.opts(hooks=[self._save_hook])
 
@@ -3453,7 +3453,7 @@ class TestSaveFilenameHookOnDynamicMap:
         plotter.compute({'primary': data})
 
         presenter = plotter.create_presenter()
-        pipe = hv.streams.Pipe(data=plotter.get_cached_state())
+        pipe = hv.streams.Pipe(data=plotter.get_frame().element)
         dmap = presenter.present(pipe)
         dmap = dmap.opts(hooks=[self._save_hook])
 
@@ -3477,10 +3477,10 @@ class TestSaveFilenameHookOnDynamicMap:
         }
         plotter.compute({'primary': data})
 
-        assert isinstance(plotter.get_cached_state(), hv.Layout)
+        assert isinstance(plotter.get_frame().element, hv.Layout)
 
         presenter = plotter.create_presenter()
-        pipe = hv.streams.Pipe(data=plotter.get_cached_state())
+        pipe = hv.streams.Pipe(data=plotter.get_frame().element)
         dmap = presenter.present(pipe)
         dmap = dmap.opts(hooks=[self._save_hook])
 
@@ -3756,7 +3756,7 @@ class TestRateNormalizationIntegration:
         )
         plotter = SlicerPlotter.from_params(params)
         plotter.compute({'primary': {data_key: data_3d}})
-        state = plotter.get_cached_state()
+        state = plotter.get_frame().element
         assert isinstance(state, SlicerState)
         first_da = next(iter(state.data.values()))
         # Values should be ~10.0 (50/5) with unit counts/s
@@ -3775,8 +3775,8 @@ class TestRateNormalizationIntegration:
         params = PlotParamsBars(normalization={'per_second': True})
         plotter = plots.BarsPlotter.from_params(params)
         plotter.compute({'primary': {data_key: data_0d}})
-        result = plotter.get_cached_state()
-        # get_cached_state wraps in an Overlay even for single bars
+        result = plotter.get_frame().element
+        # get_frame().element wraps in an Overlay even for single bars
         bars = next(iter(result.values()))
         assert isinstance(bars, hv.Bars)
         assert bars.vdims[0].unit == 'counts/s'
@@ -3810,7 +3810,7 @@ def _per_pixel_params(
 def _curves_by_label(plotter) -> dict[str, hv.Curve]:
     return {
         curve.label: curve
-        for curve in plotter.get_cached_state().traverse(lambda el: el, [hv.Curve])
+        for curve in plotter.get_frame().element.traverse(lambda el: el, [hv.Curve])
     }
 
 
@@ -3875,7 +3875,7 @@ class TestDetectorPixelNormalization:
 
         plotter.compute({PRIMARY: {data_key: totals}})
 
-        (bars,) = plotter.get_cached_state().traverse(lambda el: el, [hv.Bars])
+        (bars,) = plotter.get_frame().element.traverse(lambda el: el, [hv.Bars])
         np.testing.assert_allclose(bars.dimension_values(2), [1.0, 2.0])
         assert bars.vdims[0].unit == 'counts/pixel'
 
@@ -3885,7 +3885,7 @@ class TestDetectorPixelNormalization:
 
         plotter.compute({PRIMARY: {data_key: totals}})
 
-        (table,) = plotter.get_cached_state().traverse(lambda el: el, [hv.Table])
+        (table,) = plotter.get_frame().element.traverse(lambda el: el, [hv.Table])
         np.testing.assert_allclose(table.dimension_values(table.vdims[0]), [1, 2])
         assert table.vdims[0].unit == 'counts/pixel'
 
@@ -3911,7 +3911,7 @@ class TestDetectorPixelNormalization:
         plotter.compute({PRIMARY: {data_key: data.drop_coords('detector_pixels')}})
 
         assert not _curves_by_label(plotter)
-        (text,) = plotter.get_cached_state().traverse(lambda el: el, [hv.Text])
+        (text,) = plotter.get_frame().element.traverse(lambda el: el, [hv.Text])
         assert 'detector_pixels' in text.text
 
     def test_window_aggregation_divides_by_pixels_of_one_frame(self, data_key):
@@ -4056,7 +4056,7 @@ class TestSpectralUnitNormalization:
 
         plotter.compute({PRIMARY: {data_key: spectra}})
 
-        elements = plotter.get_cached_state().traverse(
+        elements = plotter.get_frame().element.traverse(
             lambda el: el, [hv.Histogram, hv.ErrorBars]
         )
         assert {type(el) for el in elements} == {hv.Histogram, hv.ErrorBars}
@@ -4076,7 +4076,7 @@ class TestSpectralUnitNormalization:
 
         plotter.compute({PRIMARY: {data_key: totals}})
 
-        (bars,) = plotter.get_cached_state().traverse(lambda el: el, [hv.Bars])
+        (bars,) = plotter.get_frame().element.traverse(lambda el: el, [hv.Bars])
         np.testing.assert_allclose(bars.dimension_values(2), [2.0, 1.0])
         assert bars.vdims[0].unit == 'counts/Å'
 
@@ -4088,7 +4088,7 @@ class TestSpectralUnitNormalization:
 
         plotter.compute({PRIMARY: {data_key: total}})
 
-        (table,) = plotter.get_cached_state().traverse(lambda el: el, [hv.Table])
+        (table,) = plotter.get_frame().element.traverse(lambda el: el, [hv.Table])
         np.testing.assert_allclose(table.dimension_values(table.vdims[0]), [2.5])
         assert table.vdims[0].unit == 'counts/ms'
 
@@ -4107,8 +4107,8 @@ class TestSpectralUnitNormalization:
 
         plotter.compute({PRIMARY: {data_key: total}})
 
-        assert not plotter.get_cached_state().traverse(lambda el: el, [hv.Table])
-        (text,) = plotter.get_cached_state().traverse(lambda el: el, [hv.Text])
+        assert not plotter.get_frame().element.traverse(lambda el: el, [hv.Table])
+        (text,) = plotter.get_frame().element.traverse(lambda el: el, [hv.Text])
         assert 'Per Unit TOA / Wavelength' in text.text
 
 
@@ -4171,7 +4171,7 @@ class TestTimeseriesDownsamplingAndThrottle:
         plotter.compute({'primary': {data_key: data}})
         # Just confirms compute ran without raising; the downsample helper is
         # tested directly in timeseries_downsample_test.py.
-        assert plotter.has_cached_state()
+        assert plotter.get_frame() is not None
 
     def test_second_compute_within_period_is_skipped(self, data_key):
         from ess.livedata.dashboard.plot_params import (
@@ -4190,17 +4190,17 @@ class TestTimeseriesDownsamplingAndThrottle:
 
         data1 = _make_timeseries_data_array(100)
         plotter.compute({'primary': {data_key: data1}})
-        first_state = plotter.get_cached_state()
+        first_state = plotter.get_frame().element
 
         # 5 s more data — under the 10 s period, should skip.
         data2 = _make_timeseries_data_array(105)
         plotter.compute({'primary': {data_key: data2}})
-        assert plotter.get_cached_state() is first_state
+        assert plotter.get_frame().element is first_state
 
         # 10 s more data — at/over the period, should recompute.
         data3 = _make_timeseries_data_array(110)
         plotter.compute({'primary': {data_key: data3}})
-        assert plotter.get_cached_state() is not first_state
+        assert plotter.get_frame().element is not first_state
 
     def test_first_compute_always_runs(self, data_key):
         from ess.livedata.dashboard.plot_params import (
@@ -4214,7 +4214,7 @@ class TestTimeseriesDownsamplingAndThrottle:
         plotter = plots.LinePlotter.from_timeseries_params(params)
         data = _make_timeseries_data_array(5)
         plotter.compute({'primary': {data_key: data}})
-        assert plotter.has_cached_state()
+        assert plotter.get_frame() is not None
 
     def test_throttle_uses_data_time_not_wall_clock(self, data_key):
         from ess.livedata.dashboard.plot_params import (
@@ -4230,10 +4230,10 @@ class TestTimeseriesDownsamplingAndThrottle:
         data = _make_timeseries_data_array(100)
         plotter.compute({'primary': {data_key: data}})
         # Calling compute() with the same data many times must not recompute.
-        first_state = plotter.get_cached_state()
+        first_state = plotter.get_frame().element
         for _ in range(10):
             plotter.compute({'primary': {data_key: data}})
-        assert plotter.get_cached_state() is first_state
+        assert plotter.get_frame().element is first_state
 
     def test_non_timeseries_factories_unchanged(self, data_key):
         """from_params / from_display_params keep their non-throttling behaviour."""
@@ -4245,10 +4245,10 @@ class TestTimeseriesDownsamplingAndThrottle:
             coords={'x': sc.array(dims=['x'], values=[10.0, 20.0, 30.0], unit='m')},
         )
         plotter.compute({'primary': {data_key: data}})
-        first_state = plotter.get_cached_state()
+        first_state = plotter.get_frame().element
         plotter.compute({'primary': {data_key: data}})
         # No throttle path: recomputes unconditionally, fresh cached state object.
-        assert plotter.get_cached_state() is not first_state
+        assert plotter.get_frame().element is not first_state
 
 
 class TestGetLogScaleClim:

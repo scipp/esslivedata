@@ -695,7 +695,7 @@ class TestPercentileColorLimits:
 
         target = self._c_target(plotter, data)
 
-        np.testing.assert_allclose(plotter.get_cached_state().clim, expected)
+        np.testing.assert_allclose(plotter.get_frame().element.clim, expected)
         np.testing.assert_allclose(target, _expected(hv.Image, 'c', *expected))
 
 
@@ -960,5 +960,5 @@ class TestManualColorLimitsDropAutoscaleC:
         )
         data.data.unit = 'counts'
         plotter.compute({PRIMARY: {key: data}})
-        assert plotter.get_cached_state().clim is None
+        assert plotter.get_frame().element.clim is None
         assert plotter.get_range_targets(key) is None

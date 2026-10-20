@@ -55,6 +55,31 @@ Pop-outs (`plot_popout.py`) and the phone layout's Plots tab (`plot_overview.py`
 ride on these seams (live cell set, viewer tokens, frame generations); see their
 module docstrings.
 
+### Frames: written directly or drawn through HoloViews
+
+A plotter's computed state is a `Frame` (`dashboard/frame.py`): the element, a
+spec, and per-element data-source columns. A cell is drawn as a `DirectFigure`
+when its layers' frames all have columns, its presenters pass frames through
+(`PresenterBase.PASSES_FRAMES_THROUGH`) and no layer has HoloViews compute its
+ranges (`Plotter.applies_ranges`): HoloViews builds the figure once, and later
+frames are written into its data sources. Only the autoscale hook runs per
+update; all other hooks run once at the build, so a hook must not rely on
+running per update. Everything else falls back to a session `DynamicMap`, and
+the rules below apply to it.
+
+- A spec change rebuilds the cell in every session (logged by the session
+  pass). The spec is inferred from element types, dimensions and options, so
+  nothing in it may change with the data: no per-frame closures as hooks (use
+  a dataclass, like `ImageHoverHook`) and no data-dependent options.
+  `test_frame_spec_does_not_change_with_values` guards every registered
+  plotter.
+- A new element type becomes directly writable by adding a column function
+  to `frame._COLUMNS`. It must reproduce HoloViews' own data-source columns;
+  `test_written_frame_matches_a_figure_built_from_it` checks this for every
+  registered plotter, so a plotter drawing the type needs sample data there.
+- Arrays in a published frame's columns are shared by all sessions' figures:
+  never modify them in place.
+
 ### Cell teardown and the session DynamicMap
 
 - `Plot.cleanup` severs *all* plot-refresh subscribers on a stream, not just its own

@@ -4,69 +4,120 @@
 SessionLayer - Per-session state for a single plot layer.
 
 Each browser session creates SessionLayer instances to hold session-bound
-HoloViews components (Pipe, DynamicMap, PresenterBase) when data is
-available; the instance also serves as the session's viewer-interest token.
+rendering state (presenter, current frame, figure subscriptions or a
+DynamicMap) when data is available; the instance also serves as the
+session's viewer-interest token.
 """
 
 from __future__ import annotations
 
+from collections.abc import Callable, Hashable
 from dataclasses import dataclass
 
 import holoviews as hv
+import structlog
 
+from .frame import Frame
 from .plot_data_service import LayerId, LayerSnapshot
-from .plots import Plotter, PresenterBase, layout_shape
+from .plots import Plotter, PresenterBase
+
+logger = structlog.get_logger(__name__)
 
 
-@dataclass
 class SessionComponents:
     """
-    Session-bound HoloViews components for rendering a layer.
+    Session-bound state for rendering a layer.
 
-    These components are created together when a layer has displayable data
-    and are always used as a unit.
+    Figures receive the layer's frames by one of two routes, chosen by the cell
+    that draws the layer (see ``widgets/cell.py``):
+
+    - Figures built once and updated by writing each frame's columns into their
+      data sources register a callback with :meth:`subscribe`.
+    - A HoloViews ``DynamicMap`` fed by a ``Pipe`` (:attr:`dmap`), for frames
+      whose element types cannot be written directly.
 
     Parameters
     ----------
     presenter:
         Per-session presenter created from the plotter.
-    pipe:
-        Session-local HoloViews Pipe for data updates.
-    dmap:
-        The DynamicMap or Element created by the presenter. It outlives every
-        cell widget built over it (until the plotter is replaced), so builds
-        must compose over it without modifying it. ``DynamicMap.opts()``
-        modifies it: it wraps the map's callback in place and returns the same
-        object, so each build would stack one more wrap. Pass ``clone=True``.
-    layout_shape:
-        :func:`~.plots.layout_shape` of the frame ``dmap`` was created with,
-        the only shape of frame it can display.
+    frame:
+        The frame this session's figures of the layer show: the plotter's
+        current frame at creation, then the last one pushed. Figures accept
+        only frames of its spec; a frame of another spec rebuilds the cell
+        instead, creating new components (see :meth:`is_valid_for`).
     """
 
-    presenter: PresenterBase
-    pipe: hv.streams.Pipe
-    dmap: hv.DynamicMap | hv.Element
-    layout_shape: tuple[type, ...] | None
+    def __init__(self, presenter: PresenterBase, frame: Frame) -> None:
+        self.presenter = presenter
+        self.frame = frame
+        self._subscribers: list[Callable[[Frame], None]] = []
+        self._pipe: hv.streams.Pipe | None = None
+        self._dmap: hv.DynamicMap | hv.Element | None = None
 
-    def update_pipe(self) -> bool:
+    @property
+    def spec(self) -> Hashable:
+        """Spec of the frames this layer's figures accept."""
+        return self.frame.spec
+
+    @property
+    def writable(self) -> bool:
+        """Whether figures can show the layer by writing its frames directly."""
+        return self.presenter.PASSES_FRAMES_THROUGH and self.frame.columns is not None
+
+    @property
+    def dmap(self) -> hv.DynamicMap | hv.Element:
+        """The layer's DynamicMap or Element, created on first access.
+
+        It outlives every cell widget built over it (until the plotter is
+        replaced), so builds must compose over it without modifying it.
+        ``DynamicMap.opts()`` modifies it: it wraps the map's callback in place
+        and returns the same object, so each build would stack one more wrap.
+        Pass ``clone=True``.
         """
-        Push pending update to pipe if available.
+        if self._dmap is None:
+            self._pipe = hv.streams.Pipe(data=self.frame.element)
+            self._dmap = self.presenter.present(self._pipe)
+        return self._dmap
 
-        A frame of a different layout shape is not sent: it would stop ``dmap``
-        from updating for good. The cell rebuilds on the shape change instead,
-        creating new components (see :meth:`is_valid_for`).
+    def subscribe(self, callback: Callable[[Frame], None]) -> None:
+        """Call ``callback`` with every frame pushed from now on."""
+        self._subscribers.append(callback)
+
+    def unsubscribe(self, callback: Callable[[Frame], None]) -> None:
+        """Stop calling ``callback``; a no-op if it is not subscribed."""
+        if callback in self._subscribers:
+            self._subscribers.remove(callback)
+
+    def push_update(self) -> bool:
+        """
+        Push the pending frame to the layer's figures, if there is one.
+
+        A frame of a different spec is not pushed: no figure built from
+        :attr:`frame` can show it, and for a DynamicMap of a layout it would
+        stop the map from updating for good. The cell rebuilds on the spec
+        change instead.
 
         Returns
         -------
         :
-            True if an update was sent, False if no pending update.
+            True if a frame was pushed, False otherwise.
         """
         if not self.presenter.has_pending_update():
             return False
         frame = self.presenter.consume_update()
-        if layout_shape(frame) != self.layout_shape:
+        if frame.spec != self.frame.spec:
             return False
-        self.pipe.send(frame)
+        self.frame = frame
+        for callback in list(self._subscribers):
+            # One failing figure must not stop the others, nor the session's
+            # pass, which pushes the frames of every layer (#1276). HoloViews
+            # logs the failures of its own updates the same way.
+            try:
+                callback(frame)
+            except Exception:
+                logger.exception("Writing a frame into a figure failed")
+        if self._pipe is not None:
+            self._pipe.send(frame.element)
         return True
 
     def is_valid_for(self, plotter: Plotter | None) -> bool:
@@ -74,13 +125,13 @@ class SessionComponents:
         Check if these components are still valid for the given plotter.
 
         Returns False if the plotter has been replaced (e.g., workflow restart)
-        or its frame has a different layout shape, indicating the components
-        should be recreated.
+        or its frame has a different spec, indicating the components should be
+        recreated.
         """
         return (
             plotter is not None
             and self.presenter.is_owned_by(plotter)
-            and plotter.layout_shape() == self.layout_shape
+            and plotter.get_frame().spec == self.spec
         )
 
     @classmethod
@@ -104,17 +155,7 @@ class SessionComponents:
         plotter = state.plotter
         if plotter is None:
             raise ValueError("Plotter must not be None when plot is displayable")
-        presenter = plotter.create_presenter()
-        frame = plotter.get_cached_state()
-        pipe = hv.streams.Pipe(data=frame)
-        dmap = presenter.present(pipe)
-
-        return cls(
-            presenter=presenter,
-            pipe=pipe,
-            dmap=dmap,
-            layout_shape=layout_shape(frame),
-        )
+        return cls(presenter=plotter.create_presenter(), frame=plotter.get_frame())
 
 
 @dataclass
@@ -139,23 +180,18 @@ class SessionLayer:
     layer_id: LayerId
     components: SessionComponents | None = None
 
-    @property
-    def dmap(self) -> hv.DynamicMap | hv.Element | None:
-        """The DynamicMap or Element for rendering, or None if not available."""
-        return self.components.dmap if self.components else None
-
-    def update_pipe(self) -> bool:
+    def push_update(self) -> bool:
         """
-        Push pending update to pipe if components are available.
+        Push the pending frame to the layer's figures, if components exist.
 
         Returns
         -------
         :
-            True if an update was sent, False otherwise.
+            True if a frame was pushed, False otherwise.
         """
         if self.components is None:
             return False
-        return self.components.update_pipe()
+        return self.components.push_update()
 
     def ensure_components(self, state: LayerSnapshot) -> bool:
         """

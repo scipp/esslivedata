@@ -29,7 +29,7 @@ def _present(
 ) -> tuple[hv.streams.Pipe, ElementPlot]:
     """Compute ``data`` and render it the way a session does."""
     plotter.compute({'primary': {data_key: data}})
-    pipe = hv.streams.Pipe(data=plotter.get_cached_state())
+    pipe = hv.streams.Pipe(data=plotter.get_frame().element)
     dmap = plotter.create_presenter().present(pipe)
     return pipe, BokehRenderer.instance().get_plot(dmap)
 
@@ -518,7 +518,7 @@ class TestFlattenPlotterHover:
         installed = [t for t in plot.state.toolbar.tools if isinstance(t, HoverTool)]
         for _ in range(2):
             plotter.compute({'primary': {data_key: data_abc}})
-            pipe.send(plotter.get_cached_state())
+            pipe.send(plotter.get_frame().element)
         hovers = [t for t in plot.state.toolbar.tools if isinstance(t, HoverTool)]
         assert hovers == installed
 
@@ -598,7 +598,7 @@ class TestFlattenPlotterCompute:
         params = _make_params(('a', 'b', 'c'), axis_x='b')
         plotter = FlattenPlotter.from_params(params)
         plotter.compute({'primary': {data_key: data_abc}})
-        assert plotter.has_cached_state()
+        assert plotter.get_frame() is not None
 
     def test_compute_renders_error_text_on_position_out_of_range(
         self, data_key
@@ -610,4 +610,4 @@ class TestFlattenPlotterCompute:
         plotter = FlattenPlotter.from_params(params)
         data_2d = sc.DataArray(sc.zeros(dims=['x', 'y'], shape=[2, 2]))
         plotter.compute({'primary': {data_key: data_2d}})
-        assert plotter.get_cached_state() is not None
+        assert plotter.get_frame() is not None

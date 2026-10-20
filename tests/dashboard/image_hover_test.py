@@ -36,7 +36,7 @@ def _image(**coords: sc.Variable) -> sc.DataArray:
 
 def _render(plotter: plots.ImagePlotter, data: sc.DataArray):
     plotter.compute({'primary': {DATA_KEY: data}})
-    pipe = hv.streams.Pipe(data=plotter.get_cached_state())
+    pipe = hv.streams.Pipe(data=plotter.get_frame().element)
     dmap = plotter.create_presenter().present(pipe)
     return BokehRenderer.instance().get_plot(dmap)
 

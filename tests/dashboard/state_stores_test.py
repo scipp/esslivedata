@@ -4,6 +4,7 @@
 
 import weakref
 
+from ess.livedata.dashboard.frame import Frame
 from ess.livedata.dashboard.plot_data_service import (
     LayerId,
     LayerSnapshot,
@@ -17,20 +18,17 @@ class FakePlotter:
     """Fake plotter that caches state and tracks presenters for testing."""
 
     def __init__(self, state=None, *, scale: str = 'linear'):
-        self._cached_state = state
+        self._frame = None if state is None else Frame.from_element(state)
         self.scale = scale
         self._presenters: weakref.WeakSet = weakref.WeakSet()
 
     def compute(self, data):
-        self._cached_state = data
+        self._frame = Frame.from_element(data)
         self.mark_presenters_dirty()
         return data
 
-    def get_cached_state(self):
-        return self._cached_state
-
-    def has_cached_state(self):
-        return self._cached_state is not None
+    def get_frame(self):
+        return self._frame
 
     def create_presenter(self):
         presenter = FakePresenter(self, scale=self.scale)
@@ -76,7 +74,7 @@ class TestPlotDataService:
 
         assert state is not None
         assert state.plotter is plotter
-        assert state.plotter.get_cached_state() == {'plot': 'data'}
+        assert state.plotter.get_frame().element == {'plot': 'data'}
         assert state.error_message is None
         assert state.state == LayerState.WAITING_FOR_DATA
 

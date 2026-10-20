@@ -74,7 +74,7 @@ def make_source_data(
 
 def histogram_of(plotter: CorrelationHistogramPlotter) -> dict[str, np.ndarray]:
     """Return the raw data of the single histogram in the plotter's cached state."""
-    state = plotter.get_cached_state()
+    state = plotter.get_frame().element
     assert state is not None
     return next(iter(state.values())).data
 
@@ -125,7 +125,7 @@ class TestWallClockJoinConvention:
             }
         )
 
-        (histogram,) = plotter.get_cached_state()
+        (histogram,) = plotter.get_frame().element
         # Positions 1.0 and 5.0 over two bins: one window on each side. Joining
         # on start_time would put both at 1.0 and collapse this to a single bin.
         assert list(histogram.dimension_values('result')) == [10.0, 20.0]
@@ -180,7 +180,7 @@ class TestCorrelationHistogramPlotter:
         }
 
         plotter.compute(data)
-        result = plotter.get_cached_state()
+        result = plotter.get_frame().element
         assert result is not None
 
     def test_works_with_multiple_axes(self):
@@ -208,7 +208,7 @@ class TestCorrelationHistogramPlotter:
         }
 
         plotter.compute(data)
-        result = plotter.get_cached_state()
+        result = plotter.get_frame().element
         assert result is not None
 
     def test_forwards_title_resolver_to_renderer(self):
@@ -230,7 +230,7 @@ class TestCorrelationHistogramPlotter:
 
         resolver = TitleResolver(source=lambda _: 'Detector', output=lambda _: 'I(d)')
         plotter.compute(data, title_resolver=resolver)
-        result = plotter.get_cached_state()
+        result = plotter.get_frame().element
         assert result is not None
         assert result.label == 'Detector/I(d)'
 
@@ -367,7 +367,7 @@ class TestHistogramValues:
     def test_axis_dimension_carries_name_unit_and_output_title(self):
         plotter = self._compute_1d(normalize=False, values=[10.0, 20.0, 30.0])
 
-        (histogram,) = plotter.get_cached_state()
+        (histogram,) = plotter.get_frame().element
         assert histogram.kdims[0].name == 'position'
         assert histogram.kdims[0].unit == 'm'
         assert histogram.vdims[0].label == 'Total counts'
@@ -381,7 +381,7 @@ class TestHistogramValues:
         """
         plotter = self._compute_1d(normalize=True, values=[10.0, 20.0, 30.0])
 
-        (histogram,) = plotter.get_cached_state()
+        (histogram,) = plotter.get_frame().element
         # Samples are 100 ms apart: 10, 20, 30 counts are 100, 200, 300 counts/s,
         # and the upper bin averages the latter two.
         np.testing.assert_allclose(histogram.dimension_values(1), [100.0, 250.0])
@@ -424,7 +424,7 @@ class TestHistogramValues:
             }
         )
 
-        (image,) = plotter.get_cached_state()
+        (image,) = plotter.get_frame().element
         np.testing.assert_array_equal(
             image.dimension_values(2, flat=False), [[1.0, 2.0], [3.0, 4.0]]
         )
@@ -471,7 +471,7 @@ class TestDataPrecedingAxisHistory:
 
         self._compute(plotter, make_source_data([50, 60, 70], [10.0, 20.0, 30.0]))
 
-        assert not plotter.has_cached_state()
+        assert plotter.get_frame() is None
 
     def test_preceding_points_never_appear_and_then_vanish(self):
         """Growing history must not retroactively remove already-shown points.
@@ -483,7 +483,7 @@ class TestDataPrecedingAxisHistory:
         plotter = self._make_plotter()
 
         self._compute(plotter, make_source_data([50, 60], [10.0, 20.0]))
-        assert not plotter.has_cached_state()
+        assert plotter.get_frame() is None
 
         self._compute(
             plotter, make_source_data([50, 60, 150, 250], [10.0, 20.0, 30.0, 40.0])
@@ -558,7 +558,7 @@ class TestConstantAxisValues:
                 },
             }
         )
-        state = plotter.get_cached_state()
+        state = plotter.get_frame().element
         assert state is not None
         return next(iter(state.values())).data
 
@@ -655,7 +655,7 @@ class TestCorrelationHistogram1dPlotter:
         }
 
         plotter.compute(data)
-        result = plotter.get_cached_state()
+        result = plotter.get_frame().element
         # Overlay wraps the histogram; get the first child element
         element = next(iter(result.values()))
         assert element.kdims[0].label == title

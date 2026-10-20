@@ -17,7 +17,7 @@ plain data.
 
 from __future__ import annotations
 
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Hashable, Mapping
 from dataclasses import dataclass
 
 from .plot_data_service import LayerId, LayerSnapshot
@@ -44,16 +44,17 @@ class LayerBuildInput:
     A widget built from "no computed plot" renders a placeholder, so the input
     must change when a real plot appears.
 
-    ``layout_shape`` is mutable behind a snapshot for the same reason: the item
-    types of a layout-mode plot change with the sources that have data, without
-    a lifecycle transition. A widget's DynamicMap accepts only frames of the
-    shape it was built with, so the input must change with the shape.
+    ``frame_spec`` is mutable behind a snapshot for the same reason: what a
+    figure is built from (element types, labels, units, the sources that have
+    data) changes without a lifecycle transition. A widget's figure accepts only
+    frames of the spec it was built with (see :class:`~.frame.Frame`), so the
+    input must change with the spec.
     """
 
     layer_id: LayerId
     snapshot: LayerSnapshot | None
     has_plot: bool
-    layout_shape: tuple[type, ...] | None
+    frame_spec: Hashable
 
 
 @dataclass(frozen=True, slots=True)
@@ -102,7 +103,7 @@ def cell_build_inputs(
                 layer_id=layer.layer_id,
                 snapshot=snapshot,
                 has_plot=has_plot,
-                layout_shape=snapshot.plotter.layout_shape() if has_plot else None,
+                frame_spec=snapshot.plotter.get_frame().spec if has_plot else None,
             )
         )
     return CellBuildInputs(

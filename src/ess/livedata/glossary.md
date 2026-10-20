@@ -251,8 +251,10 @@ The naming stack, from the Kafka wire inwards (see ADR 0004 and
   qualify.
 - **plot** — informal umbrella over grid/cell/layer/plotter/figure; in precise
   writing name the level, usually *layer*.
-- **frame** — neutron pulse frame (instrument context) vs. the dashboard
-  update-flush cycle (ADR 0005).
+- **frame** — neutron pulse frame (instrument context) vs. the dashboard's
+  update frame: the update-flush cycle (ADR 0005) and the `Frame` a plotter
+  computes for it (`dashboard/frame.py`). Bokeh's *frame* is the data area
+  inside a figure's axes (`dashboard/frame_aspect.py`).
 - **orchestrator** — backend `OrchestratingProcessor`; dashboard
   `JobOrchestrator` (workflow lifecycle), `PlotOrchestrator` (grid topology).
   The dashboard's Kafka-to-`DataService` message pump is `MessagePump`, not

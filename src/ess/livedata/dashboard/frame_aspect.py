@@ -32,9 +32,10 @@ cooperating parts:
    state is a browser-side write history on the figure (a loop breaker, see the
    rule's comments), which such a restore counts toward: a path that re-applied
    opts more than twice per second would letterbox intermittently.  The
-   dashboard's update path does neither -- data reaches the plot through pipes,
-   leaving figure properties alone, so the letterbox is applied once and then
-   left untouched (measured: no border change across 145 data updates).
+   dashboard's update path does neither -- data reaches the plot through pipes
+   or is written into its data sources, leaving figure properties alone, so the
+   letterbox is applied once and then left untouched (measured through pipes:
+   no border change across 145 data updates).
 
 Two hook variants exist:
 

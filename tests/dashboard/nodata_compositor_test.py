@@ -60,7 +60,7 @@ def test_2d_data_reaches_bokeh_unchanged(bin_edges: bool) -> None:
     plotter = plots.ImagePlotter.from_params(PlotParams2d())
     plotter.compute({'primary': _data_2d(bin_edges=bin_edges)})
     presenter = plotter.create_presenter()
-    rendered = presenter.present(hv.streams.Pipe(data=plotter.get_cached_state()))
+    rendered = presenter.present(hv.streams.Pipe(data=plotter.get_frame().element))
     models = BokehRenderer.instance().get_plot(rendered).state.references()
     # compute() turns any failure into a Text placeholder, which would pass vacuously.
     assert not [model for model in models if isinstance(model, Text)]
