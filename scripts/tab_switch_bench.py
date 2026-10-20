@@ -64,16 +64,28 @@ SEQUENCE = ('Workflows', GRID, 'System Status', GRID, 'Manage Plots', GRID)
 # Written to a temporary directory on the dashboard's PYTHONPATH. Active only in
 # the dashboard process (TABBENCH=1). Patching happens synchronously at startup:
 # a session built before the patch would keep the original bound methods.
+# Bokeh >= 3.10 runs session callbacks on worker threads, hence the per-thread
+# timer stack and one locked write per event line.
 SITECUSTOMIZE = r'''
-import json, os, time
+import json, os, sys, threading, time
 if os.environ.get('TABBENCH') == '1':
     import importlib
     pc, ct = time.perf_counter, time.thread_time
-    _stack = []
+    _tls = threading.local()
+    _emit_lock = threading.Lock()
     _env_sent = [False]
 
+    def _stack():
+        return _tls.__dict__.setdefault('stack', [])
+
+    def _depth():
+        return _tls.__dict__.setdefault('depth', {})
+
     def _emit(**ev):
-        print('[tb] ' + json.dumps(ev), flush=True)
+        line = '[tb] ' + json.dumps(ev) + '\n'
+        with _emit_lock:
+            sys.stdout.write(line)
+            sys.stdout.flush()
 
     def _outer(cls, name, kind, extra=None):
         orig = getattr(cls, name)
@@ -85,15 +97,16 @@ if os.environ.get('TABBENCH') == '1':
                 _env_sent[0] = True
                 _emit(kind='env', bokeh=bokeh.__version__,
                       query_impl=HasProps.query_properties_with_values.__module__)
-            if _stack:
+            stack = _stack()
+            if stack:
                 return orig(self, *a, **k)
             acc = {}
-            _stack.append(acc)
+            stack.append(acc)
             t0, c0 = pc(), ct()
             try:
                 return orig(self, *a, **k)
             finally:
-                _stack.pop()
+                stack.pop()
                 ev = dict(kind=kind, t=time.time(), ms=(pc() - t0) * 1e3,
                           cpu=(ct() - c0) * 1e3)
                 ev.update({k_: v * 1e3 for k_, v in acc.items()})
@@ -105,18 +118,18 @@ if os.environ.get('TABBENCH') == '1':
 
     def _inner(cls, name, label):
         orig = getattr(cls, name)
-        depth = [0]
 
         def wrapper(*a, **k):
-            if not _stack or depth[0]:
+            stack, depth = _stack(), _depth()
+            if not stack or depth.get(label):
                 return orig(*a, **k)
-            depth[0] += 1
+            depth[label] = 1
             t0 = pc()
             try:
                 return orig(*a, **k)
             finally:
-                depth[0] -= 1
-                _stack[-1][label] = _stack[-1].get(label, 0.0) + pc() - t0
+                depth[label] = 0
+                stack[-1][label] = stack[-1].get(label, 0.0) + pc() - t0
 
         setattr(cls, name, wrapper)
 
