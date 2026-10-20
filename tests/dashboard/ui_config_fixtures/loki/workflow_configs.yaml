@@ -1,0 +1,29 @@
+loki/detector_xy_projection/1:
+  jobs:
+    loki_detector_0:
+      aux_source_names: {}
+      params: {}
+    loki_detector_1:
+      aux_source_names: {}
+      params: {}
+    loki_detector_2:
+      aux_source_names: {}
+      params: {}
+    loki_detector_3:
+      aux_source_names: {}
+      params: {}
+    loki_detector_4:
+      aux_source_names: {}
+      params: {}
+    loki_detector_5:
+      aux_source_names: {}
+      params: {}
+    loki_detector_6:
+      aux_source_names: {}
+      params: {}
+    loki_detector_7:
+      aux_source_names: {}
+      params: {}
+    loki_detector_8:
+      aux_source_names: {}
+      params: {}

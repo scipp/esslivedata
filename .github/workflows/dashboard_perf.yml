@@ -1,0 +1,100 @@
+name: Dashboard performance
+
+# Compares two environments of the dashboard on the fake backend with
+# scripts/perf/perf.py, alternating their runs within this job (see the script's
+# docstring for what is measured). Only comparisons within one job are
+# meaningful: runners differ from run to run.
+#
+# On pull requests it runs only when the harness itself changes, as an A/A
+# comparison of the PR with itself, which shows the runner's noise.
+on:
+  workflow_dispatch:
+    inputs:
+      baseline_ref:
+        description: 'Code of the baseline environment, installed from its lock files'
+        default: 'main'
+      candidate_ref:
+        description: 'Code of the candidate environment, installed from its lock files'
+        default: 'main'
+      candidate_upgrade:
+        description: 'pip install --upgrade arguments for the candidate, e.g. "--pre panel holoviews bokeh"'
+        default: ''
+      rounds:
+        description: 'Runs per environment'
+        default: '3'
+  pull_request:
+    paths:
+      - '.github/workflows/dashboard_perf.yml'
+      - 'scripts/perf/**'
+
+jobs:
+  perf:
+    name: Dashboard performance
+    runs-on: ubuntu-24.04
+    timeout-minutes: 75
+    env:
+      BASELINE_REF: ${{ inputs.baseline_ref || github.sha }}
+      CANDIDATE_REF: ${{ inputs.candidate_ref || github.sha }}
+      CANDIDATE_UPGRADE: ${{ inputs.candidate_upgrade }}
+      ROUNDS: ${{ inputs.rounds || '3' }}
+    steps:
+      # The harness and its LOKI fixture come from the ref that runs this
+      # workflow, so both environments run the same scenario whatever they check
+      # out.
+      - uses: actions/checkout@v4
+        with:
+          path: harness
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.BASELINE_REF }}
+          path: base
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.CANDIDATE_REF }}
+          path: cand
+      - uses: actions/setup-python@v5
+        with:
+          python-version-file: 'harness/.github/workflows/python-version-ci'
+          cache: 'pip'
+          cache-dependency-path: |
+            base/requirements/*.txt
+            cand/requirements/*.txt
+      - name: Create the environments
+        run: |
+          for env in base cand; do
+            python -m venv "venv-$env"
+            "venv-$env/bin/pip" install -q --upgrade pip
+            "venv-$env/bin/pip" install -q -r "$env/requirements/test.txt"
+            "venv-$env/bin/pip" install -q --no-deps -e "./$env"
+          done
+          # The same Playwright in both, so both drive the same Chromium.
+          venv-base/bin/pip install -q playwright
+          version=$(venv-base/bin/python -c 'from importlib.metadata import version; print(version("playwright"))')
+          venv-cand/bin/pip install -q "playwright==$version"
+          if [ -n "$CANDIDATE_UPGRADE" ]; then
+            # shellcheck disable=SC2086 # word splitting is intended
+            venv-cand/bin/pip install --upgrade $CANDIDATE_UPGRADE
+          fi
+      - name: Install chromium
+        # As in ci.yml: the runner image already has chromium's shared
+        # libraries, so a failing apt mirror only costs fonts.
+        run: |
+          timeout -k 30 180 venv-base/bin/playwright install-deps chromium || echo \
+            "::warning title=install-deps::apt failed or timed out; continuing without extra fonts."
+          venv-base/bin/playwright install chromium
+      - name: Measure
+        run: |
+          python harness/scripts/perf/perf.py ab --out perf/results.json \
+            --rounds "$ROUNDS" \
+            --env "base=$PWD/venv-base/bin/python:$PWD/base" \
+            --env "cand=$PWD/venv-cand/bin/python:$PWD/cand"
+      - name: Report
+        shell: bash
+        run: |
+          python harness/scripts/perf/perf.py report perf/results.json \
+            | tee perf/report.md >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: dashboard-perf
+          path: perf/
