@@ -1600,25 +1600,25 @@ class TestLayerToolbars:
     ):
         cell_widget = self._cell_widget(plot_orchestrator, plot_grid_tabs)
 
-        assert cell_widget.layer_time_panes == {}
+        assert cell_widget.layer_time_markups == {}
 
     def test_revealing_builds_them(self, plot_orchestrator, plot_grid_tabs):
         cell_widget = self._cell_widget(plot_orchestrator, plot_grid_tabs)
         click_tool(cell_widget.view, 'lt-tool-layer-details')
 
         assert cell_widget.toolbars_shown
-        assert len(cell_widget.layer_time_panes) == 1
+        assert len(cell_widget.layer_time_markups) == 1
 
     def test_hiding_and_revealing_again_keeps_one_set(
         self, plot_orchestrator, plot_grid_tabs
     ):
         cell_widget = self._cell_widget(plot_orchestrator, plot_grid_tabs)
         click_tool(cell_widget.view, 'lt-tool-layer-details')
-        panes = dict(cell_widget.layer_time_panes)
+        panes = dict(cell_widget.layer_time_markups)
         click_tool(cell_widget.view, 'lt-tool-layer-details')
         click_tool(cell_widget.view, 'lt-tool-layer-details')
 
-        assert cell_widget.layer_time_panes == panes
+        assert cell_widget.layer_time_markups == panes
 
     def test_rebuild_preserves_revealed_toolbars(
         self, plot_orchestrator, plot_grid_tabs
@@ -1633,7 +1633,7 @@ class TestLayerToolbars:
         rebuilt = plot_grid_tabs._cells[cell_id]
         assert rebuilt is not cell_widget
         assert rebuilt.toolbars_shown
-        assert len(rebuilt.layer_time_panes) == 1
+        assert len(rebuilt.layer_time_markups) == 1
 
 
 class TestCellDiffer:
