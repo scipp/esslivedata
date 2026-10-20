@@ -1013,7 +1013,12 @@ class PlotGridTabs:
         the layer pipes the cell already renders from, and the button that got
         us here lives in a titlebar, so the cell is on the visible tab and
         already live.
+
+        A window already open for the cell is closed the way the user closes
+        it, rebuilding the cell: the cell widget owns the window's view and
+        releases it only when disposed.
         """
+        self._close_popout(cell_id)
         cell_widget = self._cells.get(cell_id)
         if cell_widget is not None:
             self._popouts.open(cell_id, cell_widget)

@@ -11,7 +11,6 @@ from __future__ import annotations
 
 import json
 from abc import ABC, abstractmethod
-from collections.abc import Hashable
 from enum import StrEnum
 
 import holoviews as hv
@@ -100,10 +99,6 @@ class StaticPlotter(ABC):
     def get_frame(self) -> Frame | None:
         """The last computed frame, or None if not yet computed."""
         return self._frame
-
-    def frame_spec(self) -> Hashable:
-        """Spec of the last computed frame, or None if not yet computed."""
-        return None if self._frame is None else self._frame.spec
 
     @property
     def time_bounds(self) -> None:

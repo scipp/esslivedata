@@ -90,15 +90,11 @@ def _xy_columns(element: hv.Curve | hv.Scatter) -> Columns:
     )
 
 
-def _histogram_columns(histogram: hv.Histogram) -> Columns | None:
+def _histogram_columns(histogram: hv.Histogram) -> Columns:
     """Columns of ``HistogramPlot.get_data`` for a non-inverted, linear-y histogram.
 
-    For a histogram with a hover tool. None on a log y-axis, where HoloViews adds
-    a ``bottom`` column when building the figure, filled with the start of the
-    y-range at that time, which a frame cannot know.
+    For a histogram with a hover tool.
     """
-    if hv.Store.lookup_options('bokeh', histogram, 'plot').kwargs.get('logy'):
-        return None
     edges = histogram.interface.coords(histogram, histogram.kdims[0], edges=True)
     columns = {'top': _values(histogram, 1), 'left': edges[:-1], 'right': edges[1:]}
     return _with_hover_columns(histogram, columns)
@@ -141,9 +137,9 @@ def _text_spec(text: hv.Text) -> Hashable:
 
 
 # Element types whose updates can be written directly, with the function
-# deriving their columns, or returning None for options under which they cannot.
-# Data the figure is built from goes into the spec instead (see ``_SPEC_ONLY``).
-_COLUMNS: dict[type, Callable[[Any], Columns | None]] = {
+# deriving their columns. Data the figure is built from goes into the spec
+# instead (see ``_SPEC_ONLY``).
+_COLUMNS: dict[type, Callable[[Any], Columns]] = {
     hv.Image: _image_columns,
     hv.Curve: _xy_columns,
     hv.Scatter: _xy_columns,
@@ -152,12 +148,26 @@ _COLUMNS: dict[type, Callable[[Any], Columns | None]] = {
     hv.Spread: _spread_columns,
 }
 
+# Plot options under which HoloViews derives columns the functions above do
+# not mirror, so that the element cannot be written directly. On a log y-axis,
+# HoloViews adds a ``bottom`` column to a histogram when building the figure,
+# filled with the start of the y-range at that time, which a frame cannot know.
+_UNMIRRORED_OPTIONS: dict[type, tuple[str, ...]] = {hv.Histogram: ('logy',)}
+_UNMIRRORED_OPTIONS_ALL_TYPES = ('invert_axes',)
+
 # Element types drawn from their spec alone: their content is small and rarely
 # changes (the "No data" and error placeholders), so a change rebuilds the
 # figure rather than being written.
 _SPEC_ONLY: dict[type, Callable[[Any], Hashable]] = {
     hv.Text: _text_spec,
 }
+
+# Options left out of the spec. The colour range is written by the cell's
+# autoscale controller on every update, and plotters set it from the data where
+# HoloViews cannot pick one (a log scale with all-NaN or uniform values).
+_UNSPECIFIED_OPTIONS = frozenset({'clim'})
+
+Options = dict[str, dict[str, Any]]
 
 
 @dataclasses.dataclass(frozen=True, eq=False)
@@ -183,19 +193,33 @@ class Frame:
 
     @classmethod
     def from_element(cls, element: Any) -> Frame:
-        """Derive the spec and columns of ``element``."""
+        """Derive the spec and columns of ``element``.
+
+        Raises for an option value that cannot be compared (see
+        :func:`_freeze`): that is a fault of the plotter, not of the data.
+        """
         leaves = _leaves(element)
-        columns = None if leaves is None else tuple(map(_columns, leaves))
-        if columns is None or None in columns:
-            return cls(element=element, spec=layout_shape(element), columns=None)
-        spec = (
-            _options_spec(element) if isinstance(element, hv.Overlay) else None,
-            tuple(_element_spec(leaf) for leaf in leaves),
-        )
-        return cls(element=element, spec=spec, columns=columns)
+        if leaves is not None:
+            options = [_options(leaf) for leaf in leaves]
+            columns = tuple(
+                _columns(leaf, opts['plot'])
+                for leaf, opts in zip(leaves, options, strict=True)
+            )
+            if None not in columns:
+                spec = (
+                    _options_spec(_options(element))
+                    if isinstance(element, hv.Overlay)
+                    else None,
+                    tuple(
+                        _element_spec(leaf, opts)
+                        for leaf, opts in zip(leaves, options, strict=True)
+                    ),
+                )
+                return cls(element=element, spec=spec, columns=columns)
+        return cls(element=element, spec=_layout_shape(element), columns=None)
 
 
-def layout_shape(frame: Any) -> tuple[type, ...] | None:
+def _layout_shape(frame: Any) -> tuple[type, ...] | None:
     """Types of a layout frame's items in order, or None for any other frame.
 
     A DynamicMap returning ``hv.Layout`` is split into one sub-map per item of
@@ -209,14 +233,6 @@ def layout_shape(frame: Any) -> tuple[type, ...] | None:
     return tuple(type(item) for item in frame)
 
 
-def _columns(element: hv.Element) -> Columns | None:
-    """Columns of ``element``, empty if spec-only, None if it cannot be written."""
-    if type(element) in _SPEC_ONLY:
-        return {}
-    columns = _COLUMNS.get(type(element))
-    return None if columns is None else columns(element)
-
-
 def _leaves(element: Any) -> list[hv.Element] | None:
     """The elements a figure of ``element`` draws, or None if it is no figure."""
     if isinstance(element, hv.Overlay):
@@ -226,7 +242,28 @@ def _leaves(element: Any) -> list[hv.Element] | None:
     return None
 
 
-def _element_spec(element: hv.Element) -> Hashable:
+def _options(element: hv.Dimensioned) -> Options:
+    return {
+        group: hv.Store.lookup_options('bokeh', element, group).kwargs
+        for group in _OPTION_GROUPS
+    }
+
+
+def _columns(element: hv.Element, plot_options: dict[str, Any]) -> Columns | None:
+    """Columns of ``element``, empty if spec-only, None if it cannot be written."""
+    if type(element) in _SPEC_ONLY:
+        return {}
+    columns = _COLUMNS.get(type(element))
+    unmirrored = (
+        *_UNMIRRORED_OPTIONS_ALL_TYPES,
+        *_UNMIRRORED_OPTIONS.get(type(element), ()),
+    )
+    if columns is None or any(plot_options.get(name) for name in unmirrored):
+        return None
+    return columns(element)
+
+
+def _element_spec(element: hv.Element, options: Options) -> Hashable:
     spec_only = _SPEC_ONLY.get(type(element))
     dimensions = tuple(
         (dim.name, dim.label, dim.unit, dim.range, dim.soft_range)
@@ -237,7 +274,7 @@ def _element_spec(element: hv.Element) -> Hashable:
         element.group,
         element.label,
         dimensions,
-        _options_spec(element),
+        _options_spec(options),
         _value_kinds(element) if spec_only is None else spec_only(element),
     )
 
@@ -252,9 +289,11 @@ def _value_kinds(element: hv.Element) -> Hashable:
     return tuple(kind if kind in 'MmUSOb' else 'number' for kind in kinds)
 
 
-def _options_spec(element: hv.Dimensioned) -> Hashable:
+def _options_spec(options: Options) -> Hashable:
     return tuple(
-        _freeze(hv.Store.lookup_options('bokeh', element, group).kwargs)
+        _freeze(
+            {k: v for k, v in options[group].items() if k not in _UNSPECIFIED_OPTIONS}
+        )
         for group in _OPTION_GROUPS
     )
 

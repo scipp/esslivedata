@@ -37,6 +37,7 @@ from ess.livedata.dashboard.session_layer import SessionLayer
 from ess.livedata.dashboard.slicer_plotter import SlicerPlotter
 from ess.livedata.dashboard.static_plots import LinesCoordinates, VLinesParams
 from ess.livedata.dashboard.theme import DEFAULT_THEME
+from tests.helpers.plot_views import shown_values
 
 hv.extension('bokeh')
 
@@ -349,8 +350,8 @@ class TestPopoutRendersTheCellsPlotAgain:
 
         _publish_frame(plot_grid_tabs, line_cell, line_plotter, frame_clock)
 
-        assert _shown_values(plot_grid_tabs._cells[line_cell].view) == [_NEW_VALUES]
-        assert _shown_values(window) == [_NEW_VALUES]
+        assert shown_values(plot_grid_tabs._cells[line_cell].view) == [_NEW_VALUES]
+        assert shown_values(window) == [_NEW_VALUES]
 
 
 _NEW_VALUES = [4.0, 5.0, 6.0]
@@ -362,18 +363,6 @@ def _publish_frame(plot_grid_tabs, cell_id, line_plotter, frame_clock) -> None:
     line_plotter.compute({PRIMARY: {key: _curve(_NEW_VALUES)}})
     frame_clock.commit(plot_grid_tabs._cells[cell_id].grid_id)
     _tick(plot_grid_tabs)
-
-
-def _shown_values(view) -> list[list[float]]:
-    """The values each curve of a rendered Panel view shows."""
-    from bokeh.models import ColumnDataSource
-
-    root = view.get_root(Document())
-    return [
-        list(source.data['values'])
-        for source in root.select({'type': ColumnDataSource})
-        if 'values' in source.data
-    ]
 
 
 def _render(plot):
@@ -408,6 +397,19 @@ class TestPopoutLifecycle:
         plot_grid_tabs._show_popout(line_cell)
 
         assert len(_open_windows(plot_grid_tabs)) == 1
+
+    def test_reopening_releases_the_replaced_windows_figure(
+        self, plot_grid_tabs, line_cell, line_plotter, frame_clock
+    ):
+        plot_grid_tabs._show_popout(line_cell)
+        replaced = _open_windows(plot_grid_tabs)[0]
+        plot_grid_tabs._show_popout(line_cell)
+
+        _publish_frame(plot_grid_tabs, line_cell, line_plotter, frame_clock)
+
+        assert shown_values(replaced) == [[1.0, 2.0, 3.0]]
+        assert shown_values(_open_windows(plot_grid_tabs)[0]) == [_NEW_VALUES]
+        assert shown_values(plot_grid_tabs._cells[line_cell].view) == [_NEW_VALUES]
 
     def test_the_window_wears_the_shell_header_color(self, plot_grid_tabs, line_cell):
         """A window floating over the dashboard is part of the shell, and the
@@ -452,7 +454,7 @@ class TestPopoutLifecycle:
         assert window is window_before
         assert window.name == 'Renamed'
         _publish_frame(plot_grid_tabs, line_cell, line_plotter, frame_clock)
-        assert _shown_values(window) == [_NEW_VALUES]
+        assert shown_values(window) == [_NEW_VALUES]
 
     def test_cell_removal_closes_the_window(
         self, plot_grid_tabs, plot_orchestrator, line_cell
@@ -922,7 +924,7 @@ class TestClosingAWindowKeepsTheCellRendering:
 
         _publish_frame(plot_grid_tabs, line_cell, line_plotter, frame_clock)
 
-        assert _shown_values(plot_grid_tabs._cells[line_cell].view) == [_NEW_VALUES]
+        assert shown_values(plot_grid_tabs._cells[line_cell].view) == [_NEW_VALUES]
 
     def test_closing_a_window_rebuilds_the_cell(self, plot_grid_tabs, line_cell):
         """The visible half of the sever repair, stated directly."""
@@ -1007,7 +1009,7 @@ class TestPopoutSurvivesGridChanges:
         _tick(plot_grid_tabs)
         _publish_frame(plot_grid_tabs, line_cell, line_plotter, frame_clock)
 
-        assert _shown_values(window) == [_NEW_VALUES]
+        assert shown_values(window) == [_NEW_VALUES]
 
 
 def _pipe(plot_grid_tabs):

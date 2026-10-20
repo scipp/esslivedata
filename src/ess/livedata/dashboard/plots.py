@@ -6,7 +6,7 @@ from __future__ import annotations
 
 import functools
 import weakref
-from collections.abc import Callable, Hashable, Iterable, Iterator, Sequence
+from collections.abc import Callable, Iterable, Iterator, Sequence
 from dataclasses import dataclass
 from typing import Any, ClassVar, Self
 
@@ -537,6 +537,13 @@ class PresenterBase:
         plotter replacement). Defaults to plotter if not specified.
     """
 
+    PASSES_FRAMES_THROUGH: ClassVar[bool] = False
+    """Whether :meth:`present` shows each frame's element as it is.
+
+    Only then can a session write the frames into a figure directly, without
+    the presenter (see :class:`~.frame.Frame`).
+    """
+
     def __init__(self, plotter: Plotter, *, owner: Plotter | None = None) -> None:
         self._plotter = plotter
         self._owner = owner
@@ -576,6 +583,8 @@ class DefaultPresenter(PresenterBase):
     create_presenter() to return a custom presenter.
     """
 
+    PASSES_FRAMES_THROUGH: ClassVar[bool] = True
+
     def present(self, pipe: hv.streams.Pipe) -> hv.DynamicMap:
         """Create a DynamicMap that passes through pre-computed elements.
 
@@ -600,6 +609,8 @@ class StaticPresenter(PresenterBase):
     content doesn't change. The pipe.data contains the pre-computed hv.Element
     which is returned as-is.
     """
+
+    PASSES_FRAMES_THROUGH: ClassVar[bool] = True
 
     def present(self, pipe: hv.streams.Pipe) -> hv.Element:
         """Return the static element from the pipe data."""
@@ -1218,11 +1229,6 @@ class Plotter:
     def get_frame(self) -> Frame | None:
         """The last computed frame, or None if not yet computed."""
         return self._frame
-
-    def frame_spec(self) -> Hashable:
-        """Spec of the last computed frame, or None if not yet computed."""
-        frame = self._frame
-        return None if frame is None else frame.spec
 
     @property
     def time_bounds(self) -> TimeBounds | None:

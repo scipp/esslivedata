@@ -3,16 +3,19 @@
 """Tests for the plotter registry and cross-cutting plotter contracts."""
 
 import math
+import re
 from collections.abc import Callable
 from typing import Any
 
 import holoviews as hv
 import numpy as np
+import panel as pn
 import pydantic
 import pytest
 import scipp as sc
 from bokeh.document import Document
 from bokeh.models import Text
+from bokeh.plotting import figure as Figure
 from holoviews.plotting.bokeh import BokehRenderer
 
 from ess.livedata.config.models import Interval, PolygonROI, RectangleROI
@@ -28,6 +31,7 @@ from ess.livedata.dashboard.plot_params import (
 )
 from ess.livedata.dashboard.plots import TitleResolver
 from ess.livedata.dashboard.plotter_registry import plotter_registry
+from ess.livedata.dashboard.session_layer import SessionComponents
 
 hv.extension('bokeh')
 
@@ -407,19 +411,53 @@ def test_frame_spec_does_not_change_with_values(
     would rebuild it on every update.
     """
     plotter = _computed_plotter(plotter_name, make_data, params)
-    spec = plotter.frame_spec()
+    spec = plotter.get_frame().spec
 
     plotter.compute(_vary(make_data(), coords=plotter_name not in _COORDS_IN_SPEC))
 
-    assert plotter.frame_spec() == spec
+    assert plotter.get_frame().spec == spec
 
 
-def _source_data(figure: DirectFigure) -> list[dict[str, Any] | None]:
-    return [
-        None if source is None else dict(source.data)
-        for sources in figure._layer_sources
-        for source in sources
-    ]
+@pytest.mark.parametrize('value', [np.nan, 5.0])
+def test_log_scale_image_spec_does_not_change_with_its_fallback_color_range(
+    value: float,
+) -> None:
+    """All-NaN or uniform values give a log-scale image a colour range from the data.
+
+    HoloViews cannot pick one there, so the plotter sets it, and it changes with
+    the values. It must not rebuild the figure on every update.
+    """
+
+    def make_data(scale: float = 1.0) -> RoleData:
+        da = _array({'y': 3, 'x': 4})
+        da.values = np.full(da.shape, scale * value)
+        return _primary(da)
+
+    params = {'plot_scale': {'color_scale': PlotScale.log}}
+    plotter = _computed_plotter('image', make_data, params)
+    spec = plotter.get_frame().spec
+
+    plotter.compute(make_data(scale=2.0))
+
+    assert plotter.get_frame().spec == spec
+
+
+def _direct_figure(plotter: Any) -> tuple[DirectFigure, SessionComponents]:
+    """A figure of the plotter's current frame, and the session layer feeding it."""
+    components = SessionComponents(
+        presenter=plotter.create_presenter(), frame=plotter.get_frame()
+    )
+    figure = DirectFigure(
+        components.frame.element,
+        [components],
+        doc=Document(),
+        margin=pn.pane.HoloViews.param.margin.default,
+    )
+    return figure, components
+
+
+def _shown_columns(figure: Any) -> list[dict[str, Any]]:
+    return [dict(renderer.data_source.data) for renderer in figure.renderers]
 
 
 @pytest.mark.parametrize(('plotter_name', 'make_data', 'params'), _session_cases())
@@ -430,20 +468,59 @@ def test_written_frame_matches_a_figure_built_from_it(
 ) -> None:
     """Writing a frame's columns gives the data sources HoloViews builds from it."""
     plotter = _computed_plotter(plotter_name, make_data, params)
-    first = plotter.get_frame()
-    if first.columns is None:
+    if plotter.get_frame().columns is None:
         pytest.skip('drawn through HoloViews')
-    figure = DirectFigure(first.element, [len(first.columns)], doc=Document())
+    figure, components = _direct_figure(plotter)
 
     plotter.compute(_vary(make_data(), coords=plotter_name not in _COORDS_IN_SPEC))
-    second = plotter.get_frame()
-    figure.write(0, second)
+    assert components.push_update()
 
-    expected = DirectFigure(second.element, [len(second.columns)], doc=Document())
-    written, built = _source_data(figure), _source_data(expected)
-    assert [d is None or d.keys() for d in written] == [
-        d is None or d.keys() for d in built
+    written = _shown_columns(figure.figure)
+    built = _shown_columns(_direct_figure(plotter)[0].figure)
+    assert [columns.keys() for columns in written] == [
+        columns.keys() for columns in built
     ]
     for got, want in zip(written, built, strict=True):
-        for name in want or {}:
+        for name in want:
             np.testing.assert_array_equal(got[name], want[name], strict=True)
+
+
+def _model_properties(root: Any) -> list[tuple[str, dict[str, str]]]:
+    """Type and non-default properties of every model, in a stable order.
+
+    Model ids and data-source contents (compared by the test above) are left out.
+    """
+    models = []
+    for model in root.references():
+        properties = {
+            name: re.sub(r"id='[^']*'", '', repr(value))
+            for name, value in model.properties_with_values(
+                include_defaults=False
+            ).items()
+            if name not in ('id', 'data')
+        }
+        models.append((type(model).__name__, properties))
+    return sorted(models, key=repr)
+
+
+@pytest.mark.parametrize(('plotter_name', 'make_data', 'params'), _session_cases())
+def test_direct_figure_matches_the_holoviews_pane(
+    plotter_name: str,
+    make_data: Callable[[], RoleData],
+    params: dict[str, Any],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A direct figure is the figure Panel's HoloViews pane would draw.
+
+    WebGL is disabled as in the dashboard (``reduction``): the figure must be
+    built by the configured renderer, not by a default one.
+    """
+    monkeypatch.setattr(hv.renderer('bokeh'), 'webgl', False)
+    plotter = _computed_plotter(plotter_name, make_data, params)
+    if plotter.get_frame().columns is None:
+        pytest.skip('drawn through HoloViews')
+    pane = pn.pane.HoloViews(plotter.get_frame().element)
+    (figure,) = pane.get_root(Document()).select({'type': Figure})
+
+    direct, _ = _direct_figure(plotter)
+    assert _model_properties(direct.figure) == _model_properties(figure)

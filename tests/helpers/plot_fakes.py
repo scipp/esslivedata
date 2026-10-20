@@ -72,6 +72,11 @@ class FakePlotter:
         return self.AUTOSCALE_AXES
 
     @property
+    def applies_ranges(self) -> bool:
+        # Mirror a plotter whose cell autoscales both axes.
+        return False
+
+    @property
     def legend_position(self) -> LegendPosition | None:
         # Mirror a plotter drawing no legend: the cell takes its placement from
         # whichever layer does.
@@ -98,9 +103,6 @@ class FakePlotter:
 
     def has_cached_state(self) -> bool:
         return self._frame is not None
-
-    def frame_spec(self) -> Any:
-        return None if self._frame is None else self._frame.spec
 
     def create_presenter(self, *, owner: Any = None) -> PresenterBase:
         presenter = self._presenter_cls(self, owner=owner)

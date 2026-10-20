@@ -9,6 +9,7 @@ the home of every materialization-policy scenario, including the #1216 gate.
 
 from __future__ import annotations
 
+from types import SimpleNamespace
 from uuid import uuid4
 
 from ess.livedata.dashboard.cell_plan import (
@@ -42,8 +43,8 @@ class _Plotter:
     def has_cached_state(self) -> bool:
         return self.cached
 
-    def frame_spec(self) -> object:
-        return self.spec
+    def get_frame(self) -> object:
+        return SimpleNamespace(spec=self.spec)
 
 
 def _grid_id() -> GridId:

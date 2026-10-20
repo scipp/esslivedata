@@ -13,7 +13,7 @@ Correlation histograms receive pre-structured data from DataSubscriber:
 
 from __future__ import annotations
 
-from collections.abc import Hashable, Iterator
+from collections.abc import Iterator
 from dataclasses import dataclass
 from typing import Any, ClassVar
 
@@ -310,9 +310,10 @@ class CorrelationHistogramPlotter:
         """Delegate to the inner renderer, which holds the computed frame."""
         return self._renderer.get_frame()
 
-    def frame_spec(self) -> Hashable:
-        """Delegate to the inner renderer, which holds the computed frame."""
-        return self._renderer.frame_spec()
+    @property
+    def applies_ranges(self) -> bool:
+        """Delegate to the inner renderer, which draws the figure."""
+        return self._renderer.applies_ranges
 
     @property
     def is_overlayable(self) -> bool:

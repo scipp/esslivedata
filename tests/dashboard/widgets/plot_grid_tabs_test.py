@@ -36,6 +36,7 @@ from ess.livedata.dashboard.widgets.workflow_status_widget import (
 )
 from tests.helpers.panel_ui import click_tool
 from tests.helpers.plot_fakes import CurvePresenter, FakePlotter, ViewerToken
+from tests.helpers.plot_views import shown_values
 
 hv.extension('bokeh')
 
@@ -1473,10 +1474,12 @@ def _publish_layer_data(
     view: str = _WORKFLOW_VIEW,
     dims: tuple[str, ...] = ('x',),
     scale: float = 1.0,
+    unit: str | None = None,
 ) -> None:
     """Publish one result on the key a ``_add_workflow_cell`` layer subscribes to.
 
-    Values are ``scale`` times 1, 2, 3, ... along ``dims``, each of length 3.
+    Values are ``scale`` times 1, 2, 3, ... along ``dims``, each of length 3,
+    with coords 0, 1, 2 in ``unit``.
     """
     import numpy as np
     import scipp as sc
@@ -1491,7 +1494,9 @@ def _publish_layer_data(
     values = scale * np.arange(1.0, 3 ** len(dims) + 1).reshape((3,) * len(dims))
     data_service[key] = sc.DataArray(
         sc.array(dims=list(dims), values=values),
-        coords={dim: sc.array(dims=[dim], values=[0.0, 1.0, 2.0]) for dim in dims},
+        coords={
+            dim: sc.array(dims=[dim], values=[0.0, 1.0, 2.0], unit=unit) for dim in dims
+        },
     )
 
 
@@ -2212,8 +2217,11 @@ class TestDisposeSeversPipeSubscribers:
     update, for the rest of the session."""
 
     @staticmethod
-    def _add_dynamic_layer_cell(plot_grid_tabs, plot_data_service):
-        """Register a one-layer dynamic cell with live session components."""
+    def _add_dynamic_layer_cell(plot_grid_tabs, plot_data_service, state=None):
+        """Register a one-layer dynamic cell with live session components.
+
+        Its presenter draws a curve, whatever the plotter's ``state``.
+        """
         from uuid import uuid4
 
         from ess.livedata.dashboard.data_roles import PRIMARY
@@ -2243,9 +2251,9 @@ class TestDisposeSeversPipeSubscribers:
             layers=[layer],
         )
         plotter = FakePlotter(presenter_cls=CurvePresenter)
-        # Not a HoloViews element, so not writable directly: the cell renders
-        # the presenter's DynamicMap, which draws a curve whatever the state.
-        plotter.compute({'drawn': 'through HoloViews'})
+        # By default not a HoloViews element, so not writable directly: the
+        # cell renders the presenter's DynamicMap.
+        plotter.compute({'drawn': 'through HoloViews'} if state is None else state)
         plot_data_service.job_started(layer.layer_id, plotter)
         plot_data_service.data_arrived(layer.layer_id)
         state = plot_data_service.get(layer.layer_id)
@@ -2269,6 +2277,22 @@ class TestDisposeSeversPipeSubscribers:
         widget.dispose()
 
         assert len(pipe.subscribers) == baseline
+
+    def test_frames_go_through_a_presenter_that_does_not_pass_them_on(
+        self, plot_grid_tabs, plot_data_service, plot_orchestrator
+    ):
+        """Writable frames are still drawn by a presenter that changes them."""
+        from uuid import uuid4
+
+        cell, pipe = self._add_dynamic_layer_cell(
+            plot_grid_tabs, plot_data_service, state=hv.Overlay([hv.Curve([1, 2])])
+        )
+        baseline = len(pipe.subscribers)
+        grid_id = plot_orchestrator.add_grid(title='Test', nrows=1, ncols=1)
+        widget = plot_grid_tabs._build_cell(CellId(uuid4()), cell, grid_id)
+        widget.view.get_root()
+
+        assert len(pipe.subscribers) > baseline
 
     def test_rebuild_while_rendered_does_not_accumulate_subscribers(
         self, plot_grid_tabs, plot_data_service, plot_orchestrator
@@ -2452,33 +2476,27 @@ def _revealed_workflow_cell(
     return cell_id
 
 
-def _shown_values(view) -> list[list[float]]:
-    """The values each curve of a rendered Panel view shows."""
-    from bokeh.models import ColumnDataSource
+class TestDirectCells:
+    """Cells of lines, whose frames are written into their figures directly.
 
-    root = view.get_root()
-    return [
-        list(source.data['values'])
-        for source in root.select({'type': ColumnDataSource})
-        if 'values' in source.data
-    ]
-
-
-class TestDisposeStopsDirectWrites:
-    """A rebuilt or removed cell's figure must stop receiving frames.
-
-    A cell whose frames are written directly subscribes each of its figures to
-    its layers. A subscription left behind would write every later frame into a
+    A cell subscribes each of its figures to its layers. A subscription left
+    behind by a rebuilt or removed cell would write every later frame into a
     figure nobody sees, for the rest of the session.
     """
 
-    def _publish(self, plot_orchestrator, plot_grid_tabs, data_service, workflow_id):
-        for view in (_WORKFLOW_VIEW, 'result2'):
-            _publish_layer_data(data_service, workflow_id, view=view, scale=10.0)
+    @staticmethod
+    def _publish(
+        plot_orchestrator, plot_grid_tabs, data_service, workflow_id, **kwargs
+    ) -> None:
+        """Publish a frame of 10x the values to the first layer, 100x to the second."""
+        for view, scale in ((_WORKFLOW_VIEW, 10.0), ('result2', 100.0)):
+            _publish_layer_data(
+                data_service, workflow_id, view=view, scale=scale, **kwargs
+            )
         plot_orchestrator.flush_frames()
         _tick(plot_grid_tabs)
 
-    def test_figure_shows_new_frames(
+    def test_figure_shows_new_frames_and_fits_its_axes_to_them(
         self,
         plot_orchestrator,
         plot_grid_tabs,
@@ -2486,6 +2504,8 @@ class TestDisposeStopsDirectWrites:
         data_service,
         workflow_id,
     ):
+        from bokeh.plotting import figure as Figure
+
         cell_id = _revealed_workflow_cell(
             plot_orchestrator,
             plot_grid_tabs,
@@ -2494,10 +2514,12 @@ class TestDisposeStopsDirectWrites:
             workflow_id,
         )
         view = plot_grid_tabs._cells[cell_id].view
+        (figure,) = view.get_root().select({'type': Figure})
 
         self._publish(plot_orchestrator, plot_grid_tabs, data_service, workflow_id)
 
-        assert _shown_values(view) == [[10.0, 20.0, 30.0]]
+        assert shown_values(view) == [[10.0, 20.0, 30.0]]
+        assert figure.y_range.end >= 30.0
 
     def test_title_change_rebuild_stops_writes_to_the_old_figure(
         self,
@@ -2521,11 +2543,11 @@ class TestDisposeStopsDirectWrites:
 
         self._publish(plot_orchestrator, plot_grid_tabs, data_service, workflow_id)
 
-        assert _shown_values(old_view) == [[1.0, 2.0, 3.0]] * 2
+        assert shown_values(old_view) == [[1.0, 2.0, 3.0]] * 2
         new_view = plot_grid_tabs._cells[cell_id].view
-        assert _shown_values(new_view) == [[10.0, 20.0, 30.0]] * 2
+        assert shown_values(new_view) == [[10.0, 20.0, 30.0], [100.0, 200.0, 300.0]]
 
-    def test_cell_removal_stops_writes_to_its_figure(
+    def test_disposed_cell_receives_no_frames(
         self,
         plot_orchestrator,
         plot_grid_tabs,
@@ -2533,6 +2555,31 @@ class TestDisposeStopsDirectWrites:
         data_service,
         workflow_id,
     ):
+        """What a rebuild and the sweep of a removed cell do to the old widget."""
+        cell_id = _revealed_workflow_cell(
+            plot_orchestrator,
+            plot_grid_tabs,
+            job_orchestrator,
+            data_service,
+            workflow_id,
+            second_view='result2',
+        )
+        disposed = plot_grid_tabs._cells[cell_id]
+
+        disposed.dispose()
+        self._publish(plot_orchestrator, plot_grid_tabs, data_service, workflow_id)
+
+        assert shown_values(disposed.view) == [[1.0, 2.0, 3.0]] * 2
+
+    def test_new_frame_spec_rebuilds_the_cell_showing_the_new_frame(
+        self,
+        plot_orchestrator,
+        plot_grid_tabs,
+        job_orchestrator,
+        data_service,
+        workflow_id,
+    ):
+        """A frame the figure cannot show is not written; the cell is rebuilt."""
         cell_id = _revealed_workflow_cell(
             plot_orchestrator,
             plot_grid_tabs,
@@ -2540,18 +2587,17 @@ class TestDisposeStopsDirectWrites:
             data_service,
             workflow_id,
         )
-        (layer,) = plot_orchestrator.get_cell(cell_id).layers
-        components = plot_grid_tabs._session_layers[layer.layer_id].components
-        view = plot_grid_tabs._cells[cell_id].view
+        old = plot_grid_tabs._cells[cell_id]
 
-        plot_orchestrator.remove_cell(cell_id)
-        _tick(plot_grid_tabs)
-        components.subscribe(lambda frame: None)  # the components outlive the cell
-        _publish_layer_data(data_service, workflow_id, scale=10.0)
-        plot_orchestrator.flush_frames()
-        components.push_update()
+        # Another coordinate unit changes the axis label, so the frame spec.
+        self._publish(
+            plot_orchestrator, plot_grid_tabs, data_service, workflow_id, unit='mm'
+        )
 
-        assert _shown_values(view) == [[1.0, 2.0, 3.0]]
+        assert shown_values(old.view) == [[1.0, 2.0, 3.0]]
+        new = plot_grid_tabs._cells[cell_id]
+        assert new is not old
+        assert shown_values(new.view) == [[10.0, 20.0, 30.0]]
 
 
 @pytest.fixture

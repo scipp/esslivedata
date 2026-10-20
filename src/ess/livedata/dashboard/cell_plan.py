@@ -103,7 +103,7 @@ def cell_build_inputs(
                 layer_id=layer.layer_id,
                 snapshot=snapshot,
                 has_plot=has_plot,
-                frame_spec=snapshot.plotter.frame_spec() if has_plot else None,
+                frame_spec=snapshot.plotter.get_frame().spec if has_plot else None,
             )
         )
     return CellBuildInputs(

@@ -59,6 +59,11 @@ class SessionComponents:
         return self.frame.spec
 
     @property
+    def writable(self) -> bool:
+        """Whether figures can show the layer by writing its frames directly."""
+        return self.presenter.PASSES_FRAMES_THROUGH and self.frame.columns is not None
+
+    @property
     def dmap(self) -> hv.DynamicMap | hv.Element:
         """The layer's DynamicMap or Element, created on first access.
 
@@ -119,7 +124,7 @@ class SessionComponents:
         return (
             plotter is not None
             and self.presenter.is_owned_by(plotter)
-            and plotter.frame_spec() == self.spec
+            and plotter.get_frame().spec == self.spec
         )
 
     @classmethod

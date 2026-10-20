@@ -16,7 +16,6 @@ disposal to the widget.
 
 from __future__ import annotations
 
-import functools
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
@@ -438,9 +437,8 @@ class CellWidget:
         # One pane per rendered view of the plot: the grid cell's, plus one
         # per pop-out window. Kept so dispose() can unsubscribe them all.
         self._plot_panes: list[pn.pane.HoloViews] = []
-        # The same for views drawn as DirectFigures: each one's subscription
-        # to each layer's frames.
-        self._subscriptions: list[tuple[SessionComponents, Callable]] = []
+        # The same for views drawn as DirectFigures, which dispose() releases.
+        self._direct_figures: list[DirectFigure] = []
         # Set by _compose_plot when the cell has a plot.
         self._layers: list[SessionComponents] = []
         self._direct = False
@@ -591,9 +589,9 @@ class CellWidget:
         if self._autoscale_controller is not None:
             self._autoscale_controller.dispose()
             self._autoscale_controller = None
-        for components, callback in self._subscriptions:
-            components.unsubscribe(callback)
-        self._subscriptions.clear()
+        for figure in self._direct_figures:
+            figure.dispose()
+        self._direct_figures.clear()
         for pane in self._plot_panes:
             # TODO(holoviz/panel#8710): delete this block once the minimum
             # panel version cleans up displaced GridSpec children itself, and
@@ -921,15 +919,15 @@ class CellWidget:
         if self._direct:
             figure = DirectFigure(
                 self._compose(),
-                [len(components.frame.columns) for components in self._layers],
+                self._layers,
                 doc=pn.state.curdoc,
+                # The margin Panel's HoloViews pane gives a figure, so that both
+                # kinds of cell are laid out alike.
+                margin=margin.get('margin', pn.pane.HoloViews.param.margin.default),
                 update_hooks=self._update_hooks,
             )
-            for index, components in enumerate(self._layers):
-                callback = functools.partial(figure.write, index)
-                components.subscribe(callback)
-                self._subscriptions.append((components, callback))
-            return pn.pane.Bokeh(figure.figure, sizing_mode='stretch_both', **margin)
+            self._direct_figures.append(figure)
+            return pn.pane.Bokeh(figure.figure, sizing_mode='stretch_both', margin=0)
         # Use .layout to preserve widgets for DynamicMaps with kdims.
         # When pn.pane.HoloViews wraps a DynamicMap with kdims, it generates
         # widgets. However, these widgets don't render when the pane is placed
@@ -1013,8 +1011,10 @@ class CellWidget:
         if not layers:
             return None
         self._layers = layers
-        self._direct = all(
-            components.frame.columns is not None for components in layers
+        # A DirectFigure computes no ranges, so every layer must leave its axes
+        # to the autoscale controller (see Plotter.applies_ranges).
+        self._direct = all(components.writable for components in layers) and not any(
+            getattr(plotter, 'applies_ranges', True) for plotter in cell_plotters
         )
 
         # Skip the cell-level hooks for a non-overlayable layer: a Layout's
