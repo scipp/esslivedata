@@ -133,7 +133,7 @@ def create_layer_info_row(
     title: str | None = None,
     description: str | None = None,
     badge: str | None = None,
-    time_pane: pn.pane.HTML | None = None,
+    time_pane: pn.pane.Bokeh | None = None,
 ) -> pn.Row | pn.Column:
     """
     Create a per-layer info row showing the layer title and its time range.
@@ -384,7 +384,7 @@ def create_cell_titlebar(
     on_toggle_toolbars_callback: Callable[[bool], None],
     on_popout_callback: Callable[[], None] | None,
     can_popout: bool,
-    freshness_pane: pn.pane.HTML | None = None,
+    freshness_pane: pn.pane.Bokeh | None = None,
     css_classes: list[str] | None = None,
 ) -> pn.Row:
     """

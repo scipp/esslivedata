@@ -210,9 +210,9 @@ class TestFreshnessIndicator:
         # Pill shows the compact data age with band styling, no hover tooltip.
         # Age is computed against the poll's wall clock, so assert structure
         # rather than an exact value.
-        assert 'border-radius' in panes[0].object
-        assert 's</span>' in panes[0].object  # compact age label, e.g. "2.0s"
-        assert 'title=' not in panes[0].object
+        assert 'border-radius' in panes[0].object.text
+        assert 's</span>' in panes[0].object.text  # compact age label, e.g. "2.0s"
+        assert 'title=' not in panes[0].object.text
 
         # The per-layer time pane shows the full range + lag.
         layer_panes = [
@@ -221,7 +221,7 @@ class TestFreshnessIndicator:
             for pane in cw.layer_time_panes.values()
         ]
         assert len(layer_panes) == 1
-        assert 'Lag:' in layer_panes[0].object
+        assert 'Lag:' in layer_panes[0].object.text
 
     def test_multilayer_each_layer_pane_populated(
         self, plot_orchestrator, plot_data_service, plot_grid_tabs
@@ -249,10 +249,10 @@ class TestFreshnessIndicator:
         plot_grid_tabs._poll_for_plot_updates()
 
         (cell_widget,) = plot_grid_tabs._cells.values()
-        assert 'Lag:' in cell_widget.layer_time_panes[l1].object
-        assert 'Lag:' in cell_widget.layer_time_panes[l2].object
+        assert 'Lag:' in cell_widget.layer_time_panes[l1].object.text
+        assert 'Lag:' in cell_widget.layer_time_panes[l2].object.text
         # The cell pill must still show with two layers.
-        assert 'border-radius' in cell_widget.freshness_pane.object
+        assert 'border-radius' in cell_widget.freshness_pane.object.text
 
     def test_rebuilt_cell_refills_its_time_panes_on_the_same_poll(
         self, plot_orchestrator, plot_data_service, plot_grid_tabs
@@ -288,8 +288,8 @@ class TestFreshnessIndicator:
         plot_grid_tabs._poll_for_plot_updates()
 
         (cell_widget,) = plot_grid_tabs._cells.values()
-        assert 'border-radius' in cell_widget.freshness_pane.object
-        assert 'Lag:' in cell_widget.layer_time_panes[layer_id].object
+        assert 'border-radius' in cell_widget.freshness_pane.object.text
+        assert 'Lag:' in cell_widget.layer_time_panes[layer_id].object.text
 
     def test_poll_updating_nothing_does_not_consume_the_stall_interval(
         self, plot_orchestrator, plot_data_service, plot_grid_tabs
@@ -334,19 +334,19 @@ class TestFreshnessIndicator:
         plot_grid_tabs.tabs.active = plot_grid_tabs._static_tabs_count
         plot_grid_tabs._poll_for_plot_updates()
         (cell_widget,) = plot_grid_tabs._cells.values()
-        assert StatusPill.FRESH[0] in cell_widget.freshness_pane.object
+        assert StatusPill.FRESH[0] in cell_widget.freshness_pane.object.text
 
         # Ages the stream without a wall-clock sleep; no version moves, so a
         # poll before the stall interval elapses leaves the pill untouched.
         plotter.time_bounds = _make_bounds(60.0)
         plot_grid_tabs._poll_for_plot_updates()
-        assert StatusPill.FRESH[0] in cell_widget.freshness_pane.object
+        assert StatusPill.FRESH[0] in cell_widget.freshness_pane.object.text
 
         plot_grid_tabs._last_freshness_update -= _FRESHNESS_STALL_INTERVAL_S
         assert plot_grid_tabs._has_pending_work()
         plot_grid_tabs._poll_for_plot_updates()
 
-        pill = cell_widget.freshness_pane.object
+        pill = cell_widget.freshness_pane.object.text
         assert StatusPill.OLD[0] in pill
         assert StatusPill.FRESH[0] not in pill
 
@@ -368,7 +368,7 @@ class TestFreshnessIndicator:
 
         assert plot_grid_tabs._cells
         for cell_widget in plot_grid_tabs._cells.values():
-            assert cell_widget.freshness_pane.object in ('', None)
+            assert cell_widget.freshness_pane.object.text in ('', None)
 
 
 class TestStoppedJobIndication:
@@ -396,7 +396,7 @@ class TestStoppedJobIndication:
 
         # Frozen "stopped" pill; the fresh bounds seen by the freshness update
         # above must not overwrite it with an age band.
-        pill = cell_widget.freshness_pane.object
+        pill = cell_widget.freshness_pane.object.text
         assert 'stopped' in pill
         assert StatusPill.STOPPED[0] in pill
         assert StatusPill.FRESH[0] not in pill
@@ -413,7 +413,7 @@ class TestStoppedJobIndication:
 
         cell_widget = self._poll_active(plot_grid_tabs)
 
-        assert 'error' in cell_widget.freshness_pane.object
+        assert 'error' in cell_widget.freshness_pane.object.text
 
     def test_partial_stop_excludes_stopped_layer_from_freshness(
         self, plot_orchestrator, plot_data_service, plot_grid_tabs
@@ -433,7 +433,7 @@ class TestStoppedJobIndication:
 
         cell_widget = self._poll_active(plot_grid_tabs)
 
-        pill = cell_widget.freshness_pane.object
+        pill = cell_widget.freshness_pane.object.text
         assert StatusPill.FRESH[0] in pill
         assert StatusPill.OLD[0] not in pill
         assert 'stopped' not in pill
