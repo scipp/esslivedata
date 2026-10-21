@@ -19,6 +19,7 @@ from ess.livedata import Service
 from ess.livedata.config.device_contract import DeviceContract
 from ess.livedata.logging_config import configure_logging
 
+from . import bokeh_serialization
 from .dashboard import (
     DEFAULT_UNUSED_SESSION_LIFETIME,
     DashboardBase,
@@ -371,6 +372,7 @@ def main() -> None:
     )
 
     check = args.pop('check')
+    bokeh_serialization.install()
     app = ReductionApp(log_level=log_level, **args)
     if check:
         return
