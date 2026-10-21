@@ -55,6 +55,8 @@ test = [
     "essreflectometry>=26.9.1",
     "esssans",
     "essspectroscopy>=26.9.0",
+    # Same cap as in the dashboard extra (#1417).
+    "bokeh>=3.9,<3.10",
     "holoviews>=1.23.0",
     "panel>=1.9.3",
     "param",
@@ -96,8 +98,10 @@ dashboard = [
   # 3.9 is where a runtime change to ``min_border_*`` started triggering a
   # relayout (bokeh#15011). The fixed-aspect letterbox has no other lever, so
   # below that floor it computes the right padding and the plot never moves
-  # (see ``dashboard/frame_aspect.py``).
-  "bokeh>=3.9",
+  # (see ``dashboard/frame_aspect.py``). The cap keeps Panel below 1.10, which
+  # requires Bokeh 3.10: Bokeh 3.10 runs session callbacks on concurrent threads,
+  # which the dashboard does not support, and is slower in the browser (#1417).
+  "bokeh>=3.9,<3.10",
   "holoviews>=1.23.0",
   "panel>=1.9.3",
   "param",
