@@ -15,8 +15,11 @@ The replacement decides from the raw default instead, and keeps the stock result
 and side effects: a callable default is still produced, since Bokeh stores it on
 the model, and a property without a default still raises ``UnsetValueError``.
 
-It relies on Bokeh internals, so :func:`install` accepts Bokeh 3.9 only. Delete
-this module when moving to a newer Bokeh.
+It relies on Bokeh internals, so :func:`install` patches Bokeh 3.9 only and
+leaves any other version alone, with a warning. Skipping costs speed, not
+correctness, so the dashboard still starts on another Bokeh, e.g. in the browser
+tests against the newest releases (``tox -e browser-latest``). Delete this module
+when moving to a newer Bokeh.
 """
 
 from __future__ import annotations
@@ -25,10 +28,13 @@ from collections.abc import Callable
 from typing import Any
 
 import bokeh
+import structlog
 from bokeh.core.has_props import HasProps
 from bokeh.core.property.descriptors import PropertyDescriptor, UnsetValueError
 from bokeh.core.property.singletons import Undefined
 from bokeh.core.property.wrappers import PropertyValueContainer
+
+logger = structlog.get_logger(__name__)
 
 
 def query_properties_with_values(
@@ -96,17 +102,18 @@ def query_properties_with_values(
 
 
 def install() -> None:
-    """Replace Bokeh's method for the whole process.
+    """Replace Bokeh's method for the whole process if Bokeh is 3.9.
 
-    Raises
-    ------
-    RuntimeError:
-        If Bokeh is not 3.9, whose internals the replacement was written against.
+    Any other version is left unpatched, since the replacement was written
+    against the internals of 3.9.
     """
     if bokeh.__version__.split('.')[:2] != ['3', '9']:
-        raise RuntimeError(
-            f'{__name__} patches Bokeh 3.9 internals, found Bokeh '
-            f'{bokeh.__version__}. Bokeh 4.0 contains the fix (bokeh#15355); '
-            'for any other version, delete the patch or port it.'
+        # Bokeh 4.0 contains the fix (bokeh#15355); for any other version,
+        # delete the patch or port it.
+        logger.warning(
+            'bokeh_serialization_patch_skipped',
+            bokeh_version=bokeh.__version__,
+            patched_version='3.9',
         )
+        return
     HasProps.query_properties_with_values = query_properties_with_values

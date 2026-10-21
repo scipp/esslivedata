@@ -12,6 +12,7 @@ from bokeh.core.json_encoder import serialize_json
 from bokeh.core.property.descriptors import PropertyDescriptor
 from bokeh.document import Document
 from bokeh.models import Range1d
+from structlog.testing import capture_logs
 
 from ess.livedata.dashboard import bokeh_serialization
 
@@ -87,9 +88,12 @@ def test_skipped_defaults_are_not_produced(monkeypatch: pytest.MonkeyPatch) -> N
 
 
 @pytest.mark.usefixtures('stock')
-def test_install_refuses_other_bokeh_versions(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_install_leaves_other_bokeh_versions_unpatched(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     stock_method = HasProps.query_properties_with_values
     monkeypatch.setattr(bokeh, '__version__', '3.10.0')
-    with pytest.raises(RuntimeError, match=r'Bokeh 3\.10\.0'):
+    with capture_logs() as captured:
         bokeh_serialization.install()
     assert HasProps.query_properties_with_values is stock_method
+    assert [e['bokeh_version'] for e in captured] == ['3.10.0']
