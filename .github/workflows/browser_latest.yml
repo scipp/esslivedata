@@ -1,11 +1,26 @@
 name: Browser tests on latest Panel/HoloViews/Bokeh
 
-# Production installs from pyproject.toml, not the lock files, so a new Panel,
-# HoloViews or Bokeh release reaches the dashboard image before the locks move.
-# This job runs the browser tests against the newest releases, pre-releases
-# included, to see what such an upgrade breaks before it ships (#1419).
+# Runs `tox -e browser-latest` (see tox.ini) on main, so that a Panel, HoloViews
+# or Bokeh release that breaks the dashboard shows up before the next image is
+# built (#1419). A separate workflow so that a known upstream breakage does not
+# mask other nightly failures.
 on:
+  schedule:
+    - cron: '0 3 * * 1'
   workflow_dispatch:
+    inputs:
+      panel:
+        description: 'Panel requirement specifier'
+        default: 'panel'
+        type: string
+      holoviews:
+        description: 'HoloViews requirement specifier'
+        default: 'holoviews'
+        type: string
+      bokeh:
+        description: 'Bokeh requirement specifier'
+        default: 'bokeh'
+        type: string
   pull_request:
     paths:
       - '.github/workflows/browser_latest.yml'
@@ -23,30 +38,29 @@ jobs:
           cache: 'pip'
           cache-dependency-path: 'requirements/*.txt'
       - run: python -m pip install --upgrade pip
-      - name: Install the locked test environment
-        run: |
-          python -m pip install -r requirements/test.txt playwright
-          python -m pip install --no-deps -e .
-      - name: Upgrade Panel, HoloViews and Bokeh
-        # Ignores the caps in pyproject.toml on purpose: pip reports the
-        # conflict and installs anyway. Bokeh follows Panel's own bound.
-        run: python -m pip install --pre --upgrade panel holoviews bokeh
-      - name: Report resolved versions
-        run: |
-          python -m pip list --format=freeze \
-            | grep -iE '^(bokeh|panel|holoviews|param|pyviz.comms)==' | tee versions.txt
-          {
-            echo '### Resolved versions'
-            echo '```'
-            cat versions.txt
-            echo '```'
-          } >> "$GITHUB_STEP_SUMMARY"
-      - name: Install chromium
+      - run: python -m pip install -r requirements/ci.txt
+      - name: Install chromium system libraries
         # As in ci.yml: the runner image already has chromium's shared
         # libraries, so a failing apt mirror only costs fonts.
         run: |
+          python -m pip install playwright
           timeout -k 30 180 playwright install-deps chromium || echo \
             "::warning title=install-deps::apt failed or timed out; continuing without extra fonts."
-          playwright install chromium
       - name: Run browser tests
-        run: python -m pytest -m browser -n 2 tests/dashboard/
+        env:
+          # Inputs are empty on schedule and pull_request. An empty variable
+          # would drop the package from tox's install command, so fall back here.
+          PANEL_SPEC: ${{ inputs.panel || 'panel' }}
+          HOLOVIEWS_SPEC: ${{ inputs.holoviews || 'holoviews' }}
+          BOKEH_SPEC: ${{ inputs.bokeh || 'bokeh' }}
+        run: tox -e browser-latest
+      - name: Report resolved versions
+        if: always()
+        run: |
+          {
+            echo '### Resolved versions'
+            echo '```'
+            .tox/browser-latest/bin/python -m pip list --format=freeze \
+              | grep -iE '^(bokeh|panel|holoviews|param|pyviz.comms)=='
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
