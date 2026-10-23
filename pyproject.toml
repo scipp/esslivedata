@@ -53,7 +53,7 @@ dynamic = ["version"]
 test = [
     "essdiffraction>=26.5.0",
     "essreflectometry>=26.9.1",
-    "esssans",
+    "esssans<26.10.0",  # ess.loki imports ipywidgets without depending on it
     "essspectroscopy>=26.9.0",
     # Same cap as in the dashboard extra (#1417).
     "bokeh>=3.9,<3.10",
@@ -80,7 +80,7 @@ freia = [
     "essreflectometry>=26.9.1",
 ]
 loki = [
-    "esssans>=26.4.0",
+    "esssans>=26.4.0,<26.10.0",  # ess.loki imports ipywidgets without depending on it
 ]
 magic = []
 nmx = [

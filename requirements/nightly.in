@@ -17,7 +17,7 @@ pooch
 structlog>=24.0.0
 essdiffraction>=26.5.0
 essreflectometry>=26.9.1
-esssans
+esssans<26.10.0
 essspectroscopy>=26.9.0
 bokeh>=3.9,<3.10
 holoviews>=1.23.0
