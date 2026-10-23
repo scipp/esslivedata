@@ -1,16 +1,6 @@
-from argparse import ArgumentParser
 from pathlib import Path
 
 import tomli
-
-parser = ArgumentParser()
-parser.add_argument(
-    "--nightly",
-    default="",
-    help="List of dependencies to install from main branch for nightly tests, "
-    "separated by commas.",
-)
-args = parser.parse_args()
 
 CUSTOM_AUTO_SEPARATOR = """
 # --- END OF CUSTOM SECTION ---
@@ -41,38 +31,23 @@ with open("../pyproject.toml", "rb") as toml_file:
     if dependencies is None:
         raise RuntimeError("No dependencies found in pyproject.toml")
     dependencies = [dep.strip().strip('"') for dep in dependencies]
-    test_dependencies = (
-        pyproject["project"].get("optional-dependencies", {}).get("test", [])
-    )
-    test_dependencies = [dep.strip().strip('"') for dep in test_dependencies]
+    extras = pyproject["project"].get("optional-dependencies", {})
+
+
+def expand_extra(name: str) -> list[str]:
+    """Dependencies of an extra, with self-references (esslivedata[a,b]) expanded."""
+    expanded = []
+    for dep in extras.get(name, []):
+        if dep.startswith("esslivedata["):
+            for extra in dep[len("esslivedata[") : dep.index("]")].split(","):
+                expanded += expand_extra(extra)
+        else:
+            expanded.append(dep.strip().strip('"'))
+    return list(dict.fromkeys(expanded))
+
+
+test_dependencies = expand_extra("test")
 
 
 write_dependencies("base", dependencies)
 write_dependencies("basetest", test_dependencies)
-
-
-def as_nightly(repo: str) -> str:
-    if "/" in repo:
-        org, repo = repo.split("/")
-    else:
-        org = "scipp"
-    if repo == "scipp":
-        # With the standard pip resolver index-url takes precedence over
-        # extra-index-url but with uv it's reversed, so if we move to tox-uv
-        # this needs to be reversed.
-        return (
-            "scipp\n"
-            "--index-url=https://pypi.anaconda.org/scipp-nightly-wheels/simple/\n"
-            "--extra-index-url=https://pypi.org/simple\n"
-            "--pre"
-        )
-    return f"{repo} @ git+https://github.com/{org}/{repo}@main"
-
-
-nightly = tuple(args.nightly.split(",") if args.nightly else [])
-nightly_dependencies = [
-    dep for dep in dependencies + test_dependencies if not dep.startswith(nightly)
-]
-nightly_dependencies += [as_nightly(arg) for arg in nightly]
-
-write_dependencies("nightly", nightly_dependencies)
