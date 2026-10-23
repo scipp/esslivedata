@@ -440,8 +440,8 @@ class ParamWidget:
 class UnionWidget:
     """Choice between the alternatives of a discriminated union of groups.
 
-    A box whose header is a row of buttons, one per alternative, labelled by the
-    title of its tag field. The box holds the fields of the chosen alternative.
+    A box whose header is a row of radio buttons, one per alternative, labelled
+    by the title of its tag field. The box holds the fields of the chosen alternative.
     The fields of the others keep their values while hidden, so switching back
     restores them.
     """
@@ -461,15 +461,14 @@ class UnionWidget:
         self._descriptions = {
             tag: field.description or '' for tag, field in tag_fields.items()
         }
-        self._selector = pn.widgets.RadioButtonGroup(
+        self._selector = pn.widgets.RadioBoxGroup(
             options={
                 field.title or tag.replace('_', ' ').title(): tag
                 for tag, field in tag_fields.items()
             },
-            color='primary',
-            variant='outline',
-            sizing_mode='stretch_width',
-            margin=(0, 0),
+            inline=True,
+            margin=(8, 5, 0, 5),
+            stylesheets=['label { margin-right: 16px; }'],
         )
         self._description = pn.pane.HTML(
             "", margin=(5, 5), styles={'color': Colors.TEXT_MUTED}
