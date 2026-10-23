@@ -61,9 +61,13 @@ from .plot_params import PlotAspect, PlotAspectType
 # Marks figures whose CustomJS callback is already attached.
 _HOOK_APPLIED_TAG = 'ess-livedata-frame-aspect'
 
-# HoloViews' own ``border`` option, which it writes to every ``min_border_*`` on
-# every update. A border at this value therefore means "no letterbox applied".
-_HOLOVIEWS_MIN_BORDER = 10
+# Border around the frame, in pixels, set through HoloViews' ``border`` option
+# (default 10), which writes it to every ``min_border_*`` on every update. A
+# border at this value therefore means "no letterbox applied". The top and right
+# borders are blank unless a title, colorbar or toolbar fills them; left and
+# bottom are usually outgrown by the axes. Kept small so a grid of many small
+# plots spends its width and height on plots.
+FIGURE_BORDER = 4
 
 # Letterbox the frame: shrink whichever dimension is too long by padding a
 # border. Prefixed by a variant-specific prologue defining ``target`` (the
@@ -229,7 +233,7 @@ def _make_hook(
         body = prologue + _FIT_FRAME_JS
         code = f"const __letterbox = () => {{{body}}};\n__letterbox();"
         callback = CustomJS(
-            args={"fig": fig, "BASE_BORDER": _HOLOVIEWS_MIN_BORDER, **js_args},
+            args={"fig": fig, "BASE_BORDER": FIGURE_BORDER, **js_args},
             code=code,
         )
         fig.js_on_change("inner_width", callback)
@@ -286,10 +290,10 @@ def make_data_aspect_hook(data_aspect: float) -> Callable[[Any, Any], None]:
 def make_frame_aspect_opts(aspect: PlotAspect) -> dict[str, Any]:
     """Create the HoloViews sizing opts enforcing the configured aspect.
 
-    Returns plain ``{'responsive': True}`` for ``free`` (no aspect
-    constraint).  Otherwise adds a hook — a fixed-ratio hook for ``square``
-    and ``aspect``, or a data-aspect hook for ``equal`` and ``data_aspect`` —
-    that letterboxes the frame in the browser.
+    Always sets ``responsive`` and the figure's ``border``. For ``free`` (no
+    aspect constraint) that is all. Otherwise adds a hook — a fixed-ratio hook
+    for ``square`` and ``aspect``, or a data-aspect hook for ``equal`` and
+    ``data_aspect`` — that letterboxes the frame in the browser.
 
     Parameters
     ----------
@@ -311,5 +315,5 @@ def make_frame_aspect_opts(aspect: PlotAspect) -> dict[str, Any]:
         case PlotAspectType.data_aspect:
             hook = make_data_aspect_hook(aspect.ratio)
         case _:
-            return {'responsive': True}
-    return {'responsive': True, 'hooks': [hook]}
+            return {'responsive': True, 'border': FIGURE_BORDER}
+    return {'responsive': True, 'border': FIGURE_BORDER, 'hooks': [hook]}

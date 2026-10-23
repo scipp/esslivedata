@@ -9,7 +9,7 @@ import numpy as np
 import pytest
 from holoviews.streams import Pipe
 
-from ess.livedata.dashboard.frame_aspect import make_frame_aspect_opts
+from ess.livedata.dashboard.frame_aspect import FIGURE_BORDER, make_frame_aspect_opts
 from ess.livedata.dashboard.plot_params import (
     PlotAspect,
     PlotAspectType,
@@ -44,9 +44,10 @@ def rendered_dmap():
 
 
 class TestMakeFrameAspectOpts:
-    def test_free_aspect_yields_plain_responsive(self) -> None:
+    def test_free_aspect_adds_no_hook(self) -> None:
         opts = make_frame_aspect_opts(PlotAspect(aspect_type=PlotAspectType.free))
-        assert opts == {'responsive': True}
+        assert opts['responsive'] is True
+        assert 'hooks' not in opts
 
     @pytest.mark.parametrize('aspect_type', _CONSTRAINED)
     def test_constrained_aspect_adds_a_hook(self, aspect_type: PlotAspectType) -> None:
@@ -70,6 +71,23 @@ class TestMakeFrameAspectOpts:
         assert fig.sizing_mode == 'stretch_both'
         assert fig.width is None
         assert fig.height is None
+
+    @pytest.mark.parametrize(
+        'aspect_type', [PlotAspectType.free, *_CONSTRAINED], ids=lambda t: t.name
+    )
+    def test_figure_border_is_the_letterbox_base(
+        self, aspect_type: PlotAspectType
+    ) -> None:
+        """Every side starts at the border the letterbox treats as unpadded."""
+        opts = make_frame_aspect_opts(PlotAspect(aspect_type=aspect_type))
+        fig = hv.render(_image(np.zeros((4, 8))).opts(**opts))
+        borders = {
+            fig.min_border_top,
+            fig.min_border_right,
+            fig.min_border_bottom,
+            fig.min_border_left,
+        }
+        assert borders == {FIGURE_BORDER}
 
 
 class TestHookAcrossUpdates:
