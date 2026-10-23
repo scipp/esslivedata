@@ -36,7 +36,7 @@ dependencies = [
   "cyclebane>=26.9.0",
   "dask>=2026.3.0",
   "ess-streaming-data-types",
-  "essreduce>=26.10.0",  # Chopper out of phase with the source is closed, not an error; pulse stride guessed from synced choppers
+  "essreduce==26.10.1",  # Chopper out of phase with the source is closed, not an error; pulse stride guessed from synced choppers
   "jinja2",
   "numba",  # Compiled wavelength-LUT interpolation, see core/numba_threading.py
   "pydantic>=2",
@@ -51,10 +51,7 @@ dynamic = ["version"]
 
 [project.optional-dependencies]
 test = [
-    "essdiffraction>=26.5.0",
-    "essreflectometry>=26.9.1",
-    "esssans",
-    "essspectroscopy>=26.9.0",
+    "esslivedata[all-instruments]",
     # Same cap as in the dashboard extra (#1417).
     "bokeh>=3.9,<3.10",
     "holoviews>=1.23.0",
@@ -67,27 +64,27 @@ test = [
 ]
 beer = []
 bifrost = [
-    "essspectroscopy>=26.9.0",
+    "essspectroscopy==26.10.0",
 ]
 dream = [
-    "essdiffraction>=26.5.0",
+    "essdiffraction==26.10.0",
 ]
 dummy = []
 estia = [
-    "essreflectometry>=26.9.1",
+    "essreflectometry==26.10.0",
 ]
 freia = [
-    "essreflectometry>=26.9.1",
+    "essreflectometry==26.10.0",
 ]
 loki = [
-    "esssans>=26.4.0",
+    "esssans==26.6.0",  # 26.10.0 imports ipywidgets at package import without depending on it (fix in progress upstream)
 ]
 magic = []
 nmx = [
-    "essnmx>=26.4.0",
+    "essnmx==26.6.0",
 ]
 odin = [
-    "essimaging>=26.4.0",
+    "essimaging==26.10.0",
 ]
 tbl = []
 # Compose the instrument extras so their dependencies remain defined in one place.
