@@ -2,8 +2,9 @@
 # Copyright (c) 2025 Scipp contributors (https://github.com/scipp)
 """Panel :class:`~panel.theme.Design` used by the dashboard template.
 
-Exists to keep markup panes visible when they are built after page load, and
-to keep every modal dialog inside the viewport.
+Exists to keep markup panes visible when they are built after page load, to
+keep every modal dialog inside the viewport, and to tighten the spacing inside
+figures.
 
 Panel keeps a markup pane's content container behind ``visibility: hidden`` from
 the moment it renders and reveals it only once every ``<link>`` stylesheet in the
@@ -34,14 +35,24 @@ footers that must stay in view while the rest scrolls make themselves sticky
 (``ModalSizing.STICKY_FOOTER_STYLES``). The cap replaces any ``max_height``
 or ``max_width`` an owner sets, rather than combining with it: owners bound
 their dialogs by bounding the scrolling body inside instead.
+
+Figure spacing goes through the Bokeh theme, which reaches every figure of the
+session -- sub-figures of a layout included -- and fills in only properties
+nothing else sets, so it costs nothing per update. Material leaves 10 px
+between an axis name and its tick labels and 10 px of padding around a
+colorbar; in a grid of many small plots that adds up to a visible share of each
+cell.
 """
 
 from typing import Any, ClassVar
 
+import param
+from bokeh.themes import Theme as BokehTheme
 from panel.layout import Modal
 from panel.pane.markup import HTMLBasePane
 from panel.theme import Material
 from panel.theme.base import Inherit
+from panel.theme.material import MATERIAL_THEME, MaterialDefaultTheme
 from panel.viewable import Viewable
 
 _ALWAYS_VISIBLE_MARKUP = ':host > div { visibility: visible !important; }'
@@ -60,8 +71,39 @@ _MODAL_FITS_VIEWPORT = """
 """
 
 
+# In pixels. Axis: gap between axis name and tick labels, and between tick
+# labels and tick marks (Bokeh's default is 5). ColorBar: space around the bar,
+# its title and its labels, which also separates it from the frame. Legend: a
+# row is as tall as the larger of glyph and label, plus ``spacing`` (Material:
+# 8, glyphs 20 tall); ``padding`` is inside its box, ``margin`` between box and
+# frame (Bokeh: 10 each).
+_FIGURE_SPACING = {
+    'Axis': {'axis_label_standoff': 2, 'major_label_standoff': 3},
+    'ColorBar': {'padding': 4},
+    'Legend': {'spacing': 2, 'glyph_height': 14, 'padding': 6, 'margin': 6},
+}
+
+
+def _with_figure_spacing(theme: dict[str, Any]) -> dict[str, Any]:
+    attrs = dict(theme['attrs'])
+    for model, spacing in _FIGURE_SPACING.items():
+        attrs[model] = {**attrs.get(model, {}), **spacing}
+    return {**theme, 'attrs': attrs}
+
+
+class LivedataTheme(MaterialDefaultTheme):
+    """Material's default theme with tighter spacing inside figures."""
+
+    bokeh_theme = param.ClassSelector(
+        class_=(BokehTheme, str),
+        default=BokehTheme(json=_with_figure_spacing(MATERIAL_THEME)),
+    )
+
+
 class LivedataDesign(Material):
     """Material design that keeps markup panes visible when built post-load."""
+
+    _themes: ClassVar = {**Material._themes, 'default': LivedataTheme}
 
     modifiers: ClassVar[dict[type[Viewable], dict[str, Any]]] = {
         HTMLBasePane: {'stylesheets': [Inherit, _ALWAYS_VISIBLE_MARKUP]},

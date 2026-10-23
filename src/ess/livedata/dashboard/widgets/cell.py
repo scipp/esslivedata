@@ -246,9 +246,9 @@ class CellDeps:
 
     ``compact_figures`` asks for figures that give the plot area as much of
     the screen as possible, for the phone layout: the toolbar inside the plot
-    and tighter axes (:func:`_compact_figure_hook`), and color bars on the side
-    the screen has room for -- below the plot in portrait, else beside it
-    (:func:`_place_colorbar`). The orientation is a build input
+    and smaller axis names (:func:`_compact_figure_hook`), and color bars on
+    the side the screen has room for -- below the plot in portrait, else beside
+    it (:func:`_place_colorbar`). The orientation is a build input
     (``CellBuildInputs.portrait``), so a rotation rebuilds the cell. The
     toolbar of a layout-mode plot, shared by its sub-figures, stays where it
     is. Compact figures keep their toolbar regardless of
@@ -266,17 +266,13 @@ class CellDeps:
     compact_figures: bool = False
 
 
-# Axis spacing of compact figures, in pixels: the gap between an axis name
-# and its tick labels (HoloViews uses 10) and between tick labels and tick marks
-# (Bokeh uses 5). With the axis name's font size, these decide how much of a
+# Gap between a cell's titlebar and its plot, in pixels.
+_PLOT_PANE_TOP_MARGIN = 4
+
+# Font size of the axis names of compact figures (the design's is 1.25em). With
+# the axis spacing every figure has (``design.py``), this decides how much of a
 # phone-width figure its axes take.
-_COMPACT_AXIS_LABEL_STANDOFF = 2
-_COMPACT_MAJOR_LABEL_STANDOFF = 3
 _COMPACT_AXIS_LABEL_FONT_SIZE = '1.1em'
-# Border above and right of the frame (HoloViews uses 10). Only these two:
-# the frame-aspect letterbox pads the left and bottom borders, and reads
-# HoloViews' value there as "not letterboxed" (``frame_aspect.py``).
-_COMPACT_OUTER_BORDER = 4
 
 
 def _compact_figure_hook(plot, element) -> None:
@@ -289,9 +285,8 @@ def _compact_figure_hook(plot, element) -> None:
     hides it while a mouse pointer is outside the plot; a finger never leaves
     the plot in that sense, so on a touch screen it stays shown.
 
-    The axes are tightened: less space around the axis names, and a smaller
-    font for them. The tick labels keep their size, since they carry the
-    values. The empty border above and right of the frame is narrowed.
+    The axis names get a smaller font. The tick labels keep their size, since
+    they carry the values.
 
     Runs on every update, after HoloViews has applied its own axis styling,
     which is what makes these settings stick. Idempotent.
@@ -299,12 +294,8 @@ def _compact_figure_hook(plot, element) -> None:
     figure = plot.state
     figure.toolbar_inner = True
     figure.toolbar.autohide = True
-    figure.min_border_top = _COMPACT_OUTER_BORDER
-    figure.min_border_right = _COMPACT_OUTER_BORDER
     for axis in [*figure.left, *figure.below]:
-        if hasattr(axis, 'axis_label_standoff'):
-            axis.axis_label_standoff = _COMPACT_AXIS_LABEL_STANDOFF
-            axis.major_label_standoff = _COMPACT_MAJOR_LABEL_STANDOFF
+        if hasattr(axis, 'axis_label_text_font_size'):
             axis.axis_label_text_font_size = _COMPACT_AXIS_LABEL_FONT_SIZE
 
 
@@ -940,12 +931,16 @@ class CellWidget:
         #   features (autoscaling, dynamic updates)
         # - Allows proper multi-layer composition via hv.Overlay
         # - Each grid cell's plot remains independent
-        # A compact figure also drops the pane's default margin around it.
+        # A margin above only: Bokeh grows the figure's top border just enough
+        # to hold a y tick label centred on the frame's top edge, which would
+        # otherwise touch the titlebar. Elsewhere the cell's border and the
+        # figure's own border already separate the plot from its neighbours,
+        # and Panel's default (5, 10) adds up across a grid of many cells.
         plot_pane_wrapper = CurrentStateHoloViews(
             self._plot,
             sizing_mode='stretch_both',
             linked_axes=False,
-            **({'margin': 0} if self._deps.compact_figures else {}),
+            margin=(_PLOT_PANE_TOP_MARGIN, 0, 0, 0),
         )
         # Kept so dispose() can unsubscribe the rendered plots from the layer
         # pipes; see dispose().
