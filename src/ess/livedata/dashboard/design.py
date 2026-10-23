@@ -73,10 +73,14 @@ _MODAL_FITS_VIEWPORT = """
 
 # In pixels. Axis: gap between axis name and tick labels, and between tick
 # labels and tick marks (Bokeh's default is 5). ColorBar: space around the bar,
-# its title and its labels, which also separates it from the frame.
+# its title and its labels, which also separates it from the frame. Legend: a
+# row is as tall as the larger of glyph and label, plus ``spacing`` (Material:
+# 8, glyphs 20 tall); ``padding`` is inside its box, ``margin`` between box and
+# frame (Bokeh: 10 each).
 _FIGURE_SPACING = {
     'Axis': {'axis_label_standoff': 2, 'major_label_standoff': 3},
     'ColorBar': {'padding': 4},
+    'Legend': {'spacing': 2, 'glyph_height': 14, 'padding': 6, 'margin': 6},
 }
 
 
