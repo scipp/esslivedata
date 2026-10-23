@@ -700,8 +700,8 @@ class TestSetErrorState:
         widget.set_error_state(True, "value: must be greater than 0")
 
         # Field should have error border
-        assert "border" in widget.widgets["value"].styles
-        assert "#dc3545" in widget.widgets["value"].styles["border"]
+        assert "outline" in widget.widgets["value"].styles
+        assert "#dc3545" in widget.widgets["value"].styles["outline"]
 
     def test_set_error_state_clears_field_highlighting(self):
         class TestModel(pydantic.BaseModel):
@@ -714,7 +714,7 @@ class TestSetErrorState:
         widget.set_error_state(False, "")
 
         # Field should have no border
-        assert widget.widgets["value"].styles.get("border") == "none"
+        assert widget.widgets["value"].styles.get("outline") == "none"
 
     def test_set_error_state_handles_model_level_error(self):
         # A model-level error has no field to highlight; this must not crash.
@@ -907,6 +907,15 @@ class TestOptionalGroup:
 
         assert widget.create_model().interval == Interval(low=0.5, high=2.0)
 
+    def test_switch_shows_the_fields_only_when_on(self):
+        widget = ParamWidget(TimeAxis)
+        card = widget.widgets['interval']
+        assert card.collapsed
+
+        widget.set_values({'interval': {}})
+
+        assert not card.collapsed
+
     def test_turning_it_off_keeps_the_values_for_later(self):
         widget = ParamWidget(TimeAxis)
         widget.set_values({'interval': {'low': 0.5, 'high': 2.0}})
@@ -935,7 +944,7 @@ class TestUnionWidget:
         assert make_group_widget(int | str, 'kind') is None
 
     def test_labels_come_from_tag_titles_or_values(self):
-        selector = _union().panel()[0]
+        (selector,) = _union().panel().header
 
         assert selector.options == {'Time': 'time', 'Wave length': 'length'}
 
@@ -974,7 +983,7 @@ class TestUnionWidget:
         widget = _union()
         widget.set_values({'kind': 'length'})
 
-        _selector, _description, *alternatives = widget.panel()
+        _description, *alternatives = widget.panel()
 
         assert [alternative.visible for alternative in alternatives] == [False, True]
 

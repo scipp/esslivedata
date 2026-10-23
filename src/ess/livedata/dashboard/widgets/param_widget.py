@@ -76,20 +76,31 @@ def _tag_value(model: type[pydantic.BaseModel], discriminator: str) -> str:
     return tag
 
 
-def _section(title: str, description: str | None, body: Any) -> pn.Column:
-    """A titled block for a group nested in a group, indented below its title."""
-    header: list[Any] = [pn.pane.HTML(f"<b>{title}</b>", margin=(5, 5))]
+def _title_row(title: str, description: str | None) -> list[Any]:
+    """The title of a nested group, with its description as a tooltip."""
+    row: list[Any] = [pn.pane.HTML(f"<b>{title}</b>", margin=(0, 5))]
     if description:
-        header.append(pn.widgets.TooltipIcon(value=description, margin=(5, 0)))
-    return pn.Column(
-        pn.Row(*header, align=('start', 'center')),
-        pn.Column(
-            body,
+        row.append(pn.widgets.TooltipIcon(value=description, margin=(0, 0)))
+    return row
+
+
+def _card(header: list[Any], *body: Any) -> pn.Card:
+    """A box with a header row, for a group or a choice nested in a group."""
+    return pn.Card(
+        *body,
+        header=pn.Row(
+            *header,
+            align=('start', 'center'),
             sizing_mode='stretch_width',
-            margin=(0, 0, 0, 10),
-            styles={'border-left': f'2px solid {Colors.BORDER}'},
+            margin=(3, 0),
         ),
+        collapsible=False,
+        header_background=Colors.BG_LIGHT,
         sizing_mode='stretch_width',
+        margin=(5, 5),
+        # Panel's stretched width ignores the margins, so a card would overflow
+        # the box it is nested in.
+        stylesheets=[':host { width: calc(100% - 10px) !important; }'],
     )
 
 
@@ -190,7 +201,7 @@ class ParamWidget:
         group = make_group_widget(annotation, field_info.discriminator)
         if group is None:
             return None
-        return group, _section(title, field_info.description, group.panel())
+        return group, _card(_title_row(title, field_info.description), group.panel())
 
     def _create_layout(self):
         """Create the layout with widgets and error pane."""
@@ -388,9 +399,10 @@ class ParamWidget:
     def set_error_state(self, has_error: bool, error_message: str) -> None:
         """Set error state for the widget."""
         if has_error:
-            # Clear all widgets first
+            # Clear all widgets first. An outline, unlike a border, leaves the
+            # border of a nested group's card alone.
             for widget in self.widgets.values():
-                widget.styles = {'border': 'none'}
+                widget.styles = {'outline': 'none'}
 
             # Try to highlight the specific failing field
             try:
@@ -403,7 +415,7 @@ class ParamWidget:
                     if field_name in self.widgets:
                         # Apply error styling to the failing widget
                         self.widgets[field_name].styles = {
-                            'border': '2px solid #dc3545',
+                            'outline': '2px solid #dc3545',
                             'border-radius': '4px',
                         }
 
@@ -415,7 +427,7 @@ class ParamWidget:
         else:
             # Clear error styling from all widgets
             for widget in self.widgets.values():
-                widget.styles = {'border': 'none'}
+                widget.styles = {'outline': 'none'}
 
             # Clear error message
             self._error_pane.object = ""
@@ -428,9 +440,10 @@ class ParamWidget:
 class UnionWidget:
     """Choice between the alternatives of a discriminated union of groups.
 
-    A radio button per alternative, labelled by the title of its tag field, shows
-    the fields of the chosen alternative below. The fields of the others keep
-    their values while hidden, so switching back restores them.
+    A box whose header is a row of buttons, one per alternative, labelled by the
+    title of its tag field. The box holds the fields of the chosen alternative.
+    The fields of the others keep their values while hidden, so switching back
+    restores them.
     """
 
     def __init__(
@@ -448,23 +461,24 @@ class UnionWidget:
         self._descriptions = {
             tag: field.description or '' for tag, field in tag_fields.items()
         }
-        self._selector = pn.widgets.RadioBoxGroup(
+        self._selector = pn.widgets.RadioButtonGroup(
             options={
                 field.title or tag.replace('_', ' ').title(): tag
                 for tag, field in tag_fields.items()
             },
-            inline=True,
-            margin=(5, 5),
+            color='primary',
+            variant='outline',
+            sizing_mode='stretch_width',
+            margin=(0, 0),
         )
         self._description = pn.pane.HTML(
-            "", margin=(0, 5), styles={'color': Colors.TEXT_MUTED}
+            "", margin=(5, 5), styles={'color': Colors.TEXT_MUTED}
         )
         self._selector.param.watch(lambda event: self._show(event.new), 'value')
-        self.layout = pn.Column(
-            self._selector,
+        self.layout = _card(
+            [self._selector],
             self._description,
             *(widget.panel() for widget in self._alternatives.values()),
-            sizing_mode='stretch_width',
         )
         self._show(self._selector.value)
 
@@ -506,49 +520,38 @@ class UnionWidget:
         """Set error state for the chosen alternative."""
         self._active.set_error_state(has_error, error_message)
 
-    def panel(self) -> pn.Column:
+    def panel(self) -> pn.Card:
         """Return the Panel layout."""
         return self.layout
 
 
 class OptionalGroupWidget:
-    """A group typed ``X | None``: a checkbox that shows the group's fields when on.
+    """A group typed ``X | None``: a box with a switch that shows its fields when on.
 
     Off means ``None``, "without X". The fields keep their values while hidden.
     """
 
     def __init__(self, group: ParamWidget, title: str, description: str | None):
         self._group = group
-        self._toggle = pn.widgets.Checkbox(label=title, value=False, margin=(5, 5))
-        header: list[Any] = [self._toggle]
-        if description:
-            header.append(pn.widgets.TooltipIcon(value=description, margin=(5, 0)))
-        body = pn.Column(
-            group.panel(),
-            visible=False,
-            sizing_mode='stretch_width',
-            margin=(0, 0, 0, 10),
-            styles={'border-left': f'2px solid {Colors.BORDER}'},
+        self._toggle = pn.widgets.Switch(value=False, margin=(0, 5), width=40)
+        self.layout = _card(
+            [self._toggle, *_title_row(title, description)], group.panel()
         )
+        self.layout.collapsed = True
         self._toggle.param.watch(
-            lambda event: setattr(body, 'visible', event.new), 'value'
-        )
-        self.layout = pn.Column(
-            pn.Row(*header, align=('start', 'center')),
-            body,
-            sizing_mode='stretch_width',
+            lambda event: setattr(self.layout, 'collapsed', not event.new), 'value'
         )
 
     def get_values(self) -> dict[str, Any] | None:
-        """Values of the group, None when the checkbox is off."""
+        """Values of the group, None when the switch is off."""
         return self._group.get_values() if self._toggle.value else None
 
     def set_values(self, values: dict[str, Any] | pydantic.BaseModel | None) -> None:
-        """Turn the checkbox off for None, else on with the group set to ``values``."""
+        """Turn the switch off for None, else on with the group set to ``values``."""
         self._toggle.value = values is not None
         if values is not None:
             self._group.set_values(values)
 
-    def panel(self) -> pn.Column:
+    def panel(self) -> pn.Card:
         """Return the Panel layout."""
         return self.layout
