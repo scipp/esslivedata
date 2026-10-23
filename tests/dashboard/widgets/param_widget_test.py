@@ -2,13 +2,18 @@
 # Copyright (c) 2025 Scipp contributors (https://github.com/scipp)
 from enum import Enum, IntEnum, StrEnum
 from pathlib import Path
-from typing import Literal
+from typing import Annotated, Literal
 
 import panel as pn
 import pydantic
 import pytest
 
-from ess.livedata.dashboard.widgets.param_widget import ParamWidget, snake_to_camel
+from ess.livedata.dashboard.widgets.param_widget import (
+    ParamWidget,
+    UnionWidget,
+    make_group_widget,
+    snake_to_camel,
+)
 
 
 class TestSnakeToCamel:
@@ -821,3 +826,173 @@ class TestComplexModels:
         restored_values = widget.get_values()
 
         assert restored_values == original_values
+
+
+class Edges(pydantic.BaseModel):
+    start: float = 1.0
+    stop: float = 10.0
+
+    @pydantic.model_validator(mode='after')
+    def _ordered(self) -> 'Edges':
+        if self.stop <= self.start:
+            raise ValueError('stop must be greater than start')
+        return self
+
+
+class Interval(pydantic.BaseModel):
+    low: float = 0.0
+    high: float = 1.0
+
+
+class TimeAxis(pydantic.BaseModel):
+    kind: Literal['time'] = pydantic.Field('time', description='Time since pulse.')
+    edges: Edges = Edges(start=0.0, stop=70.0)
+    interval: Interval | None = None
+
+
+class LengthAxis(pydantic.BaseModel):
+    kind: Literal['length'] = pydantic.Field('length', title='Wave length')
+    edges: Edges = Edges()
+
+
+Axis = Annotated[TimeAxis | LengthAxis, pydantic.Field(discriminator='kind')]
+
+
+class WithAxis(pydantic.BaseModel):
+    axis: Axis = pydantic.Field(default_factory=LengthAxis, title='Axis')
+    count: int = 3
+
+
+def _union() -> UnionWidget:
+    widget = make_group_widget(Axis.__origin__, 'kind')
+    assert isinstance(widget, UnionWidget)
+    return widget
+
+
+class TestNestedGroup:
+    def test_nested_group_starts_at_the_field_default(self):
+        widget = ParamWidget(TimeAxis)
+
+        assert widget.create_model().edges == Edges(start=0.0, stop=70.0)
+
+    def test_single_value_literal_has_no_widget(self):
+        assert set(ParamWidget(TimeAxis).widgets) == {'edges', 'interval'}
+
+    def test_set_values_reaches_nested_group(self):
+        widget = ParamWidget(TimeAxis)
+
+        widget.set_values({'edges': {'start': 2.0, 'stop': 3.0}})
+
+        assert widget.create_model().edges == Edges(start=2.0, stop=3.0)
+
+    def test_error_in_nested_group_names_its_path(self):
+        widget = ParamWidget(TimeAxis)
+        widget.set_values({'edges': {'start': 5.0, 'stop': 3.0}})
+
+        valid, message = widget.validate()
+
+        assert not valid
+        assert message.startswith('edges:')
+        assert 'stop must be greater than start' in message
+
+
+class TestOptionalGroup:
+    def test_off_by_default_gives_none(self):
+        assert ParamWidget(TimeAxis).create_model().interval is None
+
+    def test_set_values_turns_it_on(self):
+        widget = ParamWidget(TimeAxis)
+
+        widget.set_values({'interval': {'low': 0.5, 'high': 2.0}})
+
+        assert widget.create_model().interval == Interval(low=0.5, high=2.0)
+
+    def test_turning_it_off_keeps_the_values_for_later(self):
+        widget = ParamWidget(TimeAxis)
+        widget.set_values({'interval': {'low': 0.5, 'high': 2.0}})
+
+        widget.set_values({'interval': None})
+        assert widget.create_model().interval is None
+        widget.set_values({'interval': {}})
+
+        assert widget.create_model().interval == Interval(low=0.5, high=2.0)
+
+    def test_union_of_groups_typed_with_none_is_refused(self):
+        class Model(pydantic.BaseModel):
+            axis: TimeAxis | LengthAxis | None = None
+
+        with pytest.raises(TypeError, match=r'U \| None'):
+            ParamWidget(Model)
+
+
+class TestUnionWidget:
+    def test_union_without_discriminator_is_refused(self):
+        with pytest.raises(TypeError, match='discriminator'):
+            make_group_widget(TimeAxis | LengthAxis)
+
+    def test_non_group_type_gives_no_widget(self):
+        assert make_group_widget(int) is None
+        assert make_group_widget(int | str, 'kind') is None
+
+    def test_labels_come_from_tag_titles_or_values(self):
+        selector = _union().panel()[0]
+
+        assert selector.options == {'Time': 'time', 'Wave length': 'length'}
+
+    def test_first_alternative_is_chosen_initially(self):
+        assert _union().create_model() == TimeAxis()
+
+    def test_set_values_chooses_the_alternative_by_its_tag(self):
+        widget = _union()
+
+        widget.set_values({'kind': 'length', 'edges': {'start': 2.0, 'stop': 4.0}})
+
+        assert widget.create_model() == LengthAxis(edges=Edges(start=2.0, stop=4.0))
+
+    def test_set_values_accepts_a_model_instance(self):
+        widget = _union()
+
+        widget.set_values(LengthAxis(edges=Edges(start=2.0, stop=4.0)))
+
+        assert widget.create_model() == LengthAxis(edges=Edges(start=2.0, stop=4.0))
+
+    def test_get_values_includes_the_tag(self):
+        widget = _union()
+
+        assert widget.get_values()['kind'] == 'time'
+
+    def test_switching_back_restores_the_values_of_an_alternative(self):
+        widget = _union()
+        widget.set_values({'kind': 'time', 'edges': {'start': 5.0, 'stop': 6.0}})
+
+        widget.set_values({'kind': 'length'})
+        widget.set_values({'kind': 'time'})
+
+        assert widget.create_model().edges == Edges(start=5.0, stop=6.0)
+
+    def test_only_the_chosen_alternative_is_visible(self):
+        widget = _union()
+        widget.set_values({'kind': 'length'})
+
+        _selector, _description, *alternatives = widget.panel()
+
+        assert [alternative.visible for alternative in alternatives] == [False, True]
+
+    def test_validate_reports_errors_of_the_chosen_alternative(self):
+        widget = _union()
+        widget.set_values({'kind': 'length', 'edges': {'start': 5.0, 'stop': 3.0}})
+
+        valid, message = widget.validate()
+
+        assert not valid
+        assert 'stop must be greater than start' in message
+
+    def test_union_nested_in_a_group(self):
+        widget = ParamWidget(WithAxis)
+        assert widget.create_model().axis == LengthAxis()
+
+        widget.set_values({'axis': {'kind': 'time', 'interval': {'high': 3.0}}})
+
+        assert widget.create_model() == WithAxis(
+            axis=TimeAxis(interval=Interval(high=3.0)), count=3
+        )

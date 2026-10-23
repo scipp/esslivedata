@@ -38,11 +38,10 @@ class TestRegisterMonitorWorkflowSpecs:
         assert spec.aux_sources is aux
 
 
-class TestMonitorCoordinateModeRestriction:
+class TestMonitorSpectralAxisRestriction:
     def test_toa_only_params_reject_wavelength(self):
         with pytest.raises(pydantic.ValidationError):
-            TOAOnlyMonitorDataParams(coordinate_mode={'mode': 'wavelength'})
+            TOAOnlyMonitorDataParams(spectral_axis={'kind': 'wavelength'})
 
-    def test_toa_only_params_carry_no_wavelength_fields(self):
-        assert 'wavelength_edges' not in TOAOnlyMonitorDataParams.model_fields
-        assert 'wavelength_range' not in TOAOnlyMonitorDataParams.model_fields
+    def test_toa_only_params_default_to_toa(self):
+        assert TOAOnlyMonitorDataParams().spectral_axis.kind == 'toa'

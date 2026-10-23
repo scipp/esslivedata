@@ -23,7 +23,7 @@ from ...preprocessors.downsample_pixel_ids import SOURCE_RESOLUTION
 from ..detector_view_specs import (
     DetectorViewOutputs,
     DetectorViewOutputsBase,
-    DetectorViewParamsBase,
+    DetectorViewParams,
 )
 from ..lut_context import detector_lookup_table
 from ..stream_processor_workflow import StreamProcessorWorkflow
@@ -99,7 +99,7 @@ class DetectorViewFactory:
     def make_workflow(
         self,
         source_name: str,
-        params: DetectorViewParamsBase,
+        params: DetectorViewParams,
     ) -> StreamProcessorWorkflow:
         """
         Factory method that creates a detector view workflow.
@@ -109,7 +109,7 @@ class DetectorViewFactory:
         source_name:
             Name of the detector source (e.g., 'panel_0').
         params:
-            Workflow parameters containing coordinate mode, edges, and ranges.
+            Workflow parameters containing the spectral axis and pixel weighting.
 
         Returns
         -------
@@ -119,7 +119,8 @@ class DetectorViewFactory:
             :func:`bind_roi_requests`), is injected by the routing layer after
             creation.
         """
-        mode = params.coordinate_mode.mode
+        axis = params.spectral_axis
+        mode = axis.kind
 
         # Validate wavelength mode requirements
         if mode == 'wavelength':
@@ -135,9 +136,8 @@ class DetectorViewFactory:
             'wavelength': 'wavelength',
         }[mode]
 
-        # Get active edges and range for current mode
-        bins = params.get_active_edges()
-        histogram_slice = params.get_active_range()
+        bins = axis.edges.get_edges()
+        histogram_slice = None if axis.range_filter is None else axis.range_filter.range
 
         # Create base workflow with appropriate mode
         workflow = create_base_workflow(

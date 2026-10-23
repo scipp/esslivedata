@@ -89,11 +89,8 @@ def test_workflow_factory_is_attached(instrument_name: str, workflow_id: Workflo
 
 def _accepts_wavelength_mode(spec) -> bool:
     """Whether the spec's params model lets a user select wavelength mode."""
-    field = spec.params.model_fields.get('coordinate_mode')
-    if field is None or field.annotation is None:
-        return False
     try:
-        field.annotation(mode='wavelength')
+        spec.params(spectral_axis={'kind': 'wavelength'})
     except pydantic.ValidationError:
         return False
     return True
@@ -204,7 +201,7 @@ def test_wavelength_mode_workflow_can_be_instantiated(
         aux_dict = adapter.aux_sources.get_defaults()
     params_class = adapter.set_aux_sources(aux_dict)
     assert params_class is not None
-    params_model = params_class(coordinate_mode={'mode': 'wavelength'})
+    params_model = params_class(spectral_axis={'kind': 'wavelength'})
 
     source_name = spec.source_names[0] if spec.source_names else "test_source"
     job_id = JobId(source_name=source_name, job_number=uuid.uuid4())

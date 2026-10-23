@@ -4,7 +4,6 @@
 
 from __future__ import annotations
 
-import abc
 from collections.abc import Callable
 from typing import Any, ClassVar
 
@@ -26,137 +25,33 @@ from ..config.workflow_spec import (
     WindowOutput,
     WorkflowOutputsBase,
 )
-from .detector_view_specs import (
-    CoordinateMode,
-    CoordinateModeSettings,
-    TOAOnlyCoordinateModeSettings,
-)
 from .workflow_factory import SpecHandle
 
-_TOA_EDGES_DESCRIPTION = (
-    "Time of arrival (TOA) is the time elapsed since the most recent source "
-    "pulse. These edges define the histogram bins in TOA mode. The default "
-    f"range spans one pulse period of the 14 Hz ESS source "
-    f"(0 to {parameter_models.ESS_PULSE_PERIOD_MS} ms); events outside the "
-    "range are excluded from the histogram."
-)
 
+class MonitorDataParams(pydantic.BaseModel):
+    """Parameters for the monitor histogram workflow offering both spectral axes."""
 
-class MonitorDataParamsBase(pydantic.BaseModel, abc.ABC):
-    """Common interface for monitor histogram parameter models.
-
-    Subclasses expose the edges and range filter for the coordinate mode they
-    offer, narrowing :attr:`coordinate_mode` to the modes they support. This
-    lets a single workflow factory (:func:`make_monitor_workflow_factory`)
-    serve every monitor spec regardless of which coordinate modes it offers.
-    """
-
-    coordinate_mode: CoordinateModeSettings = pydantic.Field(
-        title="Coordinate Mode",
-        description="Select coordinate system for monitor data.",
-        default_factory=CoordinateModeSettings,
-    )
-
-    @abc.abstractmethod
-    def get_active_edges(self) -> sc.Variable:
-        """Return the edges for the active coordinate mode."""
-
-    @abc.abstractmethod
-    def get_active_range(self) -> tuple[sc.Variable, sc.Variable] | None:
-        """Return the range filter for the active coordinate mode, if enabled."""
-
-    def get_coordinate_mode(self) -> CoordinateMode:
-        """Return the active coordinate mode."""
-        return self.coordinate_mode.mode
-
-
-class _MonitorTOAFields(pydantic.BaseModel):
-    """TOA histogram edges and range filter, shared by both monitor models.
-
-    Fields only — which mode is *active* stays with the concrete params model,
-    so a both-modes model cannot silently inherit TOA as the answer.
-    """
-
-    toa_edges: parameter_models.TOAEdges = pydantic.Field(
-        title="Time of Arrival Edges",
-        description=_TOA_EDGES_DESCRIPTION,
-        default=parameter_models.TOAEdges(
-            start=0.0,
-            stop=parameter_models.ESS_PULSE_PERIOD_MS,
-            num_bins=100,
-            unit=parameter_models.TimeUnit.MS,
-        ),
-    )
-    toa_range: parameter_models.TOARange = pydantic.Field(
-        title="Time of Arrival Range",
-        description="Time of arrival range filter.",
-        default=parameter_models.TOARange(),
+    spectral_axis: parameter_models.SpectralAxis = pydantic.Field(
+        title="Spectral Axis",
+        description="Axis along which the monitor histograms events.",
+        default_factory=parameter_models.TOASpectralAxis,
     )
 
 
-class TOAOnlyMonitorDataParams(_MonitorTOAFields, MonitorDataParamsBase):
+class TOAOnlyMonitorDataParams(MonitorDataParams):
     """
-    Monitor data parameters restricted to TOA mode only.
+    Monitor data parameters restricted to the time-of-arrival axis.
 
-    Use this where wavelength mode cannot work: it needs each monitor's flight
+    Use this where wavelength cannot work: it needs each monitor's flight
     path, taken from the instrument's geometry file.
     """
 
-    coordinate_mode: TOAOnlyCoordinateModeSettings = pydantic.Field(
-        title="Coordinate Mode",
-        description="Select coordinate system for monitor data. "
-        "Only TOA mode is available for this instrument.",
-        default_factory=TOAOnlyCoordinateModeSettings,
+    spectral_axis: parameter_models.TOASpectralAxis = pydantic.Field(
+        title="Spectral Axis",
+        description="Axis along which the monitor histograms events. Only time "
+        "of arrival (TOA) is available for this instrument.",
+        default_factory=parameter_models.TOASpectralAxis,
     )
-
-    def get_active_edges(self) -> sc.Variable:
-        """Return the TOA edges."""
-        return self.toa_edges.get_edges()
-
-    def get_active_range(self) -> tuple[sc.Variable, sc.Variable] | None:
-        """Return the TOA range if enabled."""
-        return self.toa_range.range if self.toa_range.enabled else None
-
-
-class MonitorDataParams(_MonitorTOAFields, MonitorDataParamsBase):
-    """Parameters for monitor histogram workflow offering both coordinate modes."""
-
-    # Wavelength settings
-    wavelength_edges: parameter_models.WavelengthEdges = pydantic.Field(
-        title="Wavelength Edges",
-        description="Wavelength edges for histogramming in wavelength mode.",
-        default=parameter_models.WavelengthEdges(
-            start=1.0,
-            stop=10.0,
-            num_bins=100,
-            unit=parameter_models.WavelengthUnit.ANGSTROM,
-        ),
-    )
-    wavelength_range: parameter_models.WavelengthRangeFilter = pydantic.Field(
-        title="Wavelength Range",
-        description="Wavelength range filter for wavelength mode.",
-        default=parameter_models.WavelengthRangeFilter(),
-    )
-
-    def get_active_edges(self) -> sc.Variable:
-        """Return the edges for the currently selected coordinate mode."""
-        match self.coordinate_mode.mode:
-            case 'toa':
-                return self.toa_edges.get_edges()
-            case 'wavelength':
-                return self.wavelength_edges.get_edges()
-
-    def get_active_range(self) -> tuple[sc.Variable, sc.Variable] | None:
-        """Return the range for the currently selected coordinate mode, if enabled."""
-        match self.coordinate_mode.mode:
-            case 'toa':
-                return self.toa_range.range if self.toa_range.enabled else None
-            case 'wavelength':
-                return (
-                    self.wavelength_range.range
-                    if self.wavelength_range.enabled
-                    else None
-                )
 
 
 def _make_scalar_template() -> sc.DataArray:
@@ -178,7 +73,7 @@ class MonitorHistogramOutputs(WorkflowOutputsBase):
                 'Monitor histogram. With "since run start" shows accumulated '
                 'counts; with "latest update" or a window, shows recent counts.'
             ),
-            params=('coordinate_mode', 'toa_edges', 'wavelength_edges'),
+            params=('spectral_axis',),
         ),
         OutputView(
             name='total_counts',
@@ -199,7 +94,7 @@ class MonitorHistogramOutputs(WorkflowOutputsBase):
                 'With "since run start" shows the accumulated total; with '
                 '"latest update" or a window, shows recent counts.'
             ),
-            params=('coordinate_mode', 'toa_range', 'wavelength_range'),
+            params=('spectral_axis',),
         ),
     )
 
@@ -214,8 +109,9 @@ class MonitorHistogramOutputs(WorkflowOutputsBase):
         title='Histogram',
         description=(
             'Monitor histogram accumulated since the start of the run. '
-            'In wavelength mode accumulation restarts if the monitor moves; in '
-            'TOA mode a move is not detected and counts accumulate across it.'
+            'On the wavelength axis accumulation restarts if the monitor moves; '
+            'on the TOA axis a move is not detected and counts accumulate across '
+            'it.'
         ),
     )
     current: WindowOutput = pydantic.Field(
@@ -262,7 +158,7 @@ class MonitorHistogramOutputs(WorkflowOutputsBase):
 def register_monitor_workflow_specs(
     instrument: Instrument,
     source_names: list[str],
-    params: type[MonitorDataParamsBase] = MonitorDataParams,
+    params: type[MonitorDataParams] = MonitorDataParams,
     aux_sources: AuxSources | None = None,
     extra_description: str | None = None,
 ) -> SpecHandle | None:
@@ -277,9 +173,9 @@ def register_monitor_workflow_specs(
         List of monitor names (source names) for which to register the workflow.
         If empty, returns None without registering.
     params
-        Parameter model class for the workflow, a MonitorDataParamsBase
-        subclass. Defaults to MonitorDataParams. Instruments whose monitors
-        cannot offer wavelength mode provide TOAOnlyMonitorDataParams.
+        Parameter model class for the workflow, MonitorDataParams or a
+        subclass. Instruments whose monitors cannot offer the wavelength axis
+        provide TOAOnlyMonitorDataParams.
     aux_sources
         Optional auxiliary source specification for position or other dynamic data
         streams. Instruments with movable monitors can provide an AuxSources spec
@@ -324,25 +220,27 @@ def make_monitor_workflow_factory(instrument: Instrument) -> Callable[..., Any]:
     Return the shared monitor workflow factory for ``instrument``.
 
     The factory wraps :func:`create_monitor_workflow`, unpacking the params. It
-    serves any spec whose params subclass :class:`MonitorDataParamsBase`,
-    including the TOA-only restricted variant. In wavelength mode it passes the
-    instrument's geometry file, which the monitor needs for ``Ltotal``; TOA mode
-    loads no file.
+    serves any spec whose params subclass :class:`MonitorDataParams`,
+    including the TOA-only restricted variant. On the wavelength axis it passes
+    the instrument's geometry file, which the monitor needs for ``Ltotal``; the
+    TOA axis loads no file.
 
     The returned function is defined here so its params type hint can be
     resolved by the workflow factory registration system.
     """
 
-    def factory(source_name: str, params: MonitorDataParamsBase) -> Any:
+    def factory(source_name: str, params: MonitorDataParams) -> Any:
         from .monitor_workflow import create_monitor_workflow
 
-        mode = params.get_coordinate_mode()
+        axis = params.spectral_axis
         return create_monitor_workflow(
             source_name=source_name,
-            edges=params.get_active_edges(),
-            range_filter=params.get_active_range(),
-            coordinate_mode=mode,
-            geometry_filename=instrument.nexus_file if mode == 'wavelength' else None,
+            edges=axis.edges.get_edges(),
+            range_filter=None if axis.range_filter is None else axis.range_filter.range,
+            coordinate_mode=axis.kind,
+            geometry_filename=(
+                instrument.nexus_file if axis.kind == 'wavelength' else None
+            ),
         )
 
     return factory

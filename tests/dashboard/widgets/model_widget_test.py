@@ -1,8 +1,10 @@
 # SPDX-License-Identifier: BSD-3-Clause
 # Copyright (c) 2025 Scipp contributors (https://github.com/scipp)
 from enum import StrEnum
+from typing import Annotated, Literal
 
 import pydantic
+import pytest
 
 from ess.livedata.dashboard.widgets.model_widget import ModelWidget, get_defaults
 
@@ -155,3 +157,35 @@ class TestModelWidget:
 
         assert widget.get_parameter_widget('group') is None
         assert widget.param_group_tabs == []
+
+    def test_union_field_gets_a_tab_and_stored_values_choose_the_alternative(
+        self,
+    ) -> None:
+        class First(pydantic.BaseModel):
+            kind: Literal['first'] = 'first'
+            a: int = 1
+
+        class Second(pydantic.BaseModel):
+            kind: Literal['second'] = 'second'
+            b: str = 'x'
+
+        class Outer(pydantic.BaseModel):
+            choice: Annotated[First | Second, pydantic.Field(discriminator='kind')] = (
+                pydantic.Field(default_factory=lambda: First(a=5), title='Choice')
+            )
+
+        assert ModelWidget(Outer).parameter_values.choice == First(a=5)
+
+        widget = ModelWidget(
+            Outer, initial_values={'choice': {'kind': 'second', 'b': 'y'}}
+        )
+
+        assert [title for _, title, _ in widget.param_group_tabs] == ['Choice']
+        assert widget.parameter_values.choice == Second(b='y')
+
+    def test_field_that_is_not_a_group_is_refused(self) -> None:
+        class Outer(pydantic.BaseModel):
+            value: int = 1
+
+        with pytest.raises(ValueError, match='neither a group nor a union'):
+            ModelWidget(Outer)

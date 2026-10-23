@@ -1154,7 +1154,7 @@ class Instrument:
     def _attach_default_monitor_factories(self) -> None:
         """Attach the shared monitor workflow factory where none was provided.
 
-        Monitor specs are parameterized by a :class:`MonitorDataParamsBase`
+        Monitor specs are parameterized by a :class:`MonitorDataParams`
         model and otherwise share a single factory. An instrument needing a
         different one can attach its own in ``setup_factories``; this fills in
         the default for the rest. Done in
@@ -1163,15 +1163,13 @@ class Instrument:
         no factory references.
         """
         from ess.livedata.workflows.monitor_workflow_specs import (
-            MonitorDataParamsBase,
+            MonitorDataParams,
             make_monitor_workflow_factory,
         )
 
         factory = make_monitor_workflow_factory(self)
         for reg in list(self.workflow_factory.registrations()):
-            if reg.factory is None and issubclass(
-                reg.spec.params, MonitorDataParamsBase
-            ):
+            if reg.factory is None and issubclass(reg.spec.params, MonitorDataParams):
                 self.workflow_factory.attach_factory(reg.spec.get_id())(factory)
 
     def validate(self) -> None:
