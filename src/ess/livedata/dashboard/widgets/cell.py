@@ -266,6 +266,9 @@ class CellDeps:
     compact_figures: bool = False
 
 
+# Gap between a cell's titlebar and its plot, in pixels.
+_PLOT_PANE_TOP_MARGIN = 4
+
 # Font size of the axis names of compact figures (the design's is 1.25em). With
 # the axis spacing every figure has (``design.py``), this decides how much of a
 # phone-width figure its axes take.
@@ -928,11 +931,16 @@ class CellWidget:
         #   features (autoscaling, dynamic updates)
         # - Allows proper multi-layer composition via hv.Overlay
         # - Each grid cell's plot remains independent
-        # No margin: the cell's border and the figure's own border already
-        # separate the plot from its neighbours, and Panel's default (5, 10)
-        # adds up across a grid of many cells.
+        # A margin above only: Bokeh grows the figure's top border just enough
+        # to hold a y tick label centred on the frame's top edge, which would
+        # otherwise touch the titlebar. Elsewhere the cell's border and the
+        # figure's own border already separate the plot from its neighbours,
+        # and Panel's default (5, 10) adds up across a grid of many cells.
         plot_pane_wrapper = CurrentStateHoloViews(
-            self._plot, sizing_mode='stretch_both', linked_axes=False, margin=0
+            self._plot,
+            sizing_mode='stretch_both',
+            linked_axes=False,
+            margin=(_PLOT_PANE_TOP_MARGIN, 0, 0, 0),
         )
         # Kept so dispose() can unsubscribe the rendered plots from the layer
         # pipes; see dispose().
