@@ -643,7 +643,7 @@ class TestDreamMonitorWorkflowFactory:
     """Tests for the monitor workflow factory attached to DREAM."""
 
     @pytest.fixture
-    def dream_params_wavelength_mode(self):
+    def dream_params_wavelength_axis(self):
         """Create MonitorDataParams with wavelength mode enabled."""
         return MonitorDataParams(spectral_axis=WavelengthSpectralAxis())
 
@@ -655,7 +655,7 @@ class TestDreamMonitorWorkflowFactory:
         ],
     )
     def test_wavelength_mode_allowed_for_all_monitors(
-        self, monitor_name, dream_params_wavelength_mode
+        self, monitor_name, dream_params_wavelength_axis
     ):
         """Test that wavelength mode is allowed for all DREAM monitors.
 
@@ -672,7 +672,7 @@ class TestDreamMonitorWorkflowFactory:
         )
         factory = instrument.workflow_factory.registration(workflow_id).factory
 
-        workflow = factory(monitor_name, dream_params_wavelength_mode)
+        workflow = factory(monitor_name, dream_params_wavelength_axis)
         assert workflow is not None
 
 

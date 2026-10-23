@@ -407,44 +407,6 @@ class TestLiteralHandling:
         assert "slow" in select.options
         assert select.value == "normal"
 
-    def test_literal_uses_friendly_labels_keeping_values(self):
-        class TestModel(pydantic.BaseModel):
-            mode: Literal["toa", "wavelength"] = pydantic.Field(
-                default="toa",
-                json_schema_extra={
-                    "labels": {
-                        "toa": "Time of arrival (TOA)",
-                        "wavelength": "Wavelength",
-                    }
-                },
-            )
-
-        widget = ParamWidget(TestModel)
-
-        select = widget.widgets["mode"]
-        # Labels are user-facing; the underlying (serialized) values are unchanged.
-        assert select.options == {
-            "Time of arrival (TOA)": "toa",
-            "Wavelength": "wavelength",
-        }
-        assert select.value == "toa"
-        assert widget.create_model().mode == "toa"
-
-    def test_literal_without_labels_falls_back_to_value(self):
-        class TestModel(pydantic.BaseModel):
-            mode: Literal["toa", "wavelength"] = pydantic.Field(
-                default="toa",
-                json_schema_extra={"labels": {"toa": "Time of arrival (TOA)"}},
-            )
-
-        widget = ParamWidget(TestModel)
-
-        # Unmapped value keeps its raw string as the label.
-        assert widget.widgets["mode"].options == {
-            "Time of arrival (TOA)": "toa",
-            "wavelength": "wavelength",
-        }
-
 
 class TestGetValues:
     """Tests for get_values method."""
@@ -858,13 +820,8 @@ class LengthAxis(pydantic.BaseModel):
 Axis = Annotated[TimeAxis | LengthAxis, pydantic.Field(discriminator='kind')]
 
 
-class WithAxis(pydantic.BaseModel):
-    axis: Axis = pydantic.Field(default_factory=LengthAxis, title='Axis')
-    count: int = 3
-
-
 def _union() -> UnionWidget:
-    widget = make_group_widget(Axis.__origin__, 'kind')
+    widget = make_group_widget(TimeAxis | LengthAxis, 'kind')
     assert isinstance(widget, UnionWidget)
     return widget
 
@@ -996,12 +953,33 @@ class TestUnionWidget:
         assert not valid
         assert 'stop must be greater than start' in message
 
-    def test_union_nested_in_a_group(self):
-        widget = ParamWidget(WithAxis)
-        assert widget.create_model().axis == LengthAxis()
+    def test_union_cannot_be_a_field_of_a_group(self):
+        class WithAxis(pydantic.BaseModel):
+            axis: Axis = pydantic.Field(default_factory=LengthAxis)
 
-        widget.set_values({'axis': {'kind': 'time', 'interval': {'high': 3.0}}})
+        with pytest.raises(TypeError, match='cannot be a field of a group'):
+            ParamWidget(WithAxis)
 
-        assert widget.create_model() == WithAxis(
-            axis=TimeAxis(interval=Interval(high=3.0)), count=3
-        )
+    def test_tag_must_be_a_literal_of_one_value(self):
+        class Loose(pydantic.BaseModel):
+            kind: Literal['a', 'b'] = 'a'
+
+        with pytest.raises(TypeError, match='Loose'):
+            make_group_widget(TimeAxis | Loose, 'kind')
+
+    def test_fields_of_a_union_cannot_be_hidden(self):
+        with pytest.raises(TypeError, match='cannot be hidden'):
+            make_group_widget(TimeAxis | LengthAxis, 'kind', frozenset({'edges'}))
+
+    def test_error_state_follows_the_chosen_alternative(self):
+        widget = _union()
+        widget.set_values({'kind': 'time', 'edges': {'start': 5.0, 'stop': 3.0}})
+        _valid, message = widget.validate()
+        widget.set_error_state(True, message)
+
+        widget.set_values({'kind': 'length'})
+        widget.set_error_state(False, '')
+        widget.set_values({'kind': 'time'})
+
+        _description, time_alternative, _length = widget.panel()
+        assert 'stop must be greater' not in str(time_alternative[-1].object)

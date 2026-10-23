@@ -72,7 +72,13 @@ def _field_default(field_info: pydantic.fields.FieldInfo) -> Any:
 
 
 def _tag_value(model: type[pydantic.BaseModel], discriminator: str) -> str:
-    (tag,) = get_args(model.model_fields[discriminator].annotation)
+    annotation = model.model_fields[discriminator].annotation
+    if not _is_constant(annotation):
+        raise TypeError(
+            f"The tag {discriminator!r} of {model.__name__} must be a Literal of "
+            f"one value, got {annotation}"
+        )
+    (tag,) = get_args(annotation)
     return tag
 
 
@@ -119,13 +125,15 @@ def make_group_widget(
         The field's discriminator, the name of the tag field, required for a
         union of groups.
     hidden_fields:
-        Fields of a group to exclude from the UI.
+        Fields of a group to exclude from the UI. A union of groups has none.
     """
     if _is_group(annotation):
         return ParamWidget(annotation, hidden_fields=hidden_fields)
     alternatives = _union_args(annotation)
     if not alternatives or not all(_is_group(tp) for tp in alternatives):
         return None
+    if hidden_fields:
+        raise TypeError(f"Fields of a union of groups cannot be hidden: {annotation}")
     if not isinstance(discriminator, str):
         raise TypeError(
             f"A union of groups needs a discriminator, the name of its tag field, "
@@ -159,7 +167,7 @@ class ParamWidget:
         self.model_class = model_class
         self._hidden_fields = hidden_fields
         self.widgets = {}
-        self._nested: dict[str, ParamWidget | UnionWidget | OptionalGroupWidget] = {}
+        self._nested: dict[str, ParamWidget | OptionalGroupWidget] = {}
         self._create_widgets()
         self._error_pane = pn.pane.HTML("", sizing_mode='stretch_width', margin=(0, 5))
         self._create_layout()
@@ -180,11 +188,19 @@ class ParamWidget:
 
     def _create_nested(
         self, field_name: str, field_info: pydantic.fields.FieldInfo
-    ) -> 'tuple[ParamWidget | UnionWidget | OptionalGroupWidget, Any] | None':
-        """Widget and layout for a field that holds a group, None for other fields."""
+    ) -> 'tuple[ParamWidget | OptionalGroupWidget, Any] | None':
+        """Widget and layout for a field that holds a group, None for other fields.
+
+        A union of groups is refused: it is a parameter of its own, never a field
+        of a group (ADR 0008 of essapps).
+        """
         title = field_info.title or snake_to_camel(field_name)
         annotation = field_info.annotation
         args = _union_args(annotation)
+        if any(_is_group(tp) for tp in args) and NoneType not in args:
+            raise TypeError(
+                f"Field {field_name!r}: a union of groups cannot be a field of a group"
+            )
         if NoneType in args:
             others = tuple(tp for tp in args if tp is not NoneType)
             if not any(_is_group(tp) for tp in others):
@@ -198,9 +214,9 @@ class ParamWidget:
                 ParamWidget(others[0]), title, field_info.description
             )
             return optional, optional.panel()
-        group = make_group_widget(annotation, field_info.discriminator)
-        if group is None:
+        if not _is_group(annotation):
             return None
+        group = ParamWidget(annotation)
         return group, _card(_title_row(title, field_info.description), group.panel())
 
     def _create_layout(self):
@@ -300,13 +316,9 @@ class ParamWidget:
                 **shared_options,
             )
         elif get_origin(field_type) is Literal:
-            # Handle Literal types (e.g., Literal['a', 'b', 'c']). A field may
-            # supply human-readable labels via Field(json_schema_extra={'labels':
-            # {value: label}}); the underlying (serialized) value is unchanged.
+            # Handle Literal types (e.g., Literal['a', 'b', 'c'])
             literal_values = get_args(field_type)
-            extra = field_info.json_schema_extra
-            labels = extra.get('labels', {}) if isinstance(extra, dict) else {}
-            options = {labels.get(val, str(val)): val for val in literal_values}
+            options = {str(val): val for val in literal_values}
 
             default_widget_value = default_value if default_value else literal_values[0]
             return pn.widgets.Select(
@@ -351,9 +363,7 @@ class ParamWidget:
 
         ``values`` maps field names to values, or is an instance of the model.
         """
-        if isinstance(values, pydantic.BaseModel):
-            values = dict(values)
-        for field_name, value in values.items():
+        for field_name, value in dict(values).items():
             if field_name in self._nested:
                 self._nested[field_name].set_values(value)
             elif field_name in self.widgets:
@@ -500,8 +510,6 @@ class UnionWidget:
 
         Without a tag, ``values`` are fields of the alternative chosen now.
         """
-        if isinstance(values, pydantic.BaseModel):
-            values = dict(values)
         values = dict(values)
         if (tag := values.pop(self._discriminator, None)) is not None:
             self._selector.value = tag
@@ -516,8 +524,11 @@ class UnionWidget:
         return self._active.validate()
 
     def set_error_state(self, has_error: bool, error_message: str) -> None:
-        """Set error state for the chosen alternative."""
-        self._active.set_error_state(has_error, error_message)
+        """Set error state for the chosen alternative, clearing it for the others."""
+        for widget in self._alternatives.values():
+            widget.set_error_state(False, "")
+        if has_error:
+            self._active.set_error_state(has_error, error_message)
 
     def panel(self) -> pn.Card:
         """Return the Panel layout."""

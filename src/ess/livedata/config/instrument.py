@@ -903,7 +903,7 @@ class Instrument:
             enables proper ROI support by tracking which input pixels contribute
             to each output pixel.
         wavelength:
-            Offer wavelength mode in addition to TOA. The view then takes its
+            Offer the wavelength axis in addition to TOA. The view then takes its
             pixels, and their positions, from the instrument's geometry file
             instead of the configured ``detector_number``: wavelength needs
             ``Ltotal`` per pixel to index the lookup table with. The positions

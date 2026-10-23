@@ -138,25 +138,21 @@ class ModelWidget:
                 continue  # Skip private fields
             if field_name in self._hidden_fields:
                 continue
-            field_type = field_info.annotation
-            is_group = isinstance(field_type, type) and issubclass(
-                field_type, pydantic.BaseModel
-            )
-            group_fields = field_type.model_fields if is_group else {}
+            prefix = f'{field_name}.'
             hidden_sub_fields = frozenset(
-                sub_field
-                for sub_field in group_fields
-                if f'{field_name}.{sub_field}' in self._hidden_fields
+                path.removeprefix(prefix)
+                for path in self._hidden_fields
+                if path.startswith(prefix)
             )
-            if is_group and hidden_sub_fields == group_fields.keys():
-                continue
             widget = make_group_widget(
-                field_type, field_info.discriminator, hidden_sub_fields
+                field_info.annotation, field_info.discriminator, hidden_sub_fields
             )
             if widget is None:
                 raise TypeError(
                     f"Field {field_name!r} is neither a group nor a union of groups"
                 )
+            if isinstance(widget, ParamWidget) and not widget.widgets:
+                continue  # Every field of the group is hidden
 
             title = field_info.title or field_name.replace('_', ' ').title()
             widget_data[field_name] = {

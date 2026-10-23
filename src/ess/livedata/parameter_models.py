@@ -181,10 +181,11 @@ class WavelengthRange(RangeModel):
 
 
 class TOARange(RangeModel):
-    """Time of arrival range."""
+    """Time of arrival range, by default one pulse period of the ESS source."""
 
+    stop: float = Field(default=ESS_PULSE_PERIOD_MS, description="Stop of the range.")
     unit: TimeUnit = Field(
-        default=TimeUnit.MICROSECOND, description="Unit of the interval bounds."
+        default=TimeUnit.MS, description="Unit of the interval bounds."
     )
 
 
@@ -243,7 +244,12 @@ class TOASpectralAxis(BaseModel):
 class WavelengthSpectralAxis(BaseModel):
     """Histogram events along wavelength."""
 
-    kind: Literal['wavelength'] = Field(default='wavelength', title="Wavelength")
+    kind: Literal['wavelength'] = Field(
+        default='wavelength',
+        title="Wavelength",
+        description="Wavelength computed from time of arrival with the "
+        "instrument's lookup table.",
+    )
     edges: WavelengthEdges = Field(
         title="Bin edges",
         default=WavelengthEdges(

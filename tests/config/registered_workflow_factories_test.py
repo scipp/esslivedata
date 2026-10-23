@@ -87,22 +87,25 @@ def test_workflow_factory_is_attached(instrument_name: str, workflow_id: Workflo
     )
 
 
-def _accepts_wavelength_mode(spec) -> bool:
-    """Whether the spec's params model lets a user select wavelength mode."""
+def _accepts_wavelength_axis(spec) -> bool:
+    """Whether the spec's params model lets a user select the wavelength axis."""
+    field = spec.params.model_fields.get('spectral_axis')
+    if field is None:
+        return False
     try:
-        spec.params(spectral_axis={'kind': 'wavelength'})
+        pydantic.TypeAdapter(field.annotation).validate_python({'kind': 'wavelength'})
     except pydantic.ValidationError:
         return False
     return True
 
 
 def _collect_wavelength_capable_factories():
-    """Collect workflows whose params offer wavelength mode."""
+    """Collect workflows whose params offer the wavelength axis."""
     workflows = []
     for param in _collect_workflow_factories():
         instrument_name, workflow_id = param.values
         instrument = instrument_registry[instrument_name]
-        if _accepts_wavelength_mode(instrument.workflow_factory[workflow_id]):
+        if _accepts_wavelength_axis(instrument.workflow_factory[workflow_id]):
             workflows.append(param)
     return workflows
 
@@ -177,15 +180,15 @@ def test_workflow_roundtrip(instrument_name: str, workflow_id: WorkflowId):
 @pytest.mark.parametrize(
     ("instrument_name", "workflow_id"), _collect_wavelength_capable_factories()
 )
-def test_wavelength_mode_workflow_can_be_instantiated(
+def test_wavelength_axis_workflow_can_be_instantiated(
     instrument_name: str, workflow_id: WorkflowId
 ):
-    """A spec offering wavelength mode must be able to build one.
+    """A spec offering the wavelength axis must be able to build one.
 
     Wavelength conversion needs a lookup table and detector geometry, both
     supplied by the instrument factory rather than by the spec. Nothing ties
-    the two together, so a spec can advertise the mode in the UI while its
-    factory raises at job creation. Offering an unusable mode is a bug: the
+    the two together, so a spec can advertise the axis in the UI while its
+    factory raises at job creation. Offering an unusable axis is a bug: the
     spec must be registered with a TOA-only params model instead.
     """
     instrument = instrument_registry[instrument_name]

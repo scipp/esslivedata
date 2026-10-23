@@ -223,9 +223,9 @@ class TestDetectorViewSpectralAxisRestriction:
     """A spec can restrict its params to time-of-arrival.
 
     Logical views run on sources without geometry, so there is no ``Ltotal``
-    to index a wavelength lookup table with (ADR 0011); offering the mode
-    would fail at job start. Everywhere else coordinate mode stays a parameter
-    on one spec (ADR 0010).
+    to index a wavelength lookup table with (ADR 0011); offering the wavelength
+    axis would fail at job start. Everywhere else the spectral axis stays a
+    parameter on one spec (ADR 0010).
     """
 
     def test_toa_only_params_reject_wavelength(self):
