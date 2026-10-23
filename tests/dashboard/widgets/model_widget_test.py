@@ -1,10 +1,26 @@
 # SPDX-License-Identifier: BSD-3-Clause
 # Copyright (c) 2025 Scipp contributors (https://github.com/scipp)
 from enum import StrEnum
+from typing import Annotated, Literal
 
 import pydantic
+import pytest
 
 from ess.livedata.dashboard.widgets.model_widget import ModelWidget, get_defaults
+from ess.livedata.parameter_models import (
+    TOARange,
+    TOASpectralAxis,
+    WavelengthRange,
+    WavelengthSpectralAxis,
+)
+from ess.livedata.workflows.detector_view_specs import (
+    DetectorViewParams,
+    TOAOnlyDetectorViewParams,
+)
+from ess.livedata.workflows.monitor_workflow_specs import (
+    MonitorDataParams,
+    TOAOnlyMonitorDataParams,
+)
 
 
 def test_get_defaults_handles_default_factory():
@@ -155,3 +171,77 @@ class TestModelWidget:
 
         assert widget.get_parameter_widget('group') is None
         assert widget.param_group_tabs == []
+
+    def test_union_field_gets_a_tab_and_stored_values_choose_the_alternative(
+        self,
+    ) -> None:
+        class First(pydantic.BaseModel):
+            kind: Literal['first'] = 'first'
+            a: int = 1
+
+        class Second(pydantic.BaseModel):
+            kind: Literal['second'] = 'second'
+            b: str = 'x'
+
+        class Outer(pydantic.BaseModel):
+            choice: Annotated[First | Second, pydantic.Field(discriminator='kind')] = (
+                pydantic.Field(default_factory=lambda: First(a=5), title='Choice')
+            )
+
+        assert ModelWidget(Outer).parameter_values.choice == First(a=5)
+
+        widget = ModelWidget(
+            Outer, initial_values={'choice': {'kind': 'second', 'b': 'y'}}
+        )
+
+        assert [title for _, title, _ in widget.param_group_tabs] == ['Choice']
+        assert widget.parameter_values.choice == Second(b='y')
+
+    def test_field_that_is_not_a_group_is_refused(self) -> None:
+        class Outer(pydantic.BaseModel):
+            value: int = 1
+
+        with pytest.raises(ValueError, match='neither a group nor a union'):
+            ModelWidget(Outer)
+
+    def test_hidden_path_into_a_union_is_refused(self) -> None:
+        class First(pydantic.BaseModel):
+            kind: Literal['first'] = 'first'
+            a: int = 1
+
+        class Second(pydantic.BaseModel):
+            kind: Literal['second'] = 'second'
+
+        class Outer(pydantic.BaseModel):
+            choice: Annotated[First | Second, pydantic.Field(discriminator='kind')] = (
+                pydantic.Field(default_factory=First)
+            )
+
+        with pytest.raises(ValueError, match='cannot be hidden'):
+            ModelWidget(Outer, hidden_fields=frozenset({'choice.a'}))
+
+
+_TOA_WITH_FILTER = TOASpectralAxis(range_filter=TOARange(start=1.0, stop=2.0))
+_WAVELENGTH_WITH_FILTER = WavelengthSpectralAxis(
+    range_filter=WavelengthRange(start=2.0, stop=3.0)
+)
+
+
+@pytest.mark.parametrize(
+    'params',
+    [
+        DetectorViewParams(),
+        DetectorViewParams(spectral_axis=_TOA_WITH_FILTER),
+        DetectorViewParams(spectral_axis=_WAVELENGTH_WITH_FILTER),
+        TOAOnlyDetectorViewParams(spectral_axis=_TOA_WITH_FILTER),
+        MonitorDataParams(spectral_axis=_WAVELENGTH_WITH_FILTER),
+        TOAOnlyMonitorDataParams(spectral_axis=_TOA_WITH_FILTER),
+    ],
+    ids=lambda params: f'{type(params).__name__}-{params.spectral_axis.kind}',
+)
+def test_stored_params_round_trip_through_the_widget(
+    params: pydantic.BaseModel,
+) -> None:
+    widget = ModelWidget(type(params), initial_values=params.model_dump(mode='json'))
+
+    assert widget.parameter_values == params

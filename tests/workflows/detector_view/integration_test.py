@@ -20,7 +20,7 @@ from ess.livedata.config.roi_names import roi_stream_name
 from ess.livedata.config.workflow_spec import JobId, WorkflowId
 from ess.livedata.core.job import Job, JobData
 from ess.livedata.core.timestamp import Timestamp
-from ess.livedata.parameter_models import TimeUnit, TOARange
+from ess.livedata.parameter_models import TimeUnit, TOARange, TOASpectralAxis
 from ess.livedata.workflows.detector_view.data_source import DetectorNumberSource
 from ess.livedata.workflows.detector_view.factory import DetectorViewFactory
 from ess.livedata.workflows.detector_view.types import (
@@ -329,7 +329,9 @@ class TestROISpectraIntegration:
     def test_roi_counts_in_range_follow_the_range_filter_like_the_image(self):
         factory = make_test_factory(y_size=4, x_size=4)
         params = DetectorViewParams(
-            toa_range=TOARange(enabled=True, start=0.0, stop=35.0, unit=TimeUnit.MS)
+            spectral_axis=TOASpectralAxis(
+                range_filter=TOARange(start=0.0, stop=35.0, unit=TimeUnit.MS)
+            )
         )
         workflow = factory.make_workflow('detector', params=params)
         workflow.build(context_keys=ROI_CONTEXT_KEYS)
@@ -595,7 +597,9 @@ class TestUnitHandling:
         # Create params with microsecond TOA edges
         # Events have event_time_offset in nanoseconds (0-71ms = 0-71000 us)
         params = DetectorViewParams(
-            toa_edges=TOAEdges(start=0.0, stop=80000.0, num_bins=10, unit=TimeUnit.US)
+            spectral_axis=TOASpectralAxis(
+                edges=TOAEdges(start=0.0, stop=80000.0, num_bins=10, unit=TimeUnit.US)
+            )
         )
 
         factory = make_test_factory(y_size=4, x_size=4)

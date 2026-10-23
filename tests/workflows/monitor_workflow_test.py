@@ -27,13 +27,14 @@ from ess.livedata.parameter_models import (
     TimeUnit,
     TOAEdges,
     TOARange,
+    TOASpectralAxis,
     WavelengthEdges,
-    WavelengthRangeFilter,
+    WavelengthRange,
+    WavelengthSpectralAxis,
     WavelengthUnit,
 )
 from ess.livedata.preprocessors.accumulation_mode import Cumulative, Current
 from ess.livedata.preprocessors.accumulators import make_no_copy_accumulator_pair
-from ess.livedata.workflows.detector_view_specs import CoordinateModeSettings
 from ess.livedata.workflows.lut_context import MonitorLutContext
 from ess.livedata.workflows.monitor_workflow import (
     MONITOR_TRANSFORM,
@@ -69,16 +70,12 @@ class TestMonitorDataParams:
         """Test that MonitorDataParams has correct default values."""
         params = MonitorDataParams()
 
-        # Default coordinate mode is TOA
-        assert params.coordinate_mode.mode == 'toa'
-        assert params.toa_edges.start == 0.0
-        assert params.toa_edges.stop == ESS_PULSE_PERIOD_MS
-        assert params.toa_edges.num_bins == 100
-        assert params.toa_edges.unit == TimeUnit.MS
-        # Ratemeter defaults
-        assert params.toa_range.enabled is False
-        assert params.toa_range.start == 0.0
-        assert params.toa_range.stop == 10.0
+        assert params.spectral_axis.kind == 'toa'
+        assert params.spectral_axis.edges.start == 0.0
+        assert params.spectral_axis.edges.stop == ESS_PULSE_PERIOD_MS
+        assert params.spectral_axis.edges.num_bins == 100
+        assert params.spectral_axis.edges.unit == TimeUnit.MS
+        assert params.spectral_axis.range_filter is None
 
     def test_custom_values(self):
         """Test MonitorDataParams with custom values."""
@@ -88,78 +85,70 @@ class TestMonitorDataParams:
             num_bins=200,
             unit=TimeUnit.US,
         )
-        params = MonitorDataParams(toa_edges=custom_edges)
+        params = MonitorDataParams(spectral_axis=TOASpectralAxis(edges=custom_edges))
 
-        assert params.toa_edges.start == 10.0
-        assert params.toa_edges.stop == 50.0
-        assert params.toa_edges.num_bins == 200
-        assert params.toa_edges.unit == TimeUnit.US
+        assert params.spectral_axis.edges.start == 10.0
+        assert params.spectral_axis.edges.stop == 50.0
+        assert params.spectral_axis.edges.num_bins == 200
+        assert params.spectral_axis.edges.unit == TimeUnit.US
 
     def test_get_edges(self):
         """Test that get_edges returns correct scipp Variable."""
         params = MonitorDataParams()
-        edges = params.toa_edges.get_edges()
+        edges = params.spectral_axis.edges.get_edges()
 
         assert isinstance(edges, sc.Variable)
         assert edges.unit == sc.Unit('ms')
         assert len(edges) == 101  # num_bins + 1
 
-    def test_get_active_edges_toa_mode(self):
-        """Test get_active_edges returns TOA edges in TOA mode."""
+    def test_edges_toa_axis(self):
         params = MonitorDataParams(
-            coordinate_mode=CoordinateModeSettings(mode='toa'),
-            toa_edges=TOAEdges(start=0.0, stop=100.0, num_bins=50),
+            spectral_axis=TOASpectralAxis(
+                edges=TOAEdges(start=0.0, stop=100.0, num_bins=50)
+            )
         )
-        edges = params.get_active_edges()
+        edges = params.spectral_axis.edges.get_edges()
         assert edges.dim == 'time_of_arrival'
         assert len(edges) == 51
 
-    def test_get_active_edges_wavelength_mode(self):
-        """Test get_active_edges returns wavelength edges in wavelength mode."""
+    def test_edges_wavelength_axis(self):
         params = MonitorDataParams(
-            coordinate_mode=CoordinateModeSettings(mode='wavelength'),
-            wavelength_edges=WavelengthEdges(start=0.1, stop=10.0, num_bins=50),
+            spectral_axis=WavelengthSpectralAxis(
+                edges=WavelengthEdges(start=0.1, stop=10.0, num_bins=50)
+            )
         )
-        edges = params.get_active_edges()
+        edges = params.spectral_axis.edges.get_edges()
         assert edges.dim == 'wavelength'
         assert len(edges) == 51
 
-    def test_get_active_range_returns_none_when_disabled(self):
-        """Test get_active_range returns None when range filter is disabled."""
-        params = MonitorDataParams(
-            coordinate_mode=CoordinateModeSettings(mode='toa'),
-        )
-        assert params.get_active_range() is None
+    def test_range_filter_is_off_by_default(self):
+        assert MonitorDataParams().spectral_axis.range_filter is None
 
     @pytest.mark.parametrize(
         'unit', [TimeUnit.NS, TimeUnit.US, TimeUnit.MS, TimeUnit.S]
     )
-    def test_get_active_range_toa_mode_preserves_user_unit(self, unit: TimeUnit):
+    def test_toa_range_preserves_user_unit(self, unit: TimeUnit):
         params = MonitorDataParams(
-            coordinate_mode=CoordinateModeSettings(mode='toa'),
-            toa_range=TOARange(enabled=True, start=0.0, stop=71.4, unit=unit),
+            spectral_axis=TOASpectralAxis(
+                range_filter=TOARange(start=0.0, stop=71.4, unit=unit)
+            )
         )
-        range_filter = params.get_active_range()
-        assert range_filter is not None
-        low, high = range_filter
+        assert params.spectral_axis.range_filter is not None
+        low, high = params.spectral_axis.range_filter.range
         assert low.unit == unit.value
         assert high.unit == unit.value
 
     @pytest.mark.parametrize(
         'unit', [WavelengthUnit.ANGSTROM, WavelengthUnit.NANOMETER]
     )
-    def test_get_active_range_wavelength_mode_preserves_user_unit(
-        self, unit: WavelengthUnit
-    ):
+    def test_wavelength_range_preserves_user_unit(self, unit: WavelengthUnit):
         params = MonitorDataParams(
-            coordinate_mode=CoordinateModeSettings(mode='wavelength'),
-            wavelength_range=WavelengthRangeFilter(
-                enabled=True, start=1.0, stop=5.0, unit=unit
-            ),
+            spectral_axis=WavelengthSpectralAxis(
+                range_filter=WavelengthRange(start=1.0, stop=5.0, unit=unit)
+            )
         )
-        range_filter = params.get_active_range()
-        assert range_filter is not None
-        low, high = range_filter
+        assert params.spectral_axis.range_filter is not None
+        low, high = params.spectral_axis.range_filter.range
         assert low.unit == unit.value
         assert high.unit == unit.value
 
@@ -623,14 +612,16 @@ class TestRegisterMonitorWorkflowSpecs:
         # Attach factory
         @handle.attach_factory()
         def _factory(source_name: str, params: MonitorDataParams):
-            mode = params.coordinate_mode.mode
-            if mode == 'wavelength':
+            axis = params.spectral_axis
+            if axis.kind == 'wavelength':
                 raise NotImplementedError("wavelength mode not yet implemented")
             return create_monitor_workflow(
                 source_name=source_name,
-                edges=params.get_active_edges(),
-                range_filter=params.get_active_range(),
-                coordinate_mode=mode,
+                edges=axis.edges.get_edges(),
+                range_filter=(
+                    None if axis.range_filter is None else axis.range_filter.range
+                ),
+                coordinate_mode=axis.kind,
             )
 
         # Verify factory works by creating a workflow
@@ -652,11 +643,9 @@ class TestDreamMonitorWorkflowFactory:
     """Tests for the monitor workflow factory attached to DREAM."""
 
     @pytest.fixture
-    def dream_params_wavelength_mode(self):
+    def dream_params_wavelength_axis(self):
         """Create MonitorDataParams with wavelength mode enabled."""
-        return MonitorDataParams(
-            coordinate_mode=CoordinateModeSettings(mode='wavelength'),
-        )
+        return MonitorDataParams(spectral_axis=WavelengthSpectralAxis())
 
     @pytest.mark.parametrize(
         'monitor_name',
@@ -666,7 +655,7 @@ class TestDreamMonitorWorkflowFactory:
         ],
     )
     def test_wavelength_mode_allowed_for_all_monitors(
-        self, monitor_name, dream_params_wavelength_mode
+        self, monitor_name, dream_params_wavelength_axis
     ):
         """Test that wavelength mode is allowed for all DREAM monitors.
 
@@ -683,7 +672,7 @@ class TestDreamMonitorWorkflowFactory:
         )
         factory = instrument.workflow_factory.registration(workflow_id).factory
 
-        workflow = factory(monitor_name, dream_params_wavelength_mode)
+        workflow = factory(monitor_name, dream_params_wavelength_axis)
         assert workflow is not None
 
 

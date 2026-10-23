@@ -8,6 +8,7 @@ import scipp as sc
 
 from ess.livedata.config import Instrument
 from ess.livedata.config.instrument import LogicalViewConfig
+from ess.livedata.parameter_models import TOASpectralAxis
 
 
 def _identity_transform(da: sc.DataArray) -> sc.DataArray:
@@ -279,7 +280,7 @@ class TestAddLogicalViewSpecOutputs:
         assert 'current' in output_fields
 
 
-class TestLogicalViewCoordinateMode:
+class TestLogicalViewSpectralAxis:
     """Logical views are TOA-only.
 
     They run on ``InstrumentDetectorSource``, which carries no geometry, so
@@ -302,16 +303,15 @@ class TestLogicalViewCoordinateMode:
     def test_params_default_to_toa(self):
         instrument = Instrument(name='test', detector_names=['detector1'])
         spec = self._register(instrument)
-        assert spec.params().coordinate_mode.mode == 'toa'
+        assert spec.params().spectral_axis.kind == 'toa'
 
     def test_params_reject_wavelength(self):
         instrument = Instrument(name='test', detector_names=['detector1'])
         spec = self._register(instrument)
         with pytest.raises(pydantic.ValidationError):
-            spec.params(coordinate_mode={'mode': 'wavelength'})
+            spec.params(spectral_axis={'kind': 'wavelength'})
 
-    def test_params_carry_no_wavelength_fields(self):
+    def test_params_restrict_spectral_axis_to_toa(self):
         instrument = Instrument(name='test', detector_names=['detector1'])
         spec = self._register(instrument)
-        assert 'wavelength_edges' not in spec.params.model_fields
-        assert 'wavelength_range' not in spec.params.model_fields
+        assert spec.params.model_fields['spectral_axis'].annotation is TOASpectralAxis

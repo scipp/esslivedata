@@ -23,7 +23,7 @@ from ...preprocessors.downsample_pixel_ids import SOURCE_RESOLUTION
 from ..detector_view_specs import (
     DetectorViewOutputs,
     DetectorViewOutputsBase,
-    DetectorViewParamsBase,
+    DetectorViewParams,
 )
 from ..lut_context import detector_lookup_table
 from ..stream_processor_workflow import StreamProcessorWorkflow
@@ -99,7 +99,7 @@ class DetectorViewFactory:
     def make_workflow(
         self,
         source_name: str,
-        params: DetectorViewParamsBase,
+        params: DetectorViewParams,
     ) -> StreamProcessorWorkflow:
         """
         Factory method that creates a detector view workflow.
@@ -109,7 +109,7 @@ class DetectorViewFactory:
         source_name:
             Name of the detector source (e.g., 'panel_0').
         params:
-            Workflow parameters containing coordinate mode, edges, and ranges.
+            Workflow parameters containing the spectral axis and pixel weighting.
 
         Returns
         -------
@@ -119,27 +119,25 @@ class DetectorViewFactory:
             :func:`bind_roi_requests`), is injected by the routing layer after
             creation.
         """
-        mode = params.coordinate_mode.mode
+        axis = params.spectral_axis
+        mode = axis.kind
 
-        # Validate wavelength mode requirements
         if mode == 'wavelength':
             if isinstance(self._data_source, DetectorNumberSource):
                 raise ValueError(
-                    f"{mode} mode requires geometry for Ltotal computation; "
+                    "The wavelength axis requires geometry for Ltotal computation; "
                     "use NeXusDetectorSource instead of DetectorNumberSource"
                 )
 
-        # Get mode-specific event coordinate
+        # Event coordinate histogrammed along the spectral axis
         event_coord = {
             'toa': 'event_time_offset',
             'wavelength': 'wavelength',
         }[mode]
 
-        # Get active edges and range for current mode
-        bins = params.get_active_edges()
-        histogram_slice = params.get_active_range()
+        bins = axis.edges.get_edges()
+        histogram_slice = None if axis.range_filter is None else axis.range_filter.range
 
-        # Create base workflow with appropriate mode
         workflow = create_base_workflow(
             bins=bins,
             event_coord=event_coord,
@@ -151,7 +149,7 @@ class DetectorViewFactory:
         # the provider is the whole of the wiring: the instrument declares which
         # stream carries its key, and the build gates the job on that stream
         # only if the targets reach the provider. Hence the unconditional insert
-        # -- in TOA mode nothing reaches it, so the job neither waits for the
+        # -- on the TOA axis nothing reaches it, so the job neither waits for the
         # table nor needs one (ADR 0010).
         workflow.insert(detector_lookup_table)
         if mode == 'wavelength':
