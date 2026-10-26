@@ -38,9 +38,8 @@ def test_setup_factories_declares_detector_carriage_context_binding() -> None:
         and ci.dependent_sources == frozenset({'loki_detector_0'})
     ]
     assert matching, instrument.context_bindings
-    assert (
-        instrument.chain_patch_path(matching[0])
-        == '/entry/instrument/detector_carriage/value'
+    assert instrument.chain_patch_paths(matching[0]) == (
+        '/entry/instrument/detector_carriage/value',
     )
 
 

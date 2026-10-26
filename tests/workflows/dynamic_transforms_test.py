@@ -11,6 +11,7 @@ of duplicate-typed parameters, the reason the dedup exists.
 
 from __future__ import annotations
 
+import pytest
 import sciline
 import scipp as sc
 from ess.reduce.nexus.types import (
@@ -30,6 +31,7 @@ from ess.livedata.workflows.dynamic_transforms import wire_dynamic_transforms
 
 ROT_PATH = '/entry/det/transformations/rot'
 TILT_PATH = '/entry/det/transformations/tilt'
+OTHER_ROT_PATH = '/entry/other/transformations/rot'
 
 
 class _RotLog(ValueLog):
@@ -127,7 +129,7 @@ class TestWireDynamicTransforms:
         workflow = _Workflow(pipeline, {'det1': NeXusData[NXdetector, SampleRun]})
         binding = ChainPatchBinding(
             stream_name='rot',
-            transform_path=ROT_PATH,
+            transform_paths=(ROT_PATH,),
             workflow_key=_RotLog,
             dependent_sources=frozenset({'det1'}),
         )
@@ -141,7 +143,7 @@ class TestWireDynamicTransforms:
         workflow = _Workflow(pipeline, {'det1': NeXusData[NXdetector, SampleRun]})
         binding = ChainPatchBinding(
             stream_name='rot',
-            transform_path=ROT_PATH,
+            transform_paths=(ROT_PATH,),
             workflow_key=_RotLog,
             dependent_sources=frozenset({'other_det'}),
         )
@@ -157,7 +159,7 @@ class TestWireDynamicTransforms:
         workflow = _Workflow(pipeline, {'det1': int})
         binding = ChainPatchBinding(
             stream_name='rot',
-            transform_path=ROT_PATH,
+            transform_paths=(ROT_PATH,),
             workflow_key=_RotLog,
             dependent_sources=frozenset({'det1'}),
         )
@@ -170,7 +172,7 @@ class TestWireDynamicTransforms:
     def test_non_supporting_workflow_is_noop(self) -> None:
         binding = ChainPatchBinding(
             stream_name='rot',
-            transform_path=ROT_PATH,
+            transform_paths=(ROT_PATH,),
             workflow_key=_RotLog,
             dependent_sources=frozenset({'det1'}),
         )
@@ -192,7 +194,7 @@ class TestWireDynamicTransforms:
         )
         binding = ChainPatchBinding(
             stream_name='rot',
-            transform_path=ROT_PATH,
+            transform_paths=(ROT_PATH,),
             workflow_key=_RotLog,
             dependent_sources=frozenset({'det1', 'det2'}),
         )
@@ -211,13 +213,13 @@ class TestWireDynamicTransforms:
         bindings = [
             ChainPatchBinding(
                 stream_name='rot',
-                transform_path=ROT_PATH,
+                transform_paths=(ROT_PATH,),
                 workflow_key=_RotLog,
                 dependent_sources=frozenset({'det1'}),
             ),
             ChainPatchBinding(
                 stream_name='tilt',
-                transform_path=TILT_PATH,
+                transform_paths=(TILT_PATH,),
                 workflow_key=_TiltLog,
                 dependent_sources=frozenset({'det1'}),
             ),
@@ -228,3 +230,38 @@ class TestWireDynamicTransforms:
         chain = _computed_chain(pipeline)
         assert chain.transformations[ROT_PATH].value.value == 11.0
         assert chain.transformations[TILT_PATH].value.value == 22.0
+
+    def test_patches_only_paths_present_in_the_chain(self) -> None:
+        # One stream drives entries on several components; this component's
+        # chain carries only one of them.
+        pipeline = _pipeline(ROT_PATH)
+        pipeline[_RotLog] = _value_log(_RotLog, 7.0)
+        workflow = _Workflow(pipeline, {'det1': NeXusData[NXdetector, SampleRun]})
+        binding = ChainPatchBinding(
+            stream_name='rot',
+            transform_paths=(OTHER_ROT_PATH, ROT_PATH),
+            workflow_key=_RotLog,
+            dependent_sources=frozenset({'det1'}),
+        )
+
+        wire_dynamic_transforms(workflow, [binding])
+
+        chain = _computed_chain(pipeline)
+        assert list(chain.transformations) == [ROT_PATH]
+        assert chain.transformations[ROT_PATH].value.value == 7.0
+
+    def test_raises_if_no_path_is_in_the_chain(self) -> None:
+        pipeline = _pipeline(ROT_PATH)
+        pipeline[_RotLog] = _value_log(_RotLog, 7.0)
+        workflow = _Workflow(pipeline, {'det1': NeXusData[NXdetector, SampleRun]})
+        binding = ChainPatchBinding(
+            stream_name='rot',
+            transform_paths=(OTHER_ROT_PATH,),
+            workflow_key=_RotLog,
+            dependent_sources=frozenset({'det1'}),
+        )
+
+        wire_dynamic_transforms(workflow, [binding])
+
+        with pytest.raises(KeyError, match=OTHER_ROT_PATH):
+            _computed_chain(pipeline)

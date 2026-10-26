@@ -21,7 +21,7 @@ offline at development time rather than parsing NeXus at process startup.
 from __future__ import annotations
 
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 
 import h5py
@@ -47,6 +47,12 @@ class StreamInfo:
         FileWriter module used to write this data (e.g., 'ev44', 'f144', 'tdct').
     units:
         Units string from the 'units' attribute, if present.
+    transform_paths:
+        HDF5 paths of the ``depends_on`` chain entries driven by this stream:
+        NXlog groups inside an ``NXtransformations`` group whose ``value``
+        dataset is the same HDF5 object as this group's ``value`` (a hard
+        link). Excludes the group itself, so it is empty when the stream's own
+        NXlog is the chain entry or the stream drives no transformation.
     """
 
     group_path: str
@@ -56,6 +62,7 @@ class StreamInfo:
     parent_nx_class: str
     writer_module: str
     units: str = ''
+    transform_paths: tuple[str, ...] = ()
 
 
 def _decode_attr(value) -> str:
@@ -65,12 +72,38 @@ def _decode_attr(value) -> str:
     return str(value)
 
 
+def _object_address(dataset: h5py.Dataset) -> int:
+    """Address of the HDF5 object behind ``dataset``, shared by all its hard links."""
+    return h5py.h5o.get_info(dataset.id).addr
+
+
+def _is_transformation_nxlog(group: h5py.Group) -> bool:
+    """Whether ``group`` is an NXlog acting as an ``NXtransformations`` entry."""
+    parent = group.parent
+    return (
+        _decode_attr(group.attrs.get('NX_class', '')) == 'NXlog'
+        and parent is not None
+        and _decode_attr(parent.attrs.get('NX_class', '')) == 'NXtransformations'
+        and isinstance(group.get('value'), h5py.Dataset)
+    )
+
+
 def extract_stream_info(file_path: str | Path | h5py.File) -> list[StreamInfo]:
     """Extract streaming information from a NeXus file.
 
     Searches for all groups that have both 'topic' and 'source' attributes,
     indicating they contain streamed data. Collects metadata about these groups
     including their NeXus classes and writer modules.
+
+    Also records, per stream, the transformation entries whose ``value``
+    dataset is a hard link to the stream's ``value`` (see
+    :attr:`StreamInfo.transform_paths`). The file writer writes such entries
+    without ``topic``/``source`` attributes, so they are not streams
+    themselves; links are matched by HDF5 object identity, not by name.
+    Membership in an ``NXtransformations`` group is the criterion because that
+    is where NeXus places transformations and where the geometry artifact
+    keeps them as placeholders; an entry that is on no ``depends_on`` chain is
+    never looked up by a chain patch, so including it is harmless.
 
     Parameters
     ----------
@@ -84,6 +117,8 @@ def extract_stream_info(file_path: str | Path | h5py.File) -> list[StreamInfo]:
         Returns empty list if no streaming groups are found.
     """
     stream_infos = []
+    stream_value_addresses: dict[str, int] = {}
+    transforms_by_value_address: dict[int, list[str]] = {}
 
     def _collect_stream_nodes(name: str, node) -> None:
         """Visit function to collect nodes with streaming attributes."""
@@ -98,6 +133,11 @@ def extract_stream_info(file_path: str | Path | h5py.File) -> list[StreamInfo]:
         # that duplicate the ones under ``entry/instrument``.
         if any(part.startswith('.ESS') for part in name.split('/')):
             return
+
+        if _is_transformation_nxlog(node):
+            transforms_by_value_address.setdefault(
+                _object_address(node['value']), []
+            ).append(name)
 
         attrs = node.attrs
         if 'source' not in attrs or 'topic' not in attrs:
@@ -117,6 +157,7 @@ def extract_stream_info(file_path: str | Path | h5py.File) -> list[StreamInfo]:
         # Try to get units from 'value' dataset within the group (common for f144)
         units = ''
         if 'value' in node and isinstance(node['value'], h5py.Dataset):
+            stream_value_addresses[name] = _object_address(node['value'])
             if 'units' in node['value'].attrs:
                 units = _decode_attr(node['value'].attrs['units'])
 
@@ -139,7 +180,16 @@ def extract_stream_info(file_path: str | Path | h5py.File) -> list[StreamInfo]:
         with h5py.File(file_path, 'r') as f:
             f.visititems(_collect_stream_nodes)
 
-    return stream_infos
+    def _linked_transforms(info: StreamInfo) -> tuple[str, ...]:
+        address = stream_value_addresses.get(info.group_path)
+        if address is None:
+            return ()
+        linked = transforms_by_value_address.get(address, ())
+        return tuple(sorted(path for path in linked if path != info.group_path))
+
+    return [
+        replace(info, transform_paths=_linked_transforms(info)) for info in stream_infos
+    ]
 
 
 def filter_f144_streams(
@@ -174,6 +224,19 @@ def filter_f144_streams(
     return result
 
 
+def _format_transform_paths(paths: tuple[str, ...]) -> list[str]:
+    """Format a ``transform_paths=`` keyword argument as ``ruff format`` would."""
+    reprs = [repr(f'/{path}') for path in paths]
+    one_line = f'        transform_paths=({reprs[0]},),'
+    if len(reprs) == 1 and len(one_line) <= 88:
+        return [one_line]
+    return [
+        '        transform_paths=(',
+        *(f'            {r},' for r in reprs),
+        '        ),',
+    ]
+
+
 def generate_streams_parsed_module(
     infos: list[StreamInfo],
     *,
@@ -185,6 +248,8 @@ def generate_streams_parsed_module(
     The output is a self-contained, importable Python module: SPDX header,
     a banner identifying it as auto-generated, the ``F144Stream`` import,
     and a single ``dict[str, F144Stream]`` literal keyed by ``nexus_path``.
+    Entries whose NXlog is hard-linked into ``depends_on`` chain entries
+    carry those entries' paths as ``transform_paths``.
     The instrument's hand-edited ``specs.py`` is expected to import this
     dict and turn it into ``Instrument.streams`` — assigning names (via
     :func:`ess.livedata.config.name_streams` or any other convention),
@@ -234,9 +299,11 @@ def generate_streams_parsed_module(
                 f'        source={info.source!r},',
                 f'        topic={info.topic!r},',
                 f'        units={units!r},',
-                '    ),',
             ]
         )
+        if info.transform_paths:
+            lines.extend(_format_transform_paths(info.transform_paths))
+        lines.append('    ),')
     lines.extend(['}', ''])
     return '\n'.join(lines)
 

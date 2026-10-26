@@ -2,6 +2,7 @@
 # Copyright (c) 2024 Scipp contributors (https://github.com/scipp)
 
 import tempfile
+from dataclasses import replace
 from pathlib import Path
 
 import h5py
@@ -101,6 +102,53 @@ class TestExtractStreamInfo:
         assert [info.group_path for info in result] == [
             'entry/instrument/monitor_1/events'
         ]
+
+    @staticmethod
+    def _motor_log(f: h5py.File, path: str) -> h5py.Group:
+        log = f.create_group(path)
+        log.attrs.update(
+            NX_class='NXlog', topic='motion', source='M:RBV', writer_module='f144'
+        )
+        log.create_dataset('value', data=[1.0])
+        log.create_dataset('time', data=[0])
+        return log
+
+    @staticmethod
+    def _linked_log(f: h5py.File, path: str, target: h5py.Group) -> None:
+        f.require_group(path.rpartition('/')[0])
+        log = f.create_group(path)
+        log.attrs['NX_class'] = 'NXlog'
+        log.parent.attrs['NX_class'] = 'NXtransformations'
+        log['value'] = target['value']
+        log['time'] = target['time']
+
+    def test_records_linked_transformation_entries(self, in_memory_file) -> None:
+        motor = self._motor_log(in_memory_file, 'entry/motor/value')
+        self._linked_log(in_memory_file, 'entry/det/transformations/m', motor)
+
+        [info] = extract_stream_info(in_memory_file)
+
+        assert info.transform_paths == ('entry/det/transformations/m',)
+
+    def test_ignores_links_outside_nxtransformations(self, in_memory_file) -> None:
+        motor = self._motor_log(in_memory_file, 'entry/motor/value')
+        self._linked_log(in_memory_file, 'entry/det/transformations/m', motor)
+        in_memory_file['entry/det/transformations'].attrs['NX_class'] = 'NXcollection'
+
+        [info] = extract_stream_info(in_memory_file)
+
+        assert info.transform_paths == ()
+
+    def test_ignores_linked_entries_in_ess_bookkeeping(self, in_memory_file) -> None:
+        """The geometry artifact drops ``.ESS*`` groups, so their chain entries
+        are never patch targets."""
+        motor = self._motor_log(in_memory_file, 'entry/motor/value')
+        self._linked_log(in_memory_file, 'entry/det/transformations/m', motor)
+        self._linked_log(in_memory_file, 'entry/.ESS_monitor/transformations/m', motor)
+
+        [info] = extract_stream_info(in_memory_file)
+
+        assert info.transform_paths == ('entry/det/transformations/m',)
 
     def test_extracts_multiple_streaming_groups(self, in_memory_file) -> None:
         # Create first streaming group
@@ -600,3 +648,23 @@ class TestGenerateStreamsParsedModule:
         assert "topic='motion'" in code
         assert "topic='sample_env'" in code
         assert code.count('F144Stream(') == 2
+
+    def test_omits_transform_paths_when_empty(self) -> None:
+        infos = [_f144_info(group_path='entry/motor/value', source='MOTOR:RBV')]
+        assert 'transform_paths' not in generate_streams_parsed_module(infos)
+
+    def test_emits_transform_paths(self) -> None:
+        paths = (
+            'entry/instrument/loki_detector_0/transformations/carriage',
+            'entry/instrument/beamstop_z/transformations/carriage',
+        )
+        infos = [
+            replace(
+                _f144_info(group_path='entry/motor/value', source='MOTOR:RBV'),
+                transform_paths=paths,
+            )
+        ]
+        ns: dict = {}
+        exec(generate_streams_parsed_module(infos), ns)  # noqa: S102
+        stream = ns['PARSED_STREAMS']['/entry/motor/value']
+        assert stream.transform_paths == tuple(f'/{p}' for p in paths)

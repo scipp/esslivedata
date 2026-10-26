@@ -900,7 +900,7 @@ class TestMonitorMotion:
 
         binding = ChainPatchBinding(
             stream_name='mon_z',
-            transform_path=self._PATH,
+            transform_paths=(self._PATH,),
             workflow_key=_MonitorZLog,
             dependent_sources=frozenset({'monitor_cave'}),
         )

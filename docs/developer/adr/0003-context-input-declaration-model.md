@@ -1,6 +1,6 @@
 # ADR 0003: Unified declaration model for workflow context bindings
 
-- Status: accepted (amended 2026-08-31, 2026-09-02, 2026-09-10)
+- Status: accepted (amended 2026-08-31, 2026-09-02, 2026-09-10, 2026-10-26)
 - Deciders: Simon
 - Date: 2026-05-21
 
@@ -78,10 +78,10 @@ flavours share the record, discriminated by the *type* of `workflow_key`:
 - **NXtransformations chain patch.** `workflow_key` is a `ValueLog` subclass. The
   value is patched into the NeXus `depends_on` chain rather than bound directly.
   `wire_dynamic_transforms` discovers these by
-  `issubclass(workflow_key, ValueLog)`. The chain entry to patch is *derived* from
-  `stream_name` (the f144 substream's `nexus_path`) via `Instrument.chain_patch_path`
-  — there is no separate `transform_path` field, keeping a single source of truth in
-  the parsed stream definitions.
+  `issubclass(workflow_key, ValueLog)`. The chain entries to patch are *derived* from
+  `stream_name` (the f144 substream's `transform_paths`, else its `nexus_path`) via
+  `Instrument.chain_patch_paths` — the binding declares no path of its own, keeping a
+  single source of truth in the parsed stream definitions.
 
 ### Two declaration sites
 
@@ -150,9 +150,9 @@ one workflow without colliding.
 
 `Instrument.chain_patch_bindings` selects the instrument-scope chain-patch
 `ContextBinding` records (those whose `workflow_key` is a `ValueLog` subclass),
-resolves each one's NeXus transform path via `Instrument.chain_patch_path`, and returns
+resolves each one's NeXus transform paths via `Instrument.chain_patch_paths`, and returns
 them as `ChainPatchBinding` records — a *resolved form* of the declaration, not a second
-declaration type, carrying `transform_path` alongside the `ValueLog` key and
+declaration type, carrying `transform_paths` alongside the `ValueLog` key and
 `dependent_sources`. `wire_dynamic_transforms(workflow, bindings)` is then a pure
 function over those records: it reads each input's component type off the workflow's own
 `dynamic_keys`, groups the matching bindings by component type, and builds one fused
@@ -197,7 +197,7 @@ and `JobManager`.
 | One declaration on `WorkflowSpec` as a constructor field carrying `workflow_key` | Drags workflow-key imports into `specs.py` and therefore the dashboard. Rejected. |
 | Spec lists stream fields; factory declares keys separately; cross-reference by name | Two declarations must still agree on names; restores the routing-vs-factory drift in a new form. Rejected. |
 | Spec scope as default for motion | Makes a forgotten declaration silently-wrong (stale geometry). Instrument-scope-plus-opt-out makes it noisy instead. Rejected. |
-| Per-source `transform_name` dict local to `loki/factories.py` | The chain path is derived from `stream_name` via `chain_patch_path`; a parallel dict would re-introduce manual sync. Rejected. |
+| Per-source `transform_name` dict local to `loki/factories.py` | The chain path is derived from `stream_name` via `chain_patch_paths`; a parallel dict would re-introduce manual sync. Rejected. |
 | Keep `Workflow.context_keys` as the gate source | Leaves the `AuxSources`/factory duplication and the protocol leak in place. Rejected. |
 
 ## Key design choices
@@ -219,15 +219,23 @@ into `SpecHandle.add_context_binding` with no further machinery.
 
 ### Chain path derived, not declared
 
-The NeXus transformation-chain entry a chain-patch binding writes is derived from its
-`stream_name` via `Instrument.chain_patch_path`, so the f144 substream definition is the
+The NeXus transformation-chain entries a chain-patch binding writes are derived from its
+`stream_name` via `Instrument.chain_patch_paths`, so the f144 substream definition is the
 single source of truth and a binding cannot disagree with the stream it patches.
+
+The file writer may write the chain entry as a separate NXlog in an `NXtransformations`
+group whose `value`/`time` datasets are hard links to the stream's NXlog (e.g.
+`loki_detector_0/transformations/carriage` linking `detector_carriage/value`), and one
+stream may drive several such entries on different components. The `streams_parsed`
+generator records these entries in `F144Stream.transform_paths`, found by HDF5 object
+identity. When the field is empty the stream's own NXlog is the chain entry and its
+`nexus_path` is used.
 
 ## Consequences
 
 - `ContextBinding` lives in `config/stream.py` as a single concrete dataclass
   (`stream_name`, `workflow_key`, `dependent_sources`). Its resolved chain-patch
-  form `ChainPatchBinding` (adding `transform_path`) lives alongside it; `ValueLog`
+  form `ChainPatchBinding` (adding `transform_paths`) lives alongside it; `ValueLog`
   lives in `config/value_log.py`.
 - `Instrument` carries `context_bindings: list[ContextBinding]` and
   `add_context_binding(...)`, and exposes `chain_patch_bindings` (the resolved

@@ -53,7 +53,7 @@ def _component(chain: snx.TransformationChain) -> NeXusComponent:
 class TestSingleBinding:
     def _provider(self):
         return build_patched_chain_provider(
-            snx.NXdetector, [('carriage', _CarriageLog)]
+            snx.NXdetector, [(('carriage',), _CarriageLog)]
         )
 
     def test_patches_named_entry(self):
@@ -66,7 +66,7 @@ class TestSingleBinding:
 
     def test_raises_when_path_not_in_chain(self):
         provider = build_patched_chain_provider(
-            snx.NXdetector, [('missing', _CarriageLog)]
+            snx.NXdetector, [(('missing',), _CarriageLog)]
         )
         comp = _component(_make_chain())
         log = _CarriageLog(values=_make_log([1.0]))
@@ -90,7 +90,7 @@ class TestMultipleBindings:
     def test_two_bindings_patch_independently(self):
         provider = build_patched_chain_provider(
             snx.NXdetector,
-            [('carriage', _CarriageLog), ('other', _OtherLog)],
+            [(('carriage',), _CarriageLog), (('other',), _OtherLog)],
         )
         comp = _component(_make_chain())
         out = provider(
@@ -112,7 +112,7 @@ class TestSynthesisedProvider:
 
         provider = build_patched_chain_provider(
             snx.NXdetector,
-            [('carriage', _CarriageLog), ('other', _OtherLog)],
+            [(('carriage',), _CarriageLog), (('other',), _OtherLog)],
         )
         spec = inspect.getfullargspec(provider)
         assert spec.args == ['component', 'log_0', 'log_1']
