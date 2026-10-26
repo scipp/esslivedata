@@ -39,6 +39,17 @@ def _copy_source_fields(src: h5py.Group, dst: h5py.Group) -> None:
             src.copy(key, dst)
 
 
+def _copy_crystal_fields(src: h5py.Group, dst: h5py.Group) -> None:
+    """Copy an analyzer crystal's placement and lattice spacing.
+
+    Indirect-geometry instruments (BIFROST) derive each detector's final energy
+    from the position and ``d_spacing`` of the crystal its ``inputs`` lead to.
+    """
+    _copy_depends_on(src, dst)
+    if 'd_spacing' in src:
+        src.copy('d_spacing', dst)
+
+
 def _pixel_offsets_from_off(
     src_group: h5py.Group, active_face: str
 ) -> dict[str, tuple[np.ndarray, str]] | None:
@@ -215,8 +226,24 @@ def _collect_depends_on_targets(f: h5py.File) -> set[str]:
     return targets
 
 
+def _create_group(fin: h5py.File, fout: h5py.File, path: str) -> h5py.Group:
+    """Create ``fout[path]`` with the attributes and ``inputs`` of ``fin[path]``.
+
+    ``inputs`` names the component(s) upstream in the beam path. BIFROST finds
+    each detector's analyzer crystal by following ``inputs`` from the detector,
+    possibly through intermediate groups. Files following the NeXus standard
+    store it as a dataset, older ESS files as an attribute.
+    """
+    src = fin[path]
+    dst = fout.create_group(path)
+    _copy_attributes(src, dst)
+    if 'inputs' in src:
+        src.copy('inputs', dst)
+    return dst
+
+
 def _ensure_parent_groups(fin: h5py.File, fout: h5py.File, path: str) -> None:
-    """Create parent groups in *fout*, copying attributes from *fin*."""
+    """Create parent groups in *fout* from their counterparts in *fin*."""
     parts = path.split('/')
     current = ''
     for part in parts[:-1]:
@@ -224,20 +251,15 @@ def _ensure_parent_groups(fin: h5py.File, fout: h5py.File, path: str) -> None:
             continue
         current = f'{current}/{part}'
         if current not in fout:
-            fout.create_group(current)
-            _copy_attributes(fin[current], fout[current])
+            _create_group(fin, fout, current)
 
 
-def _get_or_create_dst(
-    fin: h5py.File, fout: h5py.File, name: str, src: h5py.Group
-) -> h5py.Group:
-    """Return ``fout[name]``, creating it (and parents) from ``src`` if absent."""
+def _get_or_create_dst(fin: h5py.File, fout: h5py.File, name: str) -> h5py.Group:
+    """Return ``fout[name]``, creating it (and parents) from ``fin`` if absent."""
     _ensure_parent_groups(fin, fout, name)
     if name in fout:
         return fout[name]
-    dst = fout.create_group(name)
-    _copy_attributes(src, dst)
-    return dst
+    return _create_group(fin, fout, name)
 
 
 def _resolve_depends_on_chains(fin: h5py.File, fout: h5py.File) -> set[str]:
@@ -284,6 +306,7 @@ _HANDLED_NX_CLASSES = (
     'NXsample',
     'NXtransformations',
     'NXdisk_chopper',
+    'NXcrystal',
 )
 
 
@@ -348,7 +371,7 @@ def write_minimal_geometry(
             nx_class = _nx_class(obj)
             if nx_class not in _HANDLED_NX_CLASSES:
                 return
-            dst = _get_or_create_dst(fin, fout, name, obj)
+            dst = _get_or_create_dst(fin, fout, name)
             if nx_class == 'NXdetector':
                 _copy_detector_fields(
                     obj,
@@ -362,6 +385,8 @@ def write_minimal_geometry(
                 _copy_source_fields(obj, dst)
             elif nx_class == 'NXsample':
                 _copy_depends_on(obj, dst)
+            elif nx_class == 'NXcrystal':
+                _copy_crystal_fields(obj, dst)
             else:  # NXtransformations or NXdisk_chopper
                 for key in obj:
                     _copy_child(obj, key, dst)

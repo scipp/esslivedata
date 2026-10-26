@@ -4,6 +4,10 @@
 import h5py
 import numpy as np
 import pytest
+import scipp as sc
+from ess.bifrost.io.nexus import load_analyzer_for_detector
+from ess.reduce.nexus.types import NeXusComponentLocationSpec, SampleRun
+from scippnexus import NXdetector
 
 from ess.livedata.scripts.make_geometry_nexus import write_minimal_geometry
 
@@ -675,3 +679,102 @@ def test_skips_ess_writer_bookkeeping_groups(tmp_path):
     with h5py.File(output, 'r') as f:
         assert 'entry/instrument/monitor_1' in f
         assert '.ESS_monitor' not in f['entry']
+
+
+def _write_analyzer_chain(path, inputs_encoding: str) -> None:
+    """BIFROST-like detector whose ``inputs`` lead to its analyzer crystal.
+
+    The chain passes through an intermediate group that holds nothing but its
+    own placement, as ``channel_*_detector_angle`` does in BIFROST files.
+    """
+    with h5py.File(path, 'w') as f:
+        entry = f.create_group('entry')
+        entry.attrs['NX_class'] = 'NXentry'
+        inst = entry.create_group('instrument')
+        inst.attrs['NX_class'] = 'NXinstrument'
+
+        def add_inputs(group: h5py.Group, upstream: str) -> None:
+            if inputs_encoding == 'dataset':
+                group.create_dataset('inputs', data=f'/entry/instrument/{upstream}')
+            else:
+                group.attrs['inputs'] = upstream
+
+        def add_placement(group: h5py.Group) -> None:
+            group.create_dataset(
+                'depends_on', data=f'{group.name}/transformations/offset'
+            )
+            tr = group.create_group('transformations')
+            tr.attrs['NX_class'] = 'NXtransformations'
+            ds = tr.create_dataset('offset', data=1.0)
+            ds.attrs['transformation_type'] = 'translation'
+            ds.attrs['vector'] = [0.0, 0.0, 1.0]
+            ds.attrs['units'] = 'm'
+            ds.attrs['depends_on'] = '.'
+
+        det = inst.create_group('triplet')
+        det.attrs['NX_class'] = 'NXdetector'
+        det.create_dataset('detector_number', data=np.arange(3))
+        det.create_dataset('x_pixel_offset', data=np.zeros(3))
+        add_placement(det)
+        add_inputs(det, 'detector_angle')
+
+        angle = inst.create_group('detector_angle')
+        angle.attrs['NX_class'] = 'NXcoordinate_system'
+        angle.create_group('transformations').attrs['NX_class'] = 'NXtransformations'
+        add_inputs(angle, 'analyzer')
+
+        analyzer = inst.create_group('analyzer')
+        analyzer.attrs['NX_class'] = 'NXcrystal'
+        analyzer.create_dataset('d_spacing', data=3.355).attrs['units'] = 'angstrom'
+        add_placement(analyzer)
+        # Points at a component the artifact does not keep.
+        add_inputs(analyzer, 'collimator')
+
+
+@pytest.mark.parametrize('inputs_encoding', ['dataset', 'attribute'])
+def test_keeps_inputs_chain_to_analyzer_crystal(tmp_path, inputs_encoding):
+    """BIFROST finds each detector's analyzer by following ``inputs`` from the
+    detector to an ``NXcrystal``, whose position and ``d_spacing`` give the
+    final energy. The artifact must keep both the chain and the crystal.
+    """
+    src = tmp_path / 'input.nxs'
+    _write_analyzer_chain(src, inputs_encoding)
+    output = tmp_path / 'output.nxs'
+    write_minimal_geometry(src, output)
+
+    def inputs(group: h5py.Group) -> str:
+        if inputs_encoding == 'dataset':
+            return group['inputs'][()].decode()
+        return group.attrs['inputs']
+
+    with h5py.File(output, 'r') as f:
+        inst = f['entry/instrument']
+        assert inputs(inst['triplet']).endswith('detector_angle')
+        assert inputs(inst['detector_angle']).endswith('analyzer')
+        analyzer = inst['analyzer']
+        assert analyzer.attrs['NX_class'] == 'NXcrystal'
+        assert inputs(analyzer).endswith('collimator')
+        assert analyzer['d_spacing'][()] == pytest.approx(3.355)
+        assert analyzer['d_spacing'].attrs['units'] == 'angstrom'
+        assert analyzer['depends_on'][()].decode() == (
+            '/entry/instrument/analyzer/transformations/offset'
+        )
+        assert analyzer['transformations/offset'][()] == pytest.approx(1.0)
+
+
+def test_analyzer_lookup_finds_crystal_in_artifact(tmp_path):
+    # The attribute encoding is the one every essspectroscopy version reads.
+    src = tmp_path / 'input.nxs'
+    _write_analyzer_chain(src, 'attribute')
+    output = tmp_path / 'output.nxs'
+    write_minimal_geometry(src, output)
+
+    analyzer = load_analyzer_for_detector(
+        NeXusComponentLocationSpec[NXdetector, SampleRun](
+            filename=output, component_name='triplet'
+        )
+    )
+    assert sc.identical(analyzer['d_spacing'], sc.scalar(3.355, unit='angstrom'))
+    assert analyzer['depends_on'].value == (
+        '/entry/instrument/analyzer/transformations/offset'
+    )
