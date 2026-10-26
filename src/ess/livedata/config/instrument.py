@@ -152,7 +152,11 @@ class Instrument:
     #: where the derivation refuses a component whose flight path is known
     #: anyway, e.g., a detector on an arm rotating about the sample. Overrides
     #: the derived range for that component.
-    declared_ltotal: dict[str, sc.Variable] = field(default_factory=dict)
+    #: A callable can derive reference flight paths from the geometry filename,
+    #: avoiding duplicated numerical geometry for a reference-pose declaration.
+    declared_ltotal: dict[str, sc.Variable | Callable[[str], sc.Variable]] = field(
+        default_factory=dict
+    )
     #: Components the lookup-table workflow can actually place, filled in when
     #: its factory is attached. Empty until then, and for chopperless
     #: instruments.
