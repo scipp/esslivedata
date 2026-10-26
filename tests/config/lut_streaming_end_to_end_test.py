@@ -678,9 +678,14 @@ def estia() -> Instrument:
 
 
 class TestEstiaReflectometry:
-    """ESTIA's detector table is placed by a declared flight path, and its
-    reflectometry reduction takes geometry from a McStas file rather than from
-    the artifact the table is built from. The two must still meet."""
+    """ESTIA uses one geometry artifact and live motor and pulse-charge logs."""
+
+    def test_logical_view_does_not_wait_for_reduction_context(self, estia):
+        job = _create_job(
+            estia, 'estia_multiblade_detector_view', 'multiblade_detector'
+        )
+        reduction_contexts = set(estia.offered_context_streams.values())
+        assert job.gating_streams.isdisjoint(reduction_contexts)
 
     def test_publishes_detector_and_monitor_tables(self, estia: Instrument) -> None:
         assert set(_ingest(estia, _run_lut_job(estia, delays={}))) == {
@@ -698,7 +703,14 @@ class TestEstiaReflectometry:
             estia, 'reflectometry_reduction', 'multiblade_detector', params_model()
         )
 
-        assert job.gating_streams == {DETECTOR_STREAM}
+        contexts = {
+            'detector_arm_rotation',
+            'sample_rotation',
+            'sample_lateral_adjustment',
+            'source/pulse_charge',
+            *(f'hexapod_{axis}' for axis in ('rx', 'ry', 'rz', 'tx', 'ty', 'tz')),
+        }
+        assert job.gating_streams == {DETECTOR_STREAM, *contexts}
 
         # Events on every pixel: most fall outside the default divergence limits.
         rng = np.random.default_rng(seed=1)
@@ -719,8 +731,6 @@ class TestEstiaReflectometry:
         sizes = sc.array(dims=['event_time_zero'], values=[n_events], unit=None)
         binned = sc.DataArray(
             sc.bins(begin=sc.cumsum(sizes, mode='exclusive'), dim='event', data=events),
-            # After the factory's placeholder proton-charge sample at 1 ns; events
-            # before it would be normalized to zero.
             coords={
                 'event_time_zero': sc.epoch(unit='ns')
                 + sc.array(dims=['event_time_zero'], values=[10**9], unit='ns')
@@ -730,7 +740,18 @@ class TestEstiaReflectometry:
             start_time=Timestamp.from_ns(0),
             end_time=Timestamp.from_ns(1),
             primary_data={'multiblade_detector': binned},
-            aux_data={DETECTOR_STREAM: table},
+            aux_data={
+                DETECTOR_STREAM: table,
+                **{
+                    stream: _nxlog(
+                        {'source/pulse_charge': 1.0, 'sample_rotation': 0.8}.get(
+                            stream, 0.0
+                        ),
+                        estia.streams[stream].units,
+                    )
+                    for stream in contexts
+                },
+            },
         )
 
         reply, result = job.process(data, finalize=True)
@@ -738,6 +759,57 @@ class TestEstiaReflectometry:
         assert not reply.has_error, reply.error_message
         assert result.error_message is None, result.error_message
         assert result.data['i_of_wavelength'].sum().value > 0
+
+        # Real charge context controls normalization; no unit-current fallback.
+        data.aux_data['source/pulse_charge'] = _nxlog(2.0, 'uC')
+        second_job = _create_job(
+            estia, 'reflectometry_reduction', 'multiblade_detector', params_model()
+        )
+        second_reply, second_result = second_job.process(data, finalize=True)
+        assert not second_reply.has_error, second_reply.error_message
+        assert second_result.error_message is None, second_result.error_message
+        assert sc.allclose(
+            second_result.data['i_of_wavelength'].data * 2,
+            result.data['i_of_wavelength'].data,
+        )
+
+        # Continue the original job with changed charge, then changed geometry.
+        # A scalar motor coordinate from the first chunk must not prevent
+        # accumulating the next histogram, whose events use the new geometry.
+        reply, accumulated = job.process(data, finalize=True)
+        assert not reply.has_error, reply.error_message
+        expected = (
+            result.data['i_of_theta_wavelength']
+            + second_result.data['i_of_theta_wavelength']
+        )
+        assert sc.allclose(
+            accumulated.data['i_of_theta_wavelength'].data, expected.data
+        )
+
+        data.aux_data['sample_rotation'] = _nxlog(0.9, 'deg')
+        data.aux_data['detector_arm_rotation'] = _nxlog(0.1, 'deg')
+        fresh_job = _create_job(
+            estia, 'reflectometry_reduction', 'multiblade_detector', params_model()
+        )
+        fresh_reply, fresh_result = fresh_job.process(data, finalize=True)
+        assert not fresh_reply.has_error, fresh_reply.error_message
+        reply, accumulated = job.process(data, finalize=True)
+        assert not reply.has_error, reply.error_message
+        expected += fresh_result.data['i_of_theta_wavelength']
+        assert sc.allclose(
+            accumulated.data['i_of_theta_wavelength'].data, expected.data
+        )
+
+        # A large sample displacement must fail, rather than silently lose
+        # the pixels outside the table's reference range.
+        data.aux_data['hexapod_tx'] = _nxlog(1300.0, 'mm')
+        moved_job = _create_job(
+            estia, 'reflectometry_reduction', 'multiblade_detector', params_model()
+        )
+        moved_reply, moved_result = moved_job.process(data, finalize=True)
+        assert moved_reply.has_error
+        assert moved_result is None
+        assert 'outside the reference lookup-table range' in moved_reply.error_message
 
     def test_monitor_reduces_to_wavelength(self, estia: Instrument) -> None:
         tables = _ingest(estia, _run_lut_job(estia, delays={'bwc': 30_000_000.0}))

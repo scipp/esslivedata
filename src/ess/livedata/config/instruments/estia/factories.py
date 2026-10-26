@@ -22,7 +22,6 @@ def setup_factories(instrument: Instrument) -> None:
     import scipp as sc
     from ess.estia import EstiaWorkflow
     from ess.estia import corrections as estia_corrections
-    from ess.estia import data as estia_data
     from ess.reduce.nexus.types import NeXusData
     from ess.reflectometry.types import (
         BeamDivergenceLimits,
@@ -31,7 +30,6 @@ def setup_factories(instrument: Instrument) -> None:
         Filename,
         LookupTableRelativeErrorThreshold,
         NeXusDetectorName,
-        ProtonCharge,
         QBins,
         ReducibleData,
         SampleRun,
@@ -42,10 +40,17 @@ def setup_factories(instrument: Instrument) -> None:
     )
     from scippnexus import NXdetector
 
-    from ess.livedata.workflows.lut_context import detector_lookup_table
+    from ess.livedata.preprocessors.detector_data import get_nexus_geometry_filename
     from ess.livedata.workflows.stream_processor_workflow import (
         StreamProcessorWorkflow,
     )
+
+    from .live_geometry import insert_live_geometry, load_live_geometry
+
+    geometry_filename = get_nexus_geometry_filename('estia')
+    live_geometry = load_live_geometry(geometry_filename, instrument)
+    for stream, key in live_geometry.context_keys.items():
+        instrument.offer_context_stream(stream_name=stream, workflow_key=key)
 
     @specs.reflectometry_reduction_handle.attach_factory()
     def _reflectometry_reduction_workflow_factory(
@@ -53,14 +58,9 @@ def setup_factories(instrument: Instrument) -> None:
         params: specs.EstiaReflectometryReductionParams,
     ) -> StreamProcessorWorkflow:
         wf = EstiaWorkflow()
-        # TODO: Once the Estia NeXus files have all logs we need
-        # (currently missing sample_rotation) replace this file
-        # with a real nexus template file.
-        wf[Filename[SampleRun]] = estia_data.estia_mcstas_nexus_sample_example(
-            'Ni/Ti-multilayer'
-        )[0]
+        wf[Filename[SampleRun]] = geometry_filename
+        insert_live_geometry(wf, live_geometry)
         wf[NeXusDetectorName] = source_name
-        wf.insert(detector_lookup_table)
         wf[LookupTableRelativeErrorThreshold] = {source_name: float('inf')}
         wf[WavelengthBins] = params.wavelength_edges.get_edges().to(unit='angstrom')
         wf[QBins] = params.q_edges.get_edges().to(unit='1/angstrom')
@@ -72,16 +72,6 @@ def setup_factories(instrument: Instrument) -> None:
             edge.to(unit='rad') for edge in params.beam_divergence_limits.get_limits()
         ]
         wf[CorrectionsToApply] = estia_corrections.default_corrections
-        # TODO: Currently we don't have proton charge data,
-        # so for now just set it to constant 1uA.
-        wf[ProtonCharge[SampleRun]] = sc.DataArray(
-            sc.ones(dims=['time'], shape=[1], unit='uA'),
-            coords={
-                'time': sc.datetime(0, unit='ns')
-                + sc.array(dims=['time'], values=[1], unit='ns')
-            },
-        )
-
         IntensityThetaWavelength = NewType('IntensityThetaWavelength', sc.DataArray)
         IntensityWavelength = NewType('IntensityWavelength', sc.DataArray)
         IntensityQ = NewType('IntensityQ', sc.DataArray)
@@ -97,6 +87,12 @@ def setup_factories(instrument: Instrument) -> None:
                 dim=events.dims,
             ).transpose(['theta', 'wavelength'])
             da = da.assign_coords(theta=da.coords['theta'].to(unit='deg'))
+            # Each chunk has already been transformed using its live geometry.
+            # Scalar motor/position coordinates describe only that chunk and
+            # would prevent accumulating histograms after a motor moves.
+            da = da.drop_coords(
+                [name for name in da.coords if name not in ('theta', 'wavelength')]
+            )
             return IntensityThetaWavelength(da)
 
         def _intensity_over_q(

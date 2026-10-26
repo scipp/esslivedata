@@ -78,10 +78,17 @@ transform keeps supplying the direction of travel. Which components ride an axis
 derived from the `depends_on` chain. Translations are bracketed by evaluating the geometry
 at the corners of the box the bounds span; rotations are refused, since `Ltotal` is not
 monotonic in an angle, and the first instrument with a live rotation has to design for it
-deliberately (`workflows/lut_ranges.py`). ESTIA was that instrument: its detector arm
-rotates about the sample, which leaves every pixel's `Ltotal` unchanged, so it declares the
-detector's flight path instead (`Instrument.declared_ltotal`). A declaration replaces the
-derivation for that component, and the end-to-end test checks it against the consumer.
+deliberately (`workflows/lut_ranges.py`). `Instrument.declared_ltotal` can replace
+the derivation for such a component. A declaration may be a callback computing
+reference flight paths from the geometry filename. ESTIA uses this to evaluate
+its ordinary empty-log geometry with the motor axes at their zero positions,
+without storing motor snapshots in the artifact or hardcoding flight paths.
+Live readbacks patch the arm and
+sample chains in the reduction. Arm rotation preserves flight paths at the
+reference sample position; sample translations can change them. Until sample
+travel bounds are confirmed, ESTIA uses the generic padding for small adjustments
+and rejects reductions if **any** pixel leaves the published block. Larger motions
+need a declared envelope; the reference range does not claim to cover them.
 
 A component nobody can place gets no block. A job on such a source gates like any other
 and then fails at its first recompute, reporting its flight path against the table's
@@ -89,7 +96,8 @@ coverage. Where the component is an aux selection, the factory rejects it at job
 instead. A group with no placeable component publishes no table, so its stream is never
 offered and a job asking for it fails at creation.
 
-**The range is static and covers the full envelope.** The LUT workflow does not consume
+**The range is static.** Declared axis bounds cover an envelope; a reference
+pose covers only that geometry plus padding. The LUT workflow does not consume
 motion. A live range would gate the LUT job on motion, couple motion to LUT-driven
 clearing, and lag the value the consumer patches into its own geometry, so padding would
 still be needed. A guard test recomputes each range from the artifact and fails if a
