@@ -287,6 +287,47 @@ _HANDLED_NX_CLASSES = (
 )
 
 
+def _copy_linked_stream_attributes(fin: h5py.File, fout: h5py.File) -> None:
+    """Retain streaming metadata on transformations linked to motor logs.
+
+    ESTIA puts transformation attributes and Kafka attributes on separate NXlog
+    groups sharing value/time datasets. Copy the standard streaming attributes
+    onto the empty transformation log, as other instruments already do upstream.
+    The time series remains empty; no motor snapshot is stored in the artifact.
+    """
+    streams = {}
+
+    def collect_streams(name, obj):
+        if (
+            isinstance(obj, h5py.Group)
+            and obj.attrs.get('writer_module') in ('f144', b'f144')
+            and 'source' in obj.attrs
+            and 'topic' in obj.attrs
+            and 'value' in obj
+            and 'time' in obj
+        ):
+            streams[(obj['value'].id, obj['time'].id)] = obj.name
+
+    fin.visititems(collect_streams)
+
+    def copy_metadata(name, obj):
+        if not (
+            isinstance(obj, h5py.Group)
+            and 'transformation_type' in obj.attrs
+            and 'value' in obj
+            and 'time' in obj
+            and name in fout
+        ):
+            return
+        stream = streams.get((obj['value'].id, obj['time'].id))
+        if stream is None:
+            return
+        for attr in ('source', 'topic', 'writer_module'):
+            fout[name].attrs[attr] = fin[stream].attrs[attr]
+
+    fin.visititems(copy_metadata)
+
+
 def write_minimal_geometry(
     input_filename: Path,
     output_filename: Path,
@@ -339,6 +380,7 @@ def write_minimal_geometry(
             )
             for path in sorted(missing):
                 print(f'  /{path}', file=sys.stderr)
+        _copy_linked_stream_attributes(fin, fout)
 
 
 def main() -> int:
