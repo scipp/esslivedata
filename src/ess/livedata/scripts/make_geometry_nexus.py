@@ -288,12 +288,10 @@ _HANDLED_NX_CLASSES = (
 
 
 def _copy_linked_stream_attributes(fin: h5py.File, fout: h5py.File) -> None:
-    """Retain streaming metadata on transformations linked to motor logs.
+    """Copy f144 metadata to transforms that link a separate motor log.
 
-    ESTIA puts transformation attributes and Kafka attributes on separate NXlog
-    groups sharing value/time datasets. Copy the standard streaming attributes
-    onto the empty transformation log, as other instruments already do upstream.
-    The time series remains empty; no motor snapshot is stored in the artifact.
+    Some files put Kafka and transformation attributes on different NXlog groups
+    sharing value/time datasets. Keep that association when the logs are trimmed.
     """
     streams = {}
 

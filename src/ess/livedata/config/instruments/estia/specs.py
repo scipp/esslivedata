@@ -191,16 +191,8 @@ def _reference_detector_ltotal(filename: str) -> sc.Variable:
     return reference_detector_ltotal(filename)
 
 
-#: The 2026-10-21 file states the moderator, chopper, and monitor placement in
-#: one frame; no source or monitor hand repairs are needed (#1362). Live
-#: transformations are empty NXlogs, matching the other geometry artifacts.
-#: LUT coverage is computed from the file with motor axes at their zero pose.
-#: The reduction patches the arm and sample transforms from live motor logs
-#: (live_geometry.py). Arm rotation at the reference sample position preserves
-#: pixel flight paths; sample translations can change them. The generic 0.1 m
-#: minimum padding allows small adjustments, and a reduction outside the
-#: published block fails explicitly. Confirm travel bounds before widening the
-#: table for larger sample motions; no unverified bounds are declared here.
+#: Use a padded zero-motor reference pose until sample travel bounds are known.
+#: The reduction rejects live positions outside this LUT coverage; see ADR 0011.
 instrument = Instrument(
     name='estia',
     detector_names=detector_names,

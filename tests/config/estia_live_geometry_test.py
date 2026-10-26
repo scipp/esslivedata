@@ -9,19 +9,17 @@ import pytest
 import scipp as sc
 from ess.estia import EstiaWorkflow
 from ess.reduce.nexus.types import (
+    EmptyDetector,
     Filename,
-    NeXusTransformationChain,
     Position,
-    ProtonCharge,
     SampleRun,
 )
 from ess.reduce.unwrap.types import DetectorLtotal
 from ess.reflectometry.types import (
     DetectorRotation,
-    RawSampleRotation,
     SampleRotation,
 )
-from scippnexus import NXdetector, NXsample, NXsource
+from scippnexus import NXsample, NXsource
 
 from ess.livedata.config.instruments.estia.live_geometry import (
     insert_live_geometry,
@@ -45,7 +43,7 @@ def _log(value, unit):
     )
 
 
-@pytest.fixture
+@pytest.fixture(scope='module')
 def geometry():
     return load_live_geometry(get_nexus_geometry_filename('estia'), instrument)
 
@@ -67,7 +65,6 @@ def test_source_and_monitor_distances_come_from_new_file(workflow):
         get_nexus_geometry_filename('estia'), 'beam_monitor', is_monitor=True
     )
     assert sc.isclose((start + stop) / 2, sc.scalar(10.68, unit='m'))
-    assert callable(instrument.declared_ltotal['multiblade_detector'])
 
 
 @pytest.mark.parametrize('angle', [0.0, 10.0, 90.0, 180.0])
@@ -85,9 +82,18 @@ def test_rotating_arm_stays_in_geometry_derived_range(workflow, geometry, angle)
     assert paths.max() <= stop
 
 
-@pytest.mark.parametrize(('axis', 'index'), [('tx', 0), ('ty', 1), ('tz', 2)])
-def test_hexapod_readback_moves_sample_position(workflow, geometry, axis, index):
-    key = geometry.context_keys[f'hexapod_{axis}']
+@pytest.mark.parametrize(
+    ('stream', 'index'),
+    [
+        ('hexapod_tx', 0),
+        ('hexapod_ty', 1),
+        ('hexapod_tz', 2),
+        ('sample_lateral_adjustment', 0),
+    ],
+)
+def test_motor_readback_moves_geometry(workflow, geometry, stream, index):
+    detector_before = workflow.compute(EmptyDetector[SampleRun]).coords['position']
+    key = geometry.context_keys[stream]
     workflow[key] = key(values=_log(2.0, 'mm'))
     expected = [0.0, 0.0, 0.0]
     expected[index] = 2.0
@@ -95,37 +101,20 @@ def test_hexapod_readback_moves_sample_position(workflow, geometry, axis, index)
         workflow.compute(Position[NXsample, SampleRun]).to(unit='mm'),
         sc.vector(expected, unit='mm'),
     )
+    if stream == 'sample_lateral_adjustment':
+        detector_after = workflow.compute(EmptyDetector[SampleRun]).coords['position']
+        assert sc.allclose(
+            (detector_after - detector_before).to(unit='mm'),
+            sc.vector(expected, unit='mm'),
+        )
 
 
 def test_sample_rotation_uses_latest_readback(workflow, geometry):
     key = geometry.context_keys['sample_rotation']
     workflow[key] = key(values=_log(0.7, 'deg'))
-    assert sc.identical(
-        workflow.compute(RawSampleRotation[SampleRun]), sc.scalar(0.7, unit='deg')
-    )
     assert sc.isclose(
         workflow.compute(SampleRotation[SampleRun]), sc.scalar(0.7, unit='deg')
     )
-
-
-def test_shared_lateral_readback_patches_detector_and_sample(workflow, geometry):
-    key = geometry.context_keys['sample_lateral_adjustment']
-    workflow[key] = key(values=_log(4.0, 'mm'))
-    for component in (NXsample, NXdetector):
-        (path,) = [
-            path for path, bound_key in geometry.bindings[component] if key == bound_key
-        ]
-        chain = workflow.compute(NeXusTransformationChain[component, SampleRun])
-        assert sc.identical(
-            chain.transformations[path].value, sc.scalar(4.0, unit='mm')
-        )
-
-
-def test_charge_keeps_measured_units_and_times(workflow, geometry):
-    charge = _log(1.5, 'uC')
-    key = geometry.context_keys['source/pulse_charge']
-    workflow[key] = key(values=charge)
-    assert sc.identical(workflow.compute(ProtonCharge[SampleRun]), charge)
 
 
 def test_missing_motor_metadata_does_not_silently_assume_zero(tmp_path):

@@ -79,16 +79,13 @@ derived from the `depends_on` chain. Translations are bracketed by evaluating th
 at the corners of the box the bounds span; rotations are refused, since `Ltotal` is not
 monotonic in an angle, and the first instrument with a live rotation has to design for it
 deliberately (`workflows/lut_ranges.py`). `Instrument.declared_ltotal` can replace
-the derivation for such a component. A declaration may be a callback computing
-reference flight paths from the geometry filename. ESTIA uses this to evaluate
-its ordinary empty-log geometry with the motor axes at their zero positions,
-without storing motor snapshots in the artifact or hardcoding flight paths.
-Live readbacks patch the arm and
-sample chains in the reduction. Arm rotation preserves flight paths at the
-reference sample position; sample translations can change them. Until sample
-travel bounds are confirmed, ESTIA uses the generic padding for small adjustments
-and rejects reductions if **any** pixel leaves the published block. Larger motions
-need a declared envelope; the reference range does not claim to cover them.
+the derivation for such a component, including via a callback reading the geometry
+file. ESTIA computes paths with motor axes at zero, then patches the reduction's
+sample and detector chains from live readbacks. Arm rotation preserves flight paths
+at this reference sample position; sample translations can change them. Until travel
+bounds are confirmed, the table covers the padded reference pose and the reduction
+rejects positions where **any** pixel leaves the block. This is not a full-motion
+envelope.
 
 A component nobody can place gets no block. A job on such a source gates like any other
 and then fails at its first recompute, reporting its flight path against the table's

@@ -147,13 +147,9 @@ class Instrument:
     #: lookup-table ranges. Which components ride an axis is derived from their
     #: ``depends_on`` chains, not restated here.
     axis_ranges: dict[str, AxisRange] = field(default_factory=dict)
-    #: Flight path at which a component's consumers look up the wavelength
-    #: table, declared instead of derived from the geometry artifact. Needed
-    #: where the derivation refuses a component whose flight path is known
-    #: anyway, e.g., a detector on an arm rotating about the sample. Overrides
-    #: the derived range for that component.
-    #: A callable can derive reference flight paths from the geometry filename,
-    #: avoiding duplicated numerical geometry for a reference-pose declaration.
+    #: Flight paths overriding automatic LUT-range derivation, e.g., for rotating
+    #: detector arms. Supply values or a callback deriving paths from the geometry
+    #: filename; the LUT factory applies its normal padding.
     declared_ltotal: dict[str, sc.Variable | Callable[[str], sc.Variable]] = field(
         default_factory=dict
     )

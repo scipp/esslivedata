@@ -108,7 +108,6 @@ _registry = {
     'geometry-estia-2025-12-16.nxs': 'md5:07d33010189a50ee46ee5f649f848ca5',
     'geometry-estia-2026-10-06.nxs': 'md5:8d4278b588fbc40bfa6425231a36af02',
     # coda_estia_999999_00026194.hdf, make_geometry_nexus --no-pixel-shape.
-    # Empty motor NXlogs retain streaming metadata resolved from HDF5 links.
     'geometry-estia-2026-10-21.nxs': 'md5:78799acb5ef44991e1046da46ba71fdb',
     'geometry-magic-2026-08-03.nxs': 'md5:d74c943d7b80c81916df2d23eb4d8045',
 }

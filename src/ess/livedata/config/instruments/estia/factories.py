@@ -30,6 +30,7 @@ def setup_factories(instrument: Instrument) -> None:
         Filename,
         LookupTableRelativeErrorThreshold,
         NeXusDetectorName,
+        ProtonCharge,
         QBins,
         ReducibleData,
         SampleRun,
@@ -51,6 +52,9 @@ def setup_factories(instrument: Instrument) -> None:
     live_geometry = load_live_geometry(geometry_filename, instrument)
     for stream, key in live_geometry.context_keys.items():
         instrument.offer_context_stream(stream_name=stream, workflow_key=key)
+    specs.reflectometry_reduction_handle.add_context_binding(
+        stream_name='source/pulse_charge', workflow_key=ProtonCharge[SampleRun]
+    )
 
     @specs.reflectometry_reduction_handle.attach_factory()
     def _reflectometry_reduction_workflow_factory(
@@ -87,9 +91,7 @@ def setup_factories(instrument: Instrument) -> None:
                 dim=events.dims,
             ).transpose(['theta', 'wavelength'])
             da = da.assign_coords(theta=da.coords['theta'].to(unit='deg'))
-            # Each chunk has already been transformed using its live geometry.
-            # Scalar motor/position coordinates describe only that chunk and
-            # would prevent accumulating histograms after a motor moves.
+            # Per-chunk geometry cannot describe an accumulated histogram.
             da = da.drop_coords(
                 [name for name in da.coords if name not in ('theta', 'wavelength')]
             )

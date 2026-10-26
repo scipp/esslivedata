@@ -1,10 +1,9 @@
 # SPDX-License-Identifier: BSD-3-Clause
 # Copyright (c) 2026 Scipp contributors (https://github.com/scipp)
-"""Adapt ESTIA's motor readbacks to its 2026-10-21 transformation layout.
+"""Map geometry NXlog metadata to live ESTIA motor inputs.
 
-The artifact stores empty transformation NXlogs with their f144 metadata derived
-from HDF5 hard links. Supply live values using those associations; all
-distances, axes, offsets, pixel positions, and motor mappings come from the file.
+Explicit providers support sample chains and motor aliases that automatic
+NeXusData-based chain patching cannot resolve.
 """
 
 from copy import deepcopy
@@ -20,7 +19,6 @@ from ess.reduce.nexus.types import (
     NeXusName,
     NeXusTransformationChain,
     Position,
-    ProtonCharge,
     SampleRun,
 )
 from ess.reduce.unwrap import GenericUnwrapWorkflow, LookupTable
@@ -42,10 +40,6 @@ class DetectorArmRotationLog(ValueLog):
 
 class SampleRotationLog(ValueLog):
     """Live sample-stage rotation."""
-
-
-class PulseChargeLog(ValueLog):
-    """Measured source pulse charge."""
 
 
 @cache
@@ -75,7 +69,6 @@ def load_live_geometry(filename: str | Path, instrument: Instrument) -> LiveGeom
     keys: dict[str, type[ValueLog]] = {
         'detector_arm_rotation': DetectorArmRotationLog,
         'sample_rotation': SampleRotationLog,
-        'source/pulse_charge': PulseChargeLog,
     }
     wf = GenericUnwrapWorkflow(run_types=[SampleRun], monitor_types=[])
     wf[Filename[SampleRun]] = filename
@@ -110,10 +103,7 @@ def load_live_geometry(filename: str | Path, instrument: Instrument) -> LiveGeom
 def reference_detector_ltotal(filename: str) -> sc.Variable:
     """Compute reference flight paths with live axes at their zero positions.
 
-    This is an explicit reference pose for the LUT, not a claim about current
-    motor positions or full travel bounds. The reduction uses live positions
-    and checks that every pixel remains covered. Axes, offsets, pixel positions,
-    and source position come from the ordinary geometry artifact.
+    The LUT factory pads these paths; the reduction checks coverage at live positions.
     """
     wf = GenericUnwrapWorkflow(run_types=[SampleRun], monitor_types=[])
     wf[Filename[SampleRun]] = filename
@@ -135,10 +125,6 @@ def sample_rotation(log: SampleRotationLog) -> RawSampleRotation[SampleRun]:
 
 def detector_rotation(log: DetectorArmRotationLog) -> DetectorRotation[SampleRun]:
     return DetectorRotation[SampleRun](log.values['time', -1].data)
-
-
-def proton_charge(log: PulseChargeLog) -> ProtonCharge[SampleRun]:
-    return ProtonCharge[SampleRun](log.values)
 
 
 def covered_detector_lookup_table(
@@ -165,5 +151,4 @@ def insert_live_geometry(workflow: sciline.Pipeline, geometry: LiveGeometry) -> 
     workflow[Position[NXsource, SampleRun]] = geometry.source_position
     workflow.insert(sample_rotation)
     workflow.insert(detector_rotation)
-    workflow.insert(proton_charge)
     workflow.insert(covered_detector_lookup_table)
