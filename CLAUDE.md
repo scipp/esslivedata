@@ -6,16 +6,6 @@ Terminology: `src/ess/livedata/glossary.md` (cross-cutting + backend) and `src/e
 
 ## Development Commands
 
-### Environment Setup
-
-In the devcontainer, micromamba is auto-activated -- `python`, `pytest`, `tox` etc. just work.
-
-**Worktree Setup** (when launched with `claude -w`):
-
-```sh
-python -m venv .venv && source .venv/bin/activate && pip install -e ".[test]"
-```
-
 ### Tests
 
 - Tests in `tests/` mirror `src/ess/livedata/` structure, files follow `*_test.py`
@@ -66,7 +56,7 @@ Uses [Copier](https://copier.readthedocs.io/) with [Scipp template](https://gith
 
 ### Running Services Locally
 
-Services require Kafka (`docker-compose up kafka`), which the devcontainer does not have.
+Services require Kafka (`docker-compose up kafka`).
 Use `--dev` for simplified topic structure. The fakes always publish to the dev topic
 names, so consuming services need `--dev` too, or they subscribe to production topics
 and see nothing.
