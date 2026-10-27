@@ -13,8 +13,12 @@ In the devcontainer, micromamba is auto-activated -- `python`, `pytest`, `tox` e
 **Worktree Setup** (when launched with `claude -w`):
 
 ```sh
-python -m venv .venv && source .venv/bin/activate && pip install -e ".[test]"
+python -m venv .venv && .venv/bin/pip install -e ".[test]"
 ```
+
+Shell state does not persist between Bash calls, so the venv is never active. Run
+tools from it explicitly, e.g. `.venv/bin/python -m pytest`. Plain `python`/`pytest`
+resolve to the conda env, which imports the main checkout.
 
 ### Tests
 
