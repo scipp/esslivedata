@@ -55,6 +55,7 @@ from .plot_topology import (
     reject_overlapping_cells,
 )
 from .plotting_controller import PlottingController
+from .roi_selection import roi_label, select_roi
 
 if TYPE_CHECKING:
     from ess.livedata.config import Instrument
@@ -158,6 +159,41 @@ def _build_subscription_keys(
         keys_by_role[role] = keys
         temporality.update(dict.fromkeys(keys, ds.temporality))
     return keys_by_role, temporality
+
+
+def _serialize_data_source(ds: DataSourceConfig) -> dict[str, Any]:
+    """Serialize a data source, writing ``roi`` only for a layer of one ROI."""
+    result: dict[str, Any] = {
+        'workflow_id': str(ds.workflow_id),
+        'source_names': ds.source_names,
+        'view_name': ds.view_name,
+    }
+    if ds.roi is not None:
+        result['roi'] = ds.roi
+    return result
+
+
+def _select_rois(
+    data: dict[str, dict[DataKey, Any]],
+    data_sources: Mapping[str, DataSourceConfig],
+) -> dict[str, dict[DataKey, Any]] | None:
+    """Reduce the data of each role with a selected ROI to that ROI.
+
+    Sources on which the ROI is not drawn are left out. Returns None if that
+    leaves a role without data, as the data is then not ready to plot.
+    """
+    for role, ds in data_sources.items():
+        if ds.roi is None or role not in data:
+            continue
+        selected = {
+            key: roi_data
+            for key, da in data[role].items()
+            if (roi_data := select_roi(da, ds.roi)) is not None
+        }
+        if not selected:
+            return None
+        data[role] = selected
+    return data
 
 
 @dataclass
@@ -928,11 +964,12 @@ class PlotOrchestrator:
     def _build_title_resolver(self, layer_id: LayerId) -> Any:
         """Build a TitleResolver for a layer, checking cell-level view uniqueness.
 
-        When all non-static layers in the same cell share the same primary view,
-        the view title is already shown on the Y-axis and is stripped from the
-        legend label to reduce redundancy. The resolver maps backend pydantic
-        field names (which appear in ``DataKey.output_name``) back to their
-        owning view's title so legends and axes show user-facing titles.
+        When all non-static layers in the same cell share the same primary view
+        and ROI, the view title is already shown on the Y-axis and is stripped
+        from the legend label to reduce redundancy. The resolver maps backend
+        pydantic field names (which appear in ``DataKey.output_name``) back to
+        their owning view's title so legends and axes show user-facing titles,
+        followed by the ROI for a layer of one ROI.
         """
         from .plots import TitleResolver, _identity
 
@@ -942,11 +979,12 @@ class PlotOrchestrator:
 
         cell_id = self._layer_to_cell[layer_id]
         cell = self.get_cell(cell_id)
-        view_names = {
-            layer.config.view_name
+        primary_views = {
+            (layer.config.view_name, layer.config.data_sources[PRIMARY].roi)
             for layer in cell.layers
             if not layer.config.is_static()
         }
+        roi = config.data_sources[PRIMARY].roi
 
         def field_to_view_title(field_name: str) -> str:
             if spec is None:
@@ -956,11 +994,14 @@ class PlotOrchestrator:
                     return view.title
             return field_name
 
+        output = field_to_view_title if spec is not None else _identity
         return TitleResolver(
             source=self.get_source_title,
-            output=field_to_view_title if spec is not None else _identity,
+            output=output
+            if roi is None
+            else lambda name: f'{output(name)}, {roi_label(roi)}',
             dim=self.get_dim_title,
-            include_output_in_label=len(view_names) != 1,
+            include_output_in_label=len(primary_views) != 1,
         )
 
     def _refresh_resolvers_for_cell(self, cell_id: CellId) -> None:
@@ -1064,6 +1105,7 @@ class PlotOrchestrator:
             if layer_id not in self._layer_to_cell:
                 return False
             subscriber = self._data_subscriptions.get(layer_id)
+            data_sources = self.get_layer_config(layer_id).data_sources
         if subscriber is None:
             return False
         snapshot = self._plot_data_service.get(layer_id)
@@ -1071,6 +1113,8 @@ class PlotOrchestrator:
             return False
         try:
             assembled = subscriber.assemble(self._data_service.snapshot(subscriber))
+            if assembled is not None:
+                assembled = _select_rois(assembled, data_sources)
         except Exception:
             error_msg = traceback.format_exc()
             self._logger.exception('Failed to extract data for layer_id=%s', layer_id)
@@ -1359,6 +1403,7 @@ class PlotOrchestrator:
                 workflow_id=WorkflowId.from_string(ds['workflow_id']),
                 source_names=ds['source_names'],
                 view_name=ds['view_name'],
+                roi=ds.get('roi'),
             )
             for role, ds in layer_data['data_sources'].items()
         }
@@ -1521,11 +1566,7 @@ class PlotOrchestrator:
         config = layer.config
         return {
             'data_sources': {
-                role: {
-                    'workflow_id': str(ds.workflow_id),
-                    'source_names': ds.source_names,
-                    'view_name': ds.view_name,
-                }
+                role: _serialize_data_source(ds)
                 for role, ds in config.data_sources.items()
             },
             'plot_name': config.plot_name,

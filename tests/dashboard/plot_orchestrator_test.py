@@ -236,6 +236,7 @@ def make_plot_config(
     output_name='test_output',
     plot_name='test_plot',
     params=None,
+    roi=None,
 ):
     """Helper to create a PlotConfig with a single data source."""
     from ess.livedata.dashboard.data_roles import PRIMARY
@@ -248,6 +249,7 @@ def make_plot_config(
         workflow_id=workflow_id,
         source_names=source_names,
         view_name=output_name,
+        roi=roi,
     )
     return PlotConfig(
         data_sources={PRIMARY: data_source},
@@ -2285,6 +2287,176 @@ class TestTitleResolverOutputViews:
         assert resolver.output('cumulative') == 'Histogram'
         assert resolver.output('current') == 'Histogram'
         assert resolver.output('unknown_field') == 'unknown_field'
+
+
+class TestRoiSelection:
+    """A layer with a selected ROI plots that ROI of a per-ROI output."""
+
+    @staticmethod
+    def _per_roi(rois: list[int]):
+        """Per-ROI totals of the drawn ``rois``, the value of ROI i being 10*i."""
+        import scipp as sc
+
+        return sc.DataArray(
+            sc.array(dims=['roi'], values=[10.0 * i for i in rois], unit='counts'),
+            coords={
+                'roi': sc.array(dims=['roi'], values=rois, unit=None, dtype='int32'),
+                'detector_pixels': sc.array(dims=['roi'], values=[2.0] * len(rois)),
+            },
+        )
+
+    def _plot_roi(
+        self,
+        plot_orchestrator,
+        job_orchestrator,
+        fake_data_service,
+        workflow_id,
+        workflow_spec,
+        rois_by_source: dict[str, list[int]],
+    ):
+        """Plot ROI 4 of 'result' while ``rois_by_source`` are drawn."""
+        from ess.livedata.config.workflow_spec import DataKey
+
+        commit_workflow_for_test(job_orchestrator, workflow_id, workflow_spec)
+        grid_id = plot_orchestrator.add_grid(title='Test Grid', nrows=1, ncols=1)
+        config = make_plot_config(
+            workflow_id,
+            source_names=list(rois_by_source),
+            output_name='result',
+            roi=4,
+        )
+        add_cell_with_layer(plot_orchestrator, grid_id, DEFAULT_GEOMETRY, config)
+        for source_name, rois in rois_by_source.items():
+            key = DataKey(
+                workflow_id=workflow_id, source_name=source_name, output_name='result'
+            )
+            fake_data_service[key] = self._per_roi(rois)
+        plot_orchestrator.flush_frames()
+
+    def test_roi_survives_a_save_load_round_trip(self, plot_orchestrator, workflow_id):
+        from ess.livedata.dashboard.data_roles import PRIMARY
+
+        grid_id = plot_orchestrator.add_grid(title='G', nrows=1, ncols=1)
+        add_cell_with_layer(
+            plot_orchestrator,
+            grid_id,
+            DEFAULT_GEOMETRY,
+            make_plot_config(workflow_id, roi=4),
+        )
+
+        data = plot_orchestrator.serialize_grid(grid_id)
+        parsed = plot_orchestrator.parse_raw_cell(data['cells'][0])
+
+        assert parsed.layers[0].config.data_sources[PRIMARY].roi == 4
+
+    def test_layer_without_roi_serializes_without_roi_key(
+        self, plot_orchestrator, workflow_id
+    ):
+        from ess.livedata.dashboard.data_roles import PRIMARY
+
+        grid_id = plot_orchestrator.add_grid(title='G', nrows=1, ncols=1)
+        add_cell_with_layer(
+            plot_orchestrator, grid_id, DEFAULT_GEOMETRY, make_plot_config(workflow_id)
+        )
+
+        data = plot_orchestrator.serialize_grid(grid_id)
+
+        assert 'roi' not in data['cells'][0]['layers'][0]['data_sources'][PRIMARY]
+
+    def test_plotter_receives_only_the_selected_roi(
+        self,
+        plot_orchestrator,
+        job_orchestrator,
+        fake_plotting_controller,
+        fake_data_service,
+        workflow_id,
+        workflow_spec,
+    ):
+        from ess.livedata.dashboard.data_roles import PRIMARY
+
+        self._plot_roi(
+            plot_orchestrator,
+            job_orchestrator,
+            fake_data_service,
+            workflow_id,
+            workflow_spec,
+            {'source1': [0, 4], 'source2': [4, 6]},
+        )
+
+        (plotter,) = fake_plotting_controller.created_plotters
+        primary = plotter.compute_calls[-1]['data'][PRIMARY]
+        assert {key.source_name: da.value for key, da in primary.items()} == {
+            'source1': 40.0,
+            'source2': 40.0,
+        }
+        assert all(da.coords['roi'].value == 4 for da in primary.values())
+
+    def test_sources_without_the_roi_are_left_out(
+        self,
+        plot_orchestrator,
+        job_orchestrator,
+        fake_plotting_controller,
+        fake_data_service,
+        workflow_id,
+        workflow_spec,
+    ):
+        from ess.livedata.dashboard.data_roles import PRIMARY
+
+        self._plot_roi(
+            plot_orchestrator,
+            job_orchestrator,
+            fake_data_service,
+            workflow_id,
+            workflow_spec,
+            {'source1': [0, 4], 'source2': [0, 6]},
+        )
+
+        (plotter,) = fake_plotting_controller.created_plotters
+        primary = plotter.compute_calls[-1]['data'][PRIMARY]
+        assert [key.source_name for key in primary] == ['source1']
+
+    def test_nothing_is_computed_while_the_roi_is_not_drawn(
+        self,
+        plot_orchestrator,
+        job_orchestrator,
+        fake_plotting_controller,
+        fake_data_service,
+        workflow_id,
+        workflow_spec,
+    ):
+        self._plot_roi(
+            plot_orchestrator,
+            job_orchestrator,
+            fake_data_service,
+            workflow_id,
+            workflow_spec,
+            {'source1': [0, 1], 'source2': [6]},
+        )
+
+        (plotter,) = fake_plotting_controller.created_plotters
+        assert plotter.compute_calls == []
+
+    def test_title_names_the_roi(
+        self,
+        plot_orchestrator,
+        job_orchestrator,
+        fake_plotting_controller,
+        fake_data_service,
+        workflow_id,
+        workflow_spec,
+    ):
+        self._plot_roi(
+            plot_orchestrator,
+            job_orchestrator,
+            fake_data_service,
+            workflow_id,
+            workflow_spec,
+            {'source1': [4]},
+        )
+
+        (plotter,) = fake_plotting_controller.created_plotters
+        resolver = plotter.compute_calls[-1]['title_resolver']
+        assert resolver.output('result') == 'Result, roi=4'
 
 
 @pytest.fixture

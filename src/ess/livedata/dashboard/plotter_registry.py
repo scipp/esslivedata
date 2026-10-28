@@ -265,8 +265,6 @@ def _register_all_plotters() -> None:
     from .correlation_plotter import (
         CorrelationHistogram1dPlotter,
         CorrelationHistogram2dPlotter,
-        ROICorrelationHistogram1dPlotter,
-        ROICorrelationHistogram2dPlotter,
     )
     from .extractors import FullHistoryExtractor
     from .flatten_plotter import FlattenPlotter, make_flatten_params
@@ -457,43 +455,6 @@ def _register_all_plotters() -> None:
             required_extractor=FullHistoryExtractor,
         ),
         factory=CorrelationHistogram2dPlotter.from_params,
-    )
-
-    # The ROI variants carry the title of the scalar ones: the wizard never offers
-    # both for one output, since one is for scalars and the other for one value
-    # per ROI. Separate registrations keep each params model fixed, so stored plot
-    # configs keep their ROI selection.
-    _per_roi_history = DataRequirements(
-        min_dims=1,
-        max_dims=1,
-        required_extractor=FullHistoryExtractor,
-        required_dim_names=['roi'],
-        custom_validators=[_entries_are_labelled],
-    )
-
-    plotter_registry.register_plotter(
-        name='roi_correlation_histogram_1d',
-        title='Correlation Histogram 1D',
-        description=(
-            'Create a 1D histogram correlating the selected per-ROI timeseries '
-            'against another timeseries axis, one curve per selected ROI. Useful '
-            'for visualizing how data varies with a parameter like temperature or '
-            'motor position.'
-        ),
-        data_requirements=_per_roi_history,
-        factory=ROICorrelationHistogram1dPlotter.from_params,
-    )
-
-    plotter_registry.register_plotter(
-        name='roi_correlation_histogram_2d',
-        title='Correlation Histogram 2D',
-        description=(
-            'Create a 2D histogram correlating one ROI of the selected per-ROI '
-            'timeseries against two timeseries axes. Useful for visualizing how '
-            'data varies with two parameters simultaneously.'
-        ),
-        data_requirements=_per_roi_history,
-        factory=ROICorrelationHistogram2dPlotter.from_params,
     )
 
     # Register static plotters (rectangles, vlines, hlines)

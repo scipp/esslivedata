@@ -26,6 +26,7 @@ from .plotter_registry import (
 )
 from .roi_publisher import ROIPublisher
 from .roi_request_plots import ParamsPersisterAware, ROIPublisherAware
+from .roi_selection import selected_output_template
 from .stream_manager import StreamManager
 
 
@@ -53,7 +54,7 @@ class PlottingController:
         self._roi_publisher = roi_publisher
 
     def get_available_plotters_from_spec(
-        self, workflow_spec: WorkflowSpec, view_name: str
+        self, workflow_spec: WorkflowSpec, view_name: str, roi: int | None = None
     ) -> tuple[dict[str, PlotterSpec], bool]:
         """
         Get available plotters based on workflow spec template (before data exists).
@@ -72,6 +73,8 @@ class PlottingController:
             WorkflowSpec object containing output templates.
         view_name:
             The name of the output view to get plotters for.
+        roi:
+            ROI selected from a per-ROI output, None for the output as is.
 
         Returns
         -------
@@ -80,7 +83,7 @@ class PlottingController:
             all registered plotters are returned as a fallback, and the caller
             should warn the user that some plotters may not work with the data.
         """
-        template = workflow_spec.get_output_template(view_name)
+        template = selected_output_template(workflow_spec, view_name, roi)
         if template is None:
             return plotter_registry.get_specs(), False
         return plotter_registry.get_compatible_plotters({view_name: template}), True
