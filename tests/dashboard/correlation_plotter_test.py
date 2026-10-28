@@ -811,6 +811,20 @@ class TestROICorrelationHistograms:
             histograms['roi=4'].dimension_values(1), [40.0, 60.0]
         )
 
+    def test_1d_draws_lines_by_default(self):
+        """Opaque histogram bars of overlaid ROIs would hide each other."""
+        plotter = self._plotter_1d()
+        self._compute(plotter)
+
+        assert all(isinstance(el, hv.Curve) for el in plotter.get_cached_state())
+
+    def test_1d_names_the_roi_in_the_value_label_when_only_one_is_drawn(self):
+        plotter = self._plotter_1d(roi={'indices': {2, 4}})
+        self._compute(plotter)
+
+        (curve,) = plotter.get_cached_state()
+        assert curve.vdims[0].label == 'result, roi=4'
+
     def test_1d_draws_only_the_selected_rois(self):
         plotter = self._plotter_1d(roi={'indices': {4}})
         self._compute(plotter)
@@ -844,6 +858,13 @@ class TestROICorrelationHistograms:
         np.testing.assert_array_equal(
             image.dimension_values(2, flat=False), [[10.0, 20.0], [30.0, 40.0]]
         )
+
+    def test_2d_names_the_roi_in_the_value_label(self):
+        plotter = self._plotter_2d(roi={'index': 4})
+        self._compute(plotter)
+
+        (image,) = plotter.get_cached_state()
+        assert image.vdims[0].label == 'result, roi=4'
 
     def test_2d_per_detector_pixel_divides_by_the_roi_pixels(self):
         plotter = self._plotter_2d(

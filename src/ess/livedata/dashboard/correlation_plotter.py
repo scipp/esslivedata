@@ -16,6 +16,7 @@ variants of the plotters histogram the selected ROIs of each source.
 
 from __future__ import annotations
 
+import dataclasses
 from collections.abc import Iterator
 from dataclasses import dataclass
 from enum import IntEnum
@@ -193,8 +194,16 @@ class ROISelection2dParams(pydantic.BaseModel):
 
 
 class ROICorrelationHistogram1dParams(CorrelationHistogram1dParams):
-    """Params for 1D correlation histograms of per-ROI outputs."""
+    """Params for 1D correlation histograms of per-ROI outputs.
 
+    Renders as lines by default: histogram mode draws opaque bars, so overlaid
+    ROIs would hide each other.
+    """
+
+    line: Line1dParams = pydantic.Field(
+        default_factory=Line1dParams,
+        description="1D line rendering options.",
+    )
     roi: ROISelection1dParams = pydantic.Field(
         default_factory=ROISelection1dParams,
         title='ROI',
@@ -547,13 +556,33 @@ class ROICorrelationHistogram2dPlotter(CorrelationHistogram2dPlotter):
 
     def __init__(self, params: ROICorrelationHistogram2dParams) -> None:
         super().__init__(params)
-        self._index = params.roi.index
+        self._index = int(params.roi.index)
 
     @staticmethod
     def _make_renderer(params: ROICorrelationHistogram2dParams) -> ImagePlotter:
         return ImagePlotter.from_display_params(
             params,
             normalize_per_detector_pixel=params.normalization.per_detector_pixel,
+        )
+
+    def compute(
+        self,
+        data: dict[str, Any],
+        *,
+        title_resolver: TitleResolver | None = None,
+    ) -> None:
+        """Compute the histogram, with the ROI named in the value label.
+
+        The selection drops the ``roi`` dim, so the image has no other place
+        that says which ROI it shows.
+        """
+        resolver = title_resolver or TitleResolver()
+        super().compute(
+            data,
+            title_resolver=dataclasses.replace(
+                resolver,
+                output=lambda name: f'{resolver.output(name)}, roi={self._index}',
+            ),
         )
 
     def _select(self, data: sc.DataArray) -> sc.DataArray | None:
