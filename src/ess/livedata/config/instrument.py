@@ -270,18 +270,21 @@ class Instrument:
                 "available and its jobs stay gated forever."
             )
         if _is_chain_patch(binding):
-            self.chain_patch_path(binding)
+            self.chain_patch_paths(binding)
 
-    def chain_patch_path(self, binding: ContextBinding) -> str:
-        """Resolve the NeXus chain entry path patched by a chain-patch binding.
+    def chain_patch_paths(self, binding: ContextBinding) -> tuple[str, ...]:
+        """Resolve the NeXus chain entry paths patched by a chain-patch binding.
 
-        The patch target is the ``nexus_path`` of the f144 RBV substream the
-        binding sources from: for a :class:`Device` stream, the RBV is
+        The patch targets come from the f144 RBV substream the binding sources
+        from: for a :class:`Device` stream, the RBV is
         ``streams[stream.value]``; for a plain :class:`F144Stream` it is the
-        stream itself. The chain entry and the f144 source-of-truth must
-        live at the same NeXus path — the geometry artifact writes the
-        placeholder NXlog at the same path the live stream targets — so
-        this single field is the source of truth for both.
+        stream itself. The geometry artifact keeps each chain entry as a
+        placeholder NXlog at its own path, so the targets are the stream's
+        :attr:`~F144Stream.transform_paths` (chain entries hard-linking the
+        stream's NXlog in the source file), or, if there are none, the
+        stream's ``nexus_path`` (the stream's NXlog is itself the chain
+        entry). Both come from the file-derived stream table, never from a
+        path written into instrument config.
         """
         stream = self.streams[binding.stream_name]
         rbv = self.streams[stream.value] if isinstance(stream, Device) else stream
@@ -291,13 +294,16 @@ class Instrument:
                 f"{type(rbv).__name__}, not F144Stream; chain-patch sources "
                 "must carry f144 NXlog payloads"
             )
+        if rbv.transform_paths:
+            return rbv.transform_paths
         if rbv.nexus_path is None:
             raise ValueError(
                 f"Chain-patch binding {binding.stream_name!r} resolves to an "
-                f"F144Stream with no nexus_path; set nexus_path on the parsed "
-                "stream entry so the chain entry path can be derived"
+                f"F144Stream with neither transform_paths nor nexus_path; set "
+                "them on the parsed stream entry so the chain entry paths can "
+                "be derived"
             )
-        return rbv.nexus_path
+        return (rbv.nexus_path,)
 
     def add_context_binding(
         self,
@@ -318,7 +324,7 @@ class Instrument:
         :class:`~ess.livedata.config.value_log.ValueLog` subclass as
         ``workflow_key``: :attr:`chain_patch_bindings` collects them by
         ``issubclass`` and resolves the NeXus ``depends_on`` chain path from
-        ``stream_name`` (see :meth:`chain_patch_path`) so the wiring step can
+        ``stream_name`` (see :meth:`chain_patch_paths`) so the wiring step can
         route the value via a fused per-component patched-chain provider.
         """
         binding = ContextBinding(
@@ -406,7 +412,7 @@ class Instrument:
 
         Selects every instrument-scope chain-patch :class:`ContextBinding` (one
         whose ``workflow_key`` is a :class:`ValueLog` subclass) and resolves its
-        NeXus transform path via :meth:`chain_patch_path`. Spec-scope bindings
+        NeXus transform paths via :meth:`chain_patch_paths`. Spec-scope bindings
         are not consulted: chain-patch contexts are required to live at
         instrument scope.
 
@@ -417,7 +423,7 @@ class Instrument:
         return [
             ChainPatchBinding(
                 stream_name=binding.stream_name,
-                transform_path=self.chain_patch_path(binding),
+                transform_paths=self.chain_patch_paths(binding),
                 workflow_key=binding.workflow_key,
                 dependent_sources=binding.dependent_sources,
             )

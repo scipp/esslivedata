@@ -8,10 +8,10 @@ delivers raw NXlog payloads through. Each chain-patch binding declares
 its own subclass so multiple dynamic transforms can coexist on one
 workflow without colliding on a shared Sciline parameter.
 
-The NeXus transformation-chain path patched by a binding is *not*
-declared here: it is derived from the binding's ``stream_name`` (the
-f144 substream's ``nexus_path``) by
-:meth:`Instrument.chain_patch_path`. This keeps a single source of
+The NeXus transformation-chain paths patched by a binding are *not*
+declared here: they are derived from the binding's ``stream_name`` (the
+f144 substream's ``transform_paths``, else its ``nexus_path``) by
+:meth:`Instrument.chain_patch_paths`. This keeps a single source of
 truth in ``streams_parsed.py`` and makes miswiring structurally
 impossible.
 

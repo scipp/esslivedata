@@ -72,6 +72,17 @@ class F144Stream(Stream):
     units: str | None = None
     writer_module: str = 'f144'
     nx_class: str = 'NXlog'
+    transform_paths: tuple[str, ...] = ()
+    """NeXus paths of the ``depends_on`` chain entries this stream drives.
+
+    The file writer may place the chain entry as a separate NXlog inside an
+    ``NXtransformations`` group, with its ``value`` and ``time`` datasets
+    hard-linked to this stream's NXlog (e.g. a detector's
+    ``transformations/carriage`` linking ``detector_carriage/value``). One
+    stream can drive several such entries. Empty when the stream's own NXlog
+    is the chain entry, so :attr:`nexus_path` is the chain path. Recorded by
+    the ``streams_parsed`` generator in :mod:`ess.livedata.nexus_helpers`.
+    """
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -137,9 +148,9 @@ class ContextBinding:
       straight into ``set_context``.
     - **NXtransformations chain patch.** ``workflow_key`` is a
       :class:`~ess.livedata.config.value_log.ValueLog` subclass. The
-      chain entry to patch is derived from :attr:`stream_name` (the
-      RBV substream's ``nexus_path``) by
-      :meth:`Instrument.chain_patch_path`.
+      chain entries to patch are derived from :attr:`stream_name` (the
+      RBV substream's ``transform_paths``, else its ``nexus_path``) by
+      :meth:`Instrument.chain_patch_paths`.
       :attr:`Instrument.chain_patch_bindings` collects these bindings by
       ``issubclass(workflow_key, ValueLog)`` and the wiring step synthesises
       a fused per-component patched-chain provider.
@@ -219,10 +230,10 @@ class AxisRange:
 class ChainPatchBinding:
     """A chain-patch :class:`ContextBinding` resolved for transform wiring.
 
-    Carries the binding's pre-resolved NeXus transform path (see
-    :meth:`ess.livedata.config.instrument.Instrument.chain_patch_path`)
+    Carries the binding's pre-resolved NeXus transform paths (see
+    :meth:`ess.livedata.config.instrument.Instrument.chain_patch_paths`)
     alongside its :attr:`dependent_sources` and ``ValueLog`` ``workflow_key``.
-    Resolving the path up front lets the wiring step in
+    Resolving the paths up front lets the wiring step in
     :mod:`ess.livedata.workflows.dynamic_transforms` run as a pure function of
     this self-contained data, without re-consulting the instrument's stream
     topology. The :attr:`stream_name` is retained as the dedup key when
@@ -230,7 +241,13 @@ class ChainPatchBinding:
     """
 
     stream_name: str
-    transform_path: str
+    transform_paths: tuple[str, ...]
+    """Chain entries the stream drives, across all components.
+
+    A component's chain typically contains only one of them (one stream can
+    move several components, each through its own chain entry), so the
+    patch writes those present in the chain being patched.
+    """
     workflow_key: Any
     dependent_sources: frozenset[str]
 

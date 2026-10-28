@@ -98,7 +98,7 @@ def synthesise_provider(
 
 def build_patched_chain_provider(
     component_type: type,
-    bindings: list[tuple[str, type[ValueLog]]],
+    bindings: list[tuple[tuple[str, ...], type[ValueLog]]],
 ) -> Any:
     """Build the fused chain-patch provider for ``component_type``.
 
@@ -116,23 +116,31 @@ def build_patched_chain_provider(
         The NeXus component type whose transformation chain is being patched
         (e.g. ``snx.NXdetector``).
     bindings:
-        ``(transform_path, value_log_cls)`` pairs. The provider takes one
+        ``(transform_paths, value_log_cls)`` pairs. The provider takes one
         positional parameter per pair, annotated with the corresponding
         :class:`ValueLog` subclass; at evaluation time the latest sample of
-        each container is written into ``transformations[transform_path]``.
+        each container is written into ``transformations[path]`` for every
+        ``path`` in ``transform_paths`` that is on the chain. At least one must
+        be: the binding names this component as a consumer, so a chain
+        without any of its entries means the stream table and the geometry
+        disagree.
     """
     bindings_local = list(bindings)
 
     def _impl(component: Any, *containers: ValueLog) -> Any:
         chain = get_transformation_chain(component)
         patched = deepcopy(chain)
-        for (path, _key), container in zip(bindings_local, containers, strict=True):
-            if path not in patched.transformations:
+        for (paths, _key), container in zip(bindings_local, containers, strict=True):
+            present = [path for path in paths if path in patched.transformations]
+            if not present:
                 raise KeyError(
-                    f"Transformation entry {path!r} not found in chain. "
-                    f"Available entries: {sorted(patched.transformations.keys())}"
+                    f"None of the transformation entries {list(paths)} found in "
+                    f"chain. Available entries: "
+                    f"{sorted(patched.transformations.keys())}"
                 )
-            patched.transformations[path].value = container.values['time', -1].data
+            latest = container.values['time', -1].data
+            for path in present:
+                patched.transformations[path].value = latest
         return patched
 
     annotations: dict[str, Any] = {
@@ -157,7 +165,7 @@ def wire_dynamic_transforms(
     ``dynamic_keys`` — each ``NeXusData[Component, Run]`` key carries the
     component type as its first type-arg — then, for every binding whose
     ``dependent_sources`` includes a derived source, groups the
-    ``(transform_path, workflow_key)`` pairs by component type and inserts one
+    ``(transform_paths, workflow_key)`` pairs by component type and inserts one
     fused provider per type (built by :func:`build_patched_chain_provider`).
 
     Deriving the map from ``dynamic_keys`` avoids restating it in the factory
@@ -189,13 +197,13 @@ def wire_dynamic_transforms(
         for source, key in workflow.dynamic_keys.items()
         if get_origin(key) is NeXusData
     }
-    by_type: dict[type, dict[str, tuple[str, type]]] = {}
+    by_type: dict[type, dict[str, tuple[tuple[str, ...], type]]] = {}
     for source_name, component_type in components.items():
         for binding in bindings:
             if source_name not in binding.dependent_sources:
                 continue
             by_type.setdefault(component_type, {})[binding.stream_name] = (
-                binding.transform_path,
+                binding.transform_paths,
                 binding.workflow_key,
             )
     for component_type, by_stream in by_type.items():

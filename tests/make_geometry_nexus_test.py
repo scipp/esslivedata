@@ -493,6 +493,49 @@ def test_motor_log_reached_via_depends_on_is_trimmed(tmp_path):
         assert log['value'].attrs['units'] == 'mm'
 
 
+def test_chain_entry_hard_linked_to_motor_log_is_trimmed_at_its_own_path(tmp_path):
+    """The file writer may write a chain entry as an NXlog in NXtransformations
+    whose datasets are hard links to the motor's NXlog. The artifact must keep
+    the entry as a length-0 placeholder at its chain path, since chain patches
+    target that path; the motor NXlog itself is on no chain and is dropped.
+    """
+    src = tmp_path / 'input.nxs'
+    with h5py.File(src, 'w') as f:
+        inst = f.create_group('entry/instrument')
+        motor_log = inst.create_group('carriage/value')
+        motor_log.attrs['NX_class'] = 'NXlog'
+        motor_log.create_dataset('time', data=np.arange(5000, dtype='int64'))
+        motor_log.create_dataset('value', data=np.linspace(0.0, 100.0, 5000)).attrs[
+            'units'
+        ] = 'mm'
+
+        det = inst.create_group('detector_0')
+        det.attrs['NX_class'] = 'NXdetector'
+        det.create_dataset(
+            'depends_on', data='/entry/instrument/detector_0/transformations/carriage'
+        )
+        tr = det.create_group('transformations')
+        tr.attrs['NX_class'] = 'NXtransformations'
+        entry = tr.create_group('carriage')
+        entry.attrs['NX_class'] = 'NXlog'
+        entry.attrs['transformation_type'] = 'translation'
+        entry.attrs['vector'] = np.array([0.0, 0.0, 1.0])
+        entry.attrs['depends_on'] = '.'
+        entry['time'] = motor_log['time']
+        entry['value'] = motor_log['value']
+
+    output = tmp_path / 'output.nxs'
+    write_minimal_geometry(src, output)
+
+    with h5py.File(output, 'r') as f:
+        entry = f['entry/instrument/detector_0/transformations/carriage']
+        assert entry.attrs['transformation_type'] == 'translation'
+        assert entry['time'].shape == (0,)
+        assert entry['value'].shape == (0,)
+        assert entry['value'].attrs['units'] == 'mm'
+        assert 'carriage' not in f['entry/instrument']
+
+
 def test_disk_chopper_log_data_is_trimmed(tmp_path):
     """NXdisk_chopper whose NXlog children carry real samples (as a
     production file would) — the geometry artifact must trim these to

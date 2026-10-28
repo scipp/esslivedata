@@ -411,6 +411,23 @@ class TestContextBindings:
         with pytest.raises(ValueError, match='ghost'):
             instrument.validate()
 
+    def test_chain_patch_binding_rejects_stream_without_chain_path(self):
+        """A chain-patch target needs ``transform_paths`` or a ``nexus_path``."""
+        from ess.livedata.config.value_log import ValueLog
+
+        class _Log(ValueLog):
+            pass
+
+        instrument = Instrument(
+            name='test',
+            streams={'rot': F144Stream(source='rot', topic='topic', units='mm')},
+        )
+
+        with pytest.raises(ValueError, match='neither transform_paths nor nexus_path'):
+            instrument.add_context_binding(
+                stream_name='rot', workflow_key=_Log, dependent_sources=['det1']
+            )
+
     def test_validates_duplicate_value_log_subclass_across_bindings(self):
         """Two chain-patch entries with different streams must not share a
         :class:`ValueLog` subclass -- Sciline keys identify parameters by

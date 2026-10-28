@@ -5,7 +5,8 @@ currently-registered geometry artifact.
 
 For every chain-patch :class:`ContextBinding` (one whose ``workflow_key``
 is a :class:`ValueLog` subclass), walks the ``depends_on`` chain of
-every declared consumer in the artifact and confirms the path appears.
+every declared consumer in the artifact and confirms one of the binding's
+resolved paths appears.
 Catches typos and orphaned bindings before runtime.
 
 Also flags any empty NXlog placeholder on a registered source that no
@@ -91,17 +92,17 @@ def instrument(request) -> Instrument:
 
 
 def test_transform_paths_match_artifact(instrument: Instrument) -> None:
-    """Each chain-patch binding's resolved transform path must appear on the
-    depends_on chain of every declared consumer in the geometry artifact."""
+    """One of each chain-patch binding's resolved transform paths must appear on
+    the depends_on chain of every declared consumer in the geometry artifact."""
     artifact = str(get_nexus_geometry_filename(instrument.name))
     for binding in _chain_patch_inputs(instrument):
-        path = instrument.chain_patch_path(binding)
+        paths = instrument.chain_patch_paths(binding)
         for source_name in binding.dependent_sources:
             chain = _chain_paths(artifact, source_name)
-            assert path in chain, (
-                f"Binding {binding.stream_name!r} resolves transform path "
-                f"{path!r} in consumers of {source_name!r}, but it does not "
-                f"appear on the depends_on chain resolved from the artifact "
+            assert set(paths) & set(chain), (
+                f"Binding {binding.stream_name!r} resolves transform paths "
+                f"{paths!r} in consumers of {source_name!r}, but none appears "
+                f"on the depends_on chain resolved from the artifact "
                 f"({artifact}). Walked: {chain}"
             )
 
@@ -138,7 +139,11 @@ def test_no_orphan_empty_nxlogs(instrument: Instrument) -> None:
     Otherwise, workflows loading that source trip essreduce's
     ``reject_time_dependent_transform`` at compute time."""
     artifact = str(get_nexus_geometry_filename(instrument.name))
-    covered = {instrument.chain_patch_path(b) for b in _chain_patch_inputs(instrument)}
+    covered = {
+        path
+        for binding in _chain_patch_inputs(instrument)
+        for path in instrument.chain_patch_paths(binding)
+    }
     sources = list(instrument.detector_names) + list(instrument.monitors)
     for source_name in sources:
         empty = _empty_nxlog(artifact, source_name)
