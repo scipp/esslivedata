@@ -16,7 +16,6 @@ from ess.livedata.config.instruments.estia.specs import (
 def test_estia_reflectometry_reduction_default_limits_match_previous_literals():
     params = EstiaReflectometryReductionParams()
 
-    assert sc.identical(params.sample_rotation.get_value(), sc.scalar(0.0, unit='deg'))
     assert sc.identical(params.y_index_limits.get_limits()[0], sc.scalar(0))
     assert sc.identical(params.y_index_limits.get_limits()[1], sc.scalar(63))
     assert sc.identical(params.z_index_limits.get_limits()[0], sc.scalar(0))
@@ -33,13 +32,11 @@ def test_estia_reflectometry_reduction_default_limits_match_previous_literals():
 
 def test_estia_reflectometry_reduction_custom_limits_convert_to_scipp_scalars():
     params = EstiaReflectometryReductionParams(
-        sample_rotation={'value': 1.5, 'unit': 'deg'},
         y_index_limits={'start': 2, 'stop': 5},
         z_index_limits=IndexLimits(start=10, stop=20),
         beam_divergence_limits={'start': -0.1, 'stop': 0.2, 'unit': 'rad'},
     )
 
-    assert sc.identical(params.sample_rotation.get_value(), sc.scalar(1.5, unit='deg'))
     assert sc.identical(params.y_index_limits.get_limits()[0], sc.scalar(2))
     assert sc.identical(params.y_index_limits.get_limits()[1], sc.scalar(5))
     assert sc.identical(params.z_index_limits.get_limits()[0], sc.scalar(10))

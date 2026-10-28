@@ -1,20 +1,15 @@
 # SPDX-License-Identifier: BSD-3-Clause
 # Copyright (c) 2025 Scipp contributors (https://github.com/scipp)
-"""Validate chain-patch :class:`ContextBinding` bindings against the
-currently-registered geometry artifact.
+"""Audit motion bindings against the registered geometry artifacts.
 
-For every chain-patch :class:`ContextBinding` (one whose ``workflow_key``
-is a :class:`ValueLog` subclass), walks the ``depends_on`` chain of
-every declared consumer in the artifact and confirms the path appears.
-Catches typos and orphaned bindings before runtime.
-
-Also flags any empty NXlog placeholder on a registered source that no
-binding covers — except those in :data:`_KNOWN_ORPHAN_NXLOGS`, a
-deliberate ledger of placeholders consciously left for follow-up work.
+Check transform paths, stream identities, and coverage of every empty NXlog.
+ESTIA's sample chains and aliases require explicit discovery; known exceptions
+are recorded in ``_KNOWN_ORPHAN_NXLOGS``.
 """
 
 from __future__ import annotations
 
+import h5py
 import pytest
 import scippnexus as snx
 from scippnexus.field import DependsOn
@@ -22,7 +17,7 @@ from scippnexus.nxtransformations import TransformationChain, parse_depends_on_c
 
 from ess.livedata.config.instrument import Instrument, instrument_registry
 from ess.livedata.config.instruments import available_instruments, get_config
-from ess.livedata.config.stream import ContextBinding
+from ess.livedata.config.stream import ContextBinding, Device
 from ess.livedata.config.value_log import ValueLog
 from ess.livedata.preprocessors.detector_data import get_nexus_geometry_filename
 
@@ -37,11 +32,12 @@ def _chain_patch_inputs(instrument: Instrument) -> list[ContextBinding]:
 
 
 def _load_chain(artifact: str, source_name: str) -> TransformationChain | None:
-    """Walk a source's depends_on chain via scippnexus.
-
-    Returns ``None`` for static components with no ``depends_on`` field.
-    """
-    parent_path = f'/entry/instrument/{source_name}'
+    """Load a chain by source name or absolute path; None if unplaced."""
+    parent_path = (
+        source_name
+        if source_name.startswith('/')
+        else f'/entry/instrument/{source_name}'
+    )
     with snx.File(artifact, 'r') as f:
         comp = f[parent_path]
         try:
@@ -58,16 +54,16 @@ def _chain_paths(artifact: str, source_name: str) -> list[str]:
     return list(chain.transformations) if chain is not None else []
 
 
-def _empty_nxlog(artifact: str, source_name: str) -> str | None:
-    """First path along the chain whose value is a length-0 NXlog, or None."""
+def _empty_nxlogs(artifact: str, source_name: str) -> set[str]:
+    """All paths along the chain whose values are length-0 NXlogs."""
     chain = _load_chain(artifact, source_name)
     if chain is None:
-        return None
-    for path, t in chain.transformations.items():
-        sizes = getattr(t.value, 'sizes', None)
-        if sizes is not None and sizes.get('time', None) == 0:
-            return path
-    return None
+        return set()
+    return {
+        path
+        for path, transform in chain.transformations.items()
+        if getattr(transform.value, 'sizes', {}).get('time') == 0
+    }
 
 
 def _instruments_with_chain_patch_bindings() -> list[str]:
@@ -91,8 +87,7 @@ def instrument(request) -> Instrument:
 
 
 def test_transform_paths_match_artifact(instrument: Instrument) -> None:
-    """Each chain-patch binding's resolved transform path must appear on the
-    depends_on chain of every declared consumer in the geometry artifact."""
+    """Each patch must target a transform in its consumer's chain."""
     artifact = str(get_nexus_geometry_filename(instrument.name))
     for binding in _chain_patch_inputs(instrument):
         path = instrument.chain_patch_path(binding)
@@ -117,10 +112,7 @@ def test_consumers_subset_of_registered_sources(instrument: Instrument) -> None:
         )
 
 
-# Known orphan placeholders not yet covered by a binding. Each entry is
-# ``(instrument_name, source_name) -> transform_path``. Keep the test
-# strict (no orphans) but record the ones consciously left for a
-# follow-up. Removing an entry is a checklist item for the follow-up PR.
+# Unbound placeholders tracked for follow-up: (instrument, source) -> path.
 _KNOWN_ORPHAN_NXLOGS: dict[tuple[str, str], str] = {
     # See loki/specs.py: m4 trans_20 needs either a make_geometry_nexus.py
     # change to share the carriage NXlog, or a separate f144 stream
@@ -133,23 +125,56 @@ _KNOWN_ORPHAN_NXLOGS: dict[tuple[str, str], str] = {
 
 
 def test_no_orphan_empty_nxlogs(instrument: Instrument) -> None:
-    """Every empty NXlog reachable from a registered source must be
-    covered by a binding (or listed in :data:`_KNOWN_ORPHAN_NXLOGS`).
-    Otherwise, workflows loading that source trip essreduce's
-    ``reject_time_dependent_transform`` at compute time."""
+    """Every empty transform must have a binding for this source."""
     artifact = str(get_nexus_geometry_filename(instrument.name))
-    covered = {instrument.chain_patch_path(b) for b in _chain_patch_inputs(instrument)}
     sources = list(instrument.detector_names) + list(instrument.monitors)
     for source_name in sources:
-        empty = _empty_nxlog(artifact, source_name)
-        if empty is None or empty in covered:
-            continue
-        if _KNOWN_ORPHAN_NXLOGS.get((instrument.name, source_name)) == empty:
-            continue
-        pytest.fail(
-            f"Source {source_name!r} has an empty NXlog placeholder at "
-            f"{empty!r} not covered by any binding. Add a chain-patch "
-            f"ContextBinding to {instrument.name} or fix the geometry "
-            f"artifact (or list it in _KNOWN_ORPHAN_NXLOGS with a "
-            f"follow-up reference)."
+        covered = {
+            instrument.chain_patch_path(binding)
+            for binding in _chain_patch_inputs(instrument)
+            if source_name in binding.dependent_sources
+        }
+        unbound = _empty_nxlogs(artifact, source_name) - covered
+        if known := _KNOWN_ORPHAN_NXLOGS.get((instrument.name, source_name)):
+            unbound.discard(known)
+        assert not unbound, (
+            f'{instrument.name}/{source_name} has unbound transforms: {sorted(unbound)}'
         )
+
+
+@pytest.fixture(scope='module')
+def estia_motion():
+    from ess.livedata.config.instruments.estia.live_geometry import load_live_geometry
+
+    get_config('estia')
+    instrument = instrument_registry['estia']
+    instrument.load_factories()
+    artifact = str(get_nexus_geometry_filename('estia'))
+    return instrument, artifact, load_live_geometry(artifact, instrument)
+
+
+@pytest.mark.parametrize(
+    ('component_type', 'component_path'),
+    [
+        (snx.NXsample, '/entry/sample'),
+        (snx.NXdetector, '/entry/instrument/multiblade_detector'),
+    ],
+)
+def test_estia_discovered_motion_bindings_match_artifact(
+    estia_motion, component_type, component_path
+):
+    instrument, artifact, geometry = estia_motion
+    bindings = geometry.bindings[component_type]
+    covered = {path for path, _ in bindings}
+    assert covered == _empty_nxlogs(artifact, component_path)
+
+    names_by_key = {key: name for name, key in geometry.context_keys.items()}
+    with h5py.File(artifact) as f:
+        for path, key in bindings:
+            name = names_by_key[key]
+            assert instrument.offered_context_streams[key] == name
+            stream = instrument.streams[name]
+            if isinstance(stream, Device):
+                stream = instrument.streams[stream.value]
+            assert f[path].attrs['source'] == stream.source
+            assert f[path].attrs['topic'] == stream.topic

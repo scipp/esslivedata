@@ -441,6 +441,37 @@ def test_nxlog_inside_nxtransformations_is_trimmed(tmp_path):
         assert log['value'].attrs['units'] == 'deg'
 
 
+def test_linked_motor_stream_metadata_is_copied(basic_nexus_file, tmp_path):
+    with h5py.File(basic_nexus_file, 'a') as f:
+        transforms = f['entry/instrument/detector_0/transformations']
+        rotation = transforms.create_group('rotation')
+        rotation.attrs.update(
+            NX_class='NXlog',
+            transformation_type='rotation',
+            depends_on='offset',
+            vector=[0.0, 1.0, 0.0],
+        )
+        rotation.create_dataset('time', data=np.arange(3)).attrs['units'] = 'ns'
+        rotation.create_dataset('value', data=np.full(3, 12.0)).attrs['units'] = 'deg'
+        motor = f['entry/instrument'].create_group('motor/value')
+        motor.attrs.update(
+            NX_class='NXlog', writer_module='f144', source='motor.RBV', topic='motion'
+        )
+        motor['time'] = rotation['time']
+        motor['value'] = rotation['value']
+    output = tmp_path / 'output.nxs'
+    write_minimal_geometry(basic_nexus_file, output)
+    with h5py.File(output) as f:
+        rotation = f['entry/instrument/detector_0/transformations/rotation']
+        assert rotation.attrs['NX_class'] == 'NXlog'
+        assert rotation.attrs['source'] == 'motor.RBV'
+        assert rotation.attrs['topic'] == 'motion'
+        assert rotation.attrs['writer_module'] == 'f144'
+        assert rotation['value'].shape == (0,)
+        assert rotation['time'].shape == (0,)
+        assert rotation['value'].attrs['units'] == 'deg'
+
+
 def test_motor_log_reached_via_depends_on_is_trimmed(tmp_path):
     """NXpositioner whose value NXlog (reached via depends_on) carries real
     samples — production motor readback. The geometry artifact must trim

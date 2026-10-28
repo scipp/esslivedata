@@ -233,8 +233,8 @@ def build_disk_choppers_provider(
             merged['delay'] = latest[name, 'delay']
             # ``DiskChopper.from_nexus`` prefers a ``phase`` field over the delay
             # it would otherwise derive the phase from, so a file-loaded one
-            # would override the streamed setpoint. ESTIA's writer stores the
-            # in-phase status flag (``InPhs_R``) under that name.
+            # would override the streamed setpoint. Older ESTIA files stored
+            # the in-phase status flag (``InPhs_R``) under that name.
             merged.pop('phase', None)
             patched[name] = merged
         return to_disk_choppers(RawChoppers[AnyRun](sc.DataGroup(patched)))
@@ -511,25 +511,21 @@ def create_wavelength_lut_workflow(
     return _make_workflow(pipeline, lut_keys)
 
 
-def _set_source_position(
-    pipeline: sciline.Pipeline, nexus_filename: str, offset: sc.Variable
-) -> None:
-    """Set the chopper-cascade source reference, shifted by ``offset``.
-
-    essreduce would take the reference from the file's unique ``NXsource``.
-    BIFROST instead labels the moderator ``NXmoderator`` and reserves
-    ``NXsource`` for accelerator metadata sitting at the origin, so essreduce
-    would measure flight distance from the accelerator and reject the upstream
-    choppers as lying behind the source. The reference is therefore the
-    ``NXmoderator`` position when present, else the ``NXsource`` (e.g. LOKI).
-
-    ``offset`` is a beam-aligned displacement added to that reference; it is
-    zero by default, in which case this reproduces the position essreduce would
-    have loaded.
-    """
+def neutron_source_position(nexus_filename: str) -> sc.Variable:
+    """Resolve the beamline source, preferring NXmoderator over accelerator metadata."""
     reference = _component_position(nexus_filename, snx.NXmoderator)
     if reference is None:
         reference = _component_position(nexus_filename, snx.NXsource)
+    if reference is None:
+        raise ValueError(f'No neutron source or moderator in {nexus_filename}')
+    return reference
+
+
+def _set_source_position(
+    pipeline: sciline.Pipeline, nexus_filename: str, offset: sc.Variable
+) -> None:
+    """Apply the configured offset to the resolved neutron-source position."""
+    reference = neutron_source_position(nexus_filename)
     pipeline[Position[snx.NXsource, AnyRun]] = reference + offset.to(
         unit=reference.unit
     )
@@ -543,7 +539,7 @@ def attach_wavelength_lut_factory(
     detectors: Sequence[str],
     monitors: Sequence[str],
     axis_ranges: Mapping[str, AxisRange],
-    declared_ltotal: Mapping[str, sc.Variable],
+    declared_ltotal: Mapping[str, sc.Variable | Callable[[str], sc.Variable]],
 ) -> frozenset[str]:
     """Bind per-chopper setpoint context and attach the LUT factory.
 
@@ -614,12 +610,14 @@ def _derive_ltotal_ranges(
     *,
     is_monitor: bool,
     axis_ranges: Mapping[str, AxisRange],
-    declared_ltotal: Mapping[str, sc.Variable],
+    declared_ltotal: Mapping[str, sc.Variable | Callable[[str], sc.Variable]],
 ) -> dict[str, Range]:
     """Derive a group's ranges, skipping components the artifact cannot place."""
     ranges: dict[str, Range] = {}
     for name in components:
         if (ltotal := declared_ltotal.get(name)) is not None:
+            if callable(ltotal):
+                ltotal = ltotal(nexus_filename)
             ranges[name] = padded_ltotal_range(ltotal)
             continue
         try:
