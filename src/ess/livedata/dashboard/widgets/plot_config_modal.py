@@ -26,7 +26,7 @@ from ess.livedata.config.workflow_spec import (
     WorkflowSpec,
     find_timeseries_outputs,
 )
-from ess.livedata.dashboard.correlation_plotter import CORRELATION_HISTOGRAM_PLOTTERS
+from ess.livedata.dashboard.correlation_plotter import CORRELATION_AXIS_ROLES
 from ess.livedata.dashboard.data_roles import PRIMARY, X_AXIS, Y_AXIS
 
 if TYPE_CHECKING:
@@ -744,18 +744,14 @@ class PlotterSelectionStep(WizardStep[OutputSelection | None, PlotterSelection])
         if self._selected_plot_name is None:
             return False
         # For correlation histograms, require axis selection
-        if self._selected_plot_name in CORRELATION_HISTOGRAM_PLOTTERS:
+        if self._selected_plot_name in CORRELATION_AXIS_ROLES:
             required_roles = self._get_required_axis_roles()
             return all(role in self._selected_axis_sources for role in required_roles)
         return True
 
     def _get_required_axis_roles(self) -> list[str]:
         """Get the required axis roles for the selected plotter."""
-        if self._selected_plot_name == 'correlation_histogram_1d':
-            return [X_AXIS]
-        elif self._selected_plot_name == 'correlation_histogram_2d':
-            return [X_AXIS, Y_AXIS]
-        return []
+        return list(CORRELATION_AXIS_ROLES.get(self._selected_plot_name, ()))
 
     def commit(self) -> PlotterSelection | None:
         """Commit the workflow, view, and selected plotter."""
@@ -764,7 +760,7 @@ class PlotterSelectionStep(WizardStep[OutputSelection | None, PlotterSelection])
         # Include axis sources for correlation histogram plotters
         axis_sources = (
             self._selected_axis_sources.copy()
-            if self._selected_plot_name in CORRELATION_HISTOGRAM_PLOTTERS
+            if self._selected_plot_name in CORRELATION_AXIS_ROLES
             else None
         )
         return PlotterSelection(
@@ -890,7 +886,7 @@ class PlotterSelectionStep(WizardStep[OutputSelection | None, PlotterSelection])
         if initial_value is not None:
             self._selected_plot_name = initial_value
             # Show axis selection for correlation histogram plotters
-            if initial_value in CORRELATION_HISTOGRAM_PLOTTERS:
+            if initial_value in CORRELATION_AXIS_ROLES:
                 self._update_axis_selection()
             self._notify_ready_changed(self.is_valid())
 
@@ -920,7 +916,7 @@ class PlotterSelectionStep(WizardStep[OutputSelection | None, PlotterSelection])
         if event.new is not None:
             self._selected_plot_name = event.new
             # Show axis selection for correlation histogram plotters
-            if self._selected_plot_name in CORRELATION_HISTOGRAM_PLOTTERS:
+            if self._selected_plot_name in CORRELATION_AXIS_ROLES:
                 self._update_axis_selection()
             else:
                 self._hide_axis_selection()
@@ -1197,8 +1193,7 @@ class SpecBasedConfigurationStep(WizardStep[PlotterSelection | None, PlotConfig]
             config_state = ConfigurationState(params=params_dict)
             initial_source_names = self._initial_config.source_names
         elif (
-            self._plotter_selection.plot_name in CORRELATION_HISTOGRAM_PLOTTERS
-            and axis_sources
+            self._plotter_selection.plot_name in CORRELATION_AXIS_ROLES and axis_sources
         ):
             # For new correlation histograms, pre-populate axis source titles
             from ess.livedata.dashboard.configuration_adapter import ConfigurationState
@@ -1272,10 +1267,7 @@ class SpecBasedConfigurationStep(WizardStep[PlotterSelection | None, PlotConfig]
         axis_sources = self._plotter_selection.axis_sources or {}
 
         # For correlation histograms, add axis sources and inject names into params
-        if (
-            self._plotter_selection.plot_name in CORRELATION_HISTOGRAM_PLOTTERS
-            and axis_sources
-        ):
+        if self._plotter_selection.plot_name in CORRELATION_AXIS_ROLES and axis_sources:
             data_sources.update(axis_sources)
             if isinstance(params, pydantic.BaseModel):
                 params = _inject_axis_source_titles(

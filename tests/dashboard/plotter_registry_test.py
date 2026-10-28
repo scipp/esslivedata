@@ -155,6 +155,15 @@ _DATA: dict[str, Callable[[], RoleData]] = {
         X_AXIS: {_key('axis_x'): _history()},
         Y_AXIS: {_key('axis_y'): _history()},
     },
+    'roi_correlation_histogram_1d': lambda: {
+        **_primary(_roi_history(), _roi_history()),
+        X_AXIS: {_key('axis_x'): _history()},
+    },
+    'roi_correlation_histogram_2d': lambda: {
+        **_primary(_roi_history()),
+        X_AXIS: {_key('axis_x'): _history()},
+        Y_AXIS: {_key('axis_y'): _history()},
+    },
     'rectangles': lambda: {},
     'vlines': lambda: {},
     'hlines': lambda: {},
@@ -274,6 +283,29 @@ class TestPerEntryPlotters:
         compatible = plotter_registry.get_compatible_plotters({_key('det'): _array({})})
         assert 'bars' in compatible
         assert 'timeseries_overlay' not in compatible
+
+    def test_per_roi_data_is_offered_only_the_roi_correlation_histograms(self):
+        compatible = plotter_registry.get_compatible_plotters(
+            {_key('det'): _roi_values()}
+        )
+        assert 'roi_correlation_histogram_1d' in compatible
+        assert 'roi_correlation_histogram_2d' in compatible
+        assert 'correlation_histogram_1d' not in compatible
+        assert 'correlation_histogram_2d' not in compatible
+
+    def test_scalars_are_offered_only_the_scalar_correlation_histograms(self):
+        compatible = plotter_registry.get_compatible_plotters({_key('det'): _array({})})
+        assert 'correlation_histogram_1d' in compatible
+        assert 'correlation_histogram_2d' in compatible
+        assert 'roi_correlation_histogram_1d' not in compatible
+        assert 'roi_correlation_histogram_2d' not in compatible
+
+    def test_roi_correlation_histograms_need_a_roi_dim(self):
+        data = _array({'entry': 3}).assign_coords(
+            entry=sc.array(dims=['entry'], values=[0, 1, 2], unit=None)
+        )
+        compatible = plotter_registry.get_compatible_plotters({_key('det'): data})
+        assert 'roi_correlation_histogram_1d' not in compatible
 
     @pytest.mark.parametrize(
         'data',

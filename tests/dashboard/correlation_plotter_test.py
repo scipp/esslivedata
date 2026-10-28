@@ -20,6 +20,10 @@ from ess.livedata.dashboard.correlation_plotter import (
     CorrelationHistogram2dParams,
     CorrelationHistogram2dPlotter,
     CorrelationHistogramPlotter,
+    ROICorrelationHistogram1dParams,
+    ROICorrelationHistogram1dPlotter,
+    ROICorrelationHistogram2dParams,
+    ROICorrelationHistogram2dPlotter,
 )
 from ess.livedata.dashboard.extractors import FullHistoryExtractor
 from ess.livedata.dashboard.plot_params import (
@@ -728,3 +732,145 @@ class TestCorrelationHistogram2dPlotter:
         params = CorrelationHistogram2dParams()
         plotter = CorrelationHistogram2dPlotter.from_params(params)
         assert isinstance(plotter, CorrelationHistogram2dPlotter)
+
+
+class TestROICorrelationHistograms:
+    """Per-ROI outputs histogram the selected ROIs of each source.
+
+    Counts are sampled 50 ms after each of four axis readings, for the ROIs 0
+    and 4 with 2 and 4 detector pixels.
+    """
+
+    times = (100, 200, 300, 400)
+
+    def _per_roi_data(self) -> sc.DataArray:
+        return sc.DataArray(
+            sc.array(
+                dims=['time', 'roi'],
+                values=[[1.0, 10.0], [2.0, 20.0], [3.0, 30.0], [4.0, 40.0]],
+                unit='counts',
+            ),
+            coords={
+                'time': sc.array(
+                    dims=['time'], values=[t + 50 for t in self.times], unit='ms'
+                ),
+                'roi': sc.array(dims=['roi'], values=[0, 4], dtype='int32', unit=None),
+                'detector_pixels': sc.array(dims=['roi'], values=[2.0, 4.0]),
+            },
+        )
+
+    def _compute(self, plotter: CorrelationHistogramPlotter) -> None:
+        plotter.compute(
+            {
+                PRIMARY: {_make_result_key('detector'): self._per_roi_data()},
+                X_AXIS: {
+                    _make_result_key('motor'): make_axis_data(
+                        times=list(self.times), values=[1.0, 2.0, 1.0, 2.0]
+                    )
+                },
+                Y_AXIS: {
+                    _make_result_key('sample'): make_axis_data(
+                        times=list(self.times),
+                        values=[10.0, 10.0, 20.0, 20.0],
+                        value_unit='K',
+                    )
+                },
+            }
+        )
+
+    def _plotter_1d(self, **params) -> ROICorrelationHistogram1dPlotter:
+        return ROICorrelationHistogram1dPlotter(
+            ROICorrelationHistogram1dParams(
+                bins=Bin1dParams(x_axis_source='position', x_bins=2), **params
+            )
+        )
+
+    def _plotter_2d(self, **params) -> ROICorrelationHistogram2dPlotter:
+        return ROICorrelationHistogram2dPlotter(
+            ROICorrelationHistogram2dParams(
+                bins=Bin2dParams(
+                    x_axis_source='position',
+                    x_bins=2,
+                    y_axis_source='temperature',
+                    y_bins=2,
+                ),
+                **params,
+            )
+        )
+
+    def test_1d_draws_one_histogram_per_roi(self):
+        plotter = self._plotter_1d()
+        self._compute(plotter)
+
+        histograms = {el.label: el for el in plotter.get_cached_state().values()}
+        assert set(histograms) == {'roi=0', 'roi=4'}
+        np.testing.assert_array_equal(
+            histograms['roi=0'].dimension_values(1), [4.0, 6.0]
+        )
+        np.testing.assert_array_equal(
+            histograms['roi=4'].dimension_values(1), [40.0, 60.0]
+        )
+
+    def test_1d_draws_only_the_selected_rois(self):
+        plotter = self._plotter_1d(roi={'indices': {4}})
+        self._compute(plotter)
+
+        (histogram,) = plotter.get_cached_state()
+        np.testing.assert_array_equal(histogram.dimension_values(1), [40.0, 60.0])
+
+    def test_1d_renders_nothing_while_no_selected_roi_is_drawn(self):
+        plotter = self._plotter_1d(roi={'indices': {1, 2}})
+        self._compute(plotter)
+
+        assert not plotter.has_cached_state()
+
+    def test_1d_per_detector_pixel_divides_each_roi_by_its_pixels(self):
+        plotter = self._plotter_1d(normalization={'per_detector_pixel': True})
+        self._compute(plotter)
+
+        histograms = {el.label: el for el in plotter.get_cached_state().values()}
+        np.testing.assert_array_equal(
+            histograms['roi=0'].dimension_values(1), [2.0, 3.0]
+        )
+        np.testing.assert_array_equal(
+            histograms['roi=4'].dimension_values(1), [10.0, 15.0]
+        )
+
+    def test_2d_histograms_the_selected_roi(self):
+        plotter = self._plotter_2d(roi={'index': 4})
+        self._compute(plotter)
+
+        (image,) = plotter.get_cached_state()
+        np.testing.assert_array_equal(
+            image.dimension_values(2, flat=False), [[10.0, 20.0], [30.0, 40.0]]
+        )
+
+    def test_2d_per_detector_pixel_divides_by_the_roi_pixels(self):
+        plotter = self._plotter_2d(
+            roi={'index': 4}, normalization={'per_detector_pixel': True}
+        )
+        self._compute(plotter)
+
+        (image,) = plotter.get_cached_state()
+        np.testing.assert_array_equal(
+            image.dimension_values(2, flat=False), [[2.5, 5.0], [7.5, 10.0]]
+        )
+
+    def test_2d_renders_nothing_while_the_selected_roi_is_not_drawn(self):
+        plotter = self._plotter_2d(roi={'index': 1})
+        self._compute(plotter)
+
+        assert not plotter.has_cached_state()
+
+    @pytest.mark.parametrize(
+        'params',
+        [
+            ROICorrelationHistogram1dParams(roi={'indices': {1, 5}}),
+            ROICorrelationHistogram2dParams(roi={'index': 5}),
+        ],
+        ids=['1d', '2d'],
+    )
+    def test_roi_selection_survives_a_stored_config(self, params):
+        stored = params.model_dump(mode='json')
+
+        assert type(params)(**stored) == params

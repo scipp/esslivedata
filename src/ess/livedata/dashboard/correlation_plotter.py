@@ -9,21 +9,28 @@ Correlation histograms receive pre-structured data from DataSubscriber:
 - "primary": dict[DataKey, DataArray] - data to histogram (may have multiple sources)
 - "x_axis": dict[DataKey, DataArray] - x-axis correlation values
 - "y_axis": dict[DataKey, DataArray] - y-axis correlation values (2D only)
+
+The primary data is either a scalar per source or one value per ROI. The ROI
+variants of the plotters histogram the selected ROIs of each source.
 """
 
 from __future__ import annotations
 
 from collections.abc import Iterator
 from dataclasses import dataclass
+from enum import IntEnum
 from typing import Any, ClassVar
 
+import numpy as np
 import pydantic
 import scipp as sc
 
+from ess.livedata.config.roi_names import get_roi_mapper
 from ess.livedata.config.workflow_spec import DataKey
 
 from .data_roles import PRIMARY, X_AXIS, Y_AXIS
 from .plot_params import (
+    DetectorPixelNormalizationParams,
     LegendPosition,
     Line1dParams,
     Line1dRenderMode,
@@ -33,6 +40,7 @@ from .plot_params import (
 from .plots import (
     ImagePlotter,
     LinePlotter,
+    Overlay1DPlotter,
     PresenterBase,
     TimeBounds,
     TitleResolver,
@@ -142,10 +150,85 @@ class CorrelationHistogram2dParams(_CorrelationHistogramBase, PlotDisplayParams2
     )
 
 
-# Plotter names that are correlation histogram types
-CORRELATION_HISTOGRAM_PLOTTERS = frozenset(
-    {'correlation_histogram_1d', 'correlation_histogram_2d'}
+ROIIndex = IntEnum(
+    'ROIIndex',
+    [
+        (f'roi={index} ({geometry.geometry_type})', index)
+        for geometry in get_roi_mapper().geometries
+        for index in geometry.index_range
+    ],
 )
+"""The ROI slots of a detector view, named like the ROI entries in plot legends."""
+
+
+# Base order puts 'per_second' first in the UI: pydantic orders inherited fields
+# from the last base to the first.
+class ROICorrelationNormalizationParams(
+    DetectorPixelNormalizationParams, CorrelationNormalizationParams
+):
+    """Normalization options for correlation histograms of per-ROI outputs."""
+
+
+class ROISelection1dParams(pydantic.BaseModel):
+    """ROI selection for 1D correlation histograms of per-ROI outputs."""
+
+    indices: set[ROIIndex] = pydantic.Field(
+        default_factory=lambda: set(ROIIndex),
+        min_length=1,
+        title='ROIs',
+        description='ROIs to histogram, one curve per ROI. An ROI that is not '
+        'drawn has no curve.',
+    )
+
+
+class ROISelection2dParams(pydantic.BaseModel):
+    """ROI selection for 2D correlation histograms of per-ROI outputs."""
+
+    index: ROIIndex = pydantic.Field(
+        default_factory=lambda: next(iter(ROIIndex)),
+        title='ROI',
+        description='ROI to histogram. The plot stays empty while this ROI is not '
+        'drawn.',
+    )
+
+
+class ROICorrelationHistogram1dParams(CorrelationHistogram1dParams):
+    """Params for 1D correlation histograms of per-ROI outputs."""
+
+    roi: ROISelection1dParams = pydantic.Field(
+        default_factory=ROISelection1dParams,
+        title='ROI',
+        description='ROIs to include in the histogram.',
+    )
+    normalization: ROICorrelationNormalizationParams = pydantic.Field(
+        default_factory=ROICorrelationNormalizationParams,
+        title='Normalization',
+        description='Options for normalizing the correlation histogram.',
+    )
+
+
+class ROICorrelationHistogram2dParams(CorrelationHistogram2dParams):
+    """Params for 2D correlation histograms of per-ROI outputs."""
+
+    roi: ROISelection2dParams = pydantic.Field(
+        default_factory=ROISelection2dParams,
+        title='ROI',
+        description='ROI to histogram.',
+    )
+    normalization: ROICorrelationNormalizationParams = pydantic.Field(
+        default_factory=ROICorrelationNormalizationParams,
+        title='Normalization',
+        description='Options for normalizing the correlation histogram.',
+    )
+
+
+CORRELATION_AXIS_ROLES: dict[str, tuple[str, ...]] = {
+    'correlation_histogram_1d': (X_AXIS,),
+    'correlation_histogram_2d': (X_AXIS, Y_AXIS),
+    'roi_correlation_histogram_1d': (X_AXIS,),
+    'roi_correlation_histogram_2d': (X_AXIS, Y_AXIS),
+}
+"""Names of the correlation histogram plotters and the axis roles each requires."""
 
 
 @dataclass(frozen=True)
@@ -214,6 +297,10 @@ class CorrelationHistogramPlotter:
     def initialize_from_data(self, data: dict[str, Any]) -> None:
         """No-op: histogram edges are computed dynamically on each call."""
 
+    def _select(self, data: sc.DataArray) -> sc.DataArray | None:
+        """Select the part of one primary source to histogram, None if absent."""
+        return data
+
     def compute(
         self,
         data: dict[str, Any],
@@ -222,9 +309,9 @@ class CorrelationHistogramPlotter:
     ) -> None:
         """Compute histograms for all data sources and render.
 
-        Data points predating the first reading of any axis are excluded. If that
-        leaves nothing to histogram, the render is skipped and the layer keeps
-        showing its placeholder.
+        Data points predating the first reading of any axis are excluded, as are
+        sources without the selected ROIs. If that leaves nothing to histogram,
+        the render is skipped and the layer keeps showing its placeholder.
 
         Parameters
         ----------
@@ -264,7 +351,10 @@ class CorrelationHistogramPlotter:
 
         histograms: dict[DataKey, sc.DataArray] = {}
         for key, source_data in histogram_data.items():
-            dependent = source_data['time', start:].copy(deep=False)
+            selected = self._select(source_data)
+            if selected is None:
+                continue
+            dependent = selected['time', start:].copy(deep=False)
             if dependent.sizes['time'] == 0:
                 continue
 
@@ -371,10 +461,15 @@ class CorrelationHistogram1dPlotter(CorrelationHistogramPlotter):
                 bins=params.bins.x_bins,
             )
         ]
-        renderer = LinePlotter.from_display_params(params)
         super().__init__(
-            axes=axes, normalize=params.normalization.per_second, renderer=renderer
+            axes=axes,
+            normalize=params.normalization.per_second,
+            renderer=self._make_renderer(params),
         )
+
+    @staticmethod
+    def _make_renderer(params: CorrelationHistogram1dParams) -> LinePlotter:
+        return LinePlotter.from_display_params(params)
 
     @classmethod
     def from_params(cls, params: CorrelationHistogram1dParams):
@@ -401,12 +496,74 @@ class CorrelationHistogram2dPlotter(CorrelationHistogramPlotter):
                 bins=params.bins.x_bins,
             ),
         ]
-        renderer = ImagePlotter.from_display_params(params)
         super().__init__(
-            axes=axes, normalize=params.normalization.per_second, renderer=renderer
+            axes=axes,
+            normalize=params.normalization.per_second,
+            renderer=self._make_renderer(params),
         )
+
+    @staticmethod
+    def _make_renderer(params: CorrelationHistogram2dParams) -> ImagePlotter:
+        return ImagePlotter.from_display_params(params)
 
     @classmethod
     def from_params(cls, params: CorrelationHistogram2dParams):
+        """Factory method for plotter registry."""
+        return cls(params=params)
+
+
+class ROICorrelationHistogram1dPlotter(CorrelationHistogram1dPlotter):
+    """1D correlation histograms of per-ROI outputs, one curve per selected ROI.
+
+    Curves are colored by ROI index, like the other per-ROI plots, also when
+    only one ROI is selected.
+    """
+
+    def __init__(self, params: ROICorrelationHistogram1dParams) -> None:
+        super().__init__(params)
+        self._indices = sorted(params.roi.indices)
+
+    @staticmethod
+    def _make_renderer(params: ROICorrelationHistogram1dParams) -> Overlay1DPlotter:
+        return Overlay1DPlotter.from_display_params(
+            params,
+            normalize_per_detector_pixel=params.normalization.per_detector_pixel,
+        )
+
+    def _select(self, data: sc.DataArray) -> sc.DataArray | None:
+        keep = np.isin(data.coords['roi'].values, self._indices)
+        if not keep.any():
+            return None
+        return data[sc.array(dims=['roi'], values=keep)]
+
+    @classmethod
+    def from_params(cls, params: ROICorrelationHistogram1dParams):
+        """Factory method for plotter registry."""
+        return cls(params=params)
+
+
+class ROICorrelationHistogram2dPlotter(CorrelationHistogram2dPlotter):
+    """2D correlation histogram of one ROI of per-ROI outputs."""
+
+    def __init__(self, params: ROICorrelationHistogram2dParams) -> None:
+        super().__init__(params)
+        self._index = params.roi.index
+
+    @staticmethod
+    def _make_renderer(params: ROICorrelationHistogram2dParams) -> ImagePlotter:
+        return ImagePlotter.from_display_params(
+            params,
+            normalize_per_detector_pixel=params.normalization.per_detector_pixel,
+        )
+
+    def _select(self, data: sc.DataArray) -> sc.DataArray | None:
+        (positions,) = np.nonzero(data.coords['roi'].values == self._index)
+        if positions.size == 0:
+            return None
+        # Copy: binning rejects the strided view of a slice along an inner dim.
+        return data['roi', int(positions[0])].copy()
+
+    @classmethod
+    def from_params(cls, params: ROICorrelationHistogram2dParams):
         """Factory method for plotter registry."""
         return cls(params=params)
