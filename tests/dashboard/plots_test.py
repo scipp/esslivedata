@@ -2542,6 +2542,34 @@ class TestOverlay1DPlotter:
         # No label: a lone labelled element would render its label as the title.
         assert result.label == ''
 
+    @pytest.mark.parametrize(
+        ('output_display_name', 'expected'),
+        [('ROI spectra', 'ROI spectra, roi=2'), ('', 'roi=2')],
+    )
+    def test_single_slice_names_its_entry_in_the_value_label(
+        self, overlay_plotter, data_key, output_display_name, expected
+    ):
+        """Without a legend entry, the value label says which entry is shown."""
+        data = sc.DataArray(
+            sc.array(dims=['roi', 'toa'], values=[[1.0, 2.0, 3.0]], unit='counts'),
+            coords={
+                'roi': sc.array(dims=['roi'], values=[2], unit=None),
+                'toa': sc.array(dims=['toa'], values=[10.0, 20.0, 30.0], unit='us'),
+            },
+        )
+        result = overlay_plotter.plot(
+            data, data_key, output_display_name=output_display_name
+        )
+        assert result.vdims[0].label == expected
+
+    def test_several_slices_leave_the_entries_to_the_legend(
+        self, overlay_plotter, data_2d_with_roi_coord, data_key
+    ):
+        result = overlay_plotter.plot(
+            data_2d_with_roi_coord, data_key, output_display_name='ROI spectra'
+        )
+        assert {curve.vdims[0].label for curve in result} == {'ROI spectra'}
+
     def test_empty_first_dim_returns_empty_curve(
         self, overlay_plotter, data_2d_empty_first_dim, data_key
     ):

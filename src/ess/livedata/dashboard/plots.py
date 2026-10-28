@@ -2214,14 +2214,19 @@ class Overlay1DPlotter(LinePlotter):
 
         # A single slice needs no label: a lone labelled element renders its
         # label as the plot title, whereas labels only earn their keep as legend
-        # entries distinguishing multiple overlaid slices.
+        # entries distinguishing multiple overlaid slices. Without a legend, the
+        # value label names the entry, or the plot would not say which it shows.
         label_slices = slice_size > 1
+        value_label = output_display_name
+        if not label_slices:
+            entry = f"{slice_dim}={coord_values[0]}"
+            value_label = f"{value_label}, {entry}" if value_label else entry
 
         elements: list[hv.Element] = []
         for i in range(slice_size):
             slice_data = data[slice_dim, i]
-            if output_display_name:
-                slice_data.name = output_display_name
+            if value_label:
+                slice_data.name = value_label
             coord_val = coord_values[i]
             # Per-slice ``color`` stays on the elements; the rest is static in
             # style_opts().
@@ -2229,7 +2234,7 @@ class Overlay1DPlotter(LinePlotter):
             curve_label = f"{slice_dim}={coord_val}" if label_slices else ''
             converter = HvConverter1d(
                 slice_data,
-                value_label=output_display_name,
+                value_label=value_label,
                 dim_label=dim_label,
                 unit=self._value_unit(slice_data),
             )
@@ -2248,7 +2253,7 @@ class Overlay1DPlotter(LinePlotter):
                     )
                     converter = HvConverter1d(
                         mid,
-                        value_label=output_display_name,
+                        value_label=value_label,
                         dim_label=dim_label,
                         unit=self._value_unit(mid),
                     )
