@@ -26,28 +26,78 @@ workflows.
 
 ## Dashboard Authentication
 
-The reduction dashboard supports optional basic password authentication via [Panel's built-in basic auth](https://panel.holoviz.org/how_to/authentication/basic.html). When enabled, users must enter a username and password before accessing the dashboard. Any username is accepted; only the password is validated.
+The reduction dashboard supports login through an OAuth 2.0 / OpenID Connect provider, using [Panel's OAuth support](https://panel.holoviz.org/en/docs/latest/how_to/authentication/configuration.html). ESS uses PING, through Panel's `generic` provider.
 
-### Enabling Authentication
-
-Set two environment variables before starting the dashboard:
-
-```sh
-export LIVEDATA_BASIC_AUTH_PASSWORD=my_password
-export LIVEDATA_BASIC_AUTH_COOKIE_SECRET=my_super_safe_cookie_secret
-python -m ess.livedata.dashboard.reduction --instrument dummy
+```{warning}
+Without OAuth configured, the dashboard runs **without any login**, and anyone who can reach it has full control. This is intended for local development only.
 ```
 
-- `LIVEDATA_BASIC_AUTH_PASSWORD`: The password required to log in. Any username will be accepted.
-- `LIVEDATA_BASIC_AUTH_COOKIE_SECRET`: A secret string used to sign session cookies. Use a long, random value in production.
+### Registering the Client
 
-The same options are available as CLI arguments (`--basic-auth-password`, `--basic-auth-cookie-secret`), but environment variables are preferred since command-line arguments may be visible in process listings and shell history.
+Register a client for the dashboard with the provider, using the authorization code flow:
 
-### How It Works
+- **Redirect URI**: for example `https://<dashboard-host>/oauth-redirect`. It must match `PANEL_OAUTH_REDIRECT_URI` exactly. The dashboard serves its login route at this path.
+- **Client authentication**: `client_secret_post`. Panel sends the client secret in the body of the token request.
+- **Scopes**: `openid`, `profile` and `email`.
 
-When authentication is configured, Panel serves a login page before granting access to the dashboard. After a successful login, a signed session cookie is set in the browser so the user remains authenticated. The authenticated username is available via `pn.state.user` within the dashboard session.
+### Configuration
 
-When neither variable is set, the dashboard runs without authentication (the default).
+Set these environment variables on the dashboard container at runtime:
+
+| Variable | Value | Sensitive |
+|---|---|---|
+| `PANEL_OAUTH_PROVIDER` | `generic` | no |
+| `PANEL_OAUTH_KEY` | Client ID | no |
+| `PANEL_OAUTH_SECRET` | Client secret | **yes** |
+| `PANEL_OAUTH_REDIRECT_URI` | `https://<dashboard-host>/oauth-redirect` | no |
+| `LIVEDATA_OAUTH_DISCOVERY_URL` | The provider's OpenID discovery document (`.../.well-known/openid-configuration`), read at startup to find its endpoints. At ESS this is the same URL User Office calls `AUTH_DISCOVERY_URL`. | no |
+| `PANEL_OAUTH_SCOPE` | `openid,profile,email` | no |
+| `PANEL_OAUTH_JWT_USER` | Token claim shown as the username, such as `email` or `preferred_username`. Default: `email`. Login fails with a 401 if the claim is missing. | no |
+| `PANEL_COOKIE_SECRET` | Long random value that signs the login cookies | **yes** |
+| `PANEL_OAUTH_ENCRYPTION` | Key that encrypts the tokens stored in cookies. Generate one with `panel oauth-secret`. | **yes** |
+| `PANEL_OAUTH_EXPIRY` | Optional login lifetime in days. Default: 1. | no |
+| `BOKEH_ALLOW_WS_ORIGIN` | The dashboard's public hostname, replacing the image's default of `*` | no |
+
+Set `PANEL_OAUTH_SCOPE` explicitly: Panel's default also requests `offline_access`, which the provider may reject.
+
+### Starting While the Provider Is Down
+
+With `LIVEDATA_OAUTH_DISCOVERY_URL`, the dashboard must reach the provider to start, and refuses to start if it cannot. To remove that dependency, set the endpoints explicitly using the values from the discovery document:
+
+| Variable | Discovery document field |
+|---|---|
+| `PANEL_OAUTH_AUTHORIZE_URL` | `authorization_endpoint` |
+| `PANEL_OAUTH_TOKEN_URL` | `token_endpoint` |
+| `PANEL_OAUTH_USER_URL` | `userinfo_endpoint` |
+
+An endpoint set this way takes priority over the discovery document. If all three are set, the document is not fetched at all.
+
+The dashboard refuses to start if the configuration is incomplete, or if OAuth variables are set without `PANEL_OAUTH_PROVIDER`.
+
+```{warning}
+Never put these values in the `Dockerfile` or pass them as image build arguments. The images are published, and values set there remain readable in the image layers. Use a Kubernetes Secret or your deployment tool's equivalent.
+```
+
+For a local run outside Docker, copy `.env.example` to `.env`, fill it in, and start the dashboard with `scripts/run_dashboard.sh`.
+
+### HTTPS
+
+Serve the dashboard over HTTPS through a TLS-terminating proxy that also forwards WebSocket connections. Panel's login cookies are signed and `HttpOnly` but are not marked `Secure`, so a browser would also send them over plain HTTP. Do not expose the dashboard port directly, and consider enabling HSTS on the proxy.
+
+For a local run, the dashboard can serve HTTPS itself, using Bokeh's standard settings. Set `BOKEH_SSL_CERTFILE` and `BOKEH_SSL_KEYFILE` to a certificate and key, and `BOKEH_SSL_PASSWORD` if the key is encrypted. A locally trusted certificate can be created with [mkcert](https://github.com/FiloSottile/mkcert). Keep the key outside the repository. The image's health check uses plain HTTP, so it fails in a container serving HTTPS this way.
+
+### Upgrading from Basic Authentication
+
+Password authentication has been removed, along with `--basic-auth-password`, `--basic-auth-cookie-secret` and their environment variables. It had no user accounts, so there is nothing to migrate.
+
+Before upgrading a deployment, configure OAuth as described above and remove `LIVEDATA_BASIC_AUTH_PASSWORD` and `LIVEDATA_BASIC_AUTH_COOKIE_SECRET`. The dashboard refuses to start while either is still set, so that a deployment cannot silently lose its login.
+
+### Limitations
+
+- **There are no access levels.** Any account the provider accepts for this client has full control of the dashboard, including starting and stopping workflows. To limit who can log in, restrict the client at the provider.
+- **Logging out is local.** It clears the dashboard's cookies but not the provider's session, so "Log in again" may sign the user straight back in.
+- **Tokens are not refreshed.** Users log in again once the login expires. See `PANEL_OAUTH_EXPIRY`.
+- **Only the dashboard is protected.** This does not cover Kafka or the backend services.
 
 ## Kafka TLS in Containers
 
