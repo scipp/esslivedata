@@ -42,17 +42,9 @@ def _is_slow_workflow(workflow_id, spec):
 _IQ_WITHOUT_MONITOR_TABLES = (
     '#1441: the default monitors m2 and m3 ride axes with no declared '
     'AxisRange, so they have no lookup-table block and the I(Q) factory '
-    'refuses them. Once placed, the job still needs the sample and m2/m3 '
-    'chains patched at job time (#1431).'
+    'refuses them.'
 )
 _ROUNDTRIP_XFAILS = {('loki', 'i_of_q'): _IQ_WITHOUT_MONITOR_TABLES}
-_WAVELENGTH_MODE_XFAILS = {
-    ('loki', 'detector_xy_projection'): (
-        '#1431: the sample position rides live axes, and a chain patch can only '
-        'reach the job\'s primary component, so the detector Ltotal hits the '
-        'empty sample NXlog.'
-    )
-}
 
 
 def _with_xfails(params: list, xfails: dict[tuple[str, str], str]) -> list:
@@ -210,7 +202,7 @@ def test_workflow_roundtrip(instrument_name: str, workflow_id: WorkflowId):
 
 @pytest.mark.parametrize(
     ("instrument_name", "workflow_id"),
-    _with_xfails(_collect_wavelength_capable_factories(), _WAVELENGTH_MODE_XFAILS),
+    _collect_wavelength_capable_factories(),
 )
 def test_wavelength_mode_workflow_can_be_instantiated(
     instrument_name: str, workflow_id: WorkflowId

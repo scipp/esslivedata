@@ -9,9 +9,10 @@ every declared consumer (a source, or the sample at ``/entry/sample``) in the
 artifact and confirms the path appears.
 Catches typos and orphaned bindings before runtime.
 
-Also flags any empty NXlog placeholder on a registered source or the sample that no
-binding covers — except those in :data:`_KNOWN_ORPHAN_NXLOGS`, a
-deliberate ledger of placeholders consciously left for follow-up work.
+Also flags, for every instrument with a geometry artifact, any empty NXlog
+placeholder on a registered source or the sample that no binding covers --
+except those in :data:`_KNOWN_ORPHAN_NXLOGS`, a deliberate ledger of
+placeholders consciously left for follow-up work.
 """
 
 from __future__ import annotations
@@ -47,8 +48,9 @@ def _load_chain(artifact: str, component: str) -> TransformationChain | None:
     """Walk a component's depends_on chain via scippnexus.
 
     ``component`` is a source name or :data:`SAMPLE_COMPONENT`. Returns ``None``
-    for static components with no ``depends_on`` field and for an artifact with
-    no sample.
+    for static components with no ``depends_on`` field and for components the
+    artifact does not contain (a missing binding consumer then fails
+    :func:`test_transform_paths_match_artifact` on its empty chain).
     """
     parent_path = _component_path(component)
     with snx.File(artifact, 'r') as f:
@@ -69,36 +71,47 @@ def _chain_paths(artifact: str, source_name: str) -> list[str]:
     return list(chain.transformations) if chain is not None else []
 
 
-def _empty_nxlog(artifact: str, source_name: str) -> str | None:
-    """First path along the chain whose value is a length-0 NXlog, or None."""
-    chain = _load_chain(artifact, source_name)
+def _empty_nxlogs(artifact: str, component: str) -> set[str]:
+    """Paths along the chain whose value is a length-0 NXlog."""
+    chain = _load_chain(artifact, component)
     if chain is None:
-        return None
-    for path, t in chain.transformations.items():
-        sizes = getattr(t.value, 'sizes', None)
-        if sizes is not None and sizes.get('time', None) == 0:
-            return path
-    return None
+        return set()
+    return {
+        path
+        for path, t in chain.transformations.items()
+        if getattr(t.value, 'sizes', {}).get('time', None) == 0
+    }
 
 
-def _instruments_with_chain_patch_bindings() -> list[str]:
-    cases = []
-    for name in available_instruments():
-        get_config(name)
-        inst = instrument_registry[name]
-        inst.load_factories()
-        if _chain_patch_inputs(inst):
-            cases.append(name)
-    return cases
-
-
-@pytest.fixture(scope='module', params=_instruments_with_chain_patch_bindings())
-def instrument(request) -> Instrument:
-    name = request.param
+def _loaded(name: str) -> Instrument:
     get_config(name)
     inst = instrument_registry[name]
     inst.load_factories()
     return inst
+
+
+def _has_geometry_artifact(name: str) -> bool:
+    try:
+        get_nexus_geometry_filename(name)
+    except ValueError:
+        return False
+    return True
+
+
+@pytest.fixture(
+    scope='module',
+    params=[n for n in available_instruments() if _chain_patch_inputs(_loaded(n))],
+)
+def instrument(request) -> Instrument:
+    return _loaded(request.param)
+
+
+@pytest.fixture(
+    scope='module',
+    params=[n for n in available_instruments() if _has_geometry_artifact(n)],
+)
+def instrument_with_artifact(request) -> Instrument:
+    return _loaded(request.param)
 
 
 def test_transform_paths_match_artifact(instrument: Instrument) -> None:
@@ -129,50 +142,50 @@ def test_consumers_subset_of_registered_sources(instrument: Instrument) -> None:
         )
 
 
-# Known orphan placeholders not yet covered by a binding. Each entry is
-# ``(instrument_name, source_name) -> transform_path``. Keep the test
-# strict (no orphans) but record the ones consciously left for a
-# follow-up. Removing an entry is a checklist item for the follow-up PR.
-_KNOWN_ORPHAN_NXLOGS: dict[tuple[str, str], str] = {
-    # LOKI aux monitors ride their own motors, which a binding can patch only in
-    # jobs whose primary component they are (#1431). Only the first empty NXlog
-    # per chain is checked: m4's chain also runs through beamstop_x, beamstop_z
-    # and detector_carriage. The sample (not checked here) rides
-    # linear_sample_changer and sample_stack_{x,y,z}, also #1431.
-    (
-        'loki',
-        'beam_monitor_m2',
-    ): '/entry/instrument/beam_monitor_m2_positioner/value',
-    (
-        'loki',
-        'beam_monitor_m3',
-    ): '/entry/instrument/beam_monitor_m3_positioner/value',
-    ('loki', 'beam_monitor_m4'): '/entry/instrument/beamstop_y1/value',
+# Known orphan placeholders not yet covered by a binding, as
+# ``(instrument_name, component) -> transform paths``. Keep the test strict
+# (no orphans) but record the ones consciously left for a follow-up. Removing
+# an entry is a checklist item for the follow-up PR.
+_KNOWN_ORPHAN_NXLOGS: dict[tuple[str, str], frozenset[str]] = {
+    # ESTIA motion bindings: #1430.
+    ('estia', 'multiblade_detector'): frozenset(
+        {'/entry/instrument/detector_arm_rotation/value'}
+    ),
+    # BIFROST tank and sample angles: #1427.
+    ('bifrost', 'elastic_monitor'): frozenset(
+        {'/entry/instrument/detector_tank_angle/value'}
+    ),
+    ('bifrost', 'sample'): frozenset(
+        {
+            '/entry/instrument/goniometer_lower/value',
+            '/entry/instrument/goniometer_upper/value',
+            '/entry/instrument/sample_rotation/value',
+        }
+    ),
 }
 
 
-def test_no_orphan_empty_nxlogs(instrument: Instrument) -> None:
+def test_no_orphan_empty_nxlogs(instrument_with_artifact: Instrument) -> None:
     """Every empty NXlog reachable from a registered source or the sample must
     be covered by a binding (or listed in :data:`_KNOWN_ORPHAN_NXLOGS`).
     Otherwise, workflows loading that component trip essreduce's
     ``reject_time_dependent_transform`` at compute time."""
+    instrument = instrument_with_artifact
     artifact = str(get_nexus_geometry_filename(instrument.name))
     covered = {instrument.chain_patch_path(b) for b in _chain_patch_inputs(instrument)}
-    sources = [
+    components = [
         *instrument.detector_names,
         *instrument.monitors,
         SAMPLE_COMPONENT,
     ]
-    for source_name in sources:
-        empty = _empty_nxlog(artifact, source_name)
-        if empty is None or empty in covered:
-            continue
-        if _KNOWN_ORPHAN_NXLOGS.get((instrument.name, source_name)) == empty:
-            continue
-        pytest.fail(
-            f"Source {source_name!r} has an empty NXlog placeholder at "
-            f"{empty!r} not covered by any binding. Add a chain-patch "
-            f"ContextBinding to {instrument.name} or fix the geometry "
-            f"artifact (or list it in _KNOWN_ORPHAN_NXLOGS with a "
-            f"follow-up reference)."
-        )
+    orphans = {}
+    for component in components:
+        known = _KNOWN_ORPHAN_NXLOGS.get((instrument.name, component), frozenset())
+        if uncovered := _empty_nxlogs(artifact, component) - covered - known:
+            orphans[component] = sorted(uncovered)
+    assert not orphans, (
+        f"Empty NXlog placeholders not covered by any binding in "
+        f"{instrument.name}: {orphans}. Add a chain-patch ContextBinding, fix "
+        f"the geometry artifact, or list them in _KNOWN_ORPHAN_NXLOGS with a "
+        f"follow-up reference."
+    )

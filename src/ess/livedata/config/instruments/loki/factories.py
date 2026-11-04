@@ -3,6 +3,7 @@
 """LOKI instrument factory implementations."""
 
 from ess.livedata.config import Instrument
+from ess.livedata.config.stream import SAMPLE_COMPONENT
 from ess.livedata.config.value_log import ValueLog
 
 from . import specs
@@ -12,10 +13,41 @@ from .specs import SansWorkflowParams, TransmissionMode
 class DetectorCarriageLog(ValueLog):
     """Per-binding Sciline key for the LOKI rear-bank carriage f144 NXlog.
 
-    Drives the ``detector_carriage`` transformation in ``loki_detector_0``'s
-    ``depends_on`` chain. Distinct subclass so multiple dynamic transforms
-    on a workflow remain distinguishable in Sciline.
+    Drives the ``detector_carriage`` transformation in the ``depends_on`` chains
+    of ``loki_detector_0`` and ``beam_monitor_m4``. Distinct subclass so multiple
+    dynamic transforms on a workflow remain distinguishable in Sciline.
     """
+
+
+#: Motor device -> components whose ``depends_on`` chain runs through its
+#: readback. ``beam_monitor_m4`` hangs off the beam-stop stage on the carriage;
+#: the other beam stops are not components any workflow reads.
+_CHAIN_PATCHES: dict[str, frozenset[str]] = {
+    'detector_carriage': frozenset({'loki_detector_0', 'beam_monitor_m4'}),
+    'beam_monitor_m2_positioner': frozenset({'beam_monitor_m2'}),
+    'beam_monitor_m3_positioner': frozenset({'beam_monitor_m3'}),
+    'beamstop_y1': frozenset({'beam_monitor_m4'}),
+    'beamstop_x': frozenset({'beam_monitor_m4'}),
+    'beamstop_z': frozenset({'beam_monitor_m4'}),
+    'linear_sample_changer': frozenset({SAMPLE_COMPONENT}),
+    'sample_stack_x': frozenset({SAMPLE_COMPONENT}),
+    'sample_stack_y': frozenset({SAMPLE_COMPONENT}),
+    'sample_stack_z': frozenset({SAMPLE_COMPONENT}),
+}
+
+#: One distinct ``ValueLog`` subclass per motor, as Sciline keys by type.
+_CHAIN_PATCH_LOGS: dict[str, type[ValueLog]] = {
+    'detector_carriage': DetectorCarriageLog,
+    **{
+        device: type(
+            ''.join(part.title() for part in device.split('_')) + 'Log',
+            (ValueLog,),
+            {'__module__': __name__},
+        )
+        for device in _CHAIN_PATCHES
+        if device != 'detector_carriage'
+    },
+}
 
 
 #: I(Q) aux fields naming the monitors a job selects. Each needs a block in the
@@ -68,15 +100,15 @@ def setup_factories(instrument: Instrument) -> None:
         StreamProcessorWorkflow,
     )
 
-    # The rear bank's NeXus ``depends_on`` chain has a dynamic ``detector_carriage``
-    # transformation driven by the live f144 carriage readback. Only jobs whose
-    # graph computes the bank's position wait for it; ``tube_view`` sums over
-    # straw/pixel and does not.
-    instrument.add_context_binding(
-        stream_name='detector_carriage',
-        dependent_sources={'loki_detector_0'},
-        workflow_key=DetectorCarriageLog,
-    )
+    # Motor readbacks patched into the depends_on chains they drive. Only jobs
+    # whose graph computes a moved component's position wait for its motors;
+    # ``tube_view`` sums over straw/pixel and does not.
+    for device, components in _CHAIN_PATCHES.items():
+        instrument.add_context_binding(
+            stream_name=device,
+            dependent_sources=components,
+            workflow_key=_CHAIN_PATCH_LOGS[device],
+        )
 
     _nexus_geometry_filename = get_nexus_geometry_filename('loki')
 

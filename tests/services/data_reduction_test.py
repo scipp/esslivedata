@@ -159,9 +159,7 @@ def test_dream_powder_reduction_produces_tof_output(
                 pytest.mark.xfail(
                     strict=True,
                     reason='#1441: the default monitors m2 and m3 have no '
-                    'lookup-table block, so I(Q) fails to start. Once placed, '
-                    'the job still needs the sample and m2/m3 chains patched '
-                    'at job time (#1431).',
+                    'lookup-table block, so I(Q) fails to start.',
                 ),
             ],
         ),
