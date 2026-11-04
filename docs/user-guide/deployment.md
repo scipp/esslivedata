@@ -38,7 +38,7 @@ Register a client for the dashboard with the provider, using the authorization c
 
 - **Redirect URI**: for example `https://<dashboard-host>/oauth-redirect`. It must match `PANEL_OAUTH_REDIRECT_URI` exactly. The dashboard serves its login route at this path.
 - **Client authentication**: `client_secret_post`. Panel sends the client secret in the body of the token request.
-- **Scopes**: `openid`, `profile` and `email`.
+- **Scopes**: `openid` and `profile`.
 
 ### Configuration
 
@@ -50,9 +50,9 @@ Set these environment variables on the dashboard container at runtime:
 | `PANEL_OAUTH_KEY` | Client ID | no |
 | `PANEL_OAUTH_SECRET` | Client secret | **yes** |
 | `PANEL_OAUTH_REDIRECT_URI` | `https://<dashboard-host>/oauth-redirect` | no |
-| `LIVEDATA_OAUTH_DISCOVERY_URL` | The provider's OpenID discovery document (`.../.well-known/openid-configuration`), read at startup to find its endpoints. At ESS this is the same URL User Office calls `AUTH_DISCOVERY_URL`. | no |
-| `PANEL_OAUTH_SCOPE` | `openid,profile,email` | no |
-| `PANEL_OAUTH_JWT_USER` | Token claim shown as the username, such as `email` or `preferred_username`. Default: `email`. Login fails with a 401 if the claim is missing. | no |
+| `LIVEDATA_OAUTH_DISCOVERY_URL` | The provider's OpenID discovery document (`.../.well-known/openid-configuration`), read at startup to find its endpoints. At ESS: `https://login.ess.eu/.well-known/openid-configuration`. | no |
+| `PANEL_OAUTH_SCOPE` | `openid,profile` | no |
+| `PANEL_OAUTH_JWT_USER` | Token claim shown as the username, such as `sub` or `mail`. Default: `email`, so this is required when the `email` scope is not requested. Login fails with a 401 if the claim is missing. | no |
 | `PANEL_COOKIE_SECRET` | Long random value that signs the login cookies | **yes** |
 | `PANEL_OAUTH_ENCRYPTION` | Key that encrypts the tokens stored in cookies. Generate one with `panel oauth-secret`. | **yes** |
 | `PANEL_OAUTH_EXPIRY` | Optional login lifetime in days. Default: 1. | no |
@@ -78,13 +78,9 @@ The dashboard refuses to start if the configuration is incomplete, or if OAuth v
 Never put these values in the `Dockerfile` or pass them as image build arguments. The images are published, and values set there remain readable in the image layers. Use a Kubernetes Secret or your deployment tool's equivalent.
 ```
 
-For a local run outside Docker, copy `.env.example` to `.env`, fill it in, and start the dashboard with `scripts/run_dashboard.sh`.
-
 ### HTTPS
 
 Serve the dashboard over HTTPS through a TLS-terminating proxy that also forwards WebSocket connections. Panel's login cookies are signed and `HttpOnly` but are not marked `Secure`, so a browser would also send them over plain HTTP. Do not expose the dashboard port directly, and consider enabling HSTS on the proxy.
-
-For a local run, the dashboard can serve HTTPS itself, using Bokeh's standard settings. Set `BOKEH_SSL_CERTFILE` and `BOKEH_SSL_KEYFILE` to a certificate and key, and `BOKEH_SSL_PASSWORD` if the key is encrypted. A locally trusted certificate can be created with [mkcert](https://github.com/FiloSottile/mkcert). Keep the key outside the repository. The image's health check uses plain HTTP, so it fails in a container serving HTTPS this way.
 
 ### Upgrading from Basic Authentication
 

@@ -9,7 +9,6 @@ from html import escape
 from pathlib import Path
 
 import panel as pn
-from bokeh.settings import settings
 
 from ess.livedata import ServiceBase, __version__, format_version
 
@@ -462,9 +461,6 @@ class DashboardBase(ServiceBase, ABC):
                 dev=self._dev,
                 oauth_provider=self._oauth_provider,
                 login_endpoint=get_login_endpoint(),
-                ssl_certfile=settings.ssl_certfile(),
-                ssl_keyfile=settings.ssl_keyfile(),
-                ssl_password=settings.ssl_password(),
                 logout_template=_LOGOUT_TEMPLATE,
                 # Bokeh discards a session once its last connection has been
                 # gone this long, which is what releases the document. It polls
