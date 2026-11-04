@@ -604,3 +604,74 @@ class TestWindowOutputs:
         )
         result3 = workflow.finalize()
         assert result3['current'].coords['start_time'].value == 9000
+
+
+class TestPublishOnChange:
+    """Outputs in ``publish_on_change`` are sent only when they changed."""
+
+    Input = NewType('Input', sc.DataArray)
+    Value = NewType('Value', sc.DataArray)
+    Scaled = NewType('Scaled', sc.DataArray | None)
+
+    @pytest.fixture
+    def workflow(self) -> StreamProcessorWorkflow:
+        from ess.reduce.streaming import EternalAccumulator
+
+        def read(data: self.Input) -> self.Value:
+            return data.copy()
+
+        def scale(value: self.Value) -> self.Scaled:
+            # Not available until the accumulated value exceeds 1; NaN-valued once
+            # it does.
+            if value.value < 2:
+                return None
+            return sc.DataArray(sc.scalar(float('nan')))
+
+        workflow = StreamProcessorWorkflow(
+            sciline.Pipeline([read, scale]),
+            dynamic_keys={'input': self.Input},
+            target_keys={'value': self.Value, 'scaled': self.Scaled},
+            accumulators={self.Value: EternalAccumulator(preprocess=None)},
+            publish_on_change=['value', 'scaled'],
+        )
+        workflow.build()
+        return workflow
+
+    def push(self, workflow: StreamProcessorWorkflow, value: float) -> dict:
+        workflow.accumulate(
+            {'input': sc.DataArray(sc.scalar(value))},
+            start_time=Timestamp.from_ns(0),
+            end_time=Timestamp.from_ns(1),
+        )
+        return workflow.finalize()
+
+    def test_none_output_is_omitted(self, workflow):
+        result = self.push(workflow, 1.0)
+        assert set(result) == {'value'}
+
+    def test_unchanged_output_is_omitted(self, workflow):
+        self.push(workflow, 0.0)
+        assert self.push(workflow, 0.0) == {}
+
+    def test_changed_output_is_published(self, workflow):
+        self.push(workflow, 1.0)
+        assert set(self.push(workflow, 1.0)) == {'value', 'scaled'}
+
+    def test_nan_output_counts_as_unchanged(self, workflow):
+        self.push(workflow, 2.0)
+        assert 'scaled' not in self.push(workflow, 1.0)
+
+    def test_clear_forgets_published_outputs(self, workflow):
+        self.push(workflow, 1.0)
+        workflow.clear()
+        assert set(self.push(workflow, 1.0)) == {'value'}
+
+    def test_overlap_with_window_outputs_is_rejected(self):
+        with pytest.raises(ValueError, match="window and publish-on-change"):
+            StreamProcessorWorkflow(
+                sciline.Pipeline(),
+                dynamic_keys={},
+                target_keys={'value': self.Value},
+                window_outputs=['value'],
+                publish_on_change=['value'],
+            )

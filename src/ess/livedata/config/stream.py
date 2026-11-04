@@ -404,7 +404,12 @@ def _detect_devices(parsed: dict[str, Stream]) -> dict[str, _DetectedDevice]:
 #: is temporarily incomplete; entries in a ``streams_parsed`` module whose
 #: topic falls outside this set are dropped by :func:`filter_authorized_streams`
 #: so instruments do not attempt to subscribe to a topic they cannot read.
-_AUTHORIZED_TOPIC_SUFFIXES: tuple[str, ...] = ('_choppers', '_motion', '_sample_env')
+_AUTHORIZED_TOPIC_SUFFIXES: tuple[str, ...] = (
+    '_choppers',
+    '_motion',
+    '_sample_env',
+    '_nicos_devices',
+)
 _AUTHORIZED_TOPICS: frozenset[str] = frozenset({'tn_data_general'})
 
 
@@ -413,9 +418,9 @@ def filter_authorized_streams(parsed: dict[str, Stream]) -> dict[str, Stream]:
 
     Temporary workaround for an incomplete PROD topic authorization list:
     keeps only entries whose ``topic`` is ``tn_data_general`` or ends in
-    ``_choppers``, ``_motion``, or ``_sample_env``. Remove this filtering
-    once PROD ACLs cover the full topic set used by ``streams_parsed``
-    modules.
+    ``_choppers``, ``_motion``, ``_sample_env``, or ``_nicos_devices``. Remove
+    this filtering once PROD ACLs cover the full topic set used by
+    ``streams_parsed`` modules.
 
     Parameters
     ----------

@@ -14,6 +14,7 @@ if TYPE_CHECKING:
 
 import sciline
 import sciline.typing
+import scipp as sc
 from ess.reduce import streaming
 
 from ess.livedata.config.value_log import ValueLog
@@ -40,6 +41,7 @@ class StreamProcessorWorkflow(Workflow):
         context_keys: dict[str, sciline.typing.Key] | None = None,
         target_keys: dict[str, sciline.typing.Key],
         window_outputs: Iterable[str] = (),
+        publish_on_change: Iterable[str] = (),
         **kwargs: Any,
     ) -> None:
         """
@@ -82,6 +84,16 @@ class StreamProcessorWorkflow(Workflow):
             Output names representing the current window (delta since last finalize).
             These receive their own ``start_time``/``time`` coords, bounding the
             window rather than the job.
+        publish_on_change:
+            Output names published only when their value differs from the one
+            published last (NaN compares equal to NaN), so that an output a batch
+            did not affect is neither re-sent nor falsely refreshed: its
+            ``time`` stays at the last real update and the dashboard shows its
+            age. A ``None`` value means the output is not available yet and is
+            skipped without the warning ``Job`` sets for other ``None`` outputs.
+            The last published values are forgotten by :meth:`clear`.
+            Must not overlap ``window_outputs``, whose time coords change on
+            every finalize.
         **kwargs:
             Additional arguments passed to StreamProcessor.
         """
@@ -90,6 +102,14 @@ class StreamProcessorWorkflow(Workflow):
         self._context_keys = dict(context_keys) if context_keys else {}
         self._target_keys = target_keys
         self._window_outputs = set(window_outputs)
+        self._publish_on_change = set(publish_on_change)
+        if unknown := self._publish_on_change - set(target_keys):
+            raise ValueError(f"publish_on_change names unknown outputs: {unknown}")
+        if overlap := self._window_outputs & self._publish_on_change:
+            raise ValueError(
+                f"Outputs cannot be both window and publish-on-change: {overlap}"
+            )
+        self._published: dict[str, Any] = {}
         self._kwargs = kwargs
         self._current_start_time: Timestamp | None = None
         self._current_end_time: Timestamp | None = None
@@ -300,10 +320,22 @@ class StreamProcessorWorkflow(Workflow):
         self._current_start_time = None
         self._current_end_time = None
 
+        for name in self._publish_on_change:
+            value = results[name]
+            published = self._published.get(name)
+            if value is None or (
+                published is not None and sc.identical(value, published, equal_nan=True)
+            ):
+                del results[name]
+            else:
+                # Copy: accumulated outputs may be the live buffer, which later
+                # batches update in place.
+                self._published[name] = value.copy()
         return results
 
     def clear(self) -> None:
         self._processor.clear()
+        self._published.clear()
         self._current_start_time = None
         self._current_end_time = None
 

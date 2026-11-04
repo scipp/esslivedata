@@ -384,6 +384,7 @@ class TestFilterAuthorizedStreams:
             'loki_choppers',
             'loki_motion',
             'loki_sample_env',
+            'loki_nicos_devices',
             'tn_data_general',
         ],
     )
@@ -395,7 +396,6 @@ class TestFilterAuthorizedStreams:
         'topic',
         [
             'loki_misc_devices',
-            'loki_nicos_devices',
         ],
     )
     def test_drops_unauthorized_topic(self, topic: str) -> None:
@@ -405,6 +405,6 @@ class TestFilterAuthorizedStreams:
     def test_keeps_only_authorized_subset(self) -> None:
         parsed = {
             '/a/value': _parsed('a', topic='loki_motion'),
-            '/b/value': _parsed('b', topic='loki_nicos_devices'),
+            '/b/value': _parsed('b', topic='loki_misc_devices'),
         }
         assert filter_authorized_streams(parsed) == {'/a/value': parsed['/a/value']}

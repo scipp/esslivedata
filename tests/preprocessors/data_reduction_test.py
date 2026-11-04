@@ -88,14 +88,13 @@ class TestReductionPreprocessorFactory:
         assert isinstance(preprocessor, GroupByPixel)
 
     def test_make_preprocessor_area_detector(self, factory):
-        """Test that AREA_DETECTOR returns Cumulative accumulator."""
+        """Test that AREA_DETECTOR keeps individual frames."""
         stream_id = StreamId(kind=StreamKind.AREA_DETECTOR, name='test')
         preprocessor = factory.make_preprocessor(stream_id)
 
-        from ess.livedata.preprocessors.accumulators import Cumulative
+        from ess.livedata.preprocessors.frame_batch import FrameBatchAccumulator
 
-        assert isinstance(preprocessor, Cumulative)
-        assert preprocessor._clear_on_get is True
+        assert isinstance(preprocessor, FrameBatchAccumulator)
 
     def test_make_preprocessor_unknown_kind(self, factory):
         """Test that unknown stream kinds return None."""
