@@ -216,56 +216,6 @@ def setup_factories(instrument: Instrument) -> None:
         return _make_cut_stream_processor(wf)
 
 
-def _transpose_with_coords(data: sc.DataArray, dims: tuple[str, ...]) -> sc.DataArray:
-    """
-    Transpose data array and all its coordinates.
-
-    Unlike scipp.DataArray.transpose, this function also transposes all coordinates
-    that have more than one dimension. Each coordinate is transposed to match the
-    order of dimensions specified in `dims`, considering only the intersection of
-    the coordinate's dimensions with `dims`.
-
-    Parameters
-    ----------
-    data:
-        Data array to transpose.
-    dims:
-        Target dimension order.
-
-    Returns
-    -------
-    :
-        Transposed data array with transposed coordinates.
-    """
-    result = data.transpose(dims)
-    # Transpose all multi-dimensional coordinates
-    for name, coord in data.coords.items():
-        if coord.ndim > 1:
-            # Only transpose dimensions that exist in both the coord and target dims
-            coord_dims = coord.dims
-            ordered_dims = tuple(d for d in dims if d in coord_dims)
-            result.coords[name] = coord.transpose(ordered_dims)
-    return result
-
-
-def _combine_banks(*bank: sc.DataArray) -> sc.DataArray:
-    """
-    Combine Bifrost banks into a single detector data array.
-
-    Each NXdetetor is a He3 tube triplet with shape=(3, 100). Detector numbers in
-    triplet are *not* consecutive:
-    - 1...900 with increasing angle (across all sectors)
-    - 901 is back to first sector and detector, second tube
-    """
-    combined = (
-        sc.concat(bank, dim='')
-        .fold('', sizes={'arc': 5, 'channel': 9})
-        .rename_dims(dim_0='tube', dim_1='pixel')
-    )
-    # Order with consecutive detector_number
-    return _transpose_with_coords(combined, ('arc', 'tube', 'channel', 'pixel')).copy()
-
-
 def _create_base_reduction_workflow():
     """
     Create the base Bifrost reduction workflow with all helper types and functions.
@@ -279,8 +229,7 @@ def _create_base_reduction_workflow():
     Returns
     -------
     reduction_workflow:
-        The base TofWorkflow configured with detector geometry, with the
-        ratemeter providers inserted.
+        Pipeline computing the ratemeter region counts from raw detector events.
     DetectorRegionCounts:
         Accumulation-mode-scoped type for detector region counts.
     DetectorRegionCountsRaw:
@@ -290,30 +239,12 @@ def _create_base_reduction_workflow():
     from typing import NewType
 
     import sciline
-    from ess.reduce.nexus.types import (
-        EmptyDetector,
-        Filename,
-        NeXusName,
-        RawDetector,
-        SampleRun,
-    )
-    from ess.spectroscopy.indirect.time_of_flight import TofWorkflow
-    from scippnexus import NXdetector
+    from ess.reduce.nexus.types import EmptyDetector, RawDetector, RunType, SampleRun
+    from ess.reduce.nexus.workflow import assemble_detector_data
 
     from ess.livedata.preprocessors.accumulation_mode import AccumulationMode
-    from ess.livedata.preprocessors.detector_data import get_nexus_geometry_filename
 
-    # Detector group names in the pinned (pre-2026-06-08) geometry artifact
-    # carry a numeric prefix, e.g. ``123_channel_1_1_triplet``. Newer files
-    # drop the prefix (``channel_1_1_triplet``; ``detector_number`` content is
-    # identical). Switch to the unprefixed form once detector geometry is
-    # unpinned (see https://github.com/scipp/esslivedata/issues/962).
-    _detector_names = [
-        f'{123 + 4 * (arc - 1) + (5 * 4 + 1) * (channel - 1)}'
-        f'_channel_{channel}_{arc}_triplet'
-        for arc in range(1, 6)
-        for channel in range(1, 10)
-    ]
+    from .streams import detector_number
 
     _arc_energy_to_index = {
         ArcEnergy.ARC_2_7: 0,
@@ -362,22 +293,15 @@ def _create_base_reduction_workflow():
         """Route per-update counts to the accumulation-mode-specific accumulator."""
         return DetectorRegionCounts[AccumulationMode](counts)
 
-    reduction_workflow = TofWorkflow(run_types=(SampleRun,), monitor_types=())
-    # Pin detector geometry to the pre-2026-06-08 survey. In newer artifacts
-    # (the default the chopper factory uses) the detector chains run through
-    # the length-0 ``detector_tank_angle`` placeholder, so loading positions
-    # fails with "Transform is time-dependent". The ratemeter only counts, but
-    # ``TofWorkflow`` loads positions anyway. Drop this pin once the ratemeter
-    # no longer loads them (https://github.com/scipp/esslivedata/issues/1427).
-    reduction_workflow[Filename[SampleRun]] = get_nexus_geometry_filename(
-        'bifrost', date=sc.datetime('2025-06-01T00:00:00')
+    # The ratemeter only counts, so the detector needs no geometry: grouping
+    # events by ``detector_number`` is all ``assemble_detector_data`` does here.
+    reduction_workflow = sciline.Pipeline(
+        (assemble_detector_data, _detector_ratemeter, _accumulated_region_counts),
+        params={
+            EmptyDetector[SampleRun]: sc.DataArray(
+                detector_number, coords={'detector_number': detector_number}
+            )
+        },
+        constraints={RunType: [SampleRun]},
     )
-    reduction_workflow[EmptyDetector[SampleRun]] = (
-        reduction_workflow[EmptyDetector[SampleRun]]
-        .map({NeXusName[NXdetector]: _detector_names})
-        .reduce(func=_combine_banks)
-    )
-
-    reduction_workflow.insert(_detector_ratemeter)
-    reduction_workflow.insert(_accumulated_region_counts)
     return reduction_workflow, DetectorRegionCounts, DetectorRegionCountsRaw

@@ -5,7 +5,6 @@ import numpy as np
 import pytest
 import scipp as sc
 from ess.reduce.nexus.types import (
-    EmptyDetector,
     NeXusData,
     SampleRun,
 )
@@ -33,18 +32,6 @@ def bifrost_workflow():
         _create_base_reduction_workflow()
     )
     return workflow, DetectorRegionCountsRaw
-
-
-@pytest.mark.slow
-def test_workflow_produces_detector_with_consecutive_detector_number(bifrost_workflow):
-    wf, _DetectorRegionCounts = bifrost_workflow
-    da = wf.compute(EmptyDetector[SampleRun])
-    assert_identical(
-        da.coords['detector_number'].transpose(da.dims),
-        sc.arange('', 1, 13500 + 1, unit=None, dtype='int32').fold(
-            dim='', sizes=da.sizes
-        ),
-    )
 
 
 def _make_test_event_data(
