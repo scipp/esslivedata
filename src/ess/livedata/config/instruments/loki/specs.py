@@ -202,7 +202,23 @@ instrument = Instrument(
         '/entry/instrument/detector_carriage/value': AxisRange(
             lower=sc.scalar(-0.5, unit='m'),
             upper=sc.scalar(5.5, unit='m'),
-        )
+        ),
+        # The sample rides four live axes, and every detector's Ltotal passes through
+        # the sample. These ranges are deliberate padding, not calibrated travel:
+        # the detector ranges are widened by twice their summed half-widths. The
+        # sample moves mainly along the beam, where Ltotal barely changes, so the
+        # generous range costs only a slightly larger wavelength LUT.
+        **{
+            f'/entry/instrument/{axis}/value': AxisRange(
+                lower=sc.scalar(-0.5, unit='m'), upper=sc.scalar(0.5, unit='m')
+            )
+            for axis in (
+                'linear_sample_changer',
+                'sample_stack_x',
+                'sample_stack_y',
+                'sample_stack_z',
+            )
+        },
     },
     streams=streams,
     source_metadata={
@@ -216,16 +232,16 @@ instrument = Instrument(
         'loki_detector_7': SourceMetadata(title='Front Bottom'),
         'loki_detector_8': SourceMetadata(title='Front Right'),
         'beam_monitor_m0': SourceMetadata(
-            title='Beam Monitor 0', description='Upstream, z = -16.8 m'
+            title='Beam Monitor 0', description='Upstream, z = -16.72 m'
         ),
         'beam_monitor_m1': SourceMetadata(
-            title='Beam Monitor 1', description='Upstream, z = -8.4 m'
+            title='Beam Monitor 1', description='Upstream, z = -8.26 m'
         ),
         'beam_monitor_m2': SourceMetadata(
-            title='Beam Monitor 2', description='Upstream, z = -2.04 m'
+            title='Beam Monitor 2', description='Upstream, z = -1.95 m'
         ),
         'beam_monitor_m3': SourceMetadata(
-            title='Beam Monitor 3', description='Downstream, z = +0.2 m'
+            title='Beam Monitor 3', description='Downstream, z = +0.29 m'
         ),
         'beam_monitor_m4': SourceMetadata(
             title='Beam Monitor 4',
@@ -233,7 +249,7 @@ instrument = Instrument(
         ),
         'detector_carriage': SourceMetadata(
             title='Rear Detector Carriage',
-            description='Rear detector carriage position w.r.t. its zero at z=5.098 m '
+            description='Rear detector carriage position w.r.t. its zero at z=5.052 m '
             'after the sample.',
         ),
     },
