@@ -14,7 +14,9 @@ from ess.livedata.config.workflow_spec import DETECTORS, WorkflowId
 from ess.livedata.parameter_models import (
     TimeUnit,
     TOARange,
-    WavelengthRangeFilter,
+    TOASpectralAxis,
+    WavelengthRange,
+    WavelengthSpectralAxis,
     WavelengthUnit,
 )
 from ess.livedata.workflows.detector_view import bind_roi_requests
@@ -23,7 +25,6 @@ from ess.livedata.workflows.detector_view.types import (
     ROIRectangleRequest,
 )
 from ess.livedata.workflows.detector_view_specs import (
-    CoordinateModeSettings,
     DetectorViewOutputs,
     DetectorViewOutputsBase,
     DetectorViewParams,
@@ -183,20 +184,20 @@ class TestLoadFactoriesROIBindings:
         assert tbl.workflow_factory.registration(workflow_id).context_bindings == ()
 
 
-class TestDetectorViewParamsGetActiveRange:
-    """Tests for DetectorViewParams.get_active_range() unit handling."""
+class TestDetectorViewParamsRangeFilter:
+    """Tests for the range filter of DetectorViewParams.spectral_axis."""
 
     @pytest.mark.parametrize(
         'unit', [TimeUnit.NS, TimeUnit.US, TimeUnit.MS, TimeUnit.S]
     )
     def test_toa_range_preserves_user_unit(self, unit: TimeUnit):
         params = DetectorViewParams(
-            coordinate_mode=CoordinateModeSettings(mode='toa'),
-            toa_range=TOARange(enabled=True, start=0.0, stop=71.4, unit=unit),
+            spectral_axis=TOASpectralAxis(
+                range_filter=TOARange(start=0.0, stop=71.4, unit=unit)
+            )
         )
-        range_filter = params.get_active_range()
-        assert range_filter is not None
-        low, high = range_filter
+        assert params.spectral_axis.range_filter is not None
+        low, high = params.spectral_axis.range_filter.range
         assert low.unit == unit.value
         assert high.unit == unit.value
 
@@ -205,46 +206,39 @@ class TestDetectorViewParamsGetActiveRange:
     )
     def test_wavelength_range_preserves_user_unit(self, unit: WavelengthUnit):
         params = DetectorViewParams(
-            coordinate_mode=CoordinateModeSettings(mode='wavelength'),
-            wavelength_range=WavelengthRangeFilter(
-                enabled=True, start=1.0, stop=5.0, unit=unit
-            ),
+            spectral_axis=WavelengthSpectralAxis(
+                range_filter=WavelengthRange(start=1.0, stop=5.0, unit=unit)
+            )
         )
-        range_filter = params.get_active_range()
-        assert range_filter is not None
-        low, high = range_filter
+        assert params.spectral_axis.range_filter is not None
+        low, high = params.spectral_axis.range_filter.range
         assert low.unit == unit.value
         assert high.unit == unit.value
 
-    def test_disabled_range_returns_none(self):
-        params = DetectorViewParams(
-            coordinate_mode=CoordinateModeSettings(mode='toa'),
-            toa_range=TOARange(enabled=False),
-        )
-        assert params.get_active_range() is None
+    def test_range_filter_is_off_by_default(self):
+        assert DetectorViewParams().spectral_axis.range_filter is None
 
 
-class TestDetectorViewCoordinateModeRestriction:
+class TestDetectorViewSpectralAxisRestriction:
     """A spec can restrict its params to time-of-arrival.
 
     Logical views run on sources without geometry, so there is no ``Ltotal``
-    to index a wavelength lookup table with (ADR 0011); offering the mode
-    would fail at job start. Everywhere else coordinate mode stays a parameter
-    on one spec (ADR 0010).
+    to index a wavelength lookup table with (ADR 0011); offering the wavelength
+    axis would fail at job start. Everywhere else the spectral axis stays a
+    parameter on one spec (ADR 0010).
     """
 
     def test_toa_only_params_reject_wavelength(self):
         with pytest.raises(pydantic.ValidationError):
-            TOAOnlyDetectorViewParams(coordinate_mode={'mode': 'wavelength'})
+            TOAOnlyDetectorViewParams(spectral_axis={'kind': 'wavelength'})
 
-    def test_toa_only_params_carry_no_wavelength_fields(self):
-        assert 'wavelength_edges' not in TOAOnlyDetectorViewParams.model_fields
-        assert 'wavelength_range' not in TOAOnlyDetectorViewParams.model_fields
+    def test_toa_only_params_default_to_toa(self):
+        assert TOAOnlyDetectorViewParams().spectral_axis.kind == 'toa'
 
     def test_both_modes_remain_available_on_the_unrestricted_model(self):
-        for mode in ('toa', 'wavelength'):
-            params = DetectorViewParams(coordinate_mode={'mode': mode})
-            assert params.coordinate_mode.mode == mode
+        for kind in ('toa', 'wavelength'):
+            params = DetectorViewParams(spectral_axis={'kind': kind})
+            assert params.spectral_axis.kind == kind
 
     def test_make_params_keeps_the_requested_base(self):
         params = make_detector_view_params(base=TOAOnlyDetectorViewParams)

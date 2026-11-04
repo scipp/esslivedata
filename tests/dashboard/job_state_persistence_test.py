@@ -5,7 +5,7 @@
 from ess.livedata.config.workflow_spec import WorkflowId
 from ess.livedata.core.job import JobState, JobStatus
 from ess.livedata.dashboard.config_store import ConfigStoreManager
-from ess.livedata.parameter_models import Scale, TimeUnit, TOAEdges
+from ess.livedata.parameter_models import Scale, TimeUnit, TOAEdges, TOASpectralAxis
 from ess.livedata.workflows.monitor_workflow_specs import MonitorDataParams
 from tests.integration.backend import DashboardBackend
 
@@ -28,12 +28,14 @@ def test_active_job_persisted_and_restored(tmp_path) -> None:
     )
     source_names = ['monitor1', 'monitor2']
     custom_params = MonitorDataParams(
-        toa_edges=TOAEdges(
-            start=5.0,
-            stop=15.0,
-            num_bins=150,
-            scale=Scale.LINEAR,
-            unit=TimeUnit.MS,
+        spectral_axis=TOASpectralAxis(
+            edges=TOAEdges(
+                start=5.0,
+                stop=15.0,
+                num_bins=150,
+                scale=Scale.LINEAR,
+                unit=TimeUnit.MS,
+            )
         )
     )
 
@@ -119,8 +121,10 @@ def test_recommit_persists_only_current_job(tmp_path) -> None:
             workflow_id=workflow_id,
             source_names=source_names,
             config=MonitorDataParams(
-                toa_edges=TOAEdges(
-                    start=10.0, stop=20.0, num_bins=100, scale=Scale.LINEAR
+                spectral_axis=TOASpectralAxis(
+                    edges=TOAEdges(
+                        start=10.0, stop=20.0, num_bins=100, scale=Scale.LINEAR
+                    )
                 )
             ),
         )

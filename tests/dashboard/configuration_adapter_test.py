@@ -212,6 +212,14 @@ class TestInitialParameterValues:
         # Should return empty dict, triggering Pydantic defaults
         assert adapter.initial_parameter_values == {}
 
+    def test_params_that_do_not_validate_fall_back_to_defaults(self) -> None:
+        state = ConfigurationState(params={'value': 'not a number'})
+        adapter = ConcreteAdapter(
+            available_sources=['source1'],
+            config_state=state,
+        )
+        assert adapter.initial_parameter_values == {}
+
     def test_partial_params_returned_for_pydantic_validation(self) -> None:
         """Params with partial overlap are returned for Pydantic to handle."""
         state = ConfigurationState(

@@ -39,10 +39,10 @@ from ess.livedata.parameter_models import (
     DspacingEdges,
     DspacingUnit,
     WavelengthRange,
+    WavelengthSpectralAxis,
     WavelengthUnit,
 )
 from ess.livedata.preprocessors.detector_data import get_nexus_geometry_filename
-from ess.livedata.workflows.detector_view_specs import CoordinateModeSettings
 from ess.livedata.workflows.lut_blocks import block_ranges, select_block
 from ess.livedata.workflows.lut_ranges import component_ltotal_range
 from ess.livedata.workflows.wavelength_lut_workflow_specs import (
@@ -343,7 +343,7 @@ def test_wavelength_job_gates_on_its_table_and_toa_job_does_not(
         dream,
         'monitor_histogram',
         MONITOR,
-        params_model(coordinate_mode=CoordinateModeSettings(mode='wavelength')),
+        params_model(spectral_axis=WavelengthSpectralAxis()),
     )
 
     assert toa.gating_streams == set()
@@ -359,7 +359,7 @@ def _run_wavelength_monitor_job(
         instrument,
         'monitor_histogram',
         MONITOR,
-        params_model(coordinate_mode=CoordinateModeSettings(mode='wavelength')),
+        params_model(spectral_axis=WavelengthSpectralAxis()),
     )
     data = JobData(
         start_time=Timestamp.from_ns(0),
@@ -399,7 +399,7 @@ def _run_wavelength_detector_view(
         instrument,
         'detector_projection',
         DETECTOR,
-        params_model(coordinate_mode=CoordinateModeSettings(mode='wavelength')),
+        params_model(spectral_axis=WavelengthSpectralAxis()),
     )
     data = JobData(
         start_time=Timestamp.from_ns(0),
@@ -746,7 +746,7 @@ class TestEstiaReflectometry:
             estia,
             'monitor_histogram',
             'beam_monitor',
-            params_model(coordinate_mode=CoordinateModeSettings(mode='wavelength')),
+            params_model(spectral_axis=WavelengthSpectralAxis()),
         )
         assert job.gating_streams == {MONITOR_STREAM}
 
@@ -810,7 +810,7 @@ class TestTblWavelengthViews:
             tbl,
             view,
             source_name,
-            params_model(coordinate_mode=CoordinateModeSettings(mode='wavelength')),
+            params_model(spectral_axis=WavelengthSpectralAxis()),
         )
         assert DETECTOR_STREAM in job.gating_streams
 
@@ -842,7 +842,7 @@ class TestTblWavelengthViews:
             tbl,
             'monitor_histogram',
             'monitor_1',
-            params_model(coordinate_mode=CoordinateModeSettings(mode='wavelength')),
+            params_model(spectral_axis=WavelengthSpectralAxis()),
         )
         assert job.gating_streams == {MONITOR_STREAM}
 

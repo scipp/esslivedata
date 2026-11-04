@@ -7,7 +7,7 @@ from collections.abc import Generator
 import pytest
 
 from ess.livedata.config.workflow_spec import WorkflowId
-from ess.livedata.parameter_models import Scale, TimeUnit, TOAEdges
+from ess.livedata.parameter_models import Scale, TimeUnit, TOAEdges, TOASpectralAxis
 from ess.livedata.workflows.monitor_workflow_specs import MonitorDataParams
 from tests.integration.backend import DashboardBackend
 
@@ -51,12 +51,14 @@ def test_workflow_params_stored_and_retrieved_via_config_store(
 
     # Create params with custom values (non-default)
     custom_params = MonitorDataParams(
-        toa_edges=TOAEdges(
-            start=5.0,
-            stop=15.0,
-            num_bins=150,
-            scale=Scale.LINEAR,
-            unit=TimeUnit.MS,
+        spectral_axis=TOASpectralAxis(
+            edges=TOAEdges(
+                start=5.0,
+                stop=15.0,
+                num_bins=150,
+                scale=Scale.LINEAR,
+                unit=TimeUnit.MS,
+            )
         )
     )
 
@@ -162,12 +164,14 @@ def test_config_persists_across_adapter_recreations(
     )
     source_names = ['monitor1']
     custom_params = MonitorDataParams(
-        toa_edges=TOAEdges(
-            start=1.0,
-            stop=10.0,
-            num_bins=200,
-            scale=Scale.LINEAR,
-            unit=TimeUnit.MS,
+        spectral_axis=TOASpectralAxis(
+            edges=TOAEdges(
+                start=1.0,
+                stop=10.0,
+                num_bins=200,
+                scale=Scale.LINEAR,
+                unit=TimeUnit.MS,
+            )
         )
     )
 
@@ -188,7 +192,8 @@ def test_config_persists_across_adapter_recreations(
     # Both adapters should retrieve identical params from config store
     assert adapter1.initial_parameter_values == adapter2.initial_parameter_values
     assert adapter1.initial_parameter_values is not adapter2.initial_parameter_values
-    assert adapter1.initial_parameter_values['toa_edges']['num_bins'] == 200
+    spectral_axis = adapter1.initial_parameter_values['spectral_axis']
+    assert spectral_axis['edges']['num_bins'] == 200
 
 
 def test_incompatible_config_falls_back_to_defaults(tmp_path) -> None:

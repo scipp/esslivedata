@@ -13,10 +13,9 @@ and should only be imported by backend services.
 
 from __future__ import annotations
 
-import abc
 from collections.abc import Callable
 from dataclasses import dataclass
-from typing import ClassVar, Literal
+from typing import ClassVar
 
 import pydantic
 import scipp as sc
@@ -35,64 +34,14 @@ from ..config.workflow_spec import (
     WorkflowOutputsBase,
 )
 
-CoordinateMode = Literal['toa', 'wavelength']
 
+class DetectorViewParams(pydantic.BaseModel):
+    """Detector-view parameters offering both spectral axes."""
 
-class CoordinateModeSettings(pydantic.BaseModel):
-    """Settings for coordinate mode selection."""
-
-    mode: CoordinateMode = pydantic.Field(
-        default='toa',
-        description="Coordinate system for event data: 'toa' (time-of-arrival) "
-        "or 'wavelength'.",
-        json_schema_extra={
-            'labels': {
-                'toa': 'Time of arrival (TOA)',
-                'wavelength': 'Wavelength',
-            }
-        },
-    )
-
-
-class TOAOnlyCoordinateModeSettings(CoordinateModeSettings):
-    """Coordinate mode settings restricted to time-of-arrival.
-
-    For specs that cannot convert to wavelength: the instrument has no lookup
-    table, or the workflow is not wired to receive one.
-    """
-
-    mode: CoordinateMode = pydantic.Field(
-        default='toa',
-        description="Coordinate system for event data. Only TOA (time-of-arrival) "
-        "is available for this workflow.",
-        json_schema_extra={'labels': {'toa': 'Time of arrival (TOA)'}},
-    )
-
-    @pydantic.field_validator('mode')
-    @classmethod
-    def _validate_toa_only(cls, v: CoordinateMode) -> CoordinateMode:
-        if v != 'toa':
-            raise ValueError(
-                f"Only 'toa' mode is supported for this workflow, got '{v}'. "
-                "Wavelength mode needs a lookup table and detector geometry, "
-                "which this workflow has no way to obtain."
-            )
-        return v
-
-
-class DetectorViewParamsBase(pydantic.BaseModel, abc.ABC):
-    """Common interface for detector-view parameter models.
-
-    Subclasses expose the active coordinate mode together with the edges and
-    range filter for that mode, so a single factory
-    (:meth:`DetectorViewFactory.make_workflow`) serves every detector-view
-    spec regardless of which coordinate modes it offers.
-    """
-
-    coordinate_mode: CoordinateModeSettings = pydantic.Field(
-        title="Coordinate Mode",
-        description="Select coordinate system for detector view.",
-        default_factory=CoordinateModeSettings,
+    spectral_axis: parameter_models.SpectralAxis = pydantic.Field(
+        title="Spectral Axis",
+        description="Axis along which the detector view histograms events.",
+        default_factory=parameter_models.TOASpectralAxis,
     )
     pixel_weighting: models.PixelWeighting = pydantic.Field(
         title="Pixel Weighting",
@@ -112,103 +61,20 @@ class DetectorViewParamsBase(pydantic.BaseModel, abc.ABC):
         default_factory=models.PixelWeighting,
     )
 
-    @abc.abstractmethod
-    def get_active_edges(self) -> sc.Variable:
-        """Return the edges for the active coordinate mode."""
 
-    @abc.abstractmethod
-    def get_active_range(self) -> tuple[sc.Variable, sc.Variable] | None:
-        """Return the range filter for the active coordinate mode, if enabled."""
+class TOAOnlyDetectorViewParams(DetectorViewParams):
+    """Detector-view parameters restricted to the time-of-arrival axis.
 
-
-class TOAHistogramFields(pydantic.BaseModel):
-    """TOA range filter and histogram edges, shared by every detector-view model.
-
-    Fields only — which mode is *active* stays with the concrete params model,
-    so a both-modes model cannot silently inherit TOA as the answer.
+    For specs that cannot convert to wavelength: the instrument has no lookup
+    table, or the workflow is not wired to receive one.
     """
 
-    toa_range: parameter_models.TOARange = pydantic.Field(
-        title="Time of Arrival Range",
-        description="Time of arrival range filter.",
-        default=parameter_models.TOARange(),
+    spectral_axis: parameter_models.TOASpectralAxis = pydantic.Field(
+        title="Spectral Axis",
+        description="Axis along which the detector view histograms events. Only "
+        "time of arrival (TOA) is available for this workflow.",
+        default_factory=parameter_models.TOASpectralAxis,
     )
-    toa_edges: parameter_models.TOAEdges = pydantic.Field(
-        title="Time of Arrival Edges",
-        description=(
-            "Time of arrival (TOA) is the time elapsed since the most recent "
-            "source pulse. These edges define the histogram bins. "
-            "The default range spans one pulse period of the 14 Hz ESS source "
-            f"(0 to {parameter_models.ESS_PULSE_PERIOD_MS} ms); events outside "
-            "the range are excluded from the histogram."
-        ),
-        default=parameter_models.TOAEdges(
-            start=0.0,
-            stop=parameter_models.ESS_PULSE_PERIOD_MS,
-            num_bins=100,
-            unit=parameter_models.TimeUnit.MS,
-        ),
-    )
-
-
-class DetectorViewParams(TOAHistogramFields, DetectorViewParamsBase):
-    """Detector-view parameters offering both coordinate modes."""
-
-    # Wavelength settings
-    wavelength_range: parameter_models.WavelengthRangeFilter = pydantic.Field(
-        title="Wavelength Range",
-        description="Wavelength range filter for wavelength mode.",
-        default=parameter_models.WavelengthRangeFilter(),
-    )
-    wavelength_edges: parameter_models.WavelengthEdges = pydantic.Field(
-        title="Wavelength Edges",
-        description="Wavelength edges for histogramming in wavelength mode.",
-        default=parameter_models.WavelengthEdges(
-            start=1.0,
-            stop=10.0,
-            num_bins=100,
-            unit=parameter_models.WavelengthUnit.ANGSTROM,
-        ),
-    )
-
-    def get_active_edges(self) -> sc.Variable:
-        """Return the edges for the currently selected coordinate mode."""
-        match self.coordinate_mode.mode:
-            case 'toa':
-                return self.toa_edges.get_edges()
-            case 'wavelength':
-                return self.wavelength_edges.get_edges()
-
-    def get_active_range(self) -> tuple[sc.Variable, sc.Variable] | None:
-        """Return the range for the currently selected coordinate mode, if enabled."""
-        match self.coordinate_mode.mode:
-            case 'toa':
-                return self.toa_range.range if self.toa_range.enabled else None
-            case 'wavelength':
-                return (
-                    self.wavelength_range.range
-                    if self.wavelength_range.enabled
-                    else None
-                )
-
-
-class TOAOnlyDetectorViewParams(TOAHistogramFields, DetectorViewParamsBase):
-    """Detector-view parameters restricted to time-of-arrival."""
-
-    coordinate_mode: TOAOnlyCoordinateModeSettings = pydantic.Field(
-        title="Coordinate Mode",
-        description="Select coordinate system for detector view. Only TOA mode "
-        "is available for this workflow.",
-        default_factory=TOAOnlyCoordinateModeSettings,
-    )
-
-    def get_active_edges(self) -> sc.Variable:
-        """Return the TOA edges."""
-        return self.toa_edges.get_edges()
-
-    def get_active_range(self) -> tuple[sc.Variable, sc.Variable] | None:
-        """Return the TOA range if enabled."""
-        return self.toa_range.range if self.toa_range.enabled else None
 
 
 @dataclass(frozen=True, slots=True)
@@ -225,8 +91,8 @@ class SpectrumViewSpec:
     output_dims:
         Spatial output dimension names, used for the initial empty template of
         the ``spectrum_view`` field. The transform preserves the spectral axis
-        of the input histogram (time-of-arrival or wavelength depending on mode),
-        so it is not listed here.
+        of the input histogram (time-of-arrival or wavelength), so it is not
+        listed here.
     output_title:
         Human-readable title for the output field.
     extra_description:
@@ -255,7 +121,7 @@ class SpectrumViewSpec:
         base = (
             'Accumulated histogram reshaped into a per-spatial-group spectrum. '
             'The last axis is the spectral coordinate of the input histogram '
-            '(time-of-arrival or wavelength, depending on the workflow mode).'
+            '(time-of-arrival or wavelength, depending on the spectral axis).'
         )
         if self.extra_description:
             return f'{base}\n\n{self.extra_description}'
@@ -325,12 +191,7 @@ _BASE_DETECTOR_VIEWS: tuple[OutputView, ...] = (
             'with "latest update" or a window, shows recent counts. With pixel '
             'weighting, counts are per detector pixel.'
         ),
-        params=(
-            'coordinate_mode',
-            'pixel_weighting',
-            'toa_edges',
-            'wavelength_edges',
-        ),
+        params=('spectral_axis', 'pixel_weighting'),
     ),
     OutputView(
         name='total_counts',
@@ -343,7 +204,7 @@ _BASE_DETECTOR_VIEWS: tuple[OutputView, ...] = (
         title='Total in range',
         fields=('counts_in_toa_range_cumulative', 'counts_in_toa_range'),
         description=('Number of detector events within the configured range filter.'),
-        params=('coordinate_mode', 'toa_range', 'wavelength_range'),
+        params=('spectral_axis',),
     ),
 )
 
@@ -439,7 +300,7 @@ class DetectorViewOutputs(DetectorViewOutputsBase):
             title='ROI spectra',
             fields=('roi_spectra_cumulative', 'roi_spectra_current'),
             description='Histogram for each active ROI region.' + _DETECTOR_PIXELS_NOTE,
-            params=('coordinate_mode', 'toa_edges', 'wavelength_edges'),
+            params=('spectral_axis',),
         ),
         OutputView(
             name='roi_total_in_range',
@@ -450,7 +311,7 @@ class DetectorViewOutputs(DetectorViewOutputsBase):
                 'per ROI. Unlike the ROI spectra, this respects the range filter.'
                 + _DETECTOR_PIXELS_NOTE
             ),
-            params=('coordinate_mode', 'toa_range', 'wavelength_range'),
+            params=('spectral_axis',),
         ),
         OutputView(
             name='roi_rectangle',
@@ -606,12 +467,7 @@ def make_detector_view_outputs(
                     title=title,
                     fields=('spectrum_view',),
                     description=description,
-                    params=(
-                        'coordinate_mode',
-                        'spectrum_params',
-                        'toa_edges',
-                        'wavelength_edges',
-                    ),
+                    params=('spectral_axis', 'spectrum_params'),
                 ),
             )
 
@@ -629,8 +485,8 @@ def make_detector_view_outputs(
 def make_detector_view_params(
     spectrum_view: SpectrumViewSpec | None = None,
     *,
-    base: type[DetectorViewParamsBase] = DetectorViewParams,
-) -> type[DetectorViewParamsBase]:
+    base: type[DetectorViewParams] = DetectorViewParams,
+) -> type[DetectorViewParams]:
     """Return a detector-view params model, adding spectrum-specific fields.
 
     When ``spectrum_view.params_model`` is set, the returned model adds a
@@ -643,8 +499,8 @@ def make_detector_view_params(
     spectrum_view:
         Optional spectrum-view configuration contributing a params field.
     base:
-        Params model to extend, selecting which coordinate modes the spec
-        offers. Defaults to the both-modes :class:`DetectorViewParams`.
+        Params model to extend, selecting which spectral axes the spec
+        offers. Defaults to :class:`DetectorViewParams`, which offers both.
     """
     if spectrum_view is None or spectrum_view.params_model is None:
         return base

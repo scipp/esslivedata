@@ -13,6 +13,7 @@ import math
 from abc import ABC
 from enum import StrEnum
 from pathlib import Path
+from typing import Annotated, Literal
 
 import scipp as sc
 from pydantic import BaseModel, Field, field_validator, model_validator
@@ -70,6 +71,11 @@ class RangeModel(BaseModel, ABC):
     def get_stop(self) -> sc.Variable:
         """Get the stop of the range as a scipp variable."""
         return sc.scalar(self.stop, unit=self.unit.value)
+
+    @property
+    def range(self) -> tuple[sc.Variable, sc.Variable]:
+        """The range as a tuple of scipp scalars."""
+        return (self.get_start(), self.get_stop())
 
 
 class Scale(StrEnum):
@@ -175,17 +181,12 @@ class WavelengthRange(RangeModel):
 
 
 class TOARange(RangeModel):
-    """Time of arrival range filter settings."""
+    """Time of arrival range, by default one pulse period of the ESS source."""
 
-    enabled: bool = Field(default=False, description="Enable the range filter.")
+    stop: float = Field(default=ESS_PULSE_PERIOD_MS, description="Stop of the range.")
     unit: TimeUnit = Field(
-        default=TimeUnit.MICROSECOND, description="Unit of the interval bounds."
+        default=TimeUnit.MS, description="Unit of the interval bounds."
     )
-
-    @property
-    def range(self) -> tuple[sc.Variable, sc.Variable]:
-        """Time of arrival range as a tuple of scipp scalars."""
-        return (self.get_start(), self.get_stop())
 
 
 class TOAEdges(EdgesModel):
@@ -210,18 +211,60 @@ class WavelengthEdges(EdgesModel):
         return make_edges(model=self, dim='wavelength', unit=self.unit.value)
 
 
-class WavelengthRangeFilter(RangeModel):
-    """Wavelength range filter settings for detector view."""
+_RANGE_FILTER_DESCRIPTION = (
+    "Outputs summed over the spectral axis, such as a detector image or the "
+    "total in range, include only the histogram bins that overlap the range. "
+    "Without a filter they include all bins."
+)
 
-    enabled: bool = Field(default=False, description="Enable the range filter.")
-    unit: WavelengthUnit = Field(
-        default=WavelengthUnit.ANGSTROM, description="Unit of the range bounds."
+
+class TOASpectralAxis(BaseModel):
+    """Histogram events along time of arrival."""
+
+    kind: Literal['toa'] = Field(
+        default='toa',
+        title="Time of arrival (TOA)",
+        description="Time of arrival (TOA) is the time elapsed since the most "
+        "recent source pulse.",
+    )
+    edges: TOAEdges = Field(
+        title="Bin edges",
+        description="The default range spans one pulse period of the 14 Hz ESS "
+        f"source (0 to {ESS_PULSE_PERIOD_MS} ms); events outside the range are "
+        "excluded from the histogram.",
+        default=TOAEdges(
+            start=0.0, stop=ESS_PULSE_PERIOD_MS, num_bins=100, unit=TimeUnit.MS
+        ),
+    )
+    range_filter: TOARange | None = Field(
+        default=None, title="Range filter", description=_RANGE_FILTER_DESCRIPTION
     )
 
-    @property
-    def range(self) -> tuple[sc.Variable, sc.Variable]:
-        """Wavelength range as a tuple of scipp scalars."""
-        return (self.get_start(), self.get_stop())
+
+class WavelengthSpectralAxis(BaseModel):
+    """Histogram events along wavelength."""
+
+    kind: Literal['wavelength'] = Field(
+        default='wavelength',
+        title="Wavelength",
+        description="Wavelength computed from time of arrival with the "
+        "instrument's lookup table.",
+    )
+    edges: WavelengthEdges = Field(
+        title="Bin edges",
+        default=WavelengthEdges(
+            start=1.0, stop=10.0, num_bins=100, unit=WavelengthUnit.ANGSTROM
+        ),
+    )
+    range_filter: WavelengthRange | None = Field(
+        default=None, title="Range filter", description=_RANGE_FILTER_DESCRIPTION
+    )
+
+
+SpectralAxis = Annotated[
+    TOASpectralAxis | WavelengthSpectralAxis, Field(discriminator='kind')
+]
+"""The axis along which monitor and detector-view workflows histogram events."""
 
 
 class DspacingEdges(EdgesModel):

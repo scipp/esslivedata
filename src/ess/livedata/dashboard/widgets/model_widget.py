@@ -6,7 +6,7 @@ import panel as pn
 import pydantic
 from pydantic_core import PydanticUndefined
 
-from .param_widget import ParamWidget
+from .param_widget import ParamWidget, UnionWidget, make_group_widget
 from .styles import Colors
 
 
@@ -35,7 +35,10 @@ def get_defaults(model: type[pydantic.BaseModel]) -> dict[str, Any]:
 
 class ModelWidget:
     """Builds per-field tab content for configuring a Pydantic model with nested
-    model fields."""
+    model fields.
+
+    Each field of the model is a group or a discriminated union of groups.
+    """
 
     def __init__(
         self,
@@ -51,7 +54,8 @@ class ModelWidget:
         Parameters
         ----------
         model_class
-            Pydantic model class where each field is also a Pydantic model
+            Pydantic model class where each field is a Pydantic model or a
+            discriminated union of Pydantic models
         initial_values
             Initial values to populate the widgets with
         show_descriptions
@@ -71,7 +75,7 @@ class ModelWidget:
         self._show_descriptions = show_descriptions
         self._hidden_fields = hidden_fields
         self._field_outputs = field_outputs or {}
-        self._parameter_widgets: dict[str, ParamWidget] = {}
+        self._parameter_widgets: dict[str, ParamWidget | UnionWidget] = {}
         self._tab_entries: list[tuple[str, str, pn.Column]] = []
         self._failing_field_names: list[str] = []
         try:
@@ -84,10 +88,9 @@ class ModelWidget:
     def _build_tabs(self) -> None:
         """Build one (field_name, title, content) entry per parameter group."""
         for field_name, data in self._get_parameter_widget_data().items():
-            param_widget = ParamWidget(
-                data['field_type'], hidden_fields=data['hidden_fields']
-            )
-            param_widget.set_values(data['values'])
+            param_widget = data['widget']
+            for values in data['values']:
+                param_widget.set_values(values)
             self._parameter_widgets[field_name] = param_widget
 
             content: list[Any] = [param_widget.panel()]
@@ -135,25 +138,33 @@ class ModelWidget:
                 continue  # Skip private fields
             if field_name in self._hidden_fields:
                 continue
-            field_type: type[pydantic.BaseModel] = field_info.annotation  # type: ignore[assignment]
+            prefix = f'{field_name}.'
             hidden_sub_fields = frozenset(
-                sub_field
-                for sub_field in field_type.model_fields
-                if f'{field_name}.{sub_field}' in self._hidden_fields
+                path.removeprefix(prefix)
+                for path in self._hidden_fields
+                if path.startswith(prefix)
             )
-            if hidden_sub_fields == field_type.model_fields.keys():
-                continue
-            values = get_defaults(field_type)
-            values.update(root_defaults.get(field_name, {}))
-            values.update(self._initial_values.get(field_name, {}))
+            widget = make_group_widget(
+                field_info.annotation, field_info.discriminator, hidden_sub_fields
+            )
+            if widget is None:
+                raise TypeError(
+                    f"Field {field_name!r} is neither a group nor a union of groups"
+                )
+            if isinstance(widget, ParamWidget) and not widget.widgets:
+                continue  # Every field of the group is hidden
 
             title = field_info.title or field_name.replace('_', ' ').title()
             widget_data[field_name] = {
-                'field_type': field_type,
-                'values': values,
+                'widget': widget,
+                # Applied in order: a union's stored values may choose another
+                # alternative than its default, so the two are not merged.
+                'values': [
+                    root_defaults.get(field_name, {}),
+                    self._initial_values.get(field_name, {}),
+                ],
                 'title': title,
                 'description': field_info.description,
-                'hidden_fields': hidden_sub_fields,
             }
 
         return widget_data
@@ -209,6 +220,6 @@ class ModelWidget:
             if field_name in self._parameter_widgets:
                 self._parameter_widgets[field_name].set_values(field_values)
 
-    def get_parameter_widget(self, field_name: str) -> ParamWidget | None:
+    def get_parameter_widget(self, field_name: str) -> ParamWidget | UnionWidget | None:
         """Get a specific parameter widget by field name."""
         return self._parameter_widgets.get(field_name)

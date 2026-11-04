@@ -5,7 +5,7 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from typing import Any
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, ValidationError
 
 from ess.livedata.config.workflow_spec import AuxSources
 
@@ -205,26 +205,23 @@ class ConfigurationAdapter[Model](ABC):
 
         Returns persisted parameter values from the reference configuration.
 
-        If stored params have no field overlap with the current model (indicating
-        complete incompatibility, e.g., from a different workflow version), returns
-        empty dict to fall back to defaults rather than propagating invalid data.
+        Stored params from an incompatible version of the workflow give an empty
+        dict, so the UI starts from the defaults rather than from values it cannot
+        show: params that share no field with the current model, or that do not
+        validate against it. Pydantic ignores fields the model lacks and gives
+        defaults for missing ones.
         """
         if self._config_state is None:
             return {}
-
-        # Check if stored params have ANY overlap with current model fields
+        params = self._config_state.params
         model_class = self.model_class()
-        # If no field names match, the config is from an incompatible version
-        stored_keys = set(self._config_state.params.keys())
-        model_fields = set(model_class.model_fields.keys())
-
-        if stored_keys and not stored_keys.intersection(model_fields):
-            # Complete incompatibility: no field overlap, fall back to defaults
+        if params and not params.keys() & model_class.model_fields.keys():
             return {}
-
-        # Partial or full compatibility: let Pydantic handle defaults/validation
-        # Note: Pydantic ignores extra fields and uses defaults for missing ones
-        return self._config_state.params
+        try:
+            model_class.model_validate(params)
+        except ValidationError:
+            return {}
+        return params
 
     @abstractmethod
     def start_action(
