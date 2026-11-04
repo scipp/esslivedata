@@ -26,74 +26,28 @@ workflows.
 
 ## Dashboard Authentication
 
-The reduction dashboard supports login through an OAuth 2.0 / OpenID Connect provider, using [Panel's OAuth support](https://panel.holoviz.org/en/docs/latest/how_to/authentication/configuration.html). ESS uses PING, through Panel's `generic` provider.
+The dashboard supports OAuth login through an OpenID Connect provider such as PING. Without OAuth configured it runs **without any login**, which is intended for local development only.
 
-```{warning}
-Without OAuth configured, the dashboard runs **without any login**, and anyone who can reach it has full control. This is intended for local development only.
-```
+Register a client with the provider using the authorization code flow and `client_secret_post` authentication. Then set these variables at runtime, never in the `Dockerfile`, as the images are published:
 
-### Registering the Client
-
-Register a client for the dashboard with the provider, using the authorization code flow:
-
-- **Redirect URI**: for example `https://<dashboard-host>/oauth-redirect`. It must match `PANEL_OAUTH_REDIRECT_URI` exactly. The dashboard serves its login route at this path.
-- **Client authentication**: `client_secret_post`. Panel sends the client secret in the body of the token request.
-- **Scopes**: `openid` and `profile`.
-
-### Configuration
-
-Set these environment variables on the dashboard container at runtime:
-
-| Variable | Value | Sensitive |
-|---|---|---|
-| `PANEL_OAUTH_PROVIDER` | `generic` | no |
-| `PANEL_OAUTH_KEY` | Client ID | no |
-| `PANEL_OAUTH_SECRET` | Client secret | **yes** |
-| `PANEL_OAUTH_REDIRECT_URI` | `https://<dashboard-host>/oauth-redirect` | no |
-| `LIVEDATA_OAUTH_DISCOVERY_URL` | The provider's OpenID discovery document (`.../.well-known/openid-configuration`), read at startup to find its endpoints. At ESS: `https://login.ess.eu/.well-known/openid-configuration`. | no |
-| `PANEL_OAUTH_SCOPE` | `openid,profile` | no |
-| `PANEL_OAUTH_JWT_USER` | Token claim shown as the username, such as `sub` or `mail`. Default: `email`, so this is required when the `email` scope is not requested. Login fails with a 401 if the claim is missing. | no |
-| `PANEL_COOKIE_SECRET` | Long random value that signs the login cookies | **yes** |
-| `PANEL_OAUTH_ENCRYPTION` | Key that encrypts the tokens stored in cookies. Generate one with `panel oauth-secret`. | **yes** |
-| `PANEL_OAUTH_EXPIRY` | Optional login lifetime in days. Default: 1. | no |
-| `BOKEH_ALLOW_WS_ORIGIN` | The dashboard's public hostname, replacing the image's default of `*` | no |
-
-Set `PANEL_OAUTH_SCOPE` explicitly: Panel's default also requests `offline_access`, which the provider may reject.
-
-### Starting While the Provider Is Down
-
-With `LIVEDATA_OAUTH_DISCOVERY_URL`, the dashboard must reach the provider to start, and refuses to start if it cannot. To remove that dependency, set the endpoints explicitly using the values from the discovery document:
-
-| Variable | Discovery document field |
+| Variable | Value |
 |---|---|
-| `PANEL_OAUTH_AUTHORIZE_URL` | `authorization_endpoint` |
-| `PANEL_OAUTH_TOKEN_URL` | `token_endpoint` |
-| `PANEL_OAUTH_USER_URL` | `userinfo_endpoint` |
+| `PANEL_OAUTH_PROVIDER` | `generic` |
+| `PANEL_OAUTH_KEY` | Client ID |
+| `PANEL_OAUTH_SECRET` | Client secret |
+| `PANEL_OAUTH_REDIRECT_URI` | Redirect URI registered with the provider, such as `https://<dashboard-host>/oauth-redirect` |
+| `PANEL_OAUTH_SCOPE` | `openid,profile` |
+| `PANEL_OAUTH_JWT_USER` | Token claim shown as the username, such as `sub` or `mail` |
+| `LIVEDATA_OAUTH_DISCOVERY_URL` | At ESS: `https://login.ess.eu/.well-known/openid-configuration` |
+| `PANEL_COOKIE_SECRET` | Long random value |
+| `PANEL_OAUTH_ENCRYPTION` | Output of `panel oauth-secret` |
+| `BOKEH_ALLOW_WS_ORIGIN` | The dashboard's public hostname |
 
-An endpoint set this way takes priority over the discovery document. If all three are set, the document is not fetched at all.
+Serve the dashboard through an HTTPS proxy that also forwards WebSocket connections.
 
-The dashboard refuses to start if the configuration is incomplete, or if OAuth variables are set without `PANEL_OAUTH_PROVIDER`.
+The dashboard refuses to start if this configuration is incomplete, or if the provider cannot be reached at startup. It also refuses to start while the removed `LIVEDATA_BASIC_AUTH_PASSWORD` or `LIVEDATA_BASIC_AUTH_COOKIE_SECRET` is set.
 
-```{warning}
-Never put these values in the `Dockerfile` or pass them as image build arguments. The images are published, and values set there remain readable in the image layers. Use a Kubernetes Secret or your deployment tool's equivalent.
-```
-
-### HTTPS
-
-Serve the dashboard over HTTPS through a TLS-terminating proxy that also forwards WebSocket connections. Panel's login cookies are signed and `HttpOnly` but are not marked `Secure`, so a browser would also send them over plain HTTP. Do not expose the dashboard port directly, and consider enabling HSTS on the proxy.
-
-### Upgrading from Basic Authentication
-
-Password authentication has been removed, along with `--basic-auth-password`, `--basic-auth-cookie-secret` and their environment variables. It had no user accounts, so there is nothing to migrate.
-
-Before upgrading a deployment, configure OAuth as described above and remove `LIVEDATA_BASIC_AUTH_PASSWORD` and `LIVEDATA_BASIC_AUTH_COOKIE_SECRET`. The dashboard refuses to start while either is still set, so that a deployment cannot silently lose its login.
-
-### Limitations
-
-- **There are no access levels.** Any account the provider accepts for this client has full control of the dashboard, including starting and stopping workflows. To limit who can log in, restrict the client at the provider.
-- **Logging out is local.** It clears the dashboard's cookies but not the provider's session, so "Log in again" may sign the user straight back in.
-- **Tokens are not refreshed.** Users log in again once the login expires. See `PANEL_OAUTH_EXPIRY`.
-- **Only the dashboard is protected.** This does not cover Kafka or the backend services.
+There are no access levels: any account the provider accepts for this client has full control of the dashboard. To limit who can log in, restrict the client at the provider.
 
 ## Kafka TLS in Containers
 
