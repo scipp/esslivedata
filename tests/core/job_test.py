@@ -48,10 +48,13 @@ class FakeProcessor(Workflow):
         # § "Workflow protocol stays pure". JobFactory derives the gate set
         # from ContextBinding records, independent of this capability.
         self.context_keys: dict[str, Any] = dict(context_keys or {})
-        # Declared context streams this fake claims its graph asks for; a real
-        # workflow derives them from the built graph, a test states them.
+        # Keys of offered or chain-patch streams this fake claims its graph asks
+        # for; a real workflow derives them from the built graph, a test states
+        # them.
         self.requests_context_streams: set[Any] = set()
         self.offered_context_streams: dict[Any, str] = {}
+        self.chain_patch_bindings: list[Any] = []
+        self._requested: dict[str, Any] = {}
         self.build_calls = 0
         self.data: dict[str, Any] = {}
         self.accumulate_calls = []
@@ -71,22 +74,25 @@ class FakeProcessor(Workflow):
         if context_keys:
             self.context_keys.update(context_keys)
         self.offered_context_streams = dict(offered_context_streams or {})
-        self.context_keys.update(
+        self.chain_patch_bindings = list(chain_patch_bindings)
+        self._requested = {
+            name: key
+            for key, name in self.offered_context_streams.items()
+            if key in self.requests_context_streams
+        }
+        self._requested.update(
             {
-                self.offered_context_streams[key]: key
-                for key in self.requests_context_streams
-                if key in self.offered_context_streams
+                b.stream_name: b.workflow_key
+                for b in self.chain_patch_bindings
+                if b.workflow_key in self.requests_context_streams
             }
         )
+        self.context_keys.update(self._requested)
         self.build_calls += 1
 
     @property
     def requested_context_streams(self) -> frozenset[str]:
-        return frozenset(
-            self.offered_context_streams[key]
-            for key in self.requests_context_streams
-            if key in self.offered_context_streams
-        )
+        return frozenset(self._requested)
 
     def accumulate(
         self, data: dict[str, Any], *, start_time: int, end_time: int

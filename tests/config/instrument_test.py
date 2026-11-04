@@ -411,6 +411,69 @@ class TestContextBindings:
         with pytest.raises(ValueError, match='ghost'):
             instrument.validate()
 
+    def test_validate_accepts_chain_patch_on_aux_monitor_and_sample(self):
+        """A chain patch names the components a motor moves; a job may read them
+        as aux sources or, for the sample, without them being a source at all."""
+        from ess.livedata.config.stream import SAMPLE_COMPONENT
+        from ess.livedata.config.value_log import ValueLog
+        from ess.livedata.config.workflow_spec import AuxInput, AuxSources
+
+        class _MonLog(ValueLog):
+            pass
+
+        class _HexLog(ValueLog):
+            pass
+
+        instrument = Instrument(
+            name='test',
+            detector_names=['det1'],
+            streams={'mon_pos': _f144('mon_pos'), 'hex': _f144('hex')},
+        )
+        instrument.register_spec(
+            name='w',
+            version=1,
+            title='W',
+            source_names=['det1'],
+            outputs=SimpleTestOutputs,
+            aux_sources=AuxSources(
+                {'monitor': AuxInput(choices=('mon1',), default='mon1')}
+            ),
+        )
+        instrument.add_context_binding(
+            stream_name='mon_pos', workflow_key=_MonLog, dependent_sources=['mon1']
+        )
+        instrument.add_context_binding(
+            stream_name='hex',
+            workflow_key=_HexLog,
+            dependent_sources=[SAMPLE_COMPONENT],
+        )
+
+        instrument.validate()
+
+    def test_validate_rejects_direct_binding_on_aux_or_sample(self):
+        """A direct-parameter binding applies per primary source only."""
+        from ess.livedata.config.workflow_spec import AuxInput, AuxSources
+
+        instrument = Instrument(
+            name='test', detector_names=['det1'], streams={'rot': _f144('rot')}
+        )
+        instrument.register_spec(
+            name='w',
+            version=1,
+            title='W',
+            source_names=['det1'],
+            outputs=SimpleTestOutputs,
+            aux_sources=AuxSources(
+                {'monitor': AuxInput(choices=('mon1',), default='mon1')}
+            ),
+        )
+        instrument.add_context_binding(
+            stream_name='rot', workflow_key=_Key, dependent_sources=['mon1', 'sample']
+        )
+
+        with pytest.raises(ValueError, match="'mon1', 'sample'"):
+            instrument.validate()
+
     def test_validates_duplicate_value_log_subclass_across_bindings(self):
         """Two chain-patch entries with different streams must not share a
         :class:`ValueLog` subclass -- Sciline keys identify parameters by
@@ -548,31 +611,6 @@ class TestContextBindings:
         with pytest.raises(ValueError, match='aux_sources field'):
             instrument.validate()
 
-    def test_skip_instrument_contexts_suppresses_context_vs_aux_collision(self):
-        """``skip_instrument_contexts`` removes instrument-scope context for the
-        spec, so a matching aux field name does not collide for that spec."""
-        from ess.livedata.config.workflow_spec import AuxInput, AuxSources
-
-        instrument = Instrument(
-            name='test', detector_names=['det1'], streams={'rot': _f144('rot')}
-        )
-        handle = instrument.register_spec(
-            name='w',
-            version=1,
-            title='W',
-            source_names=['det1'],
-            outputs=SimpleTestOutputs,
-            aux_sources=AuxSources(
-                {'rot': AuxInput(choices=('other',), default='other')}
-            ),
-        )
-        instrument.add_context_binding(
-            stream_name='rot', workflow_key=_Key, dependent_sources=['det1']
-        )
-        handle.skip_instrument_contexts()
-
-        instrument.validate()
-
     def test_validates_wire_name_collision_between_instrument_and_spec(self):
         """Instrument- and spec-level ContextBinding entries must not name-collide.
 
@@ -642,7 +680,13 @@ class TestContextBindings:
         }
         assert instrument.bound_context_keys(handle.workflow_id, 'det2') == {}
 
-    def test_declared_context_keys_honours_skip_instrument_contexts(self):
+    def test_declared_context_keys_excludes_chain_patches(self):
+        """A chain patch is read off each job's graph, not matched by source."""
+        from ess.livedata.config.value_log import ValueLog
+
+        class _RotLog(ValueLog):
+            pass
+
         instrument = Instrument(
             name='test', detector_names=['det1'], streams={'rot': _f144('rot')}
         )
@@ -654,11 +698,11 @@ class TestContextBindings:
             outputs=SimpleTestOutputs,
         )
         instrument.add_context_binding(
-            stream_name='rot', workflow_key=_Key, dependent_sources=['det1']
+            stream_name='rot', workflow_key=_RotLog, dependent_sources=['det1']
         )
-        handle.skip_instrument_contexts()
 
         assert instrument.bound_context_keys(handle.workflow_id, 'det1') == {}
+        assert instrument.bound_gating_streams(handle.workflow_id, 'det1') == set()
 
     def test_declared_context_keys_includes_spec_scope_binding(self):
         instrument = Instrument(
@@ -671,7 +715,6 @@ class TestContextBindings:
             source_names=['det1'],
             outputs=SimpleTestOutputs,
         )
-        handle.skip_instrument_contexts()
         handle.add_context_binding(stream_name='rot', workflow_key=_Key)
 
         assert instrument.bound_context_keys(handle.workflow_id, 'det1') == {

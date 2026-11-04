@@ -1,6 +1,6 @@
 # ADR 0003: Unified declaration model for workflow context bindings
 
-- Status: accepted (amended 2026-08-31, 2026-09-02, 2026-09-10)
+- Status: accepted (amended 2026-08-31, 2026-09-02, 2026-09-10, 2026-11-04)
 - Deciders: Simon
 - Date: 2026-05-21
 
@@ -46,6 +46,9 @@ dashboard-safe `workflow_key` (a `ValueLog` chain-patch marker, which subclasses
 > by `(workflow_id, source_name, output_name)` and two specs give the two coordinate
 > modes different output identities. See "The gate is per job and depends on the job's
 > parameters" in ADR 0010.
+>
+> **Amended 2026-11-04 (#1431).** Chain patches no longer over-gate either; see
+> "Chain patches are routed by the graph" below.
 
 Detector-view and monitor-view factories wire position context unconditionally for
 sources that have a motion binding, regardless of `coordinate_mode` (TOA vs
@@ -124,6 +127,10 @@ user-selectable aux only — no context-flavoured entries, no `initial_context_m
 
 ### `skip_instrument_contexts` opt-out
 
+> **Superseded 2026-11-04 (#1431).** Removed together with source-matched chain
+> patches; see "Chain patches are routed by the graph" below. The section is kept for
+> the reasoning it records.
+
 Motion is a property of the *source*, but not every spec on that source consumes the
 geometry value (LOKI `tube_view`, bifrost `detector_ratemeter`, the bifrost detector
 view). Such a spec declares `SpecHandle.skip_instrument_contexts()`, which drops
@@ -162,6 +169,24 @@ per-component provider (`build_patched_chain_provider` / `synthesise_provider` i
 `ValueLog` parameter into the chain. Resolving the path up front keeps the wiring step
 free of any reference to the instrument's stream topology. The same seam works for the
 detector-view factory and for a pre-built `LokiWorkflow()`.
+
+### Chain patches are routed by the graph
+
+> **Amendment 2026-11-04 (#1431).** Matching a chain patch against the job's *primary*
+> source could not express a motor that moves an aux monitor or the sample. A
+> chain-patch binding's `dependent_sources` now names the components whose chains
+> contain the entry (sources, aux-source choices, or `SAMPLE_COMPONENT`), and nothing
+> else. `bound_context_keys` excludes chain patches. Every job's build receives all of
+> them, inserts a patch provider for each named component it could read (the sample
+> always), and reports back via `requested_context_streams` the ones whose `ValueLog`
+> key its targets depend on, exactly as for offered streams (ADR 0010). The job
+> gates on those. Whether a job reads a chain can depend on params (LOKI I(Q) reads
+> the transmission monitor's position only in `current_run` mode), which a per-source
+> declaration cannot capture. A job that never computes positions therefore no longer
+> waits for motors, and `skip_instrument_contexts` lost its purpose and was removed.
+> The "noisy failure" argument above still holds: a graph that needs a chain gates on
+> it whether or not anyone remembered to declare anything per spec. Route derivation
+> subscribes every service hosting specs to every chain-patch stream.
 
 ### Routing pickup
 

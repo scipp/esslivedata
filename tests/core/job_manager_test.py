@@ -1977,11 +1977,19 @@ class TestJobFactoryContextBinding:
         assert job.gating_streams == {'temp', 'roi_rectangle'}
         assert job.context_defaults == {'roi_rectangle': 'empty'}
 
-    def test_skip_instrument_contexts_excludes_instrument_scope_bindings(self) -> None:
-        """A spec with ``skip_instrument_contexts`` ignores instrument-scope inputs.
+    def test_chain_patch_the_graph_requires_gates_the_job(self) -> None:
+        """A chain patch reaches a job whose graph needs the patched chain.
 
-        The spec's own bindings, if any, are unaffected.
+        Its ``dependent_sources`` name the components the motor moves, here the
+        sample, not the job's primary source. The workflow reports back which
+        chain patches its graph requires, and the job gates on those.
         """
+        from ess.livedata.config.stream import SAMPLE_COMPONENT
+        from ess.livedata.config.value_log import ValueLog
+
+        class _RotLog(ValueLog):
+            pass
+
         instrument = _build_instrument_with_streams()
         handle = instrument.register_spec(
             name='w',
@@ -1993,19 +2001,12 @@ class TestJobFactoryContextBinding:
         )
         instrument.add_context_binding(
             stream_name='rot',
-            workflow_key=_CtxKeyA,
-            dependent_sources=['detector1'],
+            dependent_sources=[SAMPLE_COMPONENT],
+            workflow_key=_RotLog,
         )
-        handle.add_context_binding(stream_name='temp', workflow_key=_CtxKeyB)
-        handle.skip_instrument_contexts()
-
-        captured: dict[str, FakeProcessor] = {}
-
-        @handle.attach_factory()
-        def _factory() -> FakeProcessor:
-            proc = FakeProcessor()
-            captured['proc'] = proc
-            return proc
+        proc = FakeProcessor()
+        proc.requests_context_streams = {_RotLog}
+        handle.attach_factory()(lambda: proc)
 
         factory = JobFactory(instrument, service_name='data_reduction')
         job_id = JobId(source_name='detector1', job_number=uuid.uuid4())
@@ -2013,20 +2014,13 @@ class TestJobFactoryContextBinding:
 
         job = factory.create(job_id=job_id, config=config)
 
-        # Instrument-scope 'rot' suppressed, spec-scope 'temp' retained.
-        assert captured['proc'].context_keys == {'temp': _CtxKeyB}
-        assert job.missing_context(set()) == {'temp'}
+        assert proc.context_keys == {'rot': _RotLog}
+        assert job.missing_context(set()) == {'rot'}
+        assert 'rot' in job.input_stream_names
 
-    def test_chain_patch_context_binding_delivers_value_log_in_context_keys(
-        self,
-    ) -> None:
-        """A chain-patch ContextBinding contributes ValueLog subclass.
-
-        A chain-patch ContextBinding contributes its :class:`ValueLog`
-        subclass to the factory's ``context_keys``; the transform path is
-        derived from the binding's ``stream_name`` and consumed by
-        ``dynamic_transforms.wire_dynamic_transforms``.
-        """
+    def test_chain_patch_the_graph_ignores_does_not_gate(self) -> None:
+        """A job on a moved component that never computes its position does not
+        wait for the motor, although the binding is handed to its build."""
         from ess.livedata.config.value_log import ValueLog
 
         class _RotLog(ValueLog):
@@ -2046,22 +2040,19 @@ class TestJobFactoryContextBinding:
             dependent_sources=['detector1'],
             workflow_key=_RotLog,
         )
-
-        captured: dict[str, FakeProcessor] = {}
-
-        @handle.attach_factory()
-        def _factory() -> FakeProcessor:
-            proc = FakeProcessor()
-            captured['proc'] = proc
-            return proc
+        proc = FakeProcessor()
+        handle.attach_factory()(lambda: proc)
 
         factory = JobFactory(instrument, service_name='data_reduction')
         job_id = JobId(source_name='detector1', job_number=uuid.uuid4())
         config = WorkflowConfig(identifier=handle.workflow_id, job_id=job_id)
 
-        factory.create(job_id=job_id, config=config)
+        job = factory.create(job_id=job_id, config=config)
 
-        assert captured['proc'].context_keys == {'rot': _RotLog}
+        assert [b.stream_name for b in proc.chain_patch_bindings] == ['rot']
+        assert proc.context_keys == {}
+        assert job.missing_context(set()) == set()
+        assert 'rot' not in job.input_stream_names
 
 
 class TestJobFactoryDeclaredContextStreams:

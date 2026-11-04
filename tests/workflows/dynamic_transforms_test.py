@@ -11,6 +11,9 @@ of duplicate-typed parameters, the reason the dedup exists.
 
 from __future__ import annotations
 
+from typing import NewType
+
+import pytest
 import sciline
 import scipp as sc
 from ess.reduce.nexus.types import (
@@ -20,13 +23,15 @@ from ess.reduce.nexus.types import (
     SampleRun,
 )
 from ess.reduce.nexus.workflow import get_transformation_chain
-from scippnexus import NXdetector
+from scippnexus import NXdetector, NXsample
 from scippnexus.field import DependsOn
 from scippnexus.nxtransformations import Transform, TransformationChain
 
-from ess.livedata.config.stream import ChainPatchBinding
+from ess.livedata.config.stream import SAMPLE_COMPONENT, ChainPatchBinding
 from ess.livedata.config.value_log import ValueLog
+from ess.livedata.core.timestamp import Timestamp
 from ess.livedata.workflows.dynamic_transforms import wire_dynamic_transforms
+from ess.livedata.workflows.stream_processor_workflow import StreamProcessorWorkflow
 
 ROT_PATH = '/entry/det/transformations/rot'
 TILT_PATH = '/entry/det/transformations/tilt'
@@ -228,3 +233,88 @@ class TestWireDynamicTransforms:
         chain = _computed_chain(pipeline)
         assert chain.transformations[ROT_PATH].value.value == 11.0
         assert chain.transformations[TILT_PATH].value.value == 22.0
+
+
+SAMPLE_PATH = '/entry/sample/transformations/rot'
+
+DetectorAngle = NewType('DetectorAngle', float)
+SampleAngle = NewType('SampleAngle', float)
+
+
+def _sample_base_chain(
+    component: NeXusComponent[NXsample, SampleRun],
+) -> NeXusTransformationChain[NXsample, SampleRun]:
+    return get_transformation_chain(component)
+
+
+def _detector_angle(
+    chain: NeXusTransformationChain[NXdetector, SampleRun],
+) -> DetectorAngle:
+    return DetectorAngle(chain.transformations[ROT_PATH].value.value)
+
+
+def _sample_angle(chain: NeXusTransformationChain[NXsample, SampleRun]) -> SampleAngle:
+    return SampleAngle(chain.transformations[SAMPLE_PATH].value.value)
+
+
+class TestChainPatchSubscription:
+    """A job takes up the chain patches its targets depend on, and only those.
+
+    Bindings name the components a motor moves; the build inserts a patch
+    provider for each and reads back from the graph which motor streams the
+    job must subscribe to. The sample is patched although it is not a source.
+    """
+
+    @pytest.fixture
+    def bindings(self) -> list[ChainPatchBinding]:
+        return [
+            ChainPatchBinding(
+                stream_name='det_rot',
+                transform_path=ROT_PATH,
+                workflow_key=_RotLog,
+                dependent_sources=frozenset({'det1'}),
+            ),
+            ChainPatchBinding(
+                stream_name='sample_rot',
+                transform_path=SAMPLE_PATH,
+                workflow_key=_TiltLog,
+                dependent_sources=frozenset({SAMPLE_COMPONENT}),
+            ),
+        ]
+
+    def _workflow(self, target: type) -> StreamProcessorWorkflow:
+        pipeline = sciline.Pipeline(
+            (_base_chain, _sample_base_chain, _detector_angle, _sample_angle)
+        )
+        pipeline[NeXusComponent[NXdetector, SampleRun]] = _component(ROT_PATH)
+        pipeline[NeXusComponent[NXsample, SampleRun]] = _component(SAMPLE_PATH)
+        return StreamProcessorWorkflow(
+            pipeline,
+            dynamic_keys={'det1': NeXusData[NXdetector, SampleRun]},
+            target_keys={'angle': target},
+            accumulators=(),
+        )
+
+    def _run(self, workflow: StreamProcessorWorkflow, data: dict) -> dict:
+        workflow.accumulate(
+            data, start_time=Timestamp.from_ns(0), end_time=Timestamp.from_ns(1)
+        )
+        return workflow.finalize()
+
+    def test_sample_chain_is_patched_and_subscribed(self, bindings) -> None:
+        workflow = self._workflow(SampleAngle)
+
+        workflow.build(chain_patch_bindings=bindings)
+
+        assert workflow.requested_context_streams == frozenset({'sample_rot'})
+        result = self._run(workflow, {'sample_rot': _value_log(_TiltLog, 7.0).values})
+        assert result['angle'] == 7.0
+
+    def test_job_ignores_patches_its_targets_do_not_reach(self, bindings) -> None:
+        workflow = self._workflow(DetectorAngle)
+
+        workflow.build(chain_patch_bindings=bindings)
+
+        assert workflow.requested_context_streams == frozenset({'det_rot'})
+        result = self._run(workflow, {'det_rot': _value_log(_RotLog, 3.0).values})
+        assert result['angle'] == 3.0

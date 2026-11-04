@@ -28,6 +28,7 @@ from copy import deepcopy
 from typing import Any, Protocol, get_args, get_origin, runtime_checkable
 
 import sciline
+import scippnexus as snx
 from ess.reduce.nexus.types import (
     NeXusComponent,
     NeXusData,
@@ -36,7 +37,7 @@ from ess.reduce.nexus.types import (
 )
 from ess.reduce.nexus.workflow import get_transformation_chain
 
-from ess.livedata.config.stream import ChainPatchBinding
+from ess.livedata.config.stream import SAMPLE_COMPONENT, ChainPatchBinding
 from ess.livedata.config.value_log import ValueLog
 
 _PY_IDENTIFIER = re.compile(r'^[a-zA-Z_][a-zA-Z0-9_]*$')
@@ -155,10 +156,17 @@ def wire_dynamic_transforms(
 
     Derives the ``{source_name: component_type}`` map from the workflow's own
     ``dynamic_keys`` — each ``NeXusData[Component, Run]`` key carries the
-    component type as its first type-arg — then, for every binding whose
-    ``dependent_sources`` includes a derived source, groups the
+    component type as its first type-arg — and adds the sample
+    (:data:`SAMPLE_COMPONENT` as ``NXsample``), which is not a stream but whose
+    chain a reduction may read. Then, for every binding whose
+    ``dependent_sources`` includes one of these components, groups the
     ``(transform_path, workflow_key)`` pairs by component type and inserts one
     fused provider per type (built by :func:`build_patched_chain_provider`).
+
+    Providers are inserted whether or not the workflow's targets need the
+    chain: one the targets cannot reach is pruned, and the caller reads back
+    which ``ValueLog`` keys the graph requires to decide what the job
+    subscribes to (see ``StreamProcessorWorkflow.build``).
 
     Deriving the map from ``dynamic_keys`` avoids restating it in the factory
     (which would duplicate ``dynamic_keys`` and is a recurring source of
@@ -189,6 +197,7 @@ def wire_dynamic_transforms(
         for source, key in workflow.dynamic_keys.items()
         if get_origin(key) is NeXusData
     }
+    components[SAMPLE_COMPONENT] = snx.NXsample
     by_type: dict[type, dict[str, tuple[str, type]]] = {}
     for source_name, component_type in components.items():
         for binding in bindings:

@@ -5,10 +5,11 @@ currently-registered geometry artifact.
 
 For every chain-patch :class:`ContextBinding` (one whose ``workflow_key``
 is a :class:`ValueLog` subclass), walks the ``depends_on`` chain of
-every declared consumer in the artifact and confirms the path appears.
+every declared consumer (a source, or the sample at ``/entry/sample``) in the
+artifact and confirms the path appears.
 Catches typos and orphaned bindings before runtime.
 
-Also flags any empty NXlog placeholder on a registered source that no
+Also flags any empty NXlog placeholder on a registered source or the sample that no
 binding covers — except those in :data:`_KNOWN_ORPHAN_NXLOGS`, a
 deliberate ledger of placeholders consciously left for follow-up work.
 """
@@ -22,7 +23,7 @@ from scippnexus.nxtransformations import TransformationChain, parse_depends_on_c
 
 from ess.livedata.config.instrument import Instrument, instrument_registry
 from ess.livedata.config.instruments import available_instruments, get_config
-from ess.livedata.config.stream import ContextBinding
+from ess.livedata.config.stream import SAMPLE_COMPONENT, ContextBinding
 from ess.livedata.config.value_log import ValueLog
 from ess.livedata.preprocessors.detector_data import get_nexus_geometry_filename
 
@@ -36,13 +37,23 @@ def _chain_patch_inputs(instrument: Instrument) -> list[ContextBinding]:
     return [b for b in instrument.context_bindings if _is_chain_patch(b)]
 
 
-def _load_chain(artifact: str, source_name: str) -> TransformationChain | None:
-    """Walk a source's depends_on chain via scippnexus.
+def _component_path(component: str) -> str:
+    if component == SAMPLE_COMPONENT:
+        return '/entry/sample'
+    return f'/entry/instrument/{component}'
 
-    Returns ``None`` for static components with no ``depends_on`` field.
+
+def _load_chain(artifact: str, component: str) -> TransformationChain | None:
+    """Walk a component's depends_on chain via scippnexus.
+
+    ``component`` is a source name or :data:`SAMPLE_COMPONENT`. Returns ``None``
+    for static components with no ``depends_on`` field and for an artifact with
+    no sample.
     """
-    parent_path = f'/entry/instrument/{source_name}'
+    parent_path = _component_path(component)
     with snx.File(artifact, 'r') as f:
+        if parent_path not in f:
+            return None
         comp = f[parent_path]
         try:
             depends_on = comp['depends_on'][()]
@@ -107,8 +118,9 @@ def test_transform_paths_match_artifact(instrument: Instrument) -> None:
 
 
 def test_consumers_subset_of_registered_sources(instrument: Instrument) -> None:
-    """Each consumer must be a registered source on the instrument."""
+    """Each consumer must be a registered source on the instrument or the sample."""
     valid = set(instrument.detector_names) | set(instrument.monitors)
+    valid.add(SAMPLE_COMPONENT)
     for binding in _chain_patch_inputs(instrument):
         unknown = binding.dependent_sources - valid
         assert not unknown, (
@@ -140,13 +152,17 @@ _KNOWN_ORPHAN_NXLOGS: dict[tuple[str, str], str] = {
 
 
 def test_no_orphan_empty_nxlogs(instrument: Instrument) -> None:
-    """Every empty NXlog reachable from a registered source must be
-    covered by a binding (or listed in :data:`_KNOWN_ORPHAN_NXLOGS`).
-    Otherwise, workflows loading that source trip essreduce's
+    """Every empty NXlog reachable from a registered source or the sample must
+    be covered by a binding (or listed in :data:`_KNOWN_ORPHAN_NXLOGS`).
+    Otherwise, workflows loading that component trip essreduce's
     ``reject_time_dependent_transform`` at compute time."""
     artifact = str(get_nexus_geometry_filename(instrument.name))
     covered = {instrument.chain_patch_path(b) for b in _chain_patch_inputs(instrument)}
-    sources = list(instrument.detector_names) + list(instrument.monitors)
+    sources = [
+        *instrument.detector_names,
+        *instrument.monitors,
+        SAMPLE_COMPONENT,
+    ]
     for source_name in sources:
         empty = _empty_nxlog(artifact, source_name)
         if empty is None or empty in covered:

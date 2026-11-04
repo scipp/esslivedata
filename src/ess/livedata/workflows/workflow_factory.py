@@ -46,10 +46,10 @@ class SupportsContext(Protocol):
     separate configuration steps and factories need not thread these through
     their signature. It also reports back, via
     :attr:`requested_context_streams`, which of the instrument's offered
-    context streams the finished graph asks for -- the routing layer cannot know
-    that before the graph exists. (Aux-role resolution is not among these:
-    factories key ``dynamic_keys`` by canonical stream name directly, via the
-    ``aux_source_names`` map passed to the factory.)
+    context streams and chain-patch streams the finished graph asks for -- the
+    routing layer cannot know that before the graph exists. (Aux-role resolution
+    is not among these: factories key ``dynamic_keys`` by canonical stream name
+    directly, via the ``aux_source_names`` map passed to the factory.)
     """
 
     def build(
@@ -69,9 +69,8 @@ class WorkflowRegistration:
     """Per-workflow record held by :class:`WorkflowFactory`.
 
     Bundles the declarative :class:`WorkflowSpec` with implementation-side
-    data: the factory callable, the owning service, spec-scope
-    :class:`ContextBinding` declarations, and the opt-out flag for
-    instrument-scope context bindings. Keeping these alongside the factory
+    data: the factory callable, the owning service, and spec-scope
+    :class:`ContextBinding` declarations. Keeping these alongside the factory
     (rather than on :class:`WorkflowSpec`) preserves the spec as a purely
     declarative model and keeps the workflow-key imports out of
     :mod:`config.workflow_spec`.
@@ -81,7 +80,6 @@ class WorkflowRegistration:
     service: str
     factory: Callable[..., Workflow] | None = None
     context_bindings: tuple[ContextBinding, ...] = ()
-    skip_instrument_contexts: bool = False
 
 
 @dataclass(frozen=True)
@@ -155,26 +153,6 @@ class SpecHandle:
             dependent_sources=dependent_sources,
             default=default,
         )
-
-    def skip_instrument_contexts(self) -> None:
-        """Opt this spec out of all instrument-scope context-stream bindings.
-
-        Use when this spec consumes a source whose instrument declaration
-        carries context (motion, geometry, etc.) but this spec does not need
-        the value — e.g. a counts-only ratemeter on a moving detector. The
-        spec is removed from the gate and from the resolved context for those
-        streams. Spec-scope bindings (declared via :meth:`add_context_binding`)
-        are unaffected.
-
-        Call this from ``factories.py``, co-located with the
-        :meth:`Instrument.add_context_binding` it negates: the opt-out has no
-        meaning without the instrument-scope binding it cancels, and the
-        rationale (does this workflow consume the geometry value?) is
-        implementation knowledge that lives with the factory. The call needs
-        no workflow-key import, so the ``specs.py`` import constraint does not
-        apply.
-        """
-        self._factory._set_skip_instrument_contexts(self.workflow_id)
 
 
 class WorkflowFactory(Mapping[WorkflowId, WorkflowSpec]):
@@ -343,12 +321,6 @@ class WorkflowFactory(Mapping[WorkflowId, WorkflowSpec]):
         )
         self._registrations[workflow_id] = dataclasses.replace(
             reg, context_bindings=(*reg.context_bindings, new_input)
-        )
-
-    def _set_skip_instrument_contexts(self, workflow_id: WorkflowId) -> None:
-        reg = self._registrations[workflow_id]
-        self._registrations[workflow_id] = dataclasses.replace(
-            reg, skip_instrument_contexts=True
         )
 
     def validate_params(self, config: WorkflowConfig) -> Any:

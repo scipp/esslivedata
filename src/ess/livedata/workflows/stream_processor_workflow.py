@@ -140,13 +140,14 @@ class StreamProcessorWorkflow(Workflow):
 
     @property
     def requested_context_streams(self) -> frozenset[str]:
-        """Offered context streams the built graph turned out to require.
+        """Context streams the built graph turned out to require.
 
         Empty before :meth:`build`. The routing layer reads this back off the
         workflow instead of predicting it: whether a job consumes the streamed
-        lookup table follows from the graph its params produce, and only the
-        graph knows (see :meth:`build`). Only *offered* streams appear here.
-        Factory-supplied context (ROI requests) reaches the gate as a
+        lookup table, or the motor readback patched into a component's chain,
+        follows from the graph its params produce, and only the graph knows
+        (see :meth:`build`). Only *offered* streams and chain-patch streams
+        appear here. Factory-supplied context (ROI requests) reaches the gate as a
         :class:`~ess.livedata.config.stream.ContextBinding` instead, carrying
         the default that keeps a job whose producer may never publish from
         deadlocking on it.
@@ -168,6 +169,12 @@ class StreamProcessorWorkflow(Workflow):
         baking them into the pruned/precomputed graph. Building eagerly (rather
         than on first ``accumulate``) keeps graph validation and the static-node
         precompute at job-creation time.
+
+        ``chain_patch_bindings`` are the instrument's chain patches, all of them:
+        a patch provider is inserted for every component a binding names, and
+        the binding's stream becomes a context stream of this job only where
+        the targets depend on its ``ValueLog`` key. A job that never computes
+        the patched component's position therefore does not wait for the motor.
 
         ``offered_context_streams`` are the instrument's offered context
         streams (key → wire name). Unlike ``context_keys``, which the routing
@@ -194,14 +201,21 @@ class StreamProcessorWorkflow(Workflow):
         wire_dynamic_transforms(self, bindings)
         # After wiring: chain patches add providers, so the graph is only
         # complete here.
-        if offered_context_streams:
-            requested = self._required_keys() & set(offered_context_streams)
-            self._requested_context_streams = {
-                offered_context_streams[key] for key in requested
+        required = self._required_keys()
+        requested = {
+            name: key
+            for key, name in (offered_context_streams or {}).items()
+            if key in required
+        }
+        requested.update(
+            {
+                b.stream_name: b.workflow_key
+                for b in bindings
+                if b.workflow_key in required
             }
-            self.add_context_keys(
-                {offered_context_streams[key]: key for key in requested}
-            )
+        )
+        self._requested_context_streams = set(requested)
+        self.add_context_keys(requested)
         self._stream_processor = streaming.StreamProcessor(
             self._base_workflow,
             dynamic_keys=tuple(self._dynamic_keys.values()),

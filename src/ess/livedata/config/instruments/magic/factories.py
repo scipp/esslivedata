@@ -64,10 +64,6 @@ def setup_factories(instrument: Instrument) -> None:
             dependent_sources={source_name},
             workflow_key=workflow_key,
         )
-    # The wire and strip views fold `detector_number` and never consume a
-    # position, so they must not wait on the rotation readback.
-    specs.wire_view_handle.skip_instrument_contexts()
-    specs.strip_view_handle.skip_instrument_contexts()
 
     _pixel_noise = sc.scalar(2.0, unit='mm')
     # One screen bin per strip and per segment. The banks are radially deep (32

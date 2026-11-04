@@ -147,6 +147,42 @@ class TestGatherSourceNames:
         )
         assert gather_source_names(instrument, "detector_data") == {'det_a'}
 
+    def test_chain_patch_is_consumed_by_every_service_hosting_specs(self) -> None:
+        """A motor moving the sample (or an aux monitor) may be needed by a job on
+        any source, and only the job's graph knows, so every service consumes it.
+        """
+        from ess.livedata.config.stream import SAMPLE_COMPONENT, F144Stream
+        from ess.livedata.config.value_log import ValueLog
+
+        class _HexLog(ValueLog):
+            pass
+
+        instrument = Instrument(
+            name="test",
+            detector_names=["det_a"],
+            streams={
+                'hex': F144Stream(
+                    source='hex', topic='t', units='mm', nexus_path='/entry/hex'
+                )
+            },
+        )
+        instrument.register_spec(
+            group=DETECTORS,
+            name="view",
+            version=1,
+            title="View",
+            source_names=["det_a"],
+            outputs=DefaultOutputs,
+        )
+        instrument.add_context_binding(
+            stream_name='hex',
+            workflow_key=_HexLog,
+            dependent_sources=[SAMPLE_COMPONENT],
+        )
+        assert gather_source_names(instrument, "detector_data") == {'det_a', 'hex'}
+        # No hosted specs, nothing to patch.
+        assert gather_source_names(instrument, "data_reduction") == set()
+
     def test_spec_context_binding_without_resolver_is_picked_up(self) -> None:
         """Spec-level ContextBinding without a stream_resolver routes by name."""
         from ess.livedata.config.stream import F144Stream

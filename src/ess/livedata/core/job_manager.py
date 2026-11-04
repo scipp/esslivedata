@@ -146,7 +146,8 @@ class JobFactory:
         Validates the config's params, then collects the job's context streams
         from both sides: the instrument- and spec-scope ``ContextBinding``
         declarations matching this ``(spec, source)``, and the offered context
-        streams the built workflow turns out to request (ADR 0010). Together
+        streams and chain patches the built workflow turns out to request (ADR
+        0010). Together
         they populate the job's ``context_keys`` (wired into ``set_context``)
         and ``gating_streams`` (the JobManager gates the job until each is
         available; see ADR 0002).
@@ -193,9 +194,9 @@ class JobFactory:
             chain_patch_bindings=self._instrument.chain_patch_bindings,
             offered_context_streams=self._instrument.offered_context_streams,
         )
-        # Offered context streams reach every job; only the built graph knows
-        # which of them it asks for, so that half of the gate is read back off
-        # the workflow rather than predicted here (ADR 0010).
+        # Offered context streams and chain patches reach every job; only the
+        # built graph knows which of them it asks for, so that half of the gate
+        # is read back off the workflow rather than predicted here (ADR 0010).
         requested_streams = (
             set(stream_processor.requested_context_streams)
             if isinstance(stream_processor, SupportsContext)

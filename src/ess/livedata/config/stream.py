@@ -142,7 +142,11 @@ class ContextBinding:
       :meth:`Instrument.chain_patch_path`.
       :attr:`Instrument.chain_patch_bindings` collects these bindings by
       ``issubclass(workflow_key, ValueLog)`` and the wiring step synthesises
-      a fused per-component patched-chain provider.
+      a fused per-component patched-chain provider. For a chain patch,
+      :attr:`dependent_sources` names the components whose chains contain
+      the entry (the motor moves them), not the jobs that receive the value:
+      a job receives it when its built graph needs one of those chains (see
+      :class:`ChainPatchBinding`).
 
     The same record is declared at two scopes: instrument scope
     (:meth:`Instrument.add_context_binding`, for source properties such as
@@ -227,12 +231,30 @@ class ChainPatchBinding:
     this self-contained data, without re-consulting the instrument's stream
     topology. The :attr:`stream_name` is retained as the dedup key when
     grouping patches per component type.
+
+    :attr:`dependent_sources` names the components whose ``depends_on`` chains
+    pass through :attr:`transform_path`: detectors and monitors by source name,
+    the sample by :data:`SAMPLE_COMPONENT`. Which jobs subscribe follows from
+    the graph rather than from this set. The patch provider is inserted for
+    every named component a job could read, and the job gates on the binding
+    only if its targets depend on a patched chain. Whether a job reads a chain
+    can depend on its params (LOKI I(Q) reads the transmission monitor's
+    position only in ``current_run`` transmission mode), so only the built
+    graph can tell.
     """
 
     stream_name: str
     transform_path: str
     workflow_key: Any
     dependent_sources: frozenset[str]
+
+
+SAMPLE_COMPONENT = 'sample'
+"""Name of the sample in a chain-patch binding's ``dependent_sources``.
+
+The sample is not a stream, so it has no source name. A workflow has at most
+one ``NXsample`` component (at ``/entry/sample``), so this one name suffices.
+"""
 
 
 #: NeXus container groups that carry no entity-level meaning. Removed from the

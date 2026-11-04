@@ -1154,17 +1154,6 @@ class TestSpecHandleAddContextBinding:
         assert [e.stream_name for e in entries] == ['roi', 'polygon']
         assert [e.workflow_key for e in entries] == [_CtxKey, _OtherCtxKey]
 
-    def test_skip_instrument_contexts_sets_registration_flag(self) -> None:
-        factory, handle = self._register(source_names=['det1'])
-
-        reg = factory.registration(handle.workflow_id)
-        assert reg.skip_instrument_contexts is False
-
-        handle.skip_instrument_contexts()
-
-        reg = factory.registration(handle.workflow_id)
-        assert reg.skip_instrument_contexts is True
-
     def test_chain_patch_rejected_at_spec_scope(self) -> None:
         """A :class:`ValueLog` ``workflow_key`` at spec scope is rejected.
 

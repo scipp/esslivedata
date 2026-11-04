@@ -61,6 +61,10 @@ def gather_source_names(
         # published on the context topic drop out in resolve_stream_names —
         # that route is added unconditionally rather than derived here.
         names.update(instrument.offered_context_streams.values())
+        # Chain patches likewise: the motor may move an aux monitor or the
+        # sample, and whether a job reads that chain is known only from its
+        # graph, so every service hosting specs consumes every motor readback.
+        names.update(b.stream_name for b in instrument.chain_patch_bindings)
     devices = instrument.devices
     for name in list(names):
         device = devices.get(name)

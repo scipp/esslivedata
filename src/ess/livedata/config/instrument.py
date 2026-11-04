@@ -26,6 +26,7 @@ from .detector_downsampling import (
 )
 from .stream import (
     NO_DEFAULT,
+    SAMPLE_COMPONENT,
     AxisRange,
     ChainPatchBinding,
     ContextBinding,
@@ -319,7 +320,12 @@ class Instrument:
         ``workflow_key``: :attr:`chain_patch_bindings` collects them by
         ``issubclass`` and resolves the NeXus ``depends_on`` chain path from
         ``stream_name`` (see :meth:`chain_patch_path`) so the wiring step can
-        route the value via a fused per-component patched-chain provider.
+        route the value via a fused per-component patched-chain provider. For
+        these, ``dependent_sources`` lists every component whose chain contains
+        the entry: detectors and monitors by source name, the sample as
+        :data:`~ess.livedata.config.stream.SAMPLE_COMPONENT`. A job subscribes
+        when its graph needs one of those chains, whichever of its sources the
+        component is (see :class:`~ess.livedata.config.stream.ChainPatchBinding`).
         """
         binding = ContextBinding(
             stream_name=stream_name,
@@ -346,8 +352,9 @@ class Instrument:
 
         A binding is needed where that reading cannot work: when the key reaches
         the graph only because the binding puts it there (a chain patch is
-        injected into a graph that never mentions it, so there is no request to
-        read back), or when the stream filling a key varies per source. Offers
+        injected into a graph that never mentions it; the build reads back
+        whether the graph needs it only after inserting the provider the binding
+        describes), or when the stream filling a key varies per source. Offers
         are bijective -- one stream per key and one key per stream,
         instrument-wide -- and so cannot express the latter.
 
@@ -413,6 +420,9 @@ class Instrument:
         The result is self-contained data the routing layer hands to
         :func:`~ess.livedata.workflows.dynamic_transforms.wire_dynamic_transforms`,
         so the wiring step needs no access to the instrument's stream topology.
+        Every job receives all of them; its built graph decides which it
+        subscribes to and gates on (``StreamProcessorWorkflow.build``), so they
+        are not part of :meth:`bound_context_keys`.
         """
         return [
             ChainPatchBinding(
@@ -431,9 +441,10 @@ class Instrument:
         """Instrument- and spec-scope bindings applying to a ``(spec, source)``.
 
         A binding applies when its ``dependent_sources`` include
-        ``source_name``. ``skip_instrument_contexts`` filters out
-        instrument-scope entries — a spec that explicitly declares a binding
-        cannot opt out of it via the flag.
+        ``source_name``. Chain patches are excluded: their
+        ``dependent_sources`` name the components a motor moves, and which jobs
+        receive the value is read off each job's built graph instead (see
+        :attr:`chain_patch_bindings`).
 
         Raises :class:`KeyError` for an unregistered ``workflow_id``: an empty
         result means "this workflow binds nothing" and must not be conflated
@@ -445,13 +456,10 @@ class Instrument:
                 f"Cannot resolve context keys: workflow {workflow_id} is not "
                 "registered with this instrument's workflow factory"
             )
-        instrument_bindings = (
-            [] if registration.skip_instrument_contexts else self.context_bindings
-        )
         return [
             binding
-            for binding in (*instrument_bindings, *registration.context_bindings)
-            if source_name in binding.dependent_sources
+            for binding in (*self.context_bindings, *registration.context_bindings)
+            if source_name in binding.dependent_sources and not _is_chain_patch(binding)
         ]
 
     def bound_context_keys(
@@ -466,7 +474,8 @@ class Instrument:
         to every job on a dependent source, which is why this needs no params: a
         stream only some of a spec's jobs consume is offered instead (see
         :meth:`offer_context_stream`), and resolved per job against the graph it
-        builds.
+        builds. Chain patches are resolved the same way and are not included
+        (see :attr:`chain_patch_bindings`).
 
         Two bindings naming one stream for different keys is a declaration
         mistake and is rejected at registration by :meth:`validate`, not here.
@@ -1214,19 +1223,31 @@ class Instrument:
                 )
 
     def _validate_binding_dependent_sources(self) -> None:
-        """Raise if any binding lists a source name no registered spec advertises."""
+        """Raise if any binding lists a source no registered spec can read.
+
+        A direct-parameter binding applies per primary source, so its names
+        must be some spec's ``source_names``. A chain patch names components
+        whose chains a job may read, so aux-source choices and
+        :data:`SAMPLE_COMPONENT` are valid too.
+        """
         if not self.context_bindings:
             return
-        known_sources: set[str] = set()
+        primary: set[str] = set()
+        readable: set[str] = {SAMPLE_COMPONENT}
         for spec in self.workflow_factory.values():
-            known_sources.update(spec.source_names)
+            primary.update(spec.source_names)
+            if spec.aux_sources is not None:
+                for aux_input in spec.aux_sources.inputs.values():
+                    readable.update(aux_input.choices)
+        readable |= primary
         for binding in self.context_bindings:
-            unknown = binding.dependent_sources - known_sources
+            known = readable if _is_chain_patch(binding) else primary
+            unknown = binding.dependent_sources - known
             if unknown:
                 raise ValueError(
                     f"ContextBinding for stream {binding.stream_name!r} lists "
                     f"unknown dependent_sources {sorted(unknown)}; no registered "
-                    f"spec advertises these source_names"
+                    f"spec reads these sources"
                 )
 
     def _validate_chain_patch_value_log_uniqueness(self) -> None:
@@ -1287,7 +1308,9 @@ class Instrument:
           instrument-level and spec-level :class:`ContextBinding` entries
           apply, the ``stream_name`` (which equals the wire name) must be
           unique across the two scopes. Rejected even where the keys agree:
-          the redundancy means one scope is unaware of the other.
+          the redundancy means one scope is unaware of the other. A chain
+          patch can reach any job, depending on its graph, so it counts as
+          applying to every (spec, source) pair.
         - **Context-vs-aux.** A context wire name must not match any
           ``aux_sources`` field name on the spec: at ``JobFactory.create``
           time the context and aux mappings are merged into a single
@@ -1299,9 +1322,11 @@ class Instrument:
             aux_field_names: set[str] = (
                 set(spec.aux_sources.inputs) if spec.aux_sources is not None else set()
             )
-            instrument_bindings = (
-                [] if reg.skip_instrument_contexts else self.context_bindings
-            )
+            chain_patch_names = {
+                binding.stream_name
+                for binding in self.context_bindings
+                if _is_chain_patch(binding)
+            }
             for source in spec.source_names:
                 keys: dict[str, Any] = {}
                 for binding in self._matching_bindings(spec.get_id(), source):
@@ -1315,9 +1340,9 @@ class Instrument:
                             f"conflicting workflow keys {previous} and "
                             f"{binding.workflow_key}"
                         )
-                instrument_names: set[str] = {
+                instrument_names: set[str] = chain_patch_names | {
                     binding.stream_name
-                    for binding in instrument_bindings
+                    for binding in self.context_bindings
                     if source in binding.dependent_sources
                 }
                 spec_names: set[str] = {
