@@ -28,9 +28,7 @@ def clean_auth_state(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
     # patch.dict rather than monkeypatch: discovery writes to the environment.
     with mock.patch.dict(os.environ):
         for var in list(os.environ):
-            if var.startswith(
-                ('PANEL_', 'BOKEH_COOKIE', 'LIVEDATA_BASIC_AUTH', 'LIVEDATA_OAUTH')
-            ):
+            if var.startswith(('PANEL_', 'BOKEH_COOKIE', 'LIVEDATA_OAUTH')):
                 del os.environ[var]
         yield
 
@@ -69,14 +67,6 @@ def test_server_is_given_the_provider(oauth_env: None, tmp_path: Path) -> None:
         app.run_forever()
     assert serve.call_args.kwargs['oauth_provider'] == 'generic'
     assert serve.call_args.kwargs['login_endpoint'] == '/oauth-redirect'
-
-
-def test_removed_basic_auth_variable_refuses_to_start() -> None:
-    """An upgraded deployment must not silently lose its password protection."""
-    os.environ['LIVEDATA_BASIC_AUTH_PASSWORD'] = SECRET
-    with pytest.raises(ValueError, match='LIVEDATA_BASIC_AUTH_PASSWORD') as excinfo:
-        configure_auth()
-    assert SECRET not in str(excinfo.value)
 
 
 def test_oauth_variable_without_provider_refuses_to_start() -> None:

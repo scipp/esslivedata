@@ -18,10 +18,6 @@ import structlog
 
 logger = structlog.get_logger(__name__)
 
-_REMOVED_BASIC_AUTH_VARS = (
-    'LIVEDATA_BASIC_AUTH_PASSWORD',
-    'LIVEDATA_BASIC_AUTH_COOKIE_SECRET',
-)
 _ENDPOINTS = {
     'PANEL_OAUTH_AUTHORIZE_URL': 'authorization_endpoint',
     'PANEL_OAUTH_TOKEN_URL': 'token_endpoint',
@@ -51,9 +47,6 @@ def configure_auth() -> str | None:
     ValueError
         If the configuration is incomplete. Names variables, never their values.
     """
-    if removed := [var for var in _REMOVED_BASIC_AUTH_VARS if os.environ.get(var)]:
-        raise ValueError(f"Basic auth was removed; unset {', '.join(removed)}.")
-
     provider = pn.config.oauth_provider
     if provider is None:
         if os.environ.get('PANEL_OAUTH_KEY') or os.environ.get('PANEL_OAUTH_SECRET'):

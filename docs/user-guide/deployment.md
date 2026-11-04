@@ -45,7 +45,7 @@ Register a client with the provider using the authorization code flow and `clien
 
 Serve the dashboard through an HTTPS proxy that also forwards WebSocket connections.
 
-The dashboard refuses to start if this configuration is incomplete, or if the provider cannot be reached at startup. It also refuses to start while the removed `LIVEDATA_BASIC_AUTH_PASSWORD` or `LIVEDATA_BASIC_AUTH_COOKIE_SECRET` is set.
+The dashboard refuses to start if this configuration is incomplete, or if the provider cannot be reached at startup.
 
 There are no access levels: any account the provider accepts for this client has full control of the dashboard. To limit who can log in, restrict the client at the provider.
 
