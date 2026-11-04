@@ -78,11 +78,11 @@ def setup_factories(instrument: Instrument) -> None:
     # whether its graph reaches them — the Q-maps do, the detector view (sums
     # over banks) and the ratemeter (counts-only) do not.
     instrument.offer_context_stream(
-        stream_name='detector_tank_angle_r0',
+        stream_name='detector_tank_angle',
         workflow_key=InstrumentAngle[SampleRun],
     )
     instrument.offer_context_stream(
-        stream_name='rotation_stage',
+        stream_name='sample_rotation',
         workflow_key=SampleAngle[SampleRun],
     )
 
@@ -363,12 +363,12 @@ def _create_base_reduction_workflow():
         return DetectorRegionCounts[AccumulationMode](counts)
 
     reduction_workflow = TofWorkflow(run_types=(SampleRun,), monitor_types=())
-    # Pin detector geometry to the pre-2026-06-08 survey. The 2026-06-08 file
-    # (added for the corrected chopper geometry, and the default the chopper
-    # factory uses) has a broken ``detector_tank_angle`` depends_on chain:
-    # missing ``_t0`` offset, stale ``117_`` prefix. Drop this pin once a file
-    # valid for both detectors and choppers is available
-    # (https://github.com/scipp/esslivedata/issues/962).
+    # Pin detector geometry to the pre-2026-06-08 survey. In newer artifacts
+    # (the default the chopper factory uses) the detector chains run through
+    # the length-0 ``detector_tank_angle`` placeholder, so loading positions
+    # fails with "Transform is time-dependent". The ratemeter only counts, but
+    # ``TofWorkflow`` loads positions anyway. Drop this pin once the ratemeter
+    # no longer loads them (https://github.com/scipp/esslivedata/issues/1427).
     reduction_workflow[Filename[SampleRun]] = get_nexus_geometry_filename(
         'bifrost', date=sc.datetime('2025-06-01T00:00:00')
     )
