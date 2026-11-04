@@ -102,6 +102,9 @@ flavours share the record, discriminated by the *type* of `workflow_key`:
 
 ### Resolution at job creation
 
+> **Amended 2026-11-04 (#1431).** Chain patches are no longer resolved here; see
+> "Chain patches are routed by the graph" below.
+
 `Instrument.bound_context_keys(workflow_id, source_name)` merges instrument- and
 spec-scope bindings filtered by source membership and returns
 `{stream_name: workflow_key}`:
@@ -260,6 +263,7 @@ single source of truth and a binding cannot disagree with the stream it patches.
   those into the pipeline.
 - `WorkflowRegistration` carries `context_bindings` and a `skip_instrument_contexts`
   flag; `SpecHandle` gains `add_context_binding(...)` and `skip_instrument_contexts()`.
+  (The flag was removed on 2026-11-04, #1431.)
 - `Instrument.bound_context_keys` merges instrument + spec bindings; `JobFactory.create`
   calls it, hands `context_keys` to the factory (injected via `SupportsContext.build`,
   ADR 0004), sets `Job.gating_streams`, and returns a bare `Job`.

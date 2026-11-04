@@ -241,6 +241,11 @@ class ChainPatchBinding:
     can depend on its params (LOKI I(Q) reads the transmission monitor's
     position only in ``current_run`` transmission mode), so only the built
     graph can tell.
+
+    A job can read a patched chain only for components it streams as
+    ``NeXusData`` (its primary and aux sources) and for the sample, and only
+    for ``SampleRun``. A job reading a moved component's chain any other way
+    still fails at compute time on the empty placeholder.
     """
 
     stream_name: str

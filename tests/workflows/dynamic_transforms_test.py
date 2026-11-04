@@ -239,6 +239,7 @@ SAMPLE_PATH = '/entry/sample/transformations/rot'
 
 DetectorAngle = NewType('DetectorAngle', float)
 SampleAngle = NewType('SampleAngle', float)
+RawSampleAngle = NewType('RawSampleAngle', float)
 
 
 def _sample_base_chain(
@@ -255,6 +256,11 @@ def _detector_angle(
 
 def _sample_angle(chain: NeXusTransformationChain[NXsample, SampleRun]) -> SampleAngle:
     return SampleAngle(chain.transformations[SAMPLE_PATH].value.value)
+
+
+def _raw_sample_angle(log: _TiltLog) -> RawSampleAngle:
+    """Consumes the motor value directly, beside (or instead of) the chain."""
+    return RawSampleAngle(log.values['time', -1].value)
 
 
 class TestChainPatchSubscription:
@@ -284,7 +290,13 @@ class TestChainPatchSubscription:
 
     def _workflow(self, target: type) -> StreamProcessorWorkflow:
         pipeline = sciline.Pipeline(
-            (_base_chain, _sample_base_chain, _detector_angle, _sample_angle)
+            (
+                _base_chain,
+                _sample_base_chain,
+                _detector_angle,
+                _sample_angle,
+                _raw_sample_angle,
+            )
         )
         pipeline[NeXusComponent[NXdetector, SampleRun]] = _component(ROT_PATH)
         pipeline[NeXusComponent[NXsample, SampleRun]] = _component(SAMPLE_PATH)
@@ -318,3 +330,12 @@ class TestChainPatchSubscription:
         assert workflow.requested_context_streams == frozenset({'det_rot'})
         result = self._run(workflow, {'det_rot': _value_log(_RotLog, 3.0).values})
         assert result['angle'] == 3.0
+
+    def test_motor_value_consumed_directly_is_subscribed(self, bindings) -> None:
+        workflow = self._workflow(RawSampleAngle)
+
+        workflow.build(chain_patch_bindings=bindings)
+
+        assert workflow.requested_context_streams == frozenset({'sample_rot'})
+        result = self._run(workflow, {'sample_rot': _value_log(_TiltLog, 9.0).values})
+        assert result['angle'] == 9.0

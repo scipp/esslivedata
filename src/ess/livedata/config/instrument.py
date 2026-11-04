@@ -1196,7 +1196,43 @@ class Instrument:
         self._validate_binding_dependent_sources()
         self._validate_context_binding_declarations()
         self._validate_chain_patch_value_log_uniqueness()
+        self._validate_chain_patch_stream_names()
         self._validate_offered_context_streams()
+
+    def _validate_chain_patch_stream_names(self) -> None:
+        """Raise if a chain-patch stream name is also used for another purpose.
+
+        A chain patch can reach any job, depending on its graph, and
+        ``StreamProcessorWorkflow.build`` adds it to the job's context keys
+        after the bound and offered ones. A direct binding (either scope) or an
+        offer under the same name would be silently replaced by the
+        ``ValueLog`` key. A workflow that needs the motor value directly, beside
+        the chain, consumes the chain patch's ``ValueLog`` key instead.
+
+        Also reserves :data:`SAMPLE_COMPONENT`: a source or stream of that name
+        would be indistinguishable from the sample in ``dependent_sources``.
+        """
+        reserved = {*self.detector_names, *self.monitors, *self.streams}
+        if SAMPLE_COMPONENT in reserved:
+            raise ValueError(
+                f"{SAMPLE_COMPONENT!r} is reserved for the sample in chain-patch "
+                "dependent_sources and cannot name a source or stream"
+            )
+        chain_patch_names = {
+            b.stream_name for b in self.context_bindings if _is_chain_patch(b)
+        }
+        other_names = {
+            b.stream_name for b in self.context_bindings if not _is_chain_patch(b)
+        }
+        for reg in self.workflow_factory.registrations():
+            other_names.update(b.stream_name for b in reg.context_bindings)
+        other_names.update(self._offered_context_streams.values())
+        if collisions := chain_patch_names & other_names:
+            raise ValueError(
+                f"Chain-patch streams {sorted(collisions)} are also bound directly "
+                "or offered; the chain patch would silently replace the other "
+                "key. Consume the chain patch's ValueLog key instead."
+            )
 
     def _validate_offered_context_streams(self) -> None:
         """Raise if an offered context stream is not published by anything.
@@ -1308,25 +1344,22 @@ class Instrument:
           instrument-level and spec-level :class:`ContextBinding` entries
           apply, the ``stream_name`` (which equals the wire name) must be
           unique across the two scopes. Rejected even where the keys agree:
-          the redundancy means one scope is unaware of the other. A chain
-          patch can reach any job, depending on its graph, so it counts as
-          applying to every (spec, source) pair.
+          the redundancy means one scope is unaware of the other.
         - **Context-vs-aux.** A context wire name must not match any
           ``aux_sources`` field name on the spec: at ``JobFactory.create``
           time the context and aux mappings are merged into a single
           field→wire dict, and a key clash would silently overwrite the
           aux entry.
+
+        Chain patches take no part: they are not matched by source and never
+        enter that merge. Their names are checked by
+        :meth:`_validate_chain_patch_stream_names`.
         """
         for reg in self.workflow_factory.registrations():
             spec = reg.spec
             aux_field_names: set[str] = (
                 set(spec.aux_sources.inputs) if spec.aux_sources is not None else set()
             )
-            chain_patch_names = {
-                binding.stream_name
-                for binding in self.context_bindings
-                if _is_chain_patch(binding)
-            }
             for source in spec.source_names:
                 keys: dict[str, Any] = {}
                 for binding in self._matching_bindings(spec.get_id(), source):
@@ -1340,10 +1373,11 @@ class Instrument:
                             f"conflicting workflow keys {previous} and "
                             f"{binding.workflow_key}"
                         )
-                instrument_names: set[str] = chain_patch_names | {
+                instrument_names: set[str] = {
                     binding.stream_name
                     for binding in self.context_bindings
                     if source in binding.dependent_sources
+                    and not _is_chain_patch(binding)
                 }
                 spec_names: set[str] = {
                     binding.stream_name

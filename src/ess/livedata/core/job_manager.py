@@ -147,10 +147,9 @@ class JobFactory:
         from both sides: the instrument- and spec-scope ``ContextBinding``
         declarations matching this ``(spec, source)``, and the offered context
         streams and chain patches the built workflow turns out to request (ADR
-        0010). Together
-        they populate the job's ``context_keys`` (wired into ``set_context``)
-        and ``gating_streams`` (the JobManager gates the job until each is
-        available; see ADR 0002).
+        0010). Together they populate the job's ``context_keys`` (wired into
+        ``set_context``) and ``gating_streams`` (the JobManager gates the job
+        until each is available; see ADR 0002).
         """
         workflow_id = config.identifier
         if workflow_id is None:

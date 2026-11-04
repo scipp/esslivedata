@@ -45,10 +45,12 @@ def gather_source_names(
         # also the wire name. A binding's name is fixed at declaration time, so
         # the subscription derived here covers every job the spec can run.
         names.update(binding.stream_name for binding in reg.context_bindings)
-    # Instrument-level ContextBinding entries: include when any spec hosted by
-    # this service shares a source with the binding's ``dependent_sources``.
+    # Instrument-level direct-parameter ContextBinding entries: include when any
+    # spec hosted by this service shares a source with the binding's
+    # ``dependent_sources``. Chain patches are added below.
+    chain_patch_names = {b.stream_name for b in instrument.chain_patch_bindings}
     for binding in instrument.context_bindings:
-        if any(
+        if binding.stream_name not in chain_patch_names and any(
             set(reg.spec.source_names) & binding.dependent_sources
             for reg in service_regs
         ):
@@ -64,7 +66,7 @@ def gather_source_names(
         # Chain patches likewise: the motor may move an aux monitor or the
         # sample, and whether a job reads that chain is known only from its
         # graph, so every service hosting specs consumes every motor readback.
-        names.update(b.stream_name for b in instrument.chain_patch_bindings)
+        names.update(chain_patch_names)
     devices = instrument.devices
     for name in list(names):
         device = devices.get(name)

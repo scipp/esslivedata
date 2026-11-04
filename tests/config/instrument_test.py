@@ -474,6 +474,46 @@ class TestContextBindings:
         with pytest.raises(ValueError, match="'mon1', 'sample'"):
             instrument.validate()
 
+    @pytest.mark.parametrize('other_use', ['instrument', 'spec', 'offer'])
+    def test_validate_rejects_chain_patch_stream_used_otherwise(self, other_use):
+        """A chain patch would silently replace a direct or offered key of the
+        same name in any job whose graph requests it."""
+        from ess.livedata.config.value_log import ValueLog
+
+        class _RotLog(ValueLog):
+            pass
+
+        instrument = Instrument(
+            name='test', detector_names=['det1'], streams={'rot': _f144('rot')}
+        )
+        handle = instrument.register_spec(
+            name='w',
+            version=1,
+            title='W',
+            source_names=['det1'],
+            outputs=SimpleTestOutputs,
+        )
+        instrument.add_context_binding(
+            stream_name='rot', workflow_key=_RotLog, dependent_sources=['det1']
+        )
+        if other_use == 'instrument':
+            instrument.add_context_binding(
+                stream_name='rot', workflow_key=_Key, dependent_sources=['det1']
+            )
+        elif other_use == 'spec':
+            handle.add_context_binding(stream_name='rot', workflow_key=_Key)
+        else:
+            instrument.offer_context_stream(workflow_key=_Key, stream_name='rot')
+
+        with pytest.raises(ValueError, match=r"Chain-patch streams \['rot'\]"):
+            instrument.validate()
+
+    def test_validate_rejects_source_named_like_the_sample(self):
+        instrument = Instrument(name='test', monitors=['sample'])
+
+        with pytest.raises(ValueError, match="'sample' is reserved"):
+            instrument.validate()
+
     def test_validates_duplicate_value_log_subclass_across_bindings(self):
         """Two chain-patch entries with different streams must not share a
         :class:`ValueLog` subclass -- Sciline keys identify parameters by

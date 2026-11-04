@@ -163,9 +163,10 @@ class StreamProcessorWorkflow(Workflow):
     ) -> None:
         """Materialize the wrapped ``StreamProcessor`` from its inputs.
 
-        Injects the routing layer's per-job bindings — ``context_keys`` merge
-        into the ``set_context`` parameters and ``chain_patch_bindings`` wire as
-        f144-driven dynamic transforms — then constructs the ``StreamProcessor``,
+        Injects the routing layer's bindings — the per-job ``context_keys`` merge
+        into the ``set_context`` parameters and the instrument's
+        ``chain_patch_bindings`` wire as f144-driven dynamic transforms — then
+        constructs the ``StreamProcessor``,
         baking them into the pruned/precomputed graph. Building eagerly (rather
         than on first ``accumulate``) keeps graph validation and the static-node
         precompute at job-creation time.
@@ -271,7 +272,7 @@ class StreamProcessorWorkflow(Workflow):
         # the most recent set_context call. The context gate is what ensures
         # every key has been set by the time the job first runs. The
         # routing layer (JobFactory.create) delivers a stream only to the jobs
-        # whose bindings subscribe to it.
+        # whose bindings subscribe to it or whose graph requested it.
         #
         # ValueLog subclasses are typed wrappers around an NXlog DataArray;
         # the raw payload (a DataArray) is wrapped as key(values=raw) so
