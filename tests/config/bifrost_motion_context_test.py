@@ -23,7 +23,7 @@ from ess.livedata.core.job_manager import JobFactory
 
 pytestmark = pytest.mark.slow
 
-ROTATION_STREAMS = {'detector_tank_angle_r0', 'rotation_stage'}
+ROTATION_STREAMS = {'detector_tank_angle', 'sample_rotation'}
 
 
 @pytest.fixture(scope='module')

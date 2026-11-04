@@ -256,7 +256,7 @@ def test_bifrost_qmap_gate_drops_then_resumes_on_rotation_context(
 
     Steady-state recovery: after the device synthesizer has merged all
     three substreams of each rotation Device and emitted on the parent
-    device name (``detector_tank_angle_r0``, ``rotation_stage``), the
+    device name (``detector_tank_angle``, ``sample_rotation``), the
     gate opens and subsequent detector batches produce output.
     """
     caplog.set_level(logging.INFO)
@@ -291,7 +291,7 @@ def test_bifrost_qmap_gate_drops_then_resumes_on_rotation_context(
 
     # Publish RBV/VAL/DMOV substreams for both rotation devices; the
     # synthesizer needs all three before emitting on the parent device name.
-    for device in ('detector_tank_angle_r0', 'rotation_stage'):
+    for device in ('detector_tank_angle', 'sample_rotation'):
         for substream, value in (
             ('target_value', 0.0),
             ('idle_flag', 1),
@@ -316,8 +316,8 @@ def test_bifrost_qmap_context_arriving_on_separate_ticks_is_not_lost(
     """Regression: a context stream seen while gated must survive to finalize.
 
     Bifrost qmap gates on two rotation context streams. When they arrive on
-    *separate* ticks, the first (``detector_tank_angle_r0``) is seen while the
-    job is still gated on the second (``rotation_stage``). The JobManager marks
+    *separate* ticks, the first (``detector_tank_angle``) is seen while the
+    job is still gated on the second (``sample_rotation``). The JobManager marks
     it seen but the gated job is skipped, so its value never reaches
     ``set_context`` on that tick. Unless the orchestrator re-presents it from
     the preprocessor's context cache when the gate finally opens, it is never
@@ -359,13 +359,13 @@ def test_bifrost_qmap_context_arriving_on_separate_ticks_is_not_lost(
 
     # Tick 1: only the first rotation context arrives. The job is still gated
     # on the second, so this value is seen-but-not-delivered.
-    _publish_rotation('detector_tank_angle_r0', time=4)
+    _publish_rotation('detector_tank_angle', time=4)
     service.step()
     assert len(sink.messages) == 0
 
     # Tick 2: the second rotation context arrives and the gate opens. The first
     # context must be refilled from the cache so both reach set_context at once.
-    _publish_rotation('rotation_stage', time=5)
+    _publish_rotation('sample_rotation', time=5)
     service.step()
 
     # Tick 3: events now produce output — proving neither context landed as None.
