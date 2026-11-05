@@ -26,9 +26,9 @@ def _loki_factories_loaded() -> None:
 def test_setup_factories_declares_detector_carriage_context_binding() -> None:
     """The rear bank's f144 carriage stream is declared at instrument scope.
 
-    Declared as a chain-patch :class:`ContextBinding` on ``loki_detector_0`` only
-    (``workflow_key`` is :class:`factories.DetectorCarriageLog`, a :class:`ValueLog`
-    subclass).
+    Declared as a chain-patch :class:`ContextBinding` on ``loki_detector_0`` and
+    ``beam_monitor_m4``, whose chains run through the carriage (``workflow_key`` is
+    :class:`factories.DetectorCarriageLog`, a :class:`ValueLog` subclass).
     """
     instrument = specs.instrument
 
