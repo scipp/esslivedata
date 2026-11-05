@@ -122,13 +122,20 @@ def test_consumers_subset_of_registered_sources(instrument: Instrument) -> None:
 # strict (no orphans) but record the ones consciously left for a
 # follow-up. Removing an entry is a checklist item for the follow-up PR.
 _KNOWN_ORPHAN_NXLOGS: dict[tuple[str, str], str] = {
-    # See loki/specs.py: m4 trans_20 needs either a make_geometry_nexus.py
-    # change to share the carriage NXlog, or a separate f144 stream
-    # registration. Tracked as follow-up to issue #922.
+    # LOKI aux monitors ride their own motors, which a binding can patch only in
+    # jobs whose primary component they are (#1431). Only the first empty NXlog
+    # per chain is checked: m4's chain also runs through beamstop_x, beamstop_z
+    # and detector_carriage. The sample (not checked here) rides
+    # linear_sample_changer and sample_stack_{x,y,z}, also #1431.
     (
         'loki',
-        'beam_monitor_m4',
-    ): '/entry/instrument/beam_monitor_m4/transformations/trans_20',
+        'beam_monitor_m2',
+    ): '/entry/instrument/beam_monitor_m2_positioner/value',
+    (
+        'loki',
+        'beam_monitor_m3',
+    ): '/entry/instrument/beam_monitor_m3_positioner/value',
+    ('loki', 'beam_monitor_m4'): '/entry/instrument/beamstop_y1/value',
 }
 
 

@@ -38,6 +38,36 @@ def _is_slow_workflow(workflow_id, spec):
     return False
 
 
+#: Known failures of a single test, as ``(instrument, workflow name) -> reason``.
+_IQ_WITHOUT_MONITOR_TABLES = (
+    '#1441: the default monitors m2 and m3 ride axes with no declared '
+    'AxisRange, so they have no lookup-table block and the I(Q) factory '
+    'refuses them. Once placed, the job still needs the sample and m2/m3 '
+    'chains patched at job time (#1431).'
+)
+_ROUNDTRIP_XFAILS = {('loki', 'i_of_q'): _IQ_WITHOUT_MONITOR_TABLES}
+_WAVELENGTH_MODE_XFAILS = {
+    ('loki', 'detector_xy_projection'): (
+        '#1431: the sample position rides live axes, and a chain patch can only '
+        'reach the job\'s primary component, so the detector Ltotal hits the '
+        'empty sample NXlog.'
+    )
+}
+
+
+def _with_xfails(params: list, xfails: dict[tuple[str, str], str]) -> list:
+    """Mark the params listed in ``xfails`` as strict xfails."""
+    marked = []
+    for param in params:
+        instrument_name, workflow_id = param.values
+        reason = xfails.get((instrument_name, workflow_id.name))
+        marks = list(param.marks)
+        if reason is not None:
+            marks.append(pytest.mark.xfail(strict=True, reason=reason))
+        marked.append(pytest.param(*param.values, id=param.id, marks=marks))
+    return marked
+
+
 def _collect_workflow_factories():
     """Collect workflows WITH factories loaded (slower).
 
@@ -111,7 +141,8 @@ def _collect_wavelength_capable_factories():
 
 
 @pytest.mark.parametrize(
-    ("instrument_name", "workflow_id"), _collect_workflow_factories()
+    ("instrument_name", "workflow_id"),
+    _with_xfails(_collect_workflow_factories(), _ROUNDTRIP_XFAILS),
 )
 def test_workflow_roundtrip(instrument_name: str, workflow_id: WorkflowId):
     """Test complete roundtrip for a registered workflow.
@@ -178,7 +209,8 @@ def test_workflow_roundtrip(instrument_name: str, workflow_id: WorkflowId):
 
 
 @pytest.mark.parametrize(
-    ("instrument_name", "workflow_id"), _collect_wavelength_capable_factories()
+    ("instrument_name", "workflow_id"),
+    _with_xfails(_collect_wavelength_capable_factories(), _WAVELENGTH_MODE_XFAILS),
 )
 def test_wavelength_mode_workflow_can_be_instantiated(
     instrument_name: str, workflow_id: WorkflowId
