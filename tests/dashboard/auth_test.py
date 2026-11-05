@@ -45,6 +45,7 @@ def oauth_env() -> None:
         PANEL_COOKIE_SECRET=SECRET,
         PANEL_OAUTH_ENCRYPTION=SECRET,
         PANEL_OAUTH_REDIRECT_URI='https://dashboard.example.org/oauth-redirect',
+        PANEL_OAUTH_JWT_USER='sub',
         PANEL_OAUTH_AUTHORIZE_URL='https://idp.example.org/authorize',
         PANEL_OAUTH_TOKEN_URL='https://idp.example.org/token',  # noqa: S106
         PANEL_OAUTH_USER_URL='https://idp.example.org/userinfo',
@@ -92,6 +93,14 @@ def test_oauth_variable_without_provider_refuses_to_start() -> None:
 @pytest.mark.parametrize(
     'var', ['PANEL_OAUTH_SECRET', 'PANEL_COOKIE_SECRET', 'PANEL_OAUTH_ENCRYPTION']
 )
+def test_missing_username_claim_refuses_to_start(oauth_env: None) -> None:
+    """Panel would otherwise look for an email claim PING does not send, and every
+    login would fail."""
+    del os.environ['PANEL_OAUTH_JWT_USER']
+    with pytest.raises(ValueError, match='PANEL_OAUTH_JWT_USER'):
+        configure_auth()
+
+
 def test_missing_secret_refuses_to_start(var: str, oauth_env: None) -> None:
     del os.environ[var]
     with pytest.raises(ValueError, match=var) as excinfo:

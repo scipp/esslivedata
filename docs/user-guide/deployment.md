@@ -37,7 +37,7 @@ Register a client with the provider using the authorization code flow and `clien
 | `PANEL_OAUTH_SECRET` | Client secret |
 | `PANEL_OAUTH_REDIRECT_URI` | Redirect URI registered with the provider, such as `https://<dashboard-host>/oauth-redirect` |
 | `PANEL_OAUTH_SCOPE` | `openid,profile` |
-| `PANEL_OAUTH_JWT_USER` | Token claim shown as the username, such as `sub` or `mail` |
+| `PANEL_OAUTH_JWT_USER` | Token claim used as the username. At ESS: `sub`, as PING returns no email |
 | `LIVEDATA_OAUTH_DISCOVERY_URL` | At ESS: `https://login.ess.eu/.well-known/openid-configuration` |
 | `PANEL_COOKIE_SECRET` | Long random value |
 | `PANEL_OAUTH_ENCRYPTION` | Output of `panel oauth-secret` |

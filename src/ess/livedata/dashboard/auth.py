@@ -11,7 +11,7 @@ up for this, and fails at startup rather than serve an unprotected dashboard by 
 import json
 import os
 from urllib.parse import urlsplit
-from urllib.request import urlopen
+from urllib.request import Request, urlopen
 
 import panel as pn
 import structlog
@@ -27,6 +27,7 @@ _REQUIRED_VARS = (
     'PANEL_OAUTH_KEY',
     'PANEL_OAUTH_SECRET',
     'PANEL_OAUTH_REDIRECT_URI',
+    'PANEL_OAUTH_JWT_USER',
     'PANEL_OAUTH_ENCRYPTION',
     'PANEL_COOKIE_SECRET',
     *_ENDPOINTS,
@@ -74,7 +75,9 @@ def get_login_endpoint() -> str | None:
 
 def _load_endpoints(discovery_url: str) -> None:
     """Fill in endpoints not set explicitly, as Panel cannot read discovery itself."""
-    with urlopen(discovery_url, timeout=10) as response:  # noqa: S310
+    # PING rejects Python's default User-Agent with 403 Forbidden.
+    request = Request(discovery_url, headers={'User-Agent': 'esslivedata'})  # noqa: S310
+    with urlopen(request, timeout=10) as response:  # noqa: S310
         document = json.load(response)
     for var, field in _ENDPOINTS.items():
         if not os.environ.get(var):
