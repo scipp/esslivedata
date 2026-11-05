@@ -167,12 +167,14 @@ _KNOWN_ORPHAN_NXLOGS: dict[tuple[str, str], frozenset[str]] = {
 
 def test_no_orphan_empty_nxlogs(instrument_with_artifact: Instrument) -> None:
     """Every empty NXlog reachable from a registered source or the sample must
-    be covered by a binding (or listed in :data:`_KNOWN_ORPHAN_NXLOGS`).
-    Otherwise, workflows loading that component trip essreduce's
+    be covered by a binding naming that component (or listed in
+    :data:`_KNOWN_ORPHAN_NXLOGS`). A patch reaches only the components in its
+    ``dependent_sources``, so a binding for the same path on another component
+    does not help: workflows loading this one still trip essreduce's
     ``reject_time_dependent_transform`` at compute time."""
     instrument = instrument_with_artifact
     artifact = str(get_nexus_geometry_filename(instrument.name))
-    covered = {instrument.chain_patch_path(b) for b in _chain_patch_inputs(instrument)}
+    bindings = _chain_patch_inputs(instrument)
     components = [
         *instrument.detector_names,
         *instrument.monitors,
@@ -180,12 +182,18 @@ def test_no_orphan_empty_nxlogs(instrument_with_artifact: Instrument) -> None:
     ]
     orphans = {}
     for component in components:
+        covered = {
+            instrument.chain_patch_path(b)
+            for b in bindings
+            if component in b.dependent_sources
+        }
         known = _KNOWN_ORPHAN_NXLOGS.get((instrument.name, component), frozenset())
         if uncovered := _empty_nxlogs(artifact, component) - covered - known:
             orphans[component] = sorted(uncovered)
     assert not orphans, (
-        f"Empty NXlog placeholders not covered by any binding in "
-        f"{instrument.name}: {orphans}. Add a chain-patch ContextBinding, fix "
-        f"the geometry artifact, or list them in _KNOWN_ORPHAN_NXLOGS with a "
+        f"Empty NXlog placeholders not covered by a binding naming their "
+        f"component in {instrument.name}: {orphans}. Add a chain-patch "
+        f"ContextBinding, add the component to the binding's dependent_sources, "
+        f"fix the geometry artifact, or list them in _KNOWN_ORPHAN_NXLOGS with a "
         f"follow-up reference."
     )
