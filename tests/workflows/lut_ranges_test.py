@@ -5,123 +5,37 @@
 Uses the real DREAM and LOKI geometry artifacts rather than synthetic files:
 the point of the derivation is that it agrees with what essreduce computes at
 lookup time, which a hand-built file would not exercise. The one exception is
-the live rotation axis, which no registered artifact has.
+the live rotation axis on a detector, which no registered artifact has.
 """
 
 from __future__ import annotations
+
+import itertools
 
 import h5py
 import numpy as np
 import pytest
 import scipp as sc
 import scippnexus as snx
-from ess.reduce.nexus.types import Filename, NeXusName, SampleRun
+from ess.reduce.nexus.types import Filename, NeXusName, Position, SampleRun
 from ess.reduce.unwrap import GenericUnwrapWorkflow
 from ess.reduce.unwrap.types import DetectorLtotal
 
 from ess.livedata.config.stream import AxisRange
 from ess.livedata.preprocessors.detector_data import get_nexus_geometry_filename
+from ess.livedata.workflows.lut_blocks import one_block
 from ess.livedata.workflows.lut_ranges import (
     LtotalRangeError,
     component_ltotal_range,
+    padded_ltotal_range,
 )
 
-#: LOKI's carriage range, plus the sample axes every LOKI detector's Ltotal
-#: passes through, mirroring the instrument declaration.
+#: LOKI's carriage range, mirroring the instrument declaration.
 LOKI_AXES = {
     '/entry/instrument/detector_carriage/value': AxisRange(
         lower=sc.scalar(0.0, unit='m'), upper=sc.scalar(15.0, unit='m')
-    ),
-    **{
-        f'/entry/instrument/{axis}/value': AxisRange(
-            lower=sc.scalar(-0.5, unit='m'), upper=sc.scalar(0.5, unit='m')
-        )
-        for axis in (
-            'linear_sample_changer',
-            'sample_stack_x',
-            'sample_stack_y',
-            'sample_stack_z',
-        )
-    },
+    )
 }
-
-#: Live axes of the synthetic sample, as ``name -> (direction, AxisRange)``.
-SAMPLE_AXES = {
-    'x': (
-        [1.0, 0.0, 0.0],
-        AxisRange(lower=sc.scalar(-0.5, unit='m'), upper=sc.scalar(0.5, unit='m')),
-    ),
-    'z': (
-        [0.0, 0.0, 1.0],
-        AxisRange(lower=sc.scalar(-300.0, unit='mm'), upper=sc.scalar(0.3, unit='m')),
-    ),
-}
-
-
-def _write_sample_geometry(path: str, sample_position: dict[str, float] | None) -> None:
-    """Source, a sample on the :data:`SAMPLE_AXES`, and a static detector.
-
-    With ``sample_position`` ``None`` the sample axes are live, stored as the
-    artifact writer stores an f144-driven transform: an NXlog with the transform
-    attributes and no values. Otherwise each axis is a static transform at the
-    given value, in metres.
-    """
-    with h5py.File(path, 'w') as f:
-        entry = f.create_group('entry')
-        entry.attrs['NX_class'] = 'NXentry'
-        instrument = entry.create_group('instrument')
-        instrument.attrs['NX_class'] = 'NXinstrument'
-
-        source = instrument.create_group('source')
-        source.attrs['NX_class'] = 'NXsource'
-        source.create_dataset('depends_on', data='transformations/distance')
-        source_transforms = source.create_group('transformations')
-        source_transforms.attrs['NX_class'] = 'NXtransformations'
-        distance = source_transforms.create_dataset('distance', data=-20.0)
-        distance.attrs.update(
-            units='m',
-            transformation_type='translation',
-            vector=np.array([0.0, 0.0, 1.0]),
-            depends_on='.',
-        )
-
-        sample = entry.create_group('sample')
-        sample.attrs['NX_class'] = 'NXsample'
-        sample_transforms = sample.create_group('transformations')
-        sample_transforms.attrs['NX_class'] = 'NXtransformations'
-        names = list(SAMPLE_AXES)
-        sample.create_dataset('depends_on', data=f'transformations/{names[0]}')
-        for name, next_name in zip(names, [*names[1:], None], strict=True):
-            vector, _ = SAMPLE_AXES[name]
-            attrs = {
-                'transformation_type': 'translation',
-                'vector': np.array(vector),
-                'depends_on': '.' if next_name is None else next_name,
-            }
-            if sample_position is None:
-                axis = sample_transforms.create_group(name)
-                axis.attrs.update(NX_class='NXlog', writer_module='f144', **attrs)
-                values = axis.create_dataset('value', shape=(0,), dtype='float64')
-                values.attrs['units'] = 'm'
-                time = axis.create_dataset('time', shape=(0,), dtype='uint64')
-                time.attrs.update(units='ns', start='1970-01-01T00:00:00Z')
-            else:
-                axis = sample_transforms.create_dataset(
-                    name, data=sample_position[name]
-                )
-                axis.attrs.update(units='m', **attrs)
-
-        detector = instrument.create_group('detector')
-        detector.attrs['NX_class'] = 'NXdetector'
-        detector.create_dataset('detector_number', data=np.arange(4))
-        for name, values in (
-            ('x_pixel_offset', [-1.0, 1.0, -1.0, 1.0]),
-            ('y_pixel_offset', [-1.0, -1.0, 1.0, 1.0]),
-            ('z_pixel_offset', [5.0, 5.0, 5.0, 5.0]),
-        ):
-            offsets = detector.create_dataset(name, data=np.array(values))
-            offsets.attrs['units'] = 'm'
-        detector.create_dataset('depends_on', data='.')
 
 
 @pytest.fixture(scope='module')
@@ -237,10 +151,9 @@ def test_axis_range_is_direction_agnostic(loki_geometry: str) -> None:
     same span comes back: the transform, not the declaration order, decides
     which end of the flight path grows."""
     swapped = {
-        **LOKI_AXES,
         '/entry/instrument/detector_carriage/value': AxisRange(
             lower=sc.scalar(15.0, unit='m'), upper=sc.scalar(0.0, unit='m')
-        ),
+        )
     }
 
     assert component_ltotal_range(
@@ -316,49 +229,69 @@ def test_live_rotation_axis_is_refused(live_rotation_geometry: str) -> None:
         )
 
 
-def _detector_ltotal(path: str) -> sc.Variable:
+def _ltotal_with_sample_at(
+    geometry: str, detector: str, position: tuple[float, float, float]
+) -> sc.Variable:
     workflow = GenericUnwrapWorkflow(run_types=[SampleRun], monitor_types=[])
-    workflow[Filename[SampleRun]] = path
-    workflow[NeXusName[snx.NXdetector]] = 'detector'
-    return workflow.compute(DetectorLtotal[SampleRun]).to(unit='m')
+    workflow[Filename[SampleRun]] = geometry
+    workflow[NeXusName[snx.NXdetector]] = detector
+    workflow[Position[snx.NXsample, SampleRun]] = sc.vector(position, unit='m')
+    return workflow.compute(DetectorLtotal[SampleRun])
 
 
-@pytest.mark.parametrize(
-    'sample_position',
-    [
-        {'x': 0.0, 'z': 0.0},
-        {'x': -0.5, 'z': -0.3},
-        {'x': 0.5, 'z': 0.3},
-        {'x': -0.5, 'z': 0.3},
-        {'x': 0.2, 'z': -0.1},
-    ],
-)
-def test_detector_range_covers_every_sample_position_in_the_box(
-    tmp_path, sample_position: dict[str, float]
-) -> None:
-    """A detector's Ltotal passes through the sample, so the range must hold
-    wherever the sample sits within its declared axes, not only at one point."""
-    live = str(tmp_path / 'live.nxs')
-    _write_sample_geometry(live, sample_position=None)
-    placed = str(tmp_path / 'placed.nxs')
-    _write_sample_geometry(placed, sample_position=sample_position)
-    axis_ranges = {
-        f'/entry/sample/transformations/{name}': axis
-        for name, (_, axis) in SAMPLE_AXES.items()
-    }
-
-    start, stop = component_ltotal_range(
-        live, 'detector', is_monitor=False, axis_ranges=axis_ranges
+@pytest.mark.slow
+def test_live_sample_is_taken_at_zero(loki_geometry: str) -> None:
+    """LOKI's sample rides live axes, which have no value in the artifact and
+    need no declared range: the range is the one for a sample at the origin."""
+    assert component_ltotal_range(
+        loki_geometry, 'loki_detector_1', is_monitor=False
+    ) == padded_ltotal_range(
+        _ltotal_with_sample_at(loki_geometry, 'loki_detector_1', (0.0, 0.0, 0.0))
     )
 
-    ltotal = _detector_ltotal(placed)
-    assert start <= ltotal.min()
-    assert ltotal.max() <= stop
+
+@pytest.mark.slow
+def test_live_sample_rotation_is_refused() -> None:
+    """BIFROST's sample rides a goniometer. Parking it at zero would be a guess
+    about what the rotation does to the sample's position."""
+    with pytest.raises(LtotalRangeError, match='goniometer_upper'):
+        component_ltotal_range(
+            get_nexus_geometry_filename('bifrost'),
+            'unified_detector',
+            is_monitor=False,
+        )
 
 
-def test_undeclared_sample_axis_fails_loud(tmp_path) -> None:
-    live = str(tmp_path / 'live.nxs')
-    _write_sample_geometry(live, sample_position=None)
+LOKI_FRONT_BANKS = [f'loki_detector_{i}' for i in range(1, 9)]
 
-    with pytest.raises(LtotalRangeError, match='AxisRange'):
-        component_ltotal_range(live, 'detector', is_monitor=False)
+
+@pytest.fixture(scope='module')
+def loki_front_block(loki_geometry: str) -> tuple[sc.Variable, sc.Variable]:
+    [block] = one_block(
+        component_ltotal_range(loki_geometry, bank, is_monitor=False)
+        for bank in LOKI_FRONT_BANKS
+    )
+    return block
+
+
+@pytest.mark.slow
+@pytest.mark.parametrize(
+    'position',
+    list(itertools.product((-0.05, 0.05), (-0.05, 0.05), (-0.2, 0.2))),
+    ids=str,
+)
+def test_padding_covers_sample_motion_on_loki(
+    loki_geometry: str,
+    loki_front_block: tuple[sc.Variable, sc.Variable],
+    position: tuple[float, float, float],
+) -> None:
+    """The sample's live axes get no range of their own, which relies on the
+    padding of the shared detector block absorbing their largest in-beam motion:
+    20 cm along the beam and 5 cm across it. The front banks set the lower end of
+    the block, and their pixels are the ones furthest from the forward direction.
+    """
+    start, stop = loki_front_block
+    for bank in LOKI_FRONT_BANKS:
+        ltotal = _ltotal_with_sample_at(loki_geometry, bank, position).to(unit='m')
+        assert start <= ltotal.nanmin()
+        assert ltotal.nanmax() <= stop

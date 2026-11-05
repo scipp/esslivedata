@@ -202,23 +202,7 @@ instrument = Instrument(
         '/entry/instrument/detector_carriage/value': AxisRange(
             lower=sc.scalar(-0.5, unit='m'),
             upper=sc.scalar(5.5, unit='m'),
-        ),
-        # The sample rides four live axes, and every detector's Ltotal passes through
-        # the sample. These ranges are deliberate padding, not calibrated travel:
-        # the detector ranges are widened by twice their summed half-widths. The
-        # sample moves mainly along the beam, where Ltotal barely changes, so the
-        # generous range costs only a slightly larger wavelength LUT.
-        **{
-            f'/entry/instrument/{axis}/value': AxisRange(
-                lower=sc.scalar(-0.5, unit='m'), upper=sc.scalar(0.5, unit='m')
-            )
-            for axis in (
-                'linear_sample_changer',
-                'sample_stack_x',
-                'sample_stack_y',
-                'sample_stack_z',
-            )
-        },
+        )
     },
     streams=streams,
     source_metadata={
