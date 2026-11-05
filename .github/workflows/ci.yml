@@ -314,7 +314,7 @@ jobs:
             python -c 'from ess.livedata.config.instruments import available_instruments; print(" ".join(available_instruments()))')
           for inst in $instruments; do
             echo "::group::$inst"
-            docker run --rm \
+            docker run --rm -e LIVEDATA_REQUIRE_LOGIN= \
               esslivedata-dashboard:test \
               python -m ess.livedata.dashboard.reduction \
               --instrument "$inst" --transport none \

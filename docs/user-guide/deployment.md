@@ -26,28 +26,28 @@ workflows.
 
 ## Dashboard Authentication
 
-The reduction dashboard supports optional basic password authentication via [Panel's built-in basic auth](https://panel.holoviz.org/how_to/authentication/basic.html). When enabled, users must enter a username and password before accessing the dashboard. Any username is accepted; only the password is validated.
+The dashboard supports OAuth login through an OpenID Connect provider such as PING. Without OAuth configured it runs **without any login**, which is intended for local development only. The published image sets `LIVEDATA_REQUIRE_LOGIN=1`, so it refuses to start without OAuth; set it to empty to run that image without login.
 
-### Enabling Authentication
+Register a client with the provider using the authorization code flow and `client_secret_post` authentication. Then set these variables at runtime, never in the `Dockerfile`, as the images are published:
 
-Set two environment variables before starting the dashboard:
+| Variable | Value |
+|---|---|
+| `PANEL_OAUTH_PROVIDER` | `generic` |
+| `PANEL_OAUTH_KEY` | Client ID |
+| `PANEL_OAUTH_SECRET` | Client secret |
+| `PANEL_OAUTH_REDIRECT_URI` | Redirect URI registered with the provider, such as `https://<dashboard-host>/oauth-redirect` |
+| `PANEL_OAUTH_SCOPE` | `openid,profile` |
+| `PANEL_OAUTH_JWT_USER` | Token claim used as the username. At ESS: `sub`, as PING returns no email |
+| `LIVEDATA_OAUTH_DISCOVERY_URL` | At ESS: `https://login.ess.eu/.well-known/openid-configuration` |
+| `PANEL_COOKIE_SECRET` | Long random value |
+| `PANEL_OAUTH_ENCRYPTION` | Output of `panel oauth-secret` |
+| `BOKEH_ALLOW_WS_ORIGIN` | The dashboard's public hostname. Required: the image's default `*` is refused when login is enabled |
 
-```sh
-export LIVEDATA_BASIC_AUTH_PASSWORD=my_password
-export LIVEDATA_BASIC_AUTH_COOKIE_SECRET=my_super_safe_cookie_secret
-python -m ess.livedata.dashboard.reduction --instrument dummy
-```
+Serve the dashboard through an HTTPS proxy that also forwards WebSocket connections.
 
-- `LIVEDATA_BASIC_AUTH_PASSWORD`: The password required to log in. Any username will be accepted.
-- `LIVEDATA_BASIC_AUTH_COOKIE_SECRET`: A secret string used to sign session cookies. Use a long, random value in production.
+The dashboard refuses to start if this configuration is incomplete, or if the provider cannot be reached at startup.
 
-The same options are available as CLI arguments (`--basic-auth-password`, `--basic-auth-cookie-secret`), but environment variables are preferred since command-line arguments may be visible in process listings and shell history.
-
-### How It Works
-
-When authentication is configured, Panel serves a login page before granting access to the dashboard. After a successful login, a signed session cookie is set in the browser so the user remains authenticated. The authenticated username is available via `pn.state.user` within the dashboard session.
-
-When neither variable is set, the dashboard runs without authentication (the default).
+There are no access levels: any account the provider accepts for this client has full control of the dashboard. To limit who can log in, restrict the client at the provider.
 
 ## Kafka TLS in Containers
 
