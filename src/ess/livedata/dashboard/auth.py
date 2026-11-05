@@ -61,6 +61,9 @@ def configure_auth() -> str | None:
         _load_endpoints(url)
     if missing := [var for var in _REQUIRED_VARS if not os.environ.get(var)]:
         raise ValueError(f"OAuth login requires {', '.join(missing)} to be set.")
+    origins = os.environ.get('BOKEH_ALLOW_WS_ORIGIN', '').split(',')
+    if '*' in (origin.strip() for origin in origins):
+        raise ValueError("Set BOKEH_ALLOW_WS_ORIGIN to the dashboard's host, not '*'.")
 
     pn.state.encryption = _create_encryption(os.environ['PANEL_OAUTH_ENCRYPTION'])
     logger.info("Dashboard login enabled.", provider=provider)

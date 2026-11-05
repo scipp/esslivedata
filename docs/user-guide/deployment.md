@@ -41,7 +41,7 @@ Register a client with the provider using the authorization code flow and `clien
 | `LIVEDATA_OAUTH_DISCOVERY_URL` | At ESS: `https://login.ess.eu/.well-known/openid-configuration` |
 | `PANEL_COOKIE_SECRET` | Long random value |
 | `PANEL_OAUTH_ENCRYPTION` | Output of `panel oauth-secret` |
-| `BOKEH_ALLOW_WS_ORIGIN` | The dashboard's public hostname |
+| `BOKEH_ALLOW_WS_ORIGIN` | The dashboard's public hostname. Required: the image's default `*` is refused when login is enabled |
 
 Serve the dashboard through an HTTPS proxy that also forwards WebSocket connections.
 
