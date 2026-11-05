@@ -26,7 +26,7 @@ workflows.
 
 ## Dashboard Authentication
 
-The dashboard supports OAuth login through an OpenID Connect provider such as PING. Without OAuth configured it runs **without any login**, which is intended for local development only.
+The dashboard supports OAuth login through an OpenID Connect provider such as PING. Without OAuth configured it runs **without any login**, which is intended for local development only. The published image sets `LIVEDATA_REQUIRE_LOGIN=1`, so it refuses to start without OAuth; set it to empty to run that image without login.
 
 Register a client with the provider using the authorization code flow and `client_secret_post` authentication. Then set these variables at runtime, never in the `Dockerfile`, as the images are published:
 

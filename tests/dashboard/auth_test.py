@@ -26,7 +26,9 @@ def clean_auth_state(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
     # A snapshot rather than monkeypatch: discovery writes to the environment.
     saved = dict(os.environ)
     for var in list(os.environ):
-        if var.startswith(('PANEL_', 'BOKEH_COOKIE', 'LIVEDATA_OAUTH')):
+        if var.startswith(
+            ('PANEL_', 'BOKEH_COOKIE', 'LIVEDATA_OAUTH', 'LIVEDATA_REQUIRE')
+        ):
             del os.environ[var]
     yield
     os.environ.clear()
@@ -51,6 +53,13 @@ def oauth_env() -> None:
 
 def test_no_configuration_means_no_login() -> None:
     assert configure_auth() is None
+
+
+def test_required_login_without_provider_refuses_to_start() -> None:
+    """The published image sets this, so a deployment cannot run open by mistake."""
+    os.environ['LIVEDATA_REQUIRE_LOGIN'] = '1'
+    with pytest.raises(ValueError, match='PANEL_OAUTH_PROVIDER'):
+        configure_auth()
 
 
 def test_complete_configuration_enables_login_and_encryption(oauth_env: None) -> None:

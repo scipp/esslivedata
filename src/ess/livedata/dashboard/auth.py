@@ -49,6 +49,8 @@ def configure_auth() -> str | None:
     """
     provider = pn.config.oauth_provider
     if provider is None:
+        if os.environ.get('LIVEDATA_REQUIRE_LOGIN'):
+            raise ValueError("Login required, but PANEL_OAUTH_PROVIDER is not set.")
         if os.environ.get('PANEL_OAUTH_KEY') or os.environ.get('PANEL_OAUTH_SECRET'):
             raise ValueError("OAuth client set without PANEL_OAUTH_PROVIDER: no login.")
         logger.warning("No OAuth provider configured: dashboard login is disabled.")
