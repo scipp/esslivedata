@@ -54,6 +54,7 @@ test = [
     "esslivedata[all-instruments]",
     # Same cap as in the dashboard extra (#1417).
     "bokeh>=3.9,<3.10",
+    "cryptography",
     "holoviews>=1.23.0",
     "panel>=1.9.3",
     "param",

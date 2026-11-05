@@ -8,27 +8,23 @@ from pathlib import Path
 
 import panel as pn
 import pytest
+from cryptography.fernet import Fernet
 
-from ess.livedata.dashboard import auth
 from ess.livedata.dashboard.auth import configure_auth
 from ess.livedata.dashboard.reduction import ReductionApp
 
 SECRET = 'do-not-leak-this-value'  # noqa: S105
-ENCRYPTION = object()
+ENCRYPTION_KEY = Fernet.generate_key().decode()
 
 
 @pytest.fixture(autouse=True)
 def clean_auth_state(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
     """Isolate from the host's environment and restore what configure_auth sets."""
     monkeypatch.setattr(pn.state, 'encryption', None)
-    # Encryption needs the `cryptography` package, which only the dashboard extra has.
-    monkeypatch.setattr(auth, '_create_encryption', lambda key: ENCRYPTION)
     # A snapshot rather than monkeypatch: discovery writes to the environment.
     saved = dict(os.environ)
     for var in list(os.environ):
-        if var.startswith(
-            ('PANEL_', 'BOKEH_COOKIE', 'LIVEDATA_OAUTH', 'LIVEDATA_REQUIRE')
-        ):
+        if var.startswith(('PANEL_', 'BOKEH_', 'LIVEDATA_OAUTH', 'LIVEDATA_REQUIRE')):
             del os.environ[var]
     yield
     os.environ.clear()
@@ -43,7 +39,7 @@ def oauth_env() -> None:
         PANEL_OAUTH_KEY='client-id',
         PANEL_OAUTH_SECRET=SECRET,
         PANEL_COOKIE_SECRET=SECRET,
-        PANEL_OAUTH_ENCRYPTION=SECRET,
+        PANEL_OAUTH_ENCRYPTION=ENCRYPTION_KEY,
         PANEL_OAUTH_REDIRECT_URI='https://dashboard.example.org/oauth-redirect',
         PANEL_OAUTH_JWT_USER='sub',
         PANEL_OAUTH_AUTHORIZE_URL='https://idp.example.org/authorize',
@@ -65,7 +61,8 @@ def test_required_login_without_provider_refuses_to_start() -> None:
 
 def test_complete_configuration_enables_login_and_encryption(oauth_env: None) -> None:
     assert configure_auth() == 'generic'
-    assert pn.state.encryption is ENCRYPTION
+    token = pn.state.encryption.encrypt(b'token')
+    assert Fernet(ENCRYPTION_KEY).decrypt(token) == b'token'
 
 
 def test_server_is_given_the_provider(
@@ -90,9 +87,6 @@ def test_oauth_variable_without_provider_refuses_to_start() -> None:
         configure_auth()
 
 
-@pytest.mark.parametrize(
-    'var', ['PANEL_OAUTH_SECRET', 'PANEL_COOKIE_SECRET', 'PANEL_OAUTH_ENCRYPTION']
-)
 def test_missing_username_claim_refuses_to_start(oauth_env: None) -> None:
     """Panel would otherwise look for an email claim PING does not send, and every
     login would fail."""
@@ -101,6 +95,16 @@ def test_missing_username_claim_refuses_to_start(oauth_env: None) -> None:
         configure_auth()
 
 
+def test_any_websocket_origin_refuses_to_start(oauth_env: None) -> None:
+    """The image sets '*'; with login it would accept the cookie from any site."""
+    os.environ['BOKEH_ALLOW_WS_ORIGIN'] = 'dashboard.example.org,*'
+    with pytest.raises(ValueError, match='BOKEH_ALLOW_WS_ORIGIN'):
+        configure_auth()
+
+
+@pytest.mark.parametrize(
+    'var', ['PANEL_OAUTH_SECRET', 'PANEL_COOKIE_SECRET', 'PANEL_OAUTH_ENCRYPTION']
+)
 def test_missing_secret_refuses_to_start(var: str, oauth_env: None) -> None:
     del os.environ[var]
     with pytest.raises(ValueError, match=var) as excinfo:

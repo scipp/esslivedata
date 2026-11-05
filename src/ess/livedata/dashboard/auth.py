@@ -15,6 +15,7 @@ from urllib.request import Request, urlopen
 
 import panel as pn
 import structlog
+from cryptography.fernet import Fernet
 
 logger = structlog.get_logger(__name__)
 
@@ -65,7 +66,7 @@ def configure_auth() -> str | None:
     if '*' in (origin.strip() for origin in origins):
         raise ValueError("Set BOKEH_ALLOW_WS_ORIGIN to the dashboard's host, not '*'.")
 
-    pn.state.encryption = _create_encryption(os.environ['PANEL_OAUTH_ENCRYPTION'])
+    pn.state.encryption = Fernet(os.environ['PANEL_OAUTH_ENCRYPTION'])
     logger.info("Dashboard login enabled.", provider=provider)
     return provider
 
@@ -85,9 +86,3 @@ def _load_endpoints(discovery_url: str) -> None:
     for var, field in _ENDPOINTS.items():
         if not os.environ.get(var):
             os.environ[var] = document[field]
-
-
-def _create_encryption(key: str):
-    from cryptography.fernet import Fernet
-
-    return Fernet(key)
