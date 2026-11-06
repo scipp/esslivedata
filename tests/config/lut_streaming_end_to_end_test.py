@@ -661,6 +661,23 @@ class TestLokiMotionAndRoles:
                 },
             )
 
+    @pytest.mark.parametrize('mode', ['toa', 'wavelength'])
+    def test_monitor_view_needs_a_table_only_in_wavelength_mode(
+        self, loki: Instrument, mode: str
+    ) -> None:
+        """Same failure as above, for a job on the monitor itself."""
+        name = 'monitor_histogram'
+        params = _params_model(loki, name)(
+            coordinate_mode=CoordinateModeSettings(mode=mode)
+        )
+
+        _create_job(loki, name, 'beam_monitor_m1', params)
+        if mode == 'toa':
+            _create_job(loki, name, 'beam_monitor_m4', params)
+        else:
+            with pytest.raises(ValueError, match='beam_monitor_m4'):
+                _create_job(loki, name, 'beam_monitor_m4', params)
+
     @pytest.mark.xfail(
         strict=True,
         reason='#1441: the default monitors m2 and m3 ride axes with no declared '

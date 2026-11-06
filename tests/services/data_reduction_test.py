@@ -198,20 +198,16 @@ def test_can_configure_and_stop_workflow_with_detector_and_monitors(
     service.step()
     sink.messages.clear()  # Clear the workflow status message(s), one per source name.
 
-    # LOKI i_of_q is gated on the detector_carriage device stream (chain-patch
-    # binding for loki_detector_0). The synthesizer emits only after all three
-    # substreams (RBV, VAL, DMOV) have arrived; publish all three then step so
-    # the gate is open before detector/monitor events arrive.
+    # LOKI i_of_q is gated on the motors on the chains it reads. The synthesizer emits
+    # a device only after all its substreams have arrived, so publish all of them,
+    # then step so the gate is open before detector/monitor events arrive.
     if instrument == 'loki':
-        app.publish_log_message(
-            source_name='detector_carriage/target_value', time=1, value=0.0
-        )
-        app.publish_log_message(
-            source_name='detector_carriage/idle_flag', time=1, value=1
-        )
-        app.publish_log_message(
-            source_name='detector_carriage/value', time=1, value=0.0
-        )
+        config = instrument_registry[instrument]
+        for motor in config.transform_streams.values():
+            device = config.streams[motor]
+            app.publish_log_message(source_name=device.target, time=1, value=0.0)
+            app.publish_log_message(source_name=device.idle, time=1, value=1)
+            app.publish_log_message(source_name=device.value, time=1, value=0.0)
         # i_of_q also gates on the detector and monitor lookup tables, so they
         # must arrive before detector and monitor events do.
         app.publish_lookup_tables()
