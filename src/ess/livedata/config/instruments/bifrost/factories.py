@@ -45,6 +45,7 @@ def setup_factories(instrument: Instrument) -> None:
         CutAxis2,
         CutData,
     )
+    from ess.bifrost.types import NeXusDetectorNames
     from ess.reduce.nexus.types import (
         Filename,
         NeXusData,
@@ -124,7 +125,8 @@ def setup_factories(instrument: Instrument) -> None:
         with snx.File(fname) as f:
             detector_names = list(f['entry/instrument'][snx.NXdetector])
             monitor_names = list(f['entry/instrument'][snx.NXmonitor])
-        workflow = BifrostQCutWorkflow(detector_names)
+        workflow = BifrostQCutWorkflow()
+        workflow[NeXusDetectorNames] = detector_names
         workflow[Filename[SampleRun]] = fname
         workflow[LookupTableFilename] = lookup_table_simulation()
         # BifrostQCutWorkflow looks up the detector threshold under the hardcoded
