@@ -4,7 +4,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Iterable, Mapping
+from collections.abc import Collection, Iterable, Mapping
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
@@ -68,12 +68,11 @@ class StreamProcessorWorkflow(Workflow):
             gate is what guarantees this, delivering either a cached value or
             the binding's declared default before the job runs.
             A factory passes only its own internal context here (e.g. ROI);
-            bindings resolved by the routing layer
-            are merged in afterwards via :meth:`add_context_keys`, which is
-            why construction of the wrapped ``StreamProcessor`` is deferred
-            until :meth:`build`. The keys must be finalized
-            before the graph is built because ``StreamProcessor`` bakes them
-            into the pruned/precomputed pipeline at construction.
+            bindings resolved by the routing layer are merged in afterwards via
+            :meth:`add_context_keys`, which is why construction of the wrapped
+            ``StreamProcessor`` is deferred until :meth:`build`. The keys must be
+            finalized before the graph is built because ``StreamProcessor`` bakes
+            them into the pruned/precomputed pipeline at construction.
         target_keys:
             Mapping from output names to sciline keys for target outputs.
         window_outputs:
@@ -152,7 +151,9 @@ class StreamProcessorWorkflow(Workflow):
         ``TransformationOverrides``. A job that never computes a moving
         component's position therefore does not wait for the motor, and a
         stream can fill several component types. A placeholder with no stream
-        would never get a value, so it raises here.
+        would never get a value, so it raises here. Nor does a job wait for a
+        motor on a chain read only by the provider of a key it gets from a stream
+        (see :meth:`_required_keys`).
 
         ``offered_context_streams`` are the instrument's offered context
         streams (key → wire name). Unlike ``context_keys``, which the routing
@@ -175,14 +176,16 @@ class StreamProcessorWorkflow(Workflow):
             return
         if context_keys:
             self.add_context_keys(context_keys)
-        required = self._required_keys()
+        offered_context_streams = offered_context_streams or {}
+        required = self._required_keys(stop_at=offered_context_streams)
         offered = {
             name: key
-            for key, name in (offered_context_streams or {}).items()
+            for key, name in offered_context_streams.items()
             if key in required
         }
         self.add_context_keys(offered)
-        for key, paths in find_live_transforms(self._base_workflow, required).items():
+        pipeline = self._base_workflow.copy()
+        for key, paths in find_live_transforms(pipeline, required).items():
             self._overrides[key] = {}
             for path in paths:
                 stream = (transform_streams or {}).get(path)
@@ -195,14 +198,16 @@ class StreamProcessorWorkflow(Workflow):
                 self._live_transforms.setdefault(stream, []).append((key, path))
         self._requested_context_streams = {*offered, *self._live_transforms}
         self._stream_processor = streaming.StreamProcessor(
-            self._base_workflow,
+            pipeline,
             dynamic_keys=tuple(self._dynamic_keys.values()),
             context_keys=(*self._context_keys.values(), *self._overrides),
             target_keys=tuple(self._target_keys.values()),
             **self._kwargs,
         )
 
-    def _required_keys(self) -> set[sciline.typing.Key]:
+    def _required_keys(
+        self, *, stop_at: Collection[sciline.typing.Key]
+    ) -> set[sciline.typing.Key]:
         """Every key a target key depends on, directly or transitively.
 
         Walks the pipeline's data graph backwards from the targets. Keys with no
@@ -211,15 +216,32 @@ class StreamProcessorWorkflow(Workflow):
         supplies then fails the ``StreamProcessor`` construction below, naming
         it. Providers the targets cannot reach are excluded, matching the
         pruning ``StreamProcessor`` applies to the same targets.
+
+        The walk ends at dynamic and context keys and at ``stop_at``: the value of
+        such a key comes from a stream, so its provider is replaced and what only
+        that provider reads is not required.
+
+        Parameters
+        ----------
+        stop_at:
+            Further keys to treat as streamed if the targets reach them.
         """
         graph = self._base_workflow.underlying_graph
+        streamed = {
+            *self._dynamic_keys.values(),
+            *self._context_keys.values(),
+            *stop_at,
+        }
         required: set[sciline.typing.Key] = set()
         pending = [key for key in self._target_keys.values() if key in graph]
         while pending:
-            for key in graph.predecessors(pending.pop()):
-                if key not in required:
-                    required.add(key)
-                    pending.append(key)
+            key = pending.pop()
+            if key in streamed:
+                continue
+            for predecessor in graph.predecessors(key):
+                if predecessor not in required:
+                    required.add(predecessor)
+                    pending.append(predecessor)
         return required
 
     @property

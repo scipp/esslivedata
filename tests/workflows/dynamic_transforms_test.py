@@ -248,3 +248,72 @@ class TestStreamUpdates:
         result = workflow.finalize()['out']
         assert sc.identical(result['angle'], log)
         _assert_close(result['position'], _rotated(90.0))
+
+
+class TestStreamedKeyAboveAChain:
+    """A key filled from a stream replaces its provider, and with it what only that
+    provider reads: a chain below it needs no motor.
+    """
+
+    @staticmethod
+    def _pipeline_with_angle_from_chain() -> sciline.Pipeline:
+        pipeline = _pipeline(rot=_log())
+
+        def angle(transform: NeXusTransformation[NXdetector, SampleRun]) -> _Angle:
+            return _Angle(sc.DataArray(transform.value * POINT))
+
+        pipeline.insert(angle)
+        return pipeline
+
+    @staticmethod
+    def _target(angle: _Angle) -> _Both:
+        return _Both(sc.DataGroup(angle=angle))
+
+    def test_offered_key_cuts_off_the_chain(self) -> None:
+        pipeline = self._pipeline_with_angle_from_chain()
+        pipeline.insert(self._target)
+
+        workflow = _build(
+            pipeline, target=_Both, offered_context_streams={_Angle: 'angle'}
+        )
+
+        assert workflow.requested_context_streams == {'angle'}
+
+    def test_bound_key_cuts_off_the_chain(self) -> None:
+        pipeline = self._pipeline_with_angle_from_chain()
+        pipeline.insert(self._target)
+
+        workflow = _build(pipeline, target=_Both, context_keys={'angle': _Angle})
+
+        assert workflow.requested_context_streams == set()
+
+    def test_chain_read_past_the_key_as_well_is_rejected(self) -> None:
+        """The key's value would disagree with the chain it is computed from."""
+        pipeline = self._pipeline_with_angle_from_chain()
+
+        def both(
+            angle: _Angle, transform: NeXusTransformation[NXdetector, SampleRun]
+        ) -> _Both:
+            return _Both(sc.DataGroup(angle=angle, transform=transform))
+
+        pipeline.insert(both)
+
+        with pytest.raises(ValueError, match='depends on other dynamic/context keys'):
+            _build(pipeline, target=_Both, offered_context_streams={_Angle: 'angle'})
+
+
+def test_build_loads_each_component_once() -> None:
+    pipeline = _pipeline(rot=_log())
+    component = pipeline.compute(NeXusComponent[NXdetector, SampleRun])
+    loads = []
+
+    def load() -> NeXusComponent[NXdetector, SampleRun]:
+        loads.append(1)
+        return component
+
+    pipeline.insert(load)
+
+    workflow = _build(pipeline)
+
+    assert len(loads) == 1
+    _assert_close(_update(workflow, rot=_log(90.0)), _rotated(90.0))

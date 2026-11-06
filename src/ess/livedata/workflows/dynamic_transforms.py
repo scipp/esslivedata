@@ -31,7 +31,8 @@ from ess.reduce.nexus.types import (
 )
 
 
-def _placeholders(chain: snx.TransformationChain) -> set[str]:
+def placeholders(chain: snx.TransformationChain) -> set[str]:
+    """Paths on a chain whose value is a length-0 NXlog."""
     return {
         path
         for path, transform in chain.transformations.items()
@@ -48,7 +49,9 @@ def find_live_transforms(
     Parameters
     ----------
     pipeline:
-        The workflow's pipeline. Loads the components whose chains are read.
+        The workflow's pipeline. The components whose chains are read are loaded
+        once and stored in it, so that building the ``StreamProcessor`` from this
+        pipeline does not load them again.
     required:
         Every key the workflow's targets depend on.
 
@@ -66,16 +69,13 @@ def find_live_transforms(
         component, run = get_args(key)
         chains = []
         if NeXusTransformationChain[component, run] in required:
-            chains.append(
-                pipeline.compute(NeXusComponent[component, run])['depends_on']
-            )
+            source = NeXusComponent[component, run]
+            pipeline[source] = group = pipeline.compute(source)
+            chains.append(group['depends_on'])
         if NeXusMultiTransformationChain[component, run] in required:
-            chains.extend(
-                group['depends_on']
-                for group in pipeline.compute(
-                    NeXusMultiComponent[component, run]
-                ).values()
-            )
-        if paths := {path for chain in chains for path in _placeholders(chain)}:
+            source = NeXusMultiComponent[component, run]
+            pipeline[source] = groups = pipeline.compute(source)
+            chains.extend(group['depends_on'] for group in groups.values())
+        if paths := {path for chain in chains for path in placeholders(chain)}:
             live[key] = paths
     return live
