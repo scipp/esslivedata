@@ -16,34 +16,27 @@ from scippnexus.nxtransformations import parse_depends_on_chain
 
 from ess.livedata.config.instrument import Instrument, instrument_registry
 from ess.livedata.config.instruments import available_instruments, get_config
+from ess.livedata.nexus_helpers import live_transform_paths
 from ess.livedata.preprocessors.detector_data import get_nexus_geometry_filename
-
-
-def _placeholders(component: snx.Group) -> set[str]:
-    """Paths on the component's chain whose value is a length-0 NXlog."""
-    if 'depends_on' not in component:
-        return set()
-    depends_on = component['depends_on'][()]
-    if not isinstance(depends_on, DependsOn):
-        depends_on = DependsOn(parent=component.name, value=depends_on)
-    chain = parse_depends_on_chain(component, depends_on)
-    return {
-        path
-        for path, transform in chain.transformations.items()
-        if getattr(transform.value, 'sizes', {}).get('time') == 0
-    }
+from ess.livedata.workflows.dynamic_transforms import placeholders
 
 
 def _chain_placeholders(artifact: str) -> set[str]:
-    """Placeholders on the chains of all detectors, monitors and the sample."""
+    """Placeholders as a job finds them: on the chains of the components it reads."""
+    found = set()
     with snx.File(artifact, 'r') as f:
         entry = f['entry']
-        components = [
+        for component in (
             *entry['instrument'][snx.NXdetector].values(),
             *entry['instrument'][snx.NXmonitor].values(),
             *entry[snx.NXsample].values(),
-        ]
-        return {path for c in components for path in _placeholders(c)}
+        ):
+            if 'depends_on' in component:
+                depends_on = component['depends_on'][()]
+                if not isinstance(depends_on, DependsOn):
+                    depends_on = DependsOn(parent=component.name, value=depends_on)
+                found |= placeholders(parse_depends_on_chain(component, depends_on))
+    return found
 
 
 def _has_geometry_artifact(name: str) -> bool:
@@ -68,7 +61,7 @@ def instrument(request: pytest.FixtureRequest) -> Instrument:
 def test_every_placeholder_has_a_stream(instrument: Instrument) -> None:
     artifact = str(get_nexus_geometry_filename(instrument.name))
 
-    missing = _chain_placeholders(artifact) - set(instrument.transform_streams)
+    missing = live_transform_paths(artifact) - set(instrument.transform_streams)
 
     assert not missing, (
         f"Placeholders in {artifact} with no stream of {instrument.name}: "
@@ -76,10 +69,10 @@ def test_every_placeholder_has_a_stream(instrument: Instrument) -> None:
     )
 
 
-def test_services_subscribe_to_every_placeholder(instrument: Instrument) -> None:
+def test_services_subscribe_to_what_jobs_find(instrument: Instrument) -> None:
+    """Services scan the file and jobs read chains: the two must agree, or a job would
+    wait for a stream no service subscribes to.
+    """
     artifact = str(get_nexus_geometry_filename(instrument.name))
-    streams = instrument.transform_streams
 
-    needed = {streams[path] for path in _chain_placeholders(artifact)}
-
-    assert needed <= instrument.live_transform_streams
+    assert _chain_placeholders(artifact) <= set(instrument.transform_streams)

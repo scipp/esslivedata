@@ -31,6 +31,7 @@ from .stream import (
     Device,
     F144Stream,
     Stream,
+    match_transform_streams,
 )
 from .workflow_spec import (
     DETECTORS,
@@ -148,11 +149,10 @@ class Instrument:
     #: its factory is attached. Empty until then, and for chopperless
     #: instruments.
     _lut_components: frozenset[str] = field(default_factory=frozenset, init=False)
-    #: Streams driving a transform in the geometry artifact, filled in by
-    #: :meth:`load_factories`. Empty until then, and without an artifact.
-    _live_transform_streams: frozenset[str] = field(
-        default_factory=frozenset, init=False
-    )
+    #: NeXus path -> stream, for each transform the geometry artifact has driven by
+    #: a stream. Filled in by :meth:`load_factories`. Empty until then, and without
+    #: an artifact.
+    _transform_streams: dict[str, str] = field(default_factory=dict, init=False)
     #: Context streams a workflow can request by asking for the key, filled in
     #: by :meth:`offer_context_stream`.
     _offered_context_streams: dict[Any, str] = field(default_factory=dict, init=False)
@@ -257,9 +257,8 @@ class Instrument:
         which.
 
         A binding is needed where that reading cannot work: when the stream
-        filling a key varies per source. Offers
-        are bijective -- one stream per key and one key per stream,
-        instrument-wide -- and so cannot express the latter.
+        filling a key varies per source. Offers are bijective -- one stream per key
+        and one key per stream, instrument-wide -- and so cannot express the latter.
 
         A binding also routes more precisely, which is what keeps a stream
         private to one spec off the offer side. Route derivation runs at startup
@@ -301,33 +300,14 @@ class Instrument:
 
     @property
     def transform_streams(self) -> dict[str, str]:
-        """NeXus path -> name of the stream carrying the value at that path.
+        """NeXus path -> name of the stream driving the transform at that path.
 
-        A :class:`Device` carries the value of its RBV substream, whose
-        ``nexus_path`` the geometry artifact uses for the chain entry. The
-        substream itself is suppressed in favour of the device stream, so it is
-        not listed under its own name.
+        Lists the motor-driven transforms of the geometry artifact. A job looks up
+        the placeholders on the chains it reads here (see
+        ``StreamProcessorWorkflow.build``). Only a job's graph says which it reads,
+        so a service hosting specs subscribes to all of them.
         """
-        streams = {
-            stream.nexus_path: name
-            for name, stream in self.f144_streams.items()
-            if stream.nexus_path is not None
-        }
-        for name, device in self.devices.items():
-            rbv = self.streams[device.value]
-            if rbv.nexus_path is not None:
-                streams[rbv.nexus_path] = name
-        return streams
-
-    @property
-    def live_transform_streams(self) -> frozenset[str]:
-        """Streams driving a transform in the geometry artifact.
-
-        The candidates a job's graph may ask for (see :attr:`transform_streams`
-        and ``StreamProcessorWorkflow.build``), hence what a service hosting
-        specs subscribes to.
-        """
-        return self._live_transform_streams
+        return dict(self._transform_streams)
 
     @property
     def lut_components(self) -> frozenset[str]:
@@ -1043,7 +1023,7 @@ class Instrument:
         bind_roi_requests(self.workflow_factory)
 
         self.validate()
-        self._live_transform_streams = self._find_live_transform_streams()
+        self._transform_streams = self._find_transform_streams()
 
         for name in (*self.detector_names, *self._pixellated_monitors):
             if name not in self._detector_numbers:
@@ -1061,17 +1041,14 @@ class Instrument:
         for name in self._downsampled_detectors:
             self.get_downsampling(name)
 
-    def _find_live_transform_streams(self) -> frozenset[str]:
+    def _find_transform_streams(self) -> dict[str, str]:
         from ess.livedata.nexus_helpers import live_transform_paths
 
         try:
             filename = self.nexus_file
         except ValueError:
-            return frozenset()
-        streams = self.transform_streams
-        return frozenset(
-            streams[path] for path in live_transform_paths(filename, streams)
-        )
+            return {}
+        return match_transform_streams(self.streams, live_transform_paths(filename))
 
     def _attach_default_monitor_factories(self) -> None:
         """Attach the shared monitor workflow factory where none was provided.

@@ -21,7 +21,7 @@ imported, not later.
 
 from __future__ import annotations
 
-from collections.abc import Iterable
+from collections.abc import Collection, Iterable, Mapping
 from dataclasses import dataclass
 from typing import Any
 
@@ -101,6 +101,48 @@ class Device(Stream):
     def substream_names(self) -> tuple[str, ...]:
         """Names of the RBV/VAL/DMOV substreams this device is synthesised from."""
         return tuple(s for s in (self.value, self.target, self.idle) if s is not None)
+
+
+def match_transform_streams(
+    streams: Mapping[str, Stream], paths: Collection[str]
+) -> dict[str, str]:
+    """Map each NeXus path to the name of the stream carrying its value.
+
+    A :class:`Device` carries the value of its RBV substream, whose ``nexus_path``
+    the geometry artifact uses for the chain entry. Its substreams are suppressed in
+    favour of the device stream and so cannot carry anything themselves.
+
+    Parameters
+    ----------
+    streams:
+        All streams of an instrument, by name.
+    paths:
+        The NeXus paths to match. A path no stream carries is left out.
+
+    Raises
+    ------
+    ValueError:
+        If two streams carry the same path.
+    """
+    devices = {n: s for n, s in streams.items() if isinstance(s, Device)}
+    suppressed = {name for d in devices.values() for name in d.substream_names}
+    candidates = [
+        *(
+            (name, stream.nexus_path)
+            for name, stream in streams.items()
+            if isinstance(stream, F144Stream) and name not in suppressed
+        ),
+        *((name, streams[d.value].nexus_path) for name, d in devices.items()),
+    ]
+    matched: dict[str, str] = {}
+    for name, path in candidates:
+        if path in paths:
+            if path in matched:
+                raise ValueError(
+                    f"Streams {matched[path]!r} and {name!r} both carry {path!r}."
+                )
+            matched[path] = name
+    return matched
 
 
 class _NoDefault:

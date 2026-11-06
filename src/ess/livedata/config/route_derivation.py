@@ -55,7 +55,7 @@ def gather_source_names(
         names.update(instrument.offered_context_streams.values())
         # Motor readbacks likewise: whether a job reads a chain is known only
         # from its graph.
-        names.update(instrument.live_transform_streams)
+        names.update(instrument.transform_streams.values())
     devices = instrument.devices
     for name in list(names):
         device = devices.get(name)
