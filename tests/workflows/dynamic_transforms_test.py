@@ -11,12 +11,18 @@ rejection of duplicate-typed parameters, the reason the dedup exists.
 
 from __future__ import annotations
 
+from typing import NewType
+
 import pytest
 import sciline
 import scipp as sc
+from ess.reduce import streaming
 from ess.reduce.nexus.types import (
     NeXusComponent,
     NeXusData,
+    NeXusMultiComponent,
+    NeXusMultiTransformation,
+    NeXusTransformation,
     NeXusTransformationChain,
     SampleRun,
 )
@@ -251,3 +257,58 @@ class TestWireDynamicTransforms:
         chain = _computed_chain(pipeline)
         assert chain.transformations[ROT_PATH].value.value == 11.0
         assert chain.transformations[TILT_PATH].value.value == 22.0
+
+
+_Positions = NewType('_Positions', sc.DataGroup)
+
+
+def _positions(
+    events: NeXusData[NXdetector, SampleRun],
+    single: NeXusTransformation[NXdetector, SampleRun],
+    multi: NeXusMultiTransformation[NXdetector, SampleRun],
+) -> _Positions:
+    point = sc.vector([1.0, 0.0, 0.0], unit='m')
+    return _Positions(
+        sc.DataGroup(single=single.value * point, multi=multi.value['a'].value * point)
+    )
+
+
+class TestContextUpdates:
+    """A stream update must reach the chains through a real StreamProcessor."""
+
+    def test_new_value_reaches_single_and_multi_chains(self) -> None:
+        pipeline = _pipeline(ROT_PATH)
+        pipeline[NeXusMultiComponent[NXdetector, SampleRun]] = sc.DataGroup(
+            a=_component(ROT_PATH)
+        )
+        pipeline[NeXusData[NXdetector, SampleRun]] = sc.DataArray(sc.scalar(1.0))
+        pipeline.insert(_positions)
+        workflow = _Workflow(pipeline, {'det1': NeXusData[NXdetector, SampleRun]})
+        binding = ChainPatchBinding(
+            stream_name='rot',
+            transform_path=ROT_PATH,
+            workflow_key=_RotLog,
+            dependent_sources=frozenset({'det1'}),
+        )
+        wire_dynamic_transforms(workflow, [binding])
+        processor = streaming.StreamProcessor(
+            pipeline,
+            dynamic_keys=(NeXusData[NXdetector, SampleRun],),
+            context_keys=(_RotLog,),
+            target_keys=(_Positions,),
+            accumulators=(),
+        )
+
+        for angle in (0.0, 90.0, 180.0):
+            processor.set_context({_RotLog: _value_log(_RotLog, angle)})
+            processor.accumulate(
+                {NeXusData[NXdetector, SampleRun]: sc.DataArray(sc.scalar(1.0))}
+            )
+            positions = processor.finalize()[_Positions]
+
+            rotation = sc.spatial.rotations_from_rotvecs(
+                sc.scalar(angle, unit='deg') * sc.vector([0.0, 0.0, 1.0])
+            )
+            expected = rotation * sc.vector([1.0, 0.0, 0.0], unit='m')
+            for position in positions.values():
+                assert sc.allclose(position, expected, atol=sc.scalar(1e-12, unit='m'))
