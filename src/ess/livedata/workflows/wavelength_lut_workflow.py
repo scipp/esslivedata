@@ -18,8 +18,7 @@ gated at the JobManager (ADR 0002/0003) — onto that geometry, then delegating
 the ``RawChoppers`` → ``DiskChoppers`` conversion to essreduce's
 ``to_disk_choppers``. It thereby replaces the workflow's own call to that
 provider. The provider is synthesised at factory time (chopper count is known
-then) with one parameter per setpoint, reusing
-:func:`~ess.livedata.workflows.dynamic_transforms.synthesise_provider`.
+then) with one parameter per setpoint, see :func:`_synthesise_provider`.
 
 An instrument with no choppers simply supplies a geometry artifact whose
 ``NXsource`` is present but that has no ``NXdisk_chopper`` groups: the empty
@@ -60,7 +59,6 @@ from ess.reduce.unwrap.lut import (
 
 from ..config.chopper import delay_setpoint_stream, speed_setpoint_stream
 from ..config.stream import AxisRange
-from .dynamic_transforms import synthesise_provider
 from .lut_blocks import Range, one_block, pack_blocks
 from .lut_ranges import (
     LtotalRangeError,
@@ -191,6 +189,44 @@ def close_non_synced_disk_choppers_and_log(
     return compatible
 
 
+def _synthesise_provider(
+    name: str,
+    impl: Callable[..., Any],
+    annotations: dict[str, Any],
+) -> Any:
+    """Synthesise a Sciline provider with explicit named positional parameters.
+
+    Returns a function ``name(p1, p2, ...)`` whose ``__annotations__`` come
+    from ``annotations`` (with ``'return'`` consumed as the return type) and
+    whose body delegates to ``impl(p1, p2, ...)``.
+
+    Sciline introspects providers via ``inspect.getfullargspec``, which
+    reads the underlying ``__code__`` and ignores ``__signature__``;
+    producing N named typed positional parameters therefore requires
+    building a real function via ``exec``/``compile``. Same technique
+    ``dataclasses`` and ``namedtuple`` use to generate ``__init__``.
+
+    ``name`` and every parameter name (annotation keys other than
+    ``'return'``) must be valid Python identifiers; raises
+    :class:`ValueError` otherwise. This guards the ``exec`` template
+    against injection from caller-supplied strings.
+    """
+    params = [n for n in annotations if n != 'return']
+    for ident in (name, *params):
+        if not ident.isidentifier():
+            raise ValueError(
+                f"_synthesise_provider: {ident!r} is not a valid Python "
+                "identifier; refusing to splice into exec template"
+            )
+    arg_list = ', '.join(params)
+    src = f"def {name}({arg_list}):\n    return _impl({arg_list})\n"
+    ns: dict[str, Any] = {'_impl': impl}
+    exec(src, ns)  # noqa: S102
+    fn = ns[name]
+    fn.__annotations__ = dict(annotations)
+    return fn
+
+
 def build_disk_choppers_provider(
     setpoint_keys: Mapping[str, ChopperSetpointKeys],
 ) -> Callable[..., DiskChoppers[AnyRun]]:
@@ -209,7 +245,7 @@ def build_disk_choppers_provider(
     The arity is fixed at synthesis time from ``setpoint_keys``; sciline reads a
     provider's ``__code__`` and ignores ``__signature__``, so a real function
     with N named typed parameters is built via
-    :func:`~ess.livedata.workflows.dynamic_transforms.synthesise_provider`.
+    :func:`_synthesise_provider`.
 
     The ``rotation_speed_setpoint``/``delay`` field names hardcoded here are one
     of the sites that move if the streamed chopper quantities change; see
@@ -247,7 +283,7 @@ def build_disk_choppers_provider(
         annotations[f'speed_{name}'] = setpoint_keys[name].speed
         annotations[f'delay_{name}'] = setpoint_keys[name].delay
     annotations['return'] = DiskChoppers[AnyRun]
-    return synthesise_provider('_provide_disk_choppers', _impl, annotations)
+    return _synthesise_provider('_provide_disk_choppers', _impl, annotations)
 
 
 def make_wavelength_bands_from_frames(

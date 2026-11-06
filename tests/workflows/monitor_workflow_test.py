@@ -2,24 +2,18 @@
 # Copyright (c) 2025 Scipp contributors (https://github.com/scipp)
 """Tests for the monitor view workflow using StreamProcessor."""
 
-import copy
+import shutil
 import uuid
+from pathlib import Path
 
+import h5py
 import pytest
 import scipp as sc
-from ess.reduce.nexus.types import (
-    NeXusComponent,
-    NeXusTransformationChain,
-    SampleRun,
-)
-from scippnexus import NXmonitor
 
 from ess.livedata.config.spectral_coords import (
     SPECTRAL_RANGE_HIGH_COORD,
     SPECTRAL_RANGE_LOW_COORD,
 )
-from ess.livedata.config.stream import ChainPatchBinding
-from ess.livedata.config.value_log import ValueLog
 from ess.livedata.config.workflow_spec import JobId
 from ess.livedata.core.timestamp import Timestamp
 from ess.livedata.parameter_models import (
@@ -789,10 +783,6 @@ def _streamed_lut(filename) -> sc.DataArray:
     return pack_blocks([load_lookup_table_from_file(str(filename))])
 
 
-class _MonitorZLog(ValueLog):
-    """Typed key for a monitor's f144 z-position log (issue #780)."""
-
-
 # Sentinel so a test can request create_monitor_workflow's own reset_coord default
 # rather than passing a value explicitly.
 _USE_FACTORY_DEFAULT = object()
@@ -804,9 +794,9 @@ class TestMonitorMotion:
 
     Mirrors the detector-view dynamic-transform mechanism on a monitor: the
     geometry artifact stores the monitor's motorised translation as a length-0
-    NXlog placeholder along its ``depends_on`` chain, and a chain-patch
-    :class:`ContextBinding` replaces it with the latest sample of a live f144
-    position stream. The monitor workflow itself is unchanged — motion support
+    NXlog placeholder along its ``depends_on`` chain, and the workflow build
+    fills it with the latest sample of a live f144 position stream. The monitor
+    workflow itself is unchanged — motion support
     falls out of the same component-agnostic ``StreamProcessorWorkflow`` seam
     the detector uses.
 
@@ -818,8 +808,8 @@ class TestMonitorMotion:
     the lookup, so this holds for the current file-based table.
     """
 
-    # monitor_cave's depends_on chain holds a single static translation; the test
-    # swaps it for a placeholder the streamed position then drives.
+    # monitor_cave's depends_on chain holds a single static translation; the
+    # geometry file fixture swaps it for a placeholder the stream then drives.
     _PATH = '/entry/instrument/monitor_cave/transformations/translation'
 
     @pytest.fixture
@@ -827,12 +817,25 @@ class TestMonitorMotion:
         return sc.linspace('wavelength', 0.1, 10.0, num=101, unit='angstrom')
 
     @pytest.fixture
-    def geometry_filename(self):
+    def geometry_filename(self, tmp_path: Path) -> str:
+        """The DREAM geometry with monitor_cave on a motor, as an artifact stores it."""
         from ess.livedata.preprocessors.detector_data import (
             get_nexus_geometry_filename,
         )
 
-        return str(get_nexus_geometry_filename('dream'))
+        filename = tmp_path / 'moving_monitor.nxs'
+        shutil.copy(get_nexus_geometry_filename('dream'), filename)
+        with h5py.File(filename, 'r+') as f:
+            attrs = dict(f[self._PATH].attrs)
+            del f[self._PATH]
+            log = f.create_group(self._PATH)
+            log.attrs.update(attrs)
+            log.attrs['NX_class'] = 'NXlog'
+            log.create_dataset('value', shape=(0,), dtype='float64').attrs['units'] = (
+                'm'
+            )
+            log.create_dataset('time', shape=(0,), dtype='int64').attrs['units'] = 'ns'
+        return str(filename)
 
     @pytest.fixture
     def lookup_table_filename(self):
@@ -881,35 +884,9 @@ class TestMonitorMotion:
             geometry_filename=geometry_filename,
             **extra,
         )
-        pipeline = workflow.base_pipeline
-        # Replace the static translation with a length-0 NXlog placeholder, as the
-        # geometry artifact stores dynamic geometry; keep all other real fields so
-        # the rest of the loaded monitor geometry is untouched.
-        chain = copy.deepcopy(
-            pipeline.compute(NeXusTransformationChain[NXmonitor, SampleRun])
-        )
-        chain.transformations[self._PATH].value = sc.DataArray(
-            sc.array(dims=['time'], values=[], unit='m', dtype='float64'),
-            coords={
-                'time': sc.array(dims=['time'], values=[], unit='ns', dtype='int64')
-            },
-        )
-        component = copy.copy(pipeline.compute(NeXusComponent[NXmonitor, SampleRun]))
-        component['depends_on'] = chain
-        pipeline[NeXusComponent[NXmonitor, SampleRun]] = component
-
-        binding = ChainPatchBinding(
-            stream_name='mon_z',
-            transform_path=self._PATH,
-            workflow_key=_MonitorZLog,
-            dependent_sources=frozenset({'monitor_cave'}),
-        )
         workflow.build(
-            context_keys={
-                'mon_z': _MonitorZLog,
-                LUT_STREAM_NAMES[MONITOR_LUT_OUTPUT]: MonitorLutContext,
-            },
-            chain_patch_bindings=[binding],
+            context_keys={LUT_STREAM_NAMES[MONITOR_LUT_OUTPUT]: MonitorLutContext},
+            transform_streams={self._PATH: 'mon_z'},
         )
         return workflow
 
@@ -1001,8 +978,6 @@ class TestMonitorMotion:
         spectrum does shift when the monitor moves (the flight path changes), so
         the cumulative must reset there as well.
         """
-        from ess.reduce.nexus.types import RawMonitor
-
         edges = sc.linspace('time_of_arrival', 0, 71_000_000, num=11, unit='ns')
         workflow = create_monitor_workflow(
             'monitor_cave',
@@ -1010,20 +985,20 @@ class TestMonitorMotion:
             coordinate_mode='toa',
             geometry_filename=geometry_filename,
         )
-        pipeline = workflow.base_pipeline
-        toa = sc.array(dims=['event'], values=[1.0, 2.0, 3.0], unit='ns')
-        events = sc.DataArray(
-            sc.ones(sizes={'event': 3}, dtype='float64', unit='counts'),
-            coords={'event_time_offset': toa},
-        )
-        begin = sc.array(dims=['event_time_zero'], values=[0], unit=None, dtype='int64')
-        pipeline[RawMonitor[SampleRun, NXmonitor]] = sc.DataArray(
-            sc.bins(begin=begin, dim='event', data=events)
+        workflow.build(transform_streams={self._PATH: 'mon_z'})
+
+        workflow.accumulate(
+            {
+                'monitor_cave': self._histogram_input(),
+                'mon_z': self._position_log(-4.2),
+            },
+            start_time=Timestamp.from_ns(0),
+            end_time=Timestamp.from_ns(1000),
         )
 
-        hist = pipeline.compute(MonitorHistogram)
-        assert MONITOR_TRANSFORM in hist.coords
-        assert hist.coords[MONITOR_TRANSFORM].ndim == 0
+        current = workflow.finalize()['current']
+        assert MONITOR_TRANSFORM in current.coords
+        assert current.coords[MONITOR_TRANSFORM].ndim == 0
 
 
 class TestPixellatedMonitorReset:

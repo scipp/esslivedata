@@ -208,9 +208,12 @@ The naming stack, from the Kafka wire inwards (see ADR 0004 and
   streams have a value (ADR 0002).
 - **ContextBinding** — declaration mapping a context stream to a Sciline
   workflow key for given dependent sources (`config/stream.py`, ADR 0003).
-  Required where the stream filling a key varies per source, where the key
-  reaches the graph only because the binding puts it there (a chain patch), or
-  where a stream private to one spec should not be subscribed by every service.
+  Required where the stream filling a key varies per source, or where a stream
+  private to one spec should not be subscribed by every service.
+- **Live transform** — an entry of a `depends_on` chain driven by a motor. The
+  geometry artifact holds it as an empty NXlog at the path of the motor's f144
+  stream. The workflow build fills essreduce's `TransformationOverrides` from
+  that stream for each chain the targets read, and the job gates on it.
 - **Offered context stream** — instrument-wide mapping from a Sciline workflow
   key to the wire name carrying it, named by no spec, source or params
   (`Instrument.offer_context_stream`, ADR 0010). The workflow build keeps the

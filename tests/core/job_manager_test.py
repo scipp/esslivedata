@@ -1826,47 +1826,7 @@ class TestJobFactoryContextBinding:
     seed: without one the gate stays closed until the producer publishes.
     """
 
-    def test_instrument_context_binding_populates_context_keys(self) -> None:
-        instrument = _build_instrument_with_streams()
-        handle = instrument.register_spec(
-            name='w',
-            version=1,
-            title='W',
-            description='',
-            source_names=['detector1'],
-            outputs=SimpleTestOutputs,
-        )
-        instrument.add_context_binding(
-            stream_name='rot',
-            workflow_key=_CtxKeyA,
-            dependent_sources=['detector1'],
-        )
-
-        captured: dict[str, FakeProcessor] = {}
-
-        @handle.attach_factory()
-        def _factory() -> FakeProcessor:
-            proc = FakeProcessor()
-            captured['proc'] = proc
-            return proc
-
-        factory = JobFactory(instrument, service_name='data_reduction')
-        job_id = JobId(source_name='detector1', job_number=uuid.uuid4())
-        config = WorkflowConfig(identifier=handle.workflow_id, job_id=job_id)
-
-        job = factory.create(job_id=job_id, config=config)
-
-        # context_keys injected post-creation and the workflow built eagerly.
-        assert captured['proc'].context_keys == {'rot': _CtxKeyA}
-        assert captured['proc'].build_calls == 1
-        # Wire stream equals stream_name: missing with no available streams,
-        # satisfied as soon as 'rot' becomes available.
-        assert job.missing_context(set()) == {'rot'}
-        assert job.missing_context({'rot'}) == set()
-        # The wire stream is routed to the workflow alongside user-selected aux.
-        assert 'rot' in job.input_stream_names
-
-    def test_instrument_context_binding_filters_by_source(self) -> None:
+    def test_binding_skips_sources_outside_dependent_sources(self) -> None:
         instrument = _build_instrument_with_streams()
         handle = instrument.register_spec(
             name='w',
@@ -1877,7 +1837,7 @@ class TestJobFactoryContextBinding:
             outputs=SimpleTestOutputs,
         )
         # detector_names limited to 'detector1' so use streams not source_names.
-        instrument.add_context_binding(
+        handle.add_context_binding(
             stream_name='rot',
             workflow_key=_CtxKeyA,
             dependent_sources=['detector2'],
@@ -1976,92 +1936,6 @@ class TestJobFactoryContextBinding:
         assert {'temp', 'roi_rectangle'} <= job.input_stream_names
         assert job.gating_streams == {'temp', 'roi_rectangle'}
         assert job.context_defaults == {'roi_rectangle': 'empty'}
-
-    def test_skip_instrument_contexts_excludes_instrument_scope_bindings(self) -> None:
-        """A spec with ``skip_instrument_contexts`` ignores instrument-scope inputs.
-
-        The spec's own bindings, if any, are unaffected.
-        """
-        instrument = _build_instrument_with_streams()
-        handle = instrument.register_spec(
-            name='w',
-            version=1,
-            title='W',
-            description='',
-            source_names=['detector1'],
-            outputs=SimpleTestOutputs,
-        )
-        instrument.add_context_binding(
-            stream_name='rot',
-            workflow_key=_CtxKeyA,
-            dependent_sources=['detector1'],
-        )
-        handle.add_context_binding(stream_name='temp', workflow_key=_CtxKeyB)
-        handle.skip_instrument_contexts()
-
-        captured: dict[str, FakeProcessor] = {}
-
-        @handle.attach_factory()
-        def _factory() -> FakeProcessor:
-            proc = FakeProcessor()
-            captured['proc'] = proc
-            return proc
-
-        factory = JobFactory(instrument, service_name='data_reduction')
-        job_id = JobId(source_name='detector1', job_number=uuid.uuid4())
-        config = WorkflowConfig(identifier=handle.workflow_id, job_id=job_id)
-
-        job = factory.create(job_id=job_id, config=config)
-
-        # Instrument-scope 'rot' suppressed, spec-scope 'temp' retained.
-        assert captured['proc'].context_keys == {'temp': _CtxKeyB}
-        assert job.missing_context(set()) == {'temp'}
-
-    def test_chain_patch_context_binding_delivers_value_log_in_context_keys(
-        self,
-    ) -> None:
-        """A chain-patch ContextBinding contributes ValueLog subclass.
-
-        A chain-patch ContextBinding contributes its :class:`ValueLog`
-        subclass to the factory's ``context_keys``; the transform path is
-        derived from the binding's ``stream_name`` and consumed by
-        ``dynamic_transforms.wire_dynamic_transforms``.
-        """
-        from ess.livedata.config.value_log import ValueLog
-
-        class _RotLog(ValueLog):
-            pass
-
-        instrument = _build_instrument_with_streams()
-        handle = instrument.register_spec(
-            name='w',
-            version=1,
-            title='W',
-            description='',
-            source_names=['detector1'],
-            outputs=SimpleTestOutputs,
-        )
-        instrument.add_context_binding(
-            stream_name='rot',
-            dependent_sources=['detector1'],
-            workflow_key=_RotLog,
-        )
-
-        captured: dict[str, FakeProcessor] = {}
-
-        @handle.attach_factory()
-        def _factory() -> FakeProcessor:
-            proc = FakeProcessor()
-            captured['proc'] = proc
-            return proc
-
-        factory = JobFactory(instrument, service_name='data_reduction')
-        job_id = JobId(source_name='detector1', job_number=uuid.uuid4())
-        config = WorkflowConfig(identifier=handle.workflow_id, job_id=job_id)
-
-        factory.create(job_id=job_id, config=config)
-
-        assert captured['proc'].context_keys == {'rot': _RotLog}
 
 
 class TestJobFactoryDeclaredContextStreams:

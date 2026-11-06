@@ -180,17 +180,13 @@ class JobFactory:
         aux_streams = {**rendered_aux_names, **{name: name for name in context_keys}}
 
         # Note that this initializes the job immediately, i.e., we pay startup cost now.
-        # ``chain_patch_bindings`` carries the instrument-scope dynamic
-        # (f144-driven) transforms; ``create`` wires them into the workflow's
-        # pipeline before it is built, deriving the component mapping from the
-        # workflow's own dynamic_keys (see dynamic_transforms.wire_dynamic_transforms).
         stream_processor = factory.create(
             source_name=job_id.source_name,
             config=config,
             params=params,
             aux_source_names=aux_streams,
             context_keys=context_keys,
-            chain_patch_bindings=self._instrument.chain_patch_bindings,
+            transform_streams=self._instrument.transform_streams,
             offered_context_streams=self._instrument.offered_context_streams,
         )
         # Offered context streams reach every job; only the built graph knows
