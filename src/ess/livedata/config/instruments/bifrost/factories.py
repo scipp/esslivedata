@@ -74,10 +74,10 @@ def setup_factories(instrument: Instrument) -> None:
     instrument.configure_detector('unified_detector', detector_number=detector_number)
 
     # Bifrost device streams (merged RBV/VAL/DMOV) feeding typed Sciline keys
-    # on the cut-workflow graph. Direct-bind (no chain patch): the keys are
-    # ordinary parameters of the cut workflow, so each job's gate follows from
-    # whether its graph reaches them — the Q-maps do, the detector view (sums
-    # over banks) and the ratemeter (counts-only) do not.
+    # on the cut-workflow graph. The keys are ordinary parameters of the cut
+    # workflow, so each job's gate follows from whether its graph reaches them —
+    # the Q-maps do, the detector view (sums over banks) and the ratemeter
+    # (counts-only) do not.
     instrument.offer_context_stream(
         stream_name='detector_tank_angle',
         workflow_key=InstrumentAngle[SampleRun],

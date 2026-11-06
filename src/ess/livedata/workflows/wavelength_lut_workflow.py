@@ -27,6 +27,7 @@ An instrument with no choppers simply supplies a geometry artifact whose
 
 from __future__ import annotations
 
+import re
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any, NewType
@@ -189,6 +190,9 @@ def close_non_synced_disk_choppers_and_log(
     return compatible
 
 
+_PY_IDENTIFIER = re.compile(r'^[a-zA-Z_][a-zA-Z0-9_]*$')
+
+
 def _synthesise_provider(
     name: str,
     impl: Callable[..., Any],
@@ -213,7 +217,7 @@ def _synthesise_provider(
     """
     params = [n for n in annotations if n != 'return']
     for ident in (name, *params):
-        if not ident.isidentifier():
+        if not _PY_IDENTIFIER.fullmatch(ident):
             raise ValueError(
                 f"_synthesise_provider: {ident!r} is not a valid Python "
                 "identifier; refusing to splice into exec template"

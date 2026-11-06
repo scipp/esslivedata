@@ -144,9 +144,9 @@ class JobFactory:
         """Build a Job from its workflow config.
 
         Validates the config's params, then collects the job's context streams
-        from both sides: the instrument- and spec-scope ``ContextBinding``
-        declarations matching this ``(spec, source)``, and the offered context
-        streams the built workflow turns out to request (ADR 0010). Together
+        from both sides: the spec-scope ``ContextBinding`` declarations matching
+        this ``(spec, source)``, and the offered context and motor streams the
+        built workflow turns out to request (ADRs 0003, 0010). Together
         they populate the job's ``context_keys`` (wired into ``set_context``)
         and ``gating_streams`` (the JobManager gates the job until each is
         available; see ADR 0002).

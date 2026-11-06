@@ -1818,9 +1818,9 @@ def _build_instrument_with_streams():
 
 
 class TestJobFactoryContextBinding:
-    """JobFactory.create merges instrument- and spec-scope ContextBinding records.
+    """JobFactory.create resolves a spec's ContextBinding records.
 
-    Both scopes feed the factory's ``context_keys`` and the job's
+    They feed the factory's ``context_keys`` and the job's
     ``gating_streams``. The wire name equals the declared ``stream_name`` (no
     per-job suffixing), and a binding's ``default`` is the only cold-start
     seed: without one the gate stays closed until the producer publishes.
@@ -1993,8 +1993,8 @@ class TestJobFactoryDeclaredContextStreams:
         assert 'lut' not in job.input_stream_names
 
     def test_requested_streams_add_to_bound_ones(self) -> None:
-        """The two mechanisms coexist on one job: a pushed chain patch and a
-        pulled table gate it alike."""
+        """The two mechanisms coexist on one job: a bound stream and a pulled
+        table gate it alike."""
         instrument = _build_instrument_with_streams()
         instrument.offer_context_stream(workflow_key=_CtxKeyA, stream_name='lut')
         proc = FakeProcessor()
