@@ -31,8 +31,8 @@ A standing constraint shapes the solution: the dashboard imports workflow `specs
 to generate UI, so `specs.py` must stay free of workflow-key imports — the dashboard
 must not depend on instrument-specific Sciline pipelines. The hard requirement is the
 absence of heavy science-package imports, but the rule is applied as written: even a
-dashboard-safe `workflow_key` (a `ValueLog` chain-patch marker, which subclasses a
-`config`-layer type) is declared in `factories.py`, co-located with the
+dashboard-safe `workflow_key` (at the time, a `ValueLog` chain-patch marker, which
+subclasses a `config`-layer type) is declared in `factories.py`, co-located with the
 `add_context_binding` that consumes it, rather than in `specs.py`.
 
 ### Param-dependent context — explicit non-goal
@@ -75,7 +75,8 @@ flavours share the record, discriminated by the *type* of `workflow_key`:
 - **Direct parameter.** `workflow_key` is an arbitrary Sciline key (e.g.
   `InstrumentAngle[SampleRun]`). The stream value is fed straight into
   `set_context`.
-- **NXtransformations chain patch.** `workflow_key` is a `ValueLog` subclass. The
+- **NXtransformations chain patch** (superseded 2026-11-06, see "Amendment 2026-11-06"
+  below). `workflow_key` is a `ValueLog` subclass. The
   value is patched into the NeXus `depends_on` chain rather than bound directly.
   `wire_dynamic_transforms` discovers these by
   `issubclass(workflow_key, ValueLog)`. The chain entry to patch is *derived* from
@@ -202,6 +203,9 @@ and `JobManager`.
 
 ## Alternatives considered
 
+> **Amended 2026-11-06 (#1431).** The motion rows below argue against options for
+> declaring motors. Motors are no longer declared, see "Amendment 2026-11-06" below.
+
 | Option | Notes |
 |---|---|
 | **One `ContextBinding` record, two declaration sites (chosen)** | Single type covers both scopes and both flavours. Late-binding for the spec side keeps `specs.py` workflow-key-free. |
@@ -231,11 +235,19 @@ into `SpecHandle.add_context_binding` with no further machinery.
 
 ### Chain path derived, not declared
 
+> **Superseded 2026-11-06 (#1431).** See "Amendment 2026-11-06" below. The stream is now found from the
+> chain entry rather than the chain entry from a declared stream.
+
 The NeXus transformation-chain entry a chain-patch binding writes is derived from its
 `stream_name` via `Instrument.chain_patch_path`, so the f144 substream definition is the
 single source of truth and a binding cannot disagree with the stream it patches.
 
 ## Consequences
+
+> **Amended 2026-11-06 (#1431).** `ChainPatchBinding`, `ValueLog`,
+> `wire_dynamic_transforms`, `skip_instrument_contexts`, instrument-scope bindings and
+> `tests/config/motion_binding_test.py` no longer exist, see "Amendment 2026-11-06" below.
+> The bullets mentioning them are the original record.
 
 - `ContextBinding` lives in `config/stream.py` as a single concrete dataclass
   (`stream_name`, `workflow_key`, `dependent_sources`). Its resolved chain-patch
@@ -340,7 +352,11 @@ for TransformationOverrides[T, R] in the keys the targets require:
 - **Instrument scope is gone.** `Instrument.add_context_binding` and
   `Instrument.context_bindings` had no other users. A stream can fill a chain entry and
   an offered or bound key in the same job, since the two no longer share a mapping.
-- **Routing.** Services subscribe to `Instrument.live_transform_streams`, read from the
+- **A key filled from a stream hides what only its provider reads.** The walk over the
+  graph ends at dynamic, context and offered keys, as `StreamProcessor` does, so a chain
+  read only by such a provider needs no motor. A job that also reads the chain past that
+  key is rejected at creation: the key's value could disagree with the chain.
+- **Routing.** Services subscribe to `Instrument.transform_streams`, read from the
   artifact in `load_factories`. ADR 0009 keeps the stream table free of file access
   because the dashboard has no file path at startup. That does not apply here: only
   backend services derive routes, and they already read the artifact in
