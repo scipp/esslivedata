@@ -21,7 +21,6 @@ offline at development time rather than parsing NeXus at process startup.
 from __future__ import annotations
 
 import re
-from collections.abc import Iterable
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -143,22 +142,26 @@ def extract_stream_info(file_path: str | Path | h5py.File) -> list[StreamInfo]:
     return stream_infos
 
 
-def live_transform_paths(file_path: str | Path, paths: Iterable[str]) -> set[str]:
-    """Return those of ``paths`` that are motor-driven transforms in the file.
+def live_transform_paths(file_path: str | Path) -> set[str]:
+    """Return the paths of the motor-driven transforms in a geometry artifact.
 
-    A geometry artifact holds such a transform as an empty NXlog carrying the
+    The artifact holds such a transform as an empty NXlog carrying the
     transformation attributes, written at the path of the f144 stream driving it.
     """
+    paths = set()
 
-    def is_live(node: h5py.Group | h5py.Dataset) -> bool:
-        return (
+    def collect(name: str, node: h5py.Group | h5py.Dataset) -> None:
+        if (
             'transformation_type' in node.attrs
             and isinstance(node, h5py.Group)
+            and 'value' in node
             and node['value'].size == 0
-        )
+        ):
+            paths.add(f'/{name}')
 
     with h5py.File(file_path, 'r') as f:
-        return {path for path in paths if path in f and is_live(f[path])}
+        f.visititems(collect)
+    return paths
 
 
 def filter_f144_streams(

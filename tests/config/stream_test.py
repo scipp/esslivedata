@@ -12,7 +12,7 @@ from ess.livedata.config import (
     filter_authorized_streams,
     name_streams,
 )
-from ess.livedata.config.stream import Stream, suggest_names
+from ess.livedata.config.stream import Stream, match_transform_streams, suggest_names
 
 
 def _parsed(path: str, *, source: str = 'src', topic: str = 'topic') -> F144Stream:
@@ -408,3 +408,45 @@ class TestFilterAuthorizedStreams:
             '/b/value': _parsed('b', topic='loki_nicos_devices'),
         }
         assert filter_authorized_streams(parsed) == {'/a/value': parsed['/a/value']}
+
+
+class TestMatchTransformStreams:
+    def test_plain_f144_stream_carries_its_path(self) -> None:
+        streams = {'motor': _parsed('/a/motor')}
+
+        assert match_transform_streams(streams, {'/a/motor'}) == {'/a/motor': 'motor'}
+
+    def test_device_carries_the_path_of_its_rbv_substream(self) -> None:
+        streams = {
+            'motor/value': _parsed('/a/motor'),
+            'motor/target_value': _parsed('/a/target'),
+            'motor': Device(value='motor/value', target='motor/target_value'),
+        }
+
+        assert match_transform_streams(streams, {'/a/motor'}) == {'/a/motor': 'motor'}
+
+    def test_suppressed_substream_carries_nothing(self) -> None:
+        """The synthesizer never publishes it, so a job would gate on it forever."""
+        streams = {
+            'motor/value': _parsed('/a/motor'),
+            'motor/target_value': _parsed('/a/target'),
+            'motor': Device(value='motor/value', target='motor/target_value'),
+        }
+
+        assert match_transform_streams(streams, {'/a/target'}) == {}
+
+    def test_other_paths_are_left_out(self) -> None:
+        streams = {'motor': _parsed('/a/motor'), 'other': _parsed('/a/other')}
+
+        assert match_transform_streams(streams, {'/a/motor'}) == {'/a/motor': 'motor'}
+
+    def test_two_streams_on_one_path_are_rejected(self) -> None:
+        streams = {'one': _parsed('/a/motor'), 'two': _parsed('/a/motor')}
+
+        with pytest.raises(ValueError, match="'one' and 'two'"):
+            match_transform_streams(streams, {'/a/motor'})
+
+    def test_duplicate_on_a_path_not_asked_for_is_ignored(self) -> None:
+        streams = {'one': _parsed('/a/log'), 'two': _parsed('/a/log')}
+
+        assert match_transform_streams(streams, {'/a/motor'}) == {}

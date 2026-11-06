@@ -13,6 +13,7 @@ from ess.livedata.nexus_helpers import (
     extract_stream_info,
     filter_f144_streams,
     generate_streams_parsed_module,
+    live_transform_paths,
 )
 
 
@@ -600,3 +601,29 @@ class TestGenerateStreamsParsedModule:
         assert "topic='motion'" in code
         assert "topic='sample_env'" in code
         assert code.count('F144Stream(') == 2
+
+
+class TestLiveTransformPaths:
+    @staticmethod
+    def _log(
+        parent: h5py.Group, name: str, *, size: int, transform: bool = True
+    ) -> None:
+        group = parent.create_group(name)
+        if transform:
+            group.attrs['transformation_type'] = 'translation'
+        group.create_dataset('value', shape=(size,), dtype='float64')
+
+    def test_finds_only_empty_transform_logs(self, tmp_path: Path) -> None:
+        filename = tmp_path / 'geometry.nxs'
+        with h5py.File(filename, 'w') as f:
+            transformations = f.create_group('entry/transformations')
+            self._log(transformations, 'motor', size=0)
+            self._log(transformations, 'recorded', size=2)
+            self._log(transformations, 'not_a_transform', size=0, transform=False)
+            static = transformations.create_dataset('static', data=1.0)
+            static.attrs['transformation_type'] = 'translation'
+            transformations.create_group('no_value').attrs['transformation_type'] = (
+                'translation'
+            )
+
+        assert live_transform_paths(filename) == {'/entry/transformations/motor'}
