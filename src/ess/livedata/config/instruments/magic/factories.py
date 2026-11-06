@@ -7,27 +7,9 @@ MAGIC instrument factory implementations.
 import scipp as sc
 
 from ess.livedata.config import Instrument
-from ess.livedata.config.value_log import ValueLog
 
 from .specs import detector_pixel_ranges
 from .views import DETECTOR_BANK_SIZES
-
-
-class DetectorARotationLog(ValueLog):
-    """Per-binding Sciline key for the ``magic_detector_a`` rotation readback."""
-
-
-class DetectorBRotationLog(ValueLog):
-    """Per-binding Sciline key for the ``magic_detector_b`` rotation readback."""
-
-
-#: Each bank hangs off its own rotation stage, so its placement is only known
-#: once the live motor readback arrives. Distinct ``ValueLog`` subclasses keep
-#: the two dynamic transforms distinguishable in Sciline.
-_rotation_logs = {
-    'magic_detector_a': ('detector_a_rotation', DetectorARotationLog),
-    'magic_detector_b': ('detector_b_rotation', DetectorBRotationLog),
-}
 
 
 def setup_factories(instrument: Instrument) -> None:
@@ -57,17 +39,6 @@ def setup_factories(instrument: Instrument) -> None:
                 'detector_number', first, last + 1, unit=None, dtype='int32'
             ),
         )
-
-    for source_name, (stream_name, workflow_key) in _rotation_logs.items():
-        instrument.add_context_binding(
-            stream_name=stream_name,
-            dependent_sources={source_name},
-            workflow_key=workflow_key,
-        )
-    # The wire and strip views fold `detector_number` and never consume a
-    # position, so they must not wait on the rotation readback.
-    specs.wire_view_handle.skip_instrument_contexts()
-    specs.strip_view_handle.skip_instrument_contexts()
 
     _pixel_noise = sc.scalar(2.0, unit='mm')
     # One screen bin per strip and per segment. The banks are radially deep (32

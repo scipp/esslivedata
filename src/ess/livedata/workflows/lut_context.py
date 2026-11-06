@@ -98,9 +98,9 @@ def offer_lut_context_streams(instrument: Instrument) -> None:
     an unplaceable source gates normally, receives the table, and fails when
     :func:`~ess.livedata.workflows.lut_blocks.select_block` finds no block
     covering its flight path, reporting that distance against the table's
-    coverage. A consumer that can rule this out earlier should: LOKI's I(Q)
-    rejects an unplaceable monitor selection in its factory, where the aux
-    selection is in hand.
+    coverage. A consumer that can rule this out earlier should: the monitor
+    workflow rejects wavelength mode on an unplaceable monitor, and LOKI's I(Q) an
+    unplaceable monitor selection, each in its factory.
     """
     for group, key, output in (
         (instrument.detector_names, DetectorLutContext, DETECTOR_LUT_OUTPUT),

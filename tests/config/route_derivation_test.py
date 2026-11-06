@@ -3,6 +3,7 @@
 import pytest
 
 from ess.livedata.config.instrument import Instrument
+from ess.livedata.config.instruments.loki import specs as loki_specs
 from ess.livedata.config.roi_names import roi_stream_name
 from ess.livedata.config.route_derivation import (
     gather_source_names,
@@ -99,53 +100,25 @@ class TestGatherSourceNames:
         result = gather_source_names(instrument, "detector_data")
         assert result == set()
 
-    def test_instrument_context_binding_is_picked_up(self) -> None:
-        """Instrument-level ContextBinding streams routed when a namespace spec
-        in the same source set consumes them (ADR 0003 § "Routing vs gating").
+    def test_live_transform_streams_are_subscribed_by_hosting_service(self) -> None:
+        """A motor readback feeds a transform in the graph of any hosted spec, so
+        its device substreams are subscribed whichever spec asks for it.
         """
-        from ess.livedata.config.stream import F144Stream
+        instrument = loki_specs.instrument
+        instrument.load_factories()
 
-        instrument = Instrument(
-            name="test",
-            detector_names=["det_a", "det_b"],
-            streams={'rot': F144Stream(source='rot', topic='t', units='mm')},
-        )
-        instrument.register_spec(
-            group=DETECTORS,
-            name="view",
-            version=1,
-            title="View",
-            source_names=["det_a"],
-            outputs=DefaultOutputs,
-        )
-        instrument.add_context_binding(
-            stream_name='rot', workflow_key=object, dependent_sources=['det_a']
-        )
-        assert gather_source_names(instrument, "detector_data") == {'det_a', 'rot'}
-        # Other namespace has no overlap with dependent_sources → not picked up.
-        assert gather_source_names(instrument, "data_reduction") == set()
+        names = gather_source_names(instrument, 'detector_data')
 
-    def test_instrument_context_binding_skipped_when_no_namespace_overlap(self) -> None:
-        from ess.livedata.config.stream import F144Stream
+        assert {'sample_stack_x/value', 'detector_carriage/value'} <= names
+        assert 'detector_carriage' not in names
 
-        instrument = Instrument(
-            name="test",
-            detector_names=["det_a", "det_b"],
-            streams={'rot': F144Stream(source='rot', topic='t', units='mm')},
-        )
-        instrument.register_spec(
-            group=DETECTORS,
-            name="view",
-            version=1,
-            title="View",
-            source_names=["det_a"],
-            outputs=DefaultOutputs,
-        )
-        # Binding's dependent_sources doesn't intersect any namespace spec.
-        instrument.add_context_binding(
-            stream_name='rot', workflow_key=object, dependent_sources=['det_b']
-        )
-        assert gather_source_names(instrument, "detector_data") == {'det_a'}
+    def test_live_transform_streams_are_not_subscribed_without_hosted_spec(
+        self,
+    ) -> None:
+        instrument = loki_specs.instrument
+        instrument.load_factories()
+
+        assert gather_source_names(instrument, 'no_such_service') == set()
 
     def test_spec_context_binding_without_resolver_is_picked_up(self) -> None:
         """Spec-level ContextBinding without a stream_resolver routes by name."""

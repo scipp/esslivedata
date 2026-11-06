@@ -67,12 +67,12 @@ def test_gating_devices_are_drivable(instrument_name: str) -> None:
         for key in _STREAM_KEYS
         if key in slider
     }
-    for binding in config.context_bindings:
-        stream = config.streams[binding.stream_name]
+    for name in config.transform_streams.values():
+        stream = config.streams[name]
         if not isinstance(stream, Device):
             continue
         missing = set(stream.substream_names) - driven
         assert not missing, (
-            f"{instrument_name} gates on device {binding.stream_name!r} but its "
+            f"{instrument_name} gates on device {name!r} but its "
             f"log producer config drives no {sorted(missing)}"
         )

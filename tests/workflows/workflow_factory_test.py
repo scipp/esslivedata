@@ -1016,7 +1016,7 @@ class FakeContextWorkflow:
 
     def __init__(self) -> None:
         self.context_keys: dict[str, type] = {}
-        self.chain_patch_bindings: list = []
+        self.transform_streams: dict[str, str] = {}
         self.offered_context_streams: dict[type, str] = {}
         self.built = False
 
@@ -1024,12 +1024,12 @@ class FakeContextWorkflow:
         self,
         *,
         context_keys=None,
-        chain_patch_bindings=(),
+        transform_streams=None,
         offered_context_streams=None,
     ) -> None:
         if context_keys:
             self.context_keys.update(context_keys)
-        self.chain_patch_bindings = list(chain_patch_bindings)
+        self.transform_streams = dict(transform_streams or {})
         self.offered_context_streams = dict(offered_context_streams or {})
         self.built = True
 
@@ -1153,34 +1153,3 @@ class TestSpecHandleAddContextBinding:
         entries = factory.registration(handle.workflow_id).context_bindings
         assert [e.stream_name for e in entries] == ['roi', 'polygon']
         assert [e.workflow_key for e in entries] == [_CtxKey, _OtherCtxKey]
-
-    def test_skip_instrument_contexts_sets_registration_flag(self) -> None:
-        factory, handle = self._register(source_names=['det1'])
-
-        reg = factory.registration(handle.workflow_id)
-        assert reg.skip_instrument_contexts is False
-
-        handle.skip_instrument_contexts()
-
-        reg = factory.registration(handle.workflow_id)
-        assert reg.skip_instrument_contexts is True
-
-    def test_chain_patch_rejected_at_spec_scope(self) -> None:
-        """A :class:`ValueLog` ``workflow_key`` at spec scope is rejected.
-
-        Chain-patching is read only from instrument scope by
-        :attr:`Instrument.chain_patch_bindings`; a spec-scope ValueLog
-        would route the f144 value to a Sciline parameter that no provider
-        consumes — silent-wrong.
-        """
-        import pytest
-
-        from ess.livedata.config.value_log import ValueLog
-
-        class _RotLog(ValueLog):
-            pass
-
-        _, handle = self._register(source_names=['det1'])
-
-        with pytest.raises(ValueError, match=r'chain-patch.*spec scope'):
-            handle.add_context_binding(stream_name='rot', workflow_key=_RotLog)

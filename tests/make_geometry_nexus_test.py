@@ -5,7 +5,7 @@ import h5py
 import numpy as np
 import pytest
 import scipp as sc
-from ess.bifrost.io.nexus import load_analyzer_for_detector
+from ess.bifrost.io.nexus import load_bifrost_analyzer_for_detector
 from ess.reduce.nexus.types import NeXusComponentLocationSpec, SampleRun
 from scippnexus import NXdetector
 
@@ -738,7 +738,7 @@ def test_analyzer_lookup_finds_crystal_in_artifact(tmp_path):
     output = tmp_path / 'output.nxs'
     write_minimal_geometry(src, output)
 
-    analyzer = load_analyzer_for_detector(
+    analyzer = load_bifrost_analyzer_for_detector(
         NeXusComponentLocationSpec[NXdetector, SampleRun](
             filename=output, component_name='triplet'
         )
