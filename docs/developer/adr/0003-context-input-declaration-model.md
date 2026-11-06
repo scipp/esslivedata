@@ -159,9 +159,10 @@ function over those records: it reads each input's component type off the workfl
 per-component provider (`build_transformation_overrides_provider` / `synthesise_provider`
 in `workflows/dynamic_transforms.py`) of essreduce's
 `TransformationOverrides[T, SampleRun]`, which maps each transform path to the latest
-sample of its `ValueLog` parameter. essreduce applies the overrides to the chains of `T`. Resolving the path up front keeps the wiring step
-free of any reference to the instrument's stream topology. The same seam works for the
-detector-view factory and for a pre-built `LokiWorkflow()`.
+sample of its `ValueLog` parameter. essreduce applies the overrides to the chains of `T`.
+Resolving the path up front keeps the wiring step free of any reference to the
+instrument's stream topology. The same seam works for the detector-view factory and for
+a pre-built `LokiWorkflow()`.
 
 ### Routing pickup
 
