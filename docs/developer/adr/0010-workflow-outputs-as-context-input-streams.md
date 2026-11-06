@@ -61,10 +61,10 @@ They are two statements of one fact, and as separate declarations they drift sil
 in the direction that leaves a job `pending_context` forever. It also removes the need
 for a spec to name which of its sources or aux selections read the stream.
 
-Offers do not replace bindings. A `ContextBinding` is still required where the key reaches
-the graph only because the binding injects it (a chain patch), where the stream filling a
-key varies per source, or where a stream private to one spec should not be subscribed by
-every service. The `offer_context_stream` docstring records the line between the two.
+Offers do not replace bindings. A `ContextBinding` is still required where the stream
+filling a key varies per source, or where a stream private to one spec should not be
+subscribed by every service. The `offer_context_stream` docstring records the line between
+the two. Motor readbacks use neither, see "Amendment 2026-11-06" in ADR 0003.
 
 ### The gate is per job and depends on the job's parameters
 

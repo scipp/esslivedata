@@ -619,8 +619,7 @@ class TestLokiMotionAndRoles:
     @pytest.mark.xfail(
         strict=True,
         reason='#1441: the transmission monitor m3 (and m2) has no lookup-table '
-        'block, so the I(Q) factory refuses it. The job also needs the sample '
-        'and m2/m3 chains patched at job time (#1431).',
+        'block, so the I(Q) factory refuses it.',
     )
     def test_reduction_gates_on_one_stream_per_group(
         self, loki: Instrument, monitors: dict[str, str]
