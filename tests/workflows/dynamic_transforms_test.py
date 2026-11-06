@@ -2,15 +2,16 @@
 # Copyright (c) 2025 Scipp contributors (https://github.com/scipp)
 """Behavioral tests for :func:`wire_dynamic_transforms`.
 
-These drive a *real* Sciline pipeline: the wiring inserts the fused chain-patch
-provider, the pipeline is then computed, and we assert on the patched
-``NeXusTransformationChain`` — i.e. the observable effect, not the number of
-providers inserted. Grouping/dedup is exercised through Sciline's own rejection
-of duplicate-typed parameters, the reason the dedup exists.
+These drive a *real* essreduce pipeline: the wiring inserts the fused
+transformation-overrides provider, the pipeline is then computed, and we assert on
+the resulting ``NeXusTransformationChain`` — i.e. the observable effect, not the
+number of providers inserted. Grouping/dedup is exercised through Sciline's own
+rejection of duplicate-typed parameters, the reason the dedup exists.
 """
 
 from __future__ import annotations
 
+import pytest
 import sciline
 import scipp as sc
 from ess.reduce.nexus.types import (
@@ -19,7 +20,7 @@ from ess.reduce.nexus.types import (
     NeXusTransformationChain,
     SampleRun,
 )
-from ess.reduce.nexus.workflow import get_transformation_chain
+from ess.reduce.nexus.workflow import GenericNeXusWorkflow
 from scippnexus import NXdetector
 from scippnexus.field import DependsOn
 from scippnexus.nxtransformations import Transform, TransformationChain
@@ -38,18 +39,6 @@ class _RotLog(ValueLog):
 
 class _TiltLog(ValueLog):
     pass
-
-
-def _base_chain(
-    component: NeXusComponent[NXdetector, SampleRun],
-) -> NeXusTransformationChain[NXdetector, SampleRun]:
-    """Concrete fallback so the chain is computable whether or not it is patched.
-
-    Mirrors essreduce's generic ``get_transformation_chain``, pinned to a single
-    component type because Sciline cannot hold the unconstrained generic. The
-    chain-patch provider, when wired, replaces this on ``insert``.
-    """
-    return get_transformation_chain(component)
 
 
 def _placeholder_transform(name: str) -> Transform:
@@ -111,7 +100,7 @@ class _Workflow:
 
 
 def _pipeline(*paths: str) -> sciline.Pipeline:
-    pipeline = sciline.Pipeline((_base_chain,))
+    pipeline = GenericNeXusWorkflow(run_types=[SampleRun], monitor_types=[])
     pipeline[NeXusComponent[NXdetector, SampleRun]] = _component(*paths)
     return pipeline
 
@@ -121,6 +110,40 @@ def _computed_chain(pipeline: sciline.Pipeline) -> TransformationChain:
 
 
 class TestWireDynamicTransforms:
+    def test_raises_when_path_not_in_chain(self) -> None:
+        pipeline = _pipeline(ROT_PATH)
+        pipeline[_TiltLog] = _value_log(_TiltLog, 42.0)
+        workflow = _Workflow(pipeline, {'det1': NeXusData[NXdetector, SampleRun]})
+        binding = ChainPatchBinding(
+            stream_name='tilt',
+            transform_path=TILT_PATH,
+            workflow_key=_TiltLog,
+            dependent_sources=frozenset({'det1'}),
+        )
+
+        wire_dynamic_transforms(workflow, [binding])
+
+        with pytest.raises(KeyError, match=TILT_PATH):
+            _computed_chain(pipeline)
+
+    def test_does_not_mutate_component(self) -> None:
+        pipeline = _pipeline(ROT_PATH)
+        pipeline[_RotLog] = _value_log(_RotLog, 42.0)
+        workflow = _Workflow(pipeline, {'det1': NeXusData[NXdetector, SampleRun]})
+        binding = ChainPatchBinding(
+            stream_name='rot',
+            transform_path=ROT_PATH,
+            workflow_key=_RotLog,
+            dependent_sources=frozenset({'det1'}),
+        )
+
+        wire_dynamic_transforms(workflow, [binding])
+        _computed_chain(pipeline)
+
+        component = pipeline.compute(NeXusComponent[NXdetector, SampleRun])
+        value = component['depends_on'].transformations[ROT_PATH].value
+        assert value.sizes == {'time': 0}
+
     def test_patches_chain_with_latest_sample(self) -> None:
         pipeline = _pipeline(ROT_PATH)
         pipeline[_RotLog] = _value_log(_RotLog, 42.0)

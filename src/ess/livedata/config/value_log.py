@@ -41,8 +41,8 @@ class ValueLog:
 
     :class:`~ess.livedata.config.stream.ContextBinding` entries pointing
     at a :class:`ValueLog` subclass as their ``workflow_key`` are routed
-    via the fused per-component patched-chain provider instead of via
-    direct ``set_context`` binding.
+    via the fused per-component transformation-overrides provider instead of
+    via direct ``set_context`` binding.
 
     :attr:`values` is the NXlog produced by ``ToNXlog`` — non-empty by the
     time it reaches the provider, because the JobManager context-stream

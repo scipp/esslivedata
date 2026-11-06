@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: BSD-3-Clause
 # Copyright (c) 2025 Scipp contributors (https://github.com/scipp)
-"""Patch f144-driven dynamic transforms into a workflow's depends_on chain.
+"""Feed f144-driven dynamic transforms into a workflow's depends_on chains.
 
 The geometry artifact represents dynamic geometry as length-0 NXlog
 placeholders along ``depends_on`` chains. Workflows that load components
@@ -8,9 +8,10 @@ walking through such a placeholder must replace the empty value with the
 latest sample from a live f144 stream — otherwise essreduce's
 ``reject_time_dependent_transform`` filter raises at workflow construction.
 
-:func:`build_patched_chain_provider` synthesises a per-component-type provider
-that consumes one :class:`ValueLog` parameter per binding and writes the
-latest sample into the corresponding transformation along the chain.
+:func:`build_transformation_overrides_provider` synthesises a per-component-type
+provider of essreduce's ``TransformationOverrides``. It consumes one
+:class:`ValueLog` parameter per binding and maps each transform path to the latest
+sample. essreduce applies the overrides to the chains of that component type.
 
 :func:`wire_dynamic_transforms` is the routing-layer entry point: it derives
 the ``source -> component_type`` map from a workflow's own ``dynamic_keys``,
@@ -24,17 +25,14 @@ from __future__ import annotations
 
 import re
 from collections.abc import Callable, Iterable, Mapping
-from copy import deepcopy
 from typing import Any, Protocol, get_args, get_origin, runtime_checkable
 
 import sciline
 from ess.reduce.nexus.types import (
-    NeXusComponent,
     NeXusData,
-    NeXusTransformationChain,
     SampleRun,
+    TransformationOverrides,
 )
-from ess.reduce.nexus.workflow import get_transformation_chain
 
 from ess.livedata.config.stream import ChainPatchBinding
 from ess.livedata.config.value_log import ValueLog
@@ -96,52 +94,45 @@ def synthesise_provider(
     return fn
 
 
-def build_patched_chain_provider(
+def build_transformation_overrides_provider(
     component_type: type,
     bindings: list[tuple[str, type[ValueLog]]],
 ) -> Any:
-    """Build the fused chain-patch provider for ``component_type``.
+    """Build the fused provider of the transformation overrides of ``component_type``.
 
-    The returned provider replaces essreduce's ``get_transformation_chain``
-    specialised to ``component_type``: it consumes
-    ``NeXusComponent[component_type, SampleRun]`` plus one parameter per
-    binding (annotated with that binding's :class:`ValueLog` subclass) and
-    produces ``NeXusTransformationChain[component_type, SampleRun]``. It
-    cannot instead consume the chain as input — that would self-cycle on
-    its own return type.
+    The returned provider replaces the default (no overrides) of essreduce's
+    ``TransformationOverrides`` specialised to ``component_type``: it consumes one
+    parameter per binding (annotated with that binding's :class:`ValueLog` subclass)
+    and produces ``TransformationOverrides[component_type, SampleRun]``.
 
     Parameters
     ----------
     component_type:
-        The NeXus component type whose transformation chain is being patched
+        The NeXus component type whose transformation chains are being overridden
         (e.g. ``snx.NXdetector``).
     bindings:
         ``(transform_path, value_log_cls)`` pairs. The provider takes one
         positional parameter per pair, annotated with the corresponding
         :class:`ValueLog` subclass; at evaluation time the latest sample of
-        each container is written into ``transformations[transform_path]``.
+        each container becomes the override for ``transform_path``.
     """
-    bindings_local = list(bindings)
+    paths = [path for path, _ in bindings]
+    overrides_key = TransformationOverrides[component_type, SampleRun]
 
-    def _impl(component: Any, *containers: ValueLog) -> Any:
-        chain = get_transformation_chain(component)
-        patched = deepcopy(chain)
-        for (path, _key), container in zip(bindings_local, containers, strict=True):
-            if path not in patched.transformations:
-                raise KeyError(
-                    f"Transformation entry {path!r} not found in chain. "
-                    f"Available entries: {sorted(patched.transformations.keys())}"
-                )
-            patched.transformations[path].value = container.values['time', -1].data
-        return patched
+    def _impl(*containers: ValueLog) -> Any:
+        return overrides_key(
+            {
+                path: container.values['time', -1].data
+                for path, container in zip(paths, containers, strict=True)
+            }
+        )
 
     annotations: dict[str, Any] = {
-        'component': NeXusComponent[component_type, SampleRun],
-        **{f'log_{i}': key for i, (_, key) in enumerate(bindings_local)},
-        'return': NeXusTransformationChain[component_type, SampleRun],
+        **{f'log_{i}': key for i, (_, key) in enumerate(bindings)},
+        'return': overrides_key,
     }
     return synthesise_provider(
-        name=f'_patched_chain__{component_type.__name__}',
+        name=f'_transformation_overrides__{component_type.__name__}',
         impl=_impl,
         annotations=annotations,
     )
@@ -158,7 +149,8 @@ def wire_dynamic_transforms(
     component type as its first type-arg — then, for every binding whose
     ``dependent_sources`` includes a derived source, groups the
     ``(transform_path, workflow_key)`` pairs by component type and inserts one
-    fused provider per type (built by :func:`build_patched_chain_provider`).
+    fused provider per type (built by
+    :func:`build_transformation_overrides_provider`).
 
     Deriving the map from ``dynamic_keys`` avoids restating it in the factory
     (which would duplicate ``dynamic_keys`` and is a recurring source of
@@ -200,5 +192,7 @@ def wire_dynamic_transforms(
             )
     for component_type, by_stream in by_type.items():
         workflow.base_pipeline.insert(
-            build_patched_chain_provider(component_type, list(by_stream.values()))
+            build_transformation_overrides_provider(
+                component_type, list(by_stream.values())
+            )
         )

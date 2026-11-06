@@ -156,10 +156,10 @@ declaration type, carrying `transform_path` alongside the `ValueLog` key and
 `dependent_sources`. `wire_dynamic_transforms(workflow, bindings)` is then a pure
 function over those records: it reads each input's component type off the workflow's own
 `dynamic_keys`, groups the matching bindings by component type, and builds one fused
-per-component provider (`build_patched_chain_provider` / `synthesise_provider` in
-`preprocessors/dynamic_transforms.py`) that replaces essreduce's
-`NeXusTransformationChain[T, SampleRun]` provider and writes the latest sample of each
-`ValueLog` parameter into the chain. Resolving the path up front keeps the wiring step
+per-component provider (`build_transformation_overrides_provider` / `synthesise_provider`
+in `workflows/dynamic_transforms.py`) of essreduce's
+`TransformationOverrides[T, SampleRun]`, which maps each transform path to the latest
+sample of its `ValueLog` parameter. essreduce applies the overrides to the chains of `T`. Resolving the path up front keeps the wiring step
 free of any reference to the instrument's stream topology. The same seam works for the
 detector-view factory and for a pre-built `LokiWorkflow()`.
 

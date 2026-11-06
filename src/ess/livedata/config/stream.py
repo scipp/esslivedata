@@ -142,7 +142,7 @@ class ContextBinding:
       :meth:`Instrument.chain_patch_path`.
       :attr:`Instrument.chain_patch_bindings` collects these bindings by
       ``issubclass(workflow_key, ValueLog)`` and the wiring step synthesises
-      a fused per-component patched-chain provider.
+      a fused per-component transformation-overrides provider.
 
     The same record is declared at two scopes: instrument scope
     (:meth:`Instrument.add_context_binding`, for source properties such as
