@@ -480,7 +480,7 @@ class TestMultiChopperWorkflow:
     def test_file_phase_log_does_not_override_streamed_delay(
         self, two_chopper_geometry: Path, tmp_path: Path
     ) -> None:
-        # ESTIA's writer stores the in-phase status flag as the chopper's
+        # Older ESTIA files stored the in-phase status flag as the chopper's
         # ``phase``. DiskChopper.from_nexus would take a ``phase`` field over the
         # delay, so the streamed delay setpoint must win regardless.
         path = tmp_path / 'phase_log.nxs'
