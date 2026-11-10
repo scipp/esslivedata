@@ -194,9 +194,15 @@ def ensure_topics_exist(instrument: str) -> None:
         | mapping.log_topics
         | mapping.topics.all_topics
     )
+    # The desired-state topic is a table, not a stream: compaction keeps the latest
+    # record per workflow forever, which plain retention would delete.
+    configs = {mapping.topics.livedata_desired: {'cleanup.policy': 'compact'}}
     admin = AdminClient(load_config(namespace=config_names.kafka, env='dev'))
     futures = admin.create_topics(
-        [NewTopic(topic, num_partitions=1) for topic in sorted(topics)]
+        [
+            NewTopic(topic, num_partitions=1, config=configs.get(topic, {}))
+            for topic in sorted(topics)
+        ]
     )
     for future in futures.values():
         try:

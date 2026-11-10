@@ -22,8 +22,8 @@ The naming stack, from the Kafka wire inwards (see ADR 0004 and
   object (`config/instrument.py`) bundling detector/monitor names, streams,
   and the workflow factory. Registered in `config/instruments/`.
 - **Topic** — a Kafka topic name (plain `str` alias in `kafka/stream_mapping.py`).
-  The fixed per-instrument livedata topics (commands, data, responses, roi,
-  status) are declared in `LivedataTopics`.
+  The fixed per-instrument livedata topics (commands, context, data, desired,
+  responses, roi, status) are declared in `LivedataTopics`.
 - **Source name** — the producer-declared name inside a FlatBuffers message
   (EV44/F144 field). `(topic, source_name)` (`InputStreamKey`) is the raw Kafka
   identity of a message and exists only at the Kafka boundary.
@@ -63,6 +63,17 @@ The naming stack, from the Kafka wire inwards (see ADR 0004 and
 - **Generation** — the epoch defined by one commit's `job_number`: results
   stamped with an older job number belong to a previous generation and are
   filtered out; a new generation clears buffers (ADR 0007/0008).
+- **Desired state** — the jobs that should run, as opposed to the jobs that
+  run (*observed state*, from heartbeats). Kept on the compacted
+  `livedata_desired` topic, keyed by `WorkflowId`, one `DesiredWorkflow`
+  record (job number plus a `DesiredJob` per source) per workflow
+  (`core/desired_state.py`).
+- **Desired table** — `dict[WorkflowId, DesiredWorkflow]` obtained by reading
+  the desired-state topic from offset 0 and folding its records in order
+  (`fold_updates`).
+- **Tombstone** — a Kafka record with a null value. On a compacted topic it
+  removes its key; on the desired-state topic it removes the workflow from the
+  desired table, so none of its jobs should run.
 - **ResultKey** — wire key of one workflow output:
   `(workflow_id, job_id, output_name)`. Embeds the per-commit job number.
 - **DataKey** — stable identity `(workflow_id, source_name, output_name)`,

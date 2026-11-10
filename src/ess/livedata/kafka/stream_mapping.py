@@ -26,6 +26,7 @@ class LivedataTopics:
     livedata_commands: str
     livedata_context: str
     livedata_data: str
+    livedata_desired: str
     livedata_responses: str
     livedata_roi: str
     livedata_status: str
@@ -67,6 +68,7 @@ class StreamMapping:
         livedata_commands_topic: str,
         livedata_context_topic: str,
         livedata_data_topic: str,
+        livedata_desired_topic: str,
         livedata_responses_topic: str,
         livedata_roi_topic: str,
         livedata_status_topic: str,
@@ -81,6 +83,7 @@ class StreamMapping:
             livedata_commands=livedata_commands_topic,
             livedata_context=livedata_context_topic,
             livedata_data=livedata_data_topic,
+            livedata_desired=livedata_desired_topic,
             livedata_responses=livedata_responses_topic,
             livedata_roi=livedata_roi_topic,
             livedata_status=livedata_status_topic,
