@@ -71,7 +71,7 @@ Dashboard: `python -m ess.livedata.dashboard.reduction --instrument dummy`
 `--transport none` runs the UI without Kafka (default port 5009; pass `--port` for a
 second instance or to dodge a port a prior run still holds). With no backend, started
 workflows stay PENDING. `--transport fake` adds an in-process fake backend (no Kafka):
-started workflows go ACTIVE and plots fill with synthesized data.
+started workflows go RUNNING and plots fill with synthesized data.
 
 To drive or screenshot the UI without Kafka, use `scripts/drive_dashboard.py`: `--launch`
 spawns a fake backend seeded from the dummy fixture, drives it, and tears it down;

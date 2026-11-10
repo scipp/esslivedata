@@ -115,7 +115,7 @@ class TestJobStateDisplayName:
         assert job_state_display_name(D.backend_down) == 'BACKEND DOWN'
 
     def test_other_states_use_upper_value(self):
-        assert job_state_display_name(D.active) == 'ACTIVE'
+        assert job_state_display_name(D.active) == 'RUNNING'
         assert job_state_display_name(D.error) == 'ERROR'
         assert job_state_display_name(D.stopping) == 'STOPPING'
 
@@ -540,7 +540,7 @@ class TestWorkflowStatusWidgetWithJobs:
         workflow_id,
         job_orchestrator,
     ):
-        """Test that status shows ACTIVE when jobs are running."""
+        """Test that status shows RUNNING when jobs are running."""
         # Stage and commit to create active job
         job_orchestrator.clear_staged_configs(workflow_id)
         job_orchestrator.stage_config(
@@ -563,7 +563,7 @@ class TestWorkflowStatusWidgetWithJobs:
         job_service.status_updated(job_status)
 
         status, _, _, _, _ = workflow_status_widget._get_status_and_timing()
-        assert status == 'ACTIVE'
+        assert status == 'RUNNING'
 
     def test_status_shows_error_when_job_has_error(
         self,
@@ -644,7 +644,7 @@ class TestWorkflowStatusWidgetWithJobs:
         workflow_id,
         job_orchestrator,
     ):
-        """Test status transitions from PENDING to ACTIVE when backend responds."""
+        """Test status transitions from PENDING to RUNNING when backend responds."""
         # Stage and commit to create active job
         job_orchestrator.clear_staged_configs(workflow_id)
         job_orchestrator.stage_config(
@@ -659,7 +659,7 @@ class TestWorkflowStatusWidgetWithJobs:
         status, _, _, _, _ = workflow_status_widget._get_status_and_timing()
         assert status == 'PENDING'
 
-        # Backend starts and sends status - should become ACTIVE
+        # Backend starts and sends status - should become RUNNING
         job_id = JobId(source_name='source1', job_number=job_ids[0].job_number)
         job_status = JobStatus(
             job_id=job_id,
@@ -670,7 +670,7 @@ class TestWorkflowStatusWidgetWithJobs:
         job_service.status_updated(job_status)
 
         status, _, _, _, _ = workflow_status_widget._get_status_and_timing()
-        assert status == 'ACTIVE'
+        assert status == 'RUNNING'
 
     def test_stop_clears_to_stopped_not_pending(
         self,
@@ -948,7 +948,7 @@ class TestPerSourceStatus:
             ),
         ]
         html = WorkflowStatusWidget._make_status_dots_html(sources)
-        assert 'Mantle Detector: active' in html
+        assert 'Mantle Detector: running' in html
         assert 'SANS Detector: error' in html
         assert 'ZeroDivisionError' in html
 
@@ -1208,7 +1208,7 @@ class TestWorkflowStatusListWidget:
 
         # Commit a workflow so it has an active job
         job_orchestrator.commit_workflow(workflow_id)
-        # Deliver a job status so the badge shows ACTIVE
+        # Deliver a job status so the badge shows RUNNING
         job_number = job_orchestrator.get_active_job_number(workflow_id)
         job_id = JobId(source_name='source1', job_number=job_number)
         job_service.status_updated(
@@ -1221,7 +1221,7 @@ class TestWorkflowStatusListWidget:
         )
 
         widget = list_widget._widgets[workflow_id]
-        # Force initial refresh so badge reflects ACTIVE
+        # Force initial refresh so badge reflects RUNNING
         list_widget._is_visible = None
         list_widget._refresh_all()
         badge_after_active = widget._status_badge.object

@@ -198,6 +198,7 @@ _DISPLAY_STATE_PRIORITY: dict[JobDisplayState, int] = {
 
 # Display names for states whose raw value is not user-friendly.
 _DISPLAY_NAMES: dict[JobDisplayState, str] = {
+    JobDisplayState.active: 'RUNNING',
     JobDisplayState.pending_context: 'WAITING FOR CONTEXT',
     JobDisplayState.backend_down: 'BACKEND DOWN',
 }
