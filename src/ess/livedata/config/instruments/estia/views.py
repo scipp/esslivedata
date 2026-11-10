@@ -21,7 +21,9 @@ def get_multiblade_view(da: sc.DataArray, source_name: str) -> sc.DataArray:
     The dimension order differs from TBL's fold of the same hardware, because the
     two geometry files enumerate ``detector_number`` differently: ESTIA runs wires
     fastest and strips slowest, TBL runs strips fastest and blades slowest. Both
-    were verified against their geometry files; see ``tbl.views.get_multiblade_view``.
+    were verified against their geometry files. TBL additionally reverses blade and
+    wire to match how its scientists number them; see
+    ``tbl.views.get_multiblade_view``.
     """
     from ess.estia.beamline import DETECTOR_BANK_SIZES
 
