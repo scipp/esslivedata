@@ -2314,7 +2314,10 @@ class TestRoiSelection:
         workflow_spec,
         rois_by_source: dict[str, list[int]],
     ):
-        """Plot ROI 4 of 'result' while ``rois_by_source`` are drawn."""
+        """Plot ROI 4 of 'result' while ``rois_by_source`` are drawn.
+
+        Returns the id of the layer.
+        """
         from ess.livedata.config.workflow_spec import DataKey
 
         commit_workflow_for_test(job_orchestrator, workflow_id, workflow_spec)
@@ -2325,13 +2328,16 @@ class TestRoiSelection:
             output_name='result',
             roi=4,
         )
-        add_cell_with_layer(plot_orchestrator, grid_id, DEFAULT_GEOMETRY, config)
+        cell_id = add_cell_with_layer(
+            plot_orchestrator, grid_id, DEFAULT_GEOMETRY, config
+        )
         for source_name, rois in rois_by_source.items():
             key = DataKey(
                 workflow_id=workflow_id, source_name=source_name, output_name='result'
             )
             fake_data_service[key] = self._per_roi(rois)
         plot_orchestrator.flush_frames()
+        return plot_orchestrator.get_cell(cell_id).layers[0].layer_id
 
     def test_roi_survives_a_save_load_round_trip(self, plot_orchestrator, workflow_id):
         from ess.livedata.dashboard.data_roles import PRIMARY
@@ -2435,6 +2441,45 @@ class TestRoiSelection:
 
         (plotter,) = fake_plotting_controller.created_plotters
         assert plotter.compute_calls == []
+
+    def test_layer_waits_for_data_again_when_its_roi_is_removed(
+        self,
+        plot_orchestrator,
+        job_orchestrator,
+        fake_plotting_controller,
+        fake_data_service,
+        plot_data_service,
+        workflow_id,
+        workflow_spec,
+    ):
+        from ess.livedata.config.workflow_spec import DataKey
+
+        layer_id = self._plot_roi(
+            plot_orchestrator,
+            job_orchestrator,
+            fake_data_service,
+            workflow_id,
+            workflow_spec,
+            {'source1': [4]},
+        )
+        assert plot_data_service.get(layer_id).state is LayerState.READY
+        key = DataKey(
+            workflow_id=workflow_id, source_name='source1', output_name='result'
+        )
+
+        fake_data_service[key] = self._per_roi([0])
+        plot_orchestrator.flush_frames()
+
+        snapshot = plot_data_service.get(layer_id)
+        assert snapshot.state is LayerState.WAITING_FOR_DATA
+        assert not snapshot.plotter.has_cached_state()
+
+        fake_data_service[key] = self._per_roi([0, 4])
+        plot_orchestrator.flush_frames()
+
+        snapshot = plot_data_service.get(layer_id)
+        assert snapshot.state is LayerState.READY
+        assert len(snapshot.plotter.compute_calls) == 1
 
     def test_title_names_the_roi(
         self,

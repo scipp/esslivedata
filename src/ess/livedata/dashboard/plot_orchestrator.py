@@ -41,7 +41,7 @@ from .config_store import ConfigStore
 from .data_roles import PRIMARY
 from .data_service import DataService
 from .frame_clock import FrameClock
-from .plot_data_service import LayerId, LayerSnapshot, PlotDataService
+from .plot_data_service import LayerId, LayerSnapshot, LayerState, PlotDataService
 from .plot_params import WindowModeMixin
 from .plot_topology import (
     CellGeometry,
@@ -1111,16 +1111,22 @@ class PlotOrchestrator:
         snapshot = self._plot_data_service.get(layer_id)
         if snapshot is None or snapshot.plotter is None:
             return False
+        roi_missing = False
         try:
             assembled = subscriber.assemble(self._data_service.snapshot(subscriber))
             if assembled is not None:
                 assembled = _select_rois(assembled, data_sources)
+                roi_missing = assembled is None
         except Exception:
             error_msg = traceback.format_exc()
             self._logger.exception('Failed to extract data for layer_id=%s', layer_id)
             if self._plot_data_service.get(layer_id) is snapshot:
                 self._plot_data_service.error_occurred(layer_id, error_msg)
             return True
+        if roi_missing and snapshot.state is LayerState.READY:
+            # The ROI was removed while the layer showed it. No compute runs
+            # without the ROI, so the layer would keep showing its last frame.
+            self._reset_layer_presentation(layer_id)
         if assembled is None:
             return False
         self._compute_layer(layer_id, snapshot, assembled)
@@ -1278,15 +1284,16 @@ class PlotOrchestrator:
                 self._plot_data_service.job_stopped(layer_id)
 
     def _reset_layer_presentation(self, layer_id: LayerId) -> None:
-        """Give a layer a fresh plotter on generation change.
+        """Give a layer a fresh plotter when its data starts over.
 
-        The commit that started the new generation cleared the workflow's
-        buffers; without a reset the layer would keep showing the previous
-        generation's last frame. Replacing the plotter drives the layer to
-        WAITING_FOR_DATA (blank until new data arrives) and deliberately
-        resets plotter-internal accumulation such as autoscale ranges. The
-        data pipeline is untouched: extractors and keys are
-        generation-independent.
+        This is the case on a generation change and when the ROI selected by
+        the layer is removed. The commit that started the new generation
+        cleared the workflow's buffers; without a reset the layer would keep
+        showing the previous generation's last frame. Replacing the plotter
+        drives the layer to WAITING_FOR_DATA (blank until new data arrives)
+        and deliberately resets plotter-internal accumulation such as
+        autoscale ranges. The data pipeline is untouched: extractors and keys
+        are generation-independent.
         """
         if layer_id not in self._data_subscriptions:
             # Setup failed for this layer: without a data subscription no data
