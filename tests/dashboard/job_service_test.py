@@ -51,7 +51,7 @@ class TestVersion:
         service.status_updated(make_status('det_1'))
         before = service.version
 
-        service.prune_stale()
+        service.prune_stale(keep=())
 
         assert service.job_statuses == {}
         assert service.version == before + 1
@@ -61,7 +61,7 @@ class TestVersion:
         service.status_updated(make_status('det_1'))
         before = service.version
 
-        service.prune_stale()
+        service.prune_stale(keep=())
 
         assert len(service.job_statuses) == 1
         assert service.version == before
@@ -86,3 +86,14 @@ class TestVersion:
 
         assert len(service.job_statuses) == 1
         assert service.version == before
+
+
+def test_prune_stale_keeps_stale_statuses_of_kept_jobs() -> None:
+    service = JobService(heartbeat_timeout_ns=-1)
+    kept = make_status('det_1')
+    service.status_updated(kept)
+    service.status_updated(make_status('det_2'))
+
+    service.prune_stale(keep={kept.job_id})
+
+    assert service.job_statuses == {kept.job_id: kept}

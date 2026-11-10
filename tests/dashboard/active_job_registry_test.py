@@ -157,42 +157,6 @@ class TestDeactivate:
         registry.deactivate(_workflow_id)  # no exception
 
 
-class TestIsKnownGeneration:
-    def test_current_and_last_are_known(self):
-        registry, _ds, _js = _make_registry()
-        old, new = uuid.uuid4(), uuid.uuid4()
-        registry.begin_generation(_workflow_id, old, config={})
-        registry.begin_generation(_workflow_id, new, config={})
-
-        assert registry.is_known_generation(_workflow_id, new)
-        assert registry.is_known_generation(_workflow_id, old)
-        assert not registry.is_known_generation(_workflow_id, uuid.uuid4())
-
-    def test_window_is_per_workflow(self):
-        registry, _ds, _js = _make_registry()
-        job_number = uuid.uuid4()
-        registry.begin_generation(_workflow_id, job_number, config={})
-
-        assert not registry.is_known_generation(_other_workflow_id, job_number)
-
-    def test_generation_leaving_the_window_is_forgotten(self):
-        registry, _ds, _js = _make_registry()
-        first = uuid.uuid4()
-        registry.begin_generation(_workflow_id, first, config={})
-        for _ in range(2):
-            registry.begin_generation(_workflow_id, uuid.uuid4(), config={})
-
-        assert not registry.is_known_generation(_workflow_id, first)
-
-    def test_unknown_config_generation_is_known(self):
-        registry, _ds, _js = _make_registry()
-        job_number = uuid.uuid4()
-        registry.begin_generation(_workflow_id, job_number, config=None)
-
-        assert registry.is_known_generation(_workflow_id, job_number)
-        assert registry.resolve_config(_workflow_id, job_number) is None
-
-
 class TestResolveConfig:
     def test_resolves_current_and_last_config(self):
         registry, _ds, _js = _make_registry()

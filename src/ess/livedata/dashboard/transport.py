@@ -7,6 +7,11 @@ from dataclasses import dataclass
 from types import TracebackType
 from typing import Protocol
 
+from ..core.desired_state import (
+    DesiredStateReader,
+    DesiredStateWriter,
+    InMemoryDesiredStateLog,
+)
 from ..core.message import Message, MessageSink, MessageSource
 
 
@@ -83,6 +88,11 @@ class DashboardResources:
         Source for consuming messages from the transport.
     command_sink:
         Sink for publishing command messages.
+    desired_state_writer:
+        Writer of the desired-state topic.
+    desired_state_reader:
+        Reader of the desired-state topic, from offset 0. Called from the
+        ingestion thread after its startup bootstrap.
     roi_sink:
         Sink for publishing ROI update messages.
     consumer_lag:
@@ -93,6 +103,8 @@ class DashboardResources:
 
     message_source: MessageSource
     command_sink: MessageSink
+    desired_state_writer: DesiredStateWriter
+    desired_state_reader: DesiredStateReader
     roi_sink: MessageSink
     consumer_lag: Callable[[], int | None]
 
@@ -117,15 +129,18 @@ class NullTransport:
     """
     Null transport that provides no-op implementations.
 
-    Useful for testing or when message transport is not needed.
-    All resources do nothing - messages are discarded and none are produced.
+    Useful for testing or when message transport is not needed. Messages are
+    discarded and none are produced; the desired state lives in memory.
     """
 
     def __enter__(self) -> DashboardResources:
-        """Return no-op resources."""
+        """Return no-op resources and an in-memory desired state."""
+        desired_state = InMemoryDesiredStateLog()
         return DashboardResources(
             message_source=NullMessageSource(),
             command_sink=NullMessageSink(),
+            desired_state_writer=desired_state,
+            desired_state_reader=desired_state.reader(),
             roi_sink=NullMessageSink(),
             consumer_lag=lambda: None,
         )

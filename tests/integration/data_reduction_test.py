@@ -6,8 +6,8 @@
 handing detector events straight to the service loop, so the science and the
 service's own bookkeeping are already pinned there. What only the wire can
 show is addressing: ``data_reduction`` and ``detector_data`` share both the
-commands topic and the raw detector topic, so a start command addressed to a
-reduction workflow has to reach the one service that hosts it, and that
+desired-state topic and the raw detector topic, so a desired-state record for a
+reduction workflow has to be run by the one service that hosts it, and that
 service's results have to come back to the dashboard under the job the
 dashboard just created.
 """

@@ -105,12 +105,17 @@ def create_service_group(
 
 
 @pytest.fixture
-def dashboard_backend(request) -> Generator[DashboardBackend, None, None]:
+def dashboard_backend(
+    desired_state: KafkaDesiredStateWriter, request
+) -> Generator[DashboardBackend, None, None]:
     """
     Pytest fixture providing a DashboardBackend instance.
 
     The backend is automatically started and stopped, using the 'dummy'
-    instrument by default. Tests can override the instrument and log level:
+    instrument by default. It starts with an empty desired table, and the
+    table is emptied again after the test (see ``desired_state``), so commits
+    made through the backend do not leak into other tests. Tests can override
+    the instrument and log level:
 
     @pytest.mark.instrument('bifrost')
     @pytest.mark.log_level('DEBUG')
@@ -327,7 +332,8 @@ def desired_state(request) -> Generator[KafkaDesiredStateWriter, None, None]:
     The topic is compacted and outlives the test, and every worker that starts
     reads it from the beginning. The table is therefore emptied before and after
     the test. Request this fixture before the services fixture, so that services
-    start with an empty table.
+    start with an empty table. ``dashboard_backend``, and therefore
+    ``integration_env``, requests it first.
     """
     instrument, _ = _get_instrument_and_log_level(request)
     ensure_topics_exist(instrument)

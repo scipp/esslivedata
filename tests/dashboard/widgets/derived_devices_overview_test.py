@@ -17,6 +17,7 @@ from ess.livedata.config.workflow_spec import (
     WorkflowOutputsBase,
     WorkflowSpec,
 )
+from ess.livedata.core.desired_state import InMemoryDesiredStateLog
 from ess.livedata.dashboard.active_job_registry import ActiveJobRegistry
 from ess.livedata.dashboard.command_service import CommandService
 from ess.livedata.dashboard.data_service import DataService
@@ -86,12 +87,12 @@ def contract(workflow_id) -> DeviceContract:
 def orchestrator(registry) -> JobOrchestrator:
     js = JobService()
     orch = JobOrchestrator(
+        desired_state=InMemoryDesiredStateLog(),
         command_service=CommandService(sink=FakeMessageSink()),
         workflow_registry=registry,
         active_job_registry=ActiveJobRegistry(
             data_service=DataService(), job_service=js
         ),
-        job_service=js,
         config_store=None,
     )
     return orch

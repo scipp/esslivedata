@@ -2,13 +2,14 @@
 # Copyright (c) 2025 Scipp contributors (https://github.com/scipp)
 """In-process fake backend transport for Kafka-free dashboard testing.
 
-This transport mimics a backend worker without Kafka. Commands the dashboard
-sends (``WorkflowConfig``, ``JobCommand``) are captured by an in-process
-:class:`FakeBackend`, which responds exactly as a real backend would: it
-acknowledges the command, reports the job as running, and emits periodic
-result data on the data stream. Stopping a job yields a terminal ``stopped``
-status, and :meth:`FakeBackend.fail_job` faults one into the ``error`` state,
-so the dashboard's non-live presentations are reachable too.
+This transport mimics a backend worker without Kafka. The desired state lives
+in an in-process log shared by the dashboard and an in-process
+:class:`FakeBackend`, which reconciles its jobs against it as a real worker
+does: it runs every desired job, reports it as running, and emits periodic
+result data on the data stream. A job that is no longer desired yields a
+terminal ``stopped`` status, and :meth:`FakeBackend.fail_job` faults one into
+the ``error`` state, so the dashboard's non-live presentations are reachable
+too. Reset commands are acknowledged.
 
 Result data is synthesized from each workflow's output templates (the
 ``default_factory`` DataArrays declared on ``WorkflowSpec.outputs``). Because
@@ -46,12 +47,17 @@ from ..config.workflow_spec import (
     JobId,
     ResultKey,
     Temporality,
-    WorkflowConfig,
     WorkflowId,
     WorkflowSpec,
 )
+from ..core.desired_state import (
+    DesiredStateReader,
+    DesiredTable,
+    InMemoryDesiredStateLog,
+    fold_updates,
+)
 from ..core.job import JobState, JobStatus
-from ..core.job_manager import Command, JobAction, JobCommand
+from ..core.job_manager import Command
 from ..core.message import (
     RESPONSES_STREAM_ID,
     STATUS_STREAM_ID,
@@ -260,15 +266,20 @@ def expand_per_roi(
 class _Job:
     """A running fake job and its synthesized output state."""
 
-    def __init__(self, config: WorkflowConfig, spec: WorkflowSpec) -> None:
-        self.config = config
+    def __init__(self, workflow_id: WorkflowId, job_id: JobId, spec: WorkflowSpec):
+        self.workflow_id = workflow_id
+        self.job_id = job_id
         self.spec = spec
+        self.variant = source_variant(job_id.source_name)
+        self.error_message: str | None = None
+        self.reset()
+
+    def reset(self) -> None:
+        """Start accumulating afresh, as a reset backend job does."""
         self.update = 0
         self.next_emit = 0.0  # monotonic deadline; 0 => emit immediately
-        self.variant = source_variant(config.job_id.source_name)
         self.start_time = Timestamp.now()
         self.previous_emit = self.start_time
-        self.error_message: str | None = None
 
     @property
     def state(self) -> JobState:
@@ -285,14 +296,29 @@ class _Job:
 
 
 class FakeBackend:
-    """Captures dashboard commands and synthesizes backend responses.
+    """Runs fake jobs as wanted by the desired state; answers reset commands.
 
-    Thread-safe: commands arrive on the UI thread via :meth:`submit`; data is
-    drained on the background update thread via :meth:`poll`.
+    Thread-safe: commands arrive on the UI thread via :meth:`submit`; the
+    desired state is applied and data drained on the background update thread
+    via :meth:`poll`.
+
+    Parameters
+    ----------
+    workflows:
+        Workflows the backend runs; desired entries for other workflows are
+        ignored, as no real worker owns them.
+    desired_state:
+        Reader of the desired state the jobs are reconciled against.
     """
 
-    def __init__(self, workflows: Mapping[WorkflowId, WorkflowSpec]) -> None:
+    def __init__(
+        self,
+        workflows: Mapping[WorkflowId, WorkflowSpec],
+        desired_state: DesiredStateReader,
+    ) -> None:
         self._workflows = workflows
+        self._desired_state = desired_state
+        self._table: DesiredTable = {}
         self._jobs: dict[JobId, _Job] = {}
         # Latched ROI requests, keyed by the wire stream name they arrived on.
         # Outlives the jobs reading them, as the backend's context accumulators
@@ -302,21 +328,36 @@ class FakeBackend:
         self._lock = threading.Lock()
 
     def submit(self, command: Command) -> None:
-        """Handle a command sent by the dashboard."""
+        """Handle a reset command sent by the dashboard."""
         with self._lock:
-            if isinstance(command, WorkflowConfig):
-                self._start(command)
-            elif isinstance(command, JobCommand):
-                self._control_job(command)
+            job = self._jobs.get(command.job_id) if command.job_id else None
+            if job is not None:
+                job.reset()
+                ack = CommandAcknowledgement(
+                    message_id=command.message_id,
+                    device=str(command.job_id),
+                    response=AcknowledgementResponse.ACK,
+                )
+                self._control.append(Message(stream=RESPONSES_STREAM_ID, value=ack))
 
-    def _start(self, config: WorkflowConfig) -> None:
-        spec = self._workflows.get(config.identifier)
-        if spec is None:
-            self._ack(config.message_id, config.job_id.source_name, error='unknown')
-            return
-        self._jobs[config.job_id] = _Job(config=config, spec=spec)
-        self._ack(config.message_id, config.job_id.source_name)
-        logger.info("fake_backend_started", job_id=str(config.job_id))
+    def _reconcile(self) -> None:
+        """Stop the jobs the desired table does not want; start missing ones."""
+        self._table = fold_updates(self._table, self._desired_state.poll())
+        wanted = {
+            JobId(source_name=source_name, job_number=want.job_number): want
+            for want in self._table.values()
+            if want.workflow_id in self._workflows
+            for source_name in want.jobs
+        }
+        for job_id in [job_id for job_id in self._jobs if job_id not in wanted]:
+            # Terminal status ahead of the job's disappearance: the dashboard
+            # freezes the cell on it rather than aging it out.
+            self._control.append(self._status(self._jobs.pop(job_id), JobState.stopped))
+        for job_id, want in wanted.items():
+            if job_id not in self._jobs:
+                spec = self._workflows[want.workflow_id]
+                self._jobs[job_id] = _Job(want.workflow_id, job_id, spec)
+                logger.info("fake_backend_started", job_id=str(job_id))
 
     def set_roi(self, stream_name: str, rois: sc.DataArray) -> None:
         """Store an ROI request, replacing the previous one for its geometry.
@@ -338,8 +379,8 @@ class FakeBackend:
 
     def _job_rois(self, job: _Job) -> dict[str, sc.DataArray]:
         """The latched ROI requests a job reads, keyed by readback key."""
-        workflow_id = job.config.identifier
-        source_name = job.config.job_id.source_name
+        workflow_id = job.workflow_id
+        source_name = job.job_id.source_name
         found = {
             key: self._rois.get(roi_stream_name(workflow_id, source_name, key))
             for key in _ROI_READBACK_KEYS
@@ -366,27 +407,11 @@ class FakeBackend:
                 raise KeyError(f"No running job {job_id}")
             job.error_message = message
 
-    def _control_job(self, command: JobCommand) -> None:
-        if command.action is JobAction.stop and command.job_id is not None:
-            job = self._jobs.pop(command.job_id, None)
-            if job is not None:
-                # Terminal status ahead of the job's disappearance: the
-                # dashboard freezes the cell on it rather than aging it out.
-                self._control.append(self._status(job, JobState.stopped))
-            self._ack(command.message_id, command.job_id.source_name)
-
-    def _ack(self, message_id: str, device: str, error: str | None = None) -> None:
-        response = AcknowledgementResponse.ERR if error else AcknowledgementResponse.ACK
-        ack = CommandAcknowledgement(
-            message_id=message_id, device=device, response=response, message=error
-        )
-        self._control.append(Message(stream=RESPONSES_STREAM_ID, value=ack))
-
     @staticmethod
     def _status(job: _Job, state: JobState) -> Message:
         status = JobStatus(
-            job_id=job.config.job_id,
-            workflow_id=job.config.identifier,
+            job_id=job.job_id,
+            workflow_id=job.workflow_id,
             state=state,
             error_message=job.error_message,
             start_time=job.start_time,
@@ -394,7 +419,8 @@ class FakeBackend:
         return Message(stream=STATUS_STREAM_ID, value=status)
 
     def poll(self) -> Sequence[Message]:
-        """Return queued control messages plus due status and data updates.
+        """Apply the desired state, then return queued control messages plus due
+        status and data updates.
 
         Each due cycle re-emits the job status, acting as a heartbeat so the
         dashboard keeps the job ACTIVE rather than letting it go stale. A
@@ -402,6 +428,7 @@ class FakeBackend:
         """
         now = time.monotonic()
         with self._lock:
+            self._reconcile()
             messages = self._control
             self._control = []
             for job in self._jobs.values():
@@ -419,8 +446,8 @@ class FakeBackend:
         messages = []
         for output_name, template in job.output_templates().items():
             key = ResultKey(
-                workflow_id=job.config.identifier,
-                job_id=job.config.job_id,
+                workflow_id=job.workflow_id,
+                job_id=job.job_id,
                 output_name=output_name,
             )
             stream = StreamId(kind=StreamKind.LIVEDATA_DATA, name=key.model_dump_json())
@@ -467,7 +494,7 @@ class _FakeMessageSource:
 
 
 class _FakeCommandSink:
-    """Feeds dashboard commands into the backend."""
+    """Feeds dashboard reset commands into the backend."""
 
     def __init__(self, backend: FakeBackend) -> None:
         self._backend = backend
@@ -506,11 +533,14 @@ class FakeBackendTransport(Transport[DashboardResources]):
         from ..config import instrument_registry
 
         workflows = instrument_registry[self._instrument].workflow_factory
-        self._backend = FakeBackend(workflows)
+        desired_state = InMemoryDesiredStateLog()
+        self._backend = FakeBackend(workflows, desired_state=desired_state.reader())
         logger.info("fake_backend_transport_initialized", instrument=self._instrument)
         return DashboardResources(
             message_source=_FakeMessageSource(self._backend),
             command_sink=_FakeCommandSink(self._backend),
+            desired_state_writer=desired_state,
+            desired_state_reader=desired_state.reader(),
             roi_sink=_FakeROISink(self._backend),
             consumer_lag=lambda: None,
         )

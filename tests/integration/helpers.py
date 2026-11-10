@@ -70,6 +70,7 @@ def dump_diagnostics(backend: Any, instrument: str = 'dummy') -> None:
             'beam_monitor',
             'detector',
             'livedata_commands',
+            'livedata_desired',
             'livedata_responses',
             'livedata_heartbeat',
             'livedata_data',
@@ -312,7 +313,8 @@ def _get_job_data(
 
     Iteration already hides cleared keys, but it takes the lock separately from
     each read: the dashboard's ingestion thread can flip a generation in
-    between (heartbeat adoption) and empty a key this call already accepted.
+    between (a desired-state record read back) and empty a key this call
+    already accepted.
     Such a key reads as absent -- there is genuinely no data for it yet.
     """
     data: dict[DataKey, Any] = {}

@@ -21,10 +21,15 @@ from ess.livedata.config.workflow_spec import (
     ResultKey,
     SeriesOutput,
     WindowOutput,
-    WorkflowConfig,
     WorkflowId,
     WorkflowOutputsBase,
     WorkflowSpec,
+)
+from ess.livedata.core.desired_state import (
+    DesiredJob,
+    DesiredStateWriter,
+    DesiredWorkflow,
+    InMemoryDesiredStateLog,
 )
 from ess.livedata.core.job import JobState, JobStatus
 from ess.livedata.core.job_manager import JobAction, JobCommand
@@ -33,7 +38,6 @@ from ess.livedata.core.message import (
     STATUS_STREAM_ID,
     StreamKind,
 )
-from ess.livedata.dashboard.command_service import CommandService
 from ess.livedata.dashboard.fake_backend import (
     FakeBackend,
     FakeBackendTransport,
@@ -127,12 +131,30 @@ def _registry(*specs: WorkflowSpec) -> dict[WorkflowId, WorkflowSpec]:
     return {spec.get_id(): spec for spec in specs}
 
 
-def _config(spec: WorkflowSpec, message_id: str = 'm1') -> WorkflowConfig:
-    return WorkflowConfig.from_params(
-        workflow_id=spec.get_id(),
-        job_id=JobId(source_name='source1', job_number=uuid.uuid4()),
-        message_id=message_id,
+def _want(
+    writer: DesiredStateWriter,
+    workflow_id: WorkflowId,
+    sources: tuple[str, ...] = ('source1',),
+) -> JobId:
+    """Write a desired record with a new job number; return its first job id."""
+    desired = DesiredWorkflow(
+        workflow_id=workflow_id,
+        job_number=uuid.uuid4(),
+        jobs={s: DesiredJob(params={}, aux_source_names={}) for s in sources},
     )
+    writer.write(workflow_id, desired)
+    return JobId(source_name=sources[0], job_number=desired.job_number)
+
+
+def _backend(*specs: WorkflowSpec) -> tuple[FakeBackend, InMemoryDesiredStateLog]:
+    log = InMemoryDesiredStateLog()
+    return FakeBackend(_registry(*specs), desired_state=log.reader()), log
+
+
+def _started(spec: WorkflowSpec) -> FakeBackend:
+    backend, log = _backend(spec)
+    _want(log, spec.get_id())
+    return backend
 
 
 class TestExpandTemplate:
@@ -182,29 +204,19 @@ class TestExpandTemplate:
 
 
 class TestFakeBackend:
-    def test_workflow_config_yields_ack_and_active_status(self) -> None:
+    def test_desired_job_reports_active_status(self) -> None:
         spec = _spec(Outputs1D, 'wf1d')
-        backend = FakeBackend(_registry(spec))
-        config = _config(spec)
+        backend, log = _backend(spec)
+        job_id = _want(log, spec.get_id())
 
-        backend.submit(config)
-        messages = backend.poll()
+        statuses = [m.value for m in backend.poll() if m.stream == STATUS_STREAM_ID]
 
-        acks = [m.value for m in messages if m.stream == RESPONSES_STREAM_ID]
-        assert len(acks) == 1
-        ack = acks[0]
-        assert isinstance(ack, CommandAcknowledgement)
-        assert ack.message_id == config.message_id
-        assert ack.response is AcknowledgementResponse.ACK
-
-        statuses = [m.value for m in messages if m.stream == STATUS_STREAM_ID]
         assert len(statuses) == 1
         status = statuses[0]
         assert isinstance(status, JobStatus)
-        assert status.job_id == config.job_id
+        assert status.job_id == job_id
         assert status.state is JobState.active
-        # start_time drives the dashboard's runtime clock; without it the
-        # workflow stays stuck at "Starting...".
+        # start_time drives the dashboard's runtime clock.
         assert status.start_time is not None
 
     def test_status_reemitted_as_heartbeat(
@@ -214,10 +226,7 @@ class TestFakeBackend:
         monkeypatch.setattr(
             'ess.livedata.dashboard.fake_backend._UPDATE_PERIOD_SECONDS', 0.0
         )
-        spec = _spec(Outputs1D, 'wf1d')
-        backend = FakeBackend(_registry(spec))
-        config = _config(spec)
-        backend.submit(config)
+        backend = _started(_spec(Outputs1D, 'wf1d'))
 
         for _ in range(3):
             statuses = [m.value for m in backend.poll() if m.stream == STATUS_STREAM_ID]
@@ -227,32 +236,24 @@ class TestFakeBackend:
 
     def test_emits_data_with_matching_result_key(self) -> None:
         spec = _spec(Outputs1D, 'wf1d')
-        backend = FakeBackend(_registry(spec))
-        config = _config(spec)
+        backend, log = _backend(spec)
+        job_id = _want(log, spec.get_id())
 
-        backend.submit(config)
         data = [m for m in backend.poll() if m.stream.kind is StreamKind.LIVEDATA_DATA]
 
         assert len(data) == 1
         key = ResultKey.model_validate_json(data[0].stream.name)
-        assert key.workflow_id == config.identifier
-        assert key.job_id == config.job_id
+        assert key.workflow_id == spec.get_id()
+        assert key.job_id == job_id
         assert key.output_name == 'histogram'
         assert isinstance(data[0].value, sc.DataArray)
         assert data[0].value.sizes == {'x': 64}
 
     def test_distinct_sources_yield_distinct_data(self) -> None:
         spec = _spec(Outputs1D, 'wf1d')
-        backend = FakeBackend(_registry(spec))
-        job_number = uuid.uuid4()  # same job, two sources -> overlaid lines
-        for source in ('monitor1', 'monitor2'):
-            backend.submit(
-                WorkflowConfig.from_params(
-                    workflow_id=spec.get_id(),
-                    job_id=JobId(source_name=source, job_number=job_number),
-                    message_id=source,
-                )
-            )
+        backend, log = _backend(spec)
+        _want(log, spec.get_id(), sources=('monitor1', 'monitor2'))
+
         data = {
             ResultKey.model_validate_json(m.stream.name).job_id.source_name: m.value
             for m in backend.poll()
@@ -276,9 +277,7 @@ class TestFakeBackend:
                 title='B',
             )
 
-        spec = _spec(MultiOutputs, 'multi')
-        backend = FakeBackend(_registry(spec))
-        backend.submit(_config(spec))
+        backend = _started(_spec(MultiOutputs, 'multi'))
 
         data = [m for m in backend.poll() if m.stream.kind is StreamKind.LIVEDATA_DATA]
         output_names = {
@@ -287,64 +286,83 @@ class TestFakeBackend:
         assert output_names == {'a', 'b'}
 
     def test_output_without_template_is_skipped(self) -> None:
-        spec = _spec(OutputsNoTemplate, 'no_template')
-        backend = FakeBackend(_registry(spec))
-        backend.submit(_config(spec))
+        backend = _started(_spec(OutputsNoTemplate, 'no_template'))
 
         data = [m for m in backend.poll() if m.stream.kind is StreamKind.LIVEDATA_DATA]
         assert data == []
 
-    def test_unknown_workflow_yields_error_ack(self) -> None:
-        backend = FakeBackend({})
-        unknown = WorkflowId(instrument='test', name='ghost', version=1)
-        config = WorkflowConfig.from_params(
-            workflow_id=unknown,
-            job_id=JobId(source_name='source1', job_number=uuid.uuid4()),
-            message_id='m1',
-        )
+    def test_desired_entry_of_unknown_workflow_is_ignored(self) -> None:
+        backend, log = _backend()
+        _want(log, WorkflowId(instrument='test', name='ghost', version=1))
 
-        backend.submit(config)
-        messages = backend.poll()
+        assert backend.poll() == []
 
-        acks = [m.value for m in messages if m.stream == RESPONSES_STREAM_ID]
-        assert len(acks) == 1
-        assert acks[0].response is AcknowledgementResponse.ERR
-        assert not [m for m in messages if m.stream.kind is StreamKind.LIVEDATA_DATA]
-
-    def test_stop_command_halts_data_emission(self) -> None:
+    def test_tombstone_halts_data_and_yields_terminal_stopped_status(self) -> None:
         spec = _spec(Outputs1D, 'wf1d')
-        backend = FakeBackend(_registry(spec))
-        config = _config(spec)
-        backend.submit(config)
-        backend.poll()  # drain initial ack/status/data
+        backend, log = _backend(spec)
+        job_id = _want(log, spec.get_id())
+        backend.poll()  # drain initial status/data
 
-        backend.submit(
-            JobCommand(job_id=config.job_id, action=JobAction.stop, message_id='m2')
-        )
+        log.write(spec.get_id(), None)
         messages = backend.poll()
 
         assert not [m for m in messages if m.stream.kind is StreamKind.LIVEDATA_DATA]
-
-    def test_stop_command_yields_terminal_stopped_status(self) -> None:
-        spec = _spec(Outputs1D, 'wf1d')
-        backend = FakeBackend(_registry(spec))
-        config = _config(spec)
-        backend.submit(config)
-        backend.poll()  # drain initial ack/status/data
-
-        backend.submit(
-            JobCommand(job_id=config.job_id, action=JobAction.stop, message_id='m2')
-        )
-        statuses = [m.value for m in backend.poll() if m.stream == STATUS_STREAM_ID]
-
-        assert len(statuses) == 1
-        assert statuses[0].job_id == config.job_id
-        assert statuses[0].state is JobState.stopped
+        statuses = [m.value for m in messages if m.stream == STATUS_STREAM_ID]
+        assert [(s.job_id, s.state) for s in statuses] == [(job_id, JobState.stopped)]
         # The status is terminal: the job is gone and never heartbeats again.
         assert not backend.poll()
 
+    def test_new_record_supersedes_the_previous_job(self) -> None:
+        spec = _spec(Outputs1D, 'wf1d')
+        backend, log = _backend(spec)
+        old = _want(log, spec.get_id())
+        backend.poll()
+
+        new = _want(log, spec.get_id())
+        statuses = {
+            m.value.job_id: m.value.state
+            for m in backend.poll()
+            if m.stream == STATUS_STREAM_ID
+        }
+
+        assert statuses == {old: JobState.stopped, new: JobState.active}
+
+    def test_reset_is_acknowledged(self) -> None:
+        spec = _spec(Outputs1D, 'wf1d')
+        backend, log = _backend(spec)
+        job_id = _want(log, spec.get_id())
+        backend.poll()
+
+        backend.submit(JobCommand(job_id=job_id, action=JobAction.reset))
+        acks = [m.value for m in backend.poll() if m.stream == RESPONSES_STREAM_ID]
+
+        assert len(acks) == 1
+        assert isinstance(acks[0], CommandAcknowledgement)
+        assert acks[0].response is AcknowledgementResponse.ACK
+        assert acks[0].device == str(job_id)
+
+    def test_reset_restarts_accumulation(self) -> None:
+        spec = _spec(Outputs1D, 'wf1d')
+        backend, log = _backend(spec)
+        job_id = _want(log, spec.get_id())
+        first = _outputs(backend.poll())['histogram']
+
+        backend.submit(JobCommand(job_id=job_id, action=JobAction.reset))
+        again = _outputs(backend.poll())['histogram']
+
+        assert sc.identical(first.data, again.data)
+        assert again.coords['start_time'].value > first.coords['start_time'].value
+
+    def test_reset_of_unknown_job_is_not_acknowledged(self) -> None:
+        backend, _ = _backend()
+        unknown = JobId(source_name='source1', job_number=uuid.uuid4())
+
+        backend.submit(JobCommand(job_id=unknown, action=JobAction.reset))
+
+        assert backend.poll() == []
+
     def test_poll_is_empty_without_active_jobs(self) -> None:
-        backend = FakeBackend({})
+        backend, _ = _backend()
         assert backend.poll() == []
 
 
@@ -359,11 +377,10 @@ class TestFailedJob:
             'ess.livedata.dashboard.fake_backend._UPDATE_PERIOD_SECONDS', 0.0
         )
         spec = _spec(Outputs1D, 'wf1d')
-        backend = FakeBackend(_registry(spec))
-        config = _config(spec)
-        backend.submit(config)
+        backend, log = _backend(spec)
+        job_id = _want(log, spec.get_id())
         backend.poll()
-        return backend, config.job_id
+        return backend, job_id
 
     def test_reports_error_state_with_message(self, running) -> None:
         backend, job_id = running
@@ -414,8 +431,8 @@ def _polygon(x: float) -> PolygonROI:
 class _DetectorSession:
     """A started detector-view job, driven through the fake transport.
 
-    Uses the real :class:`CommandService` and :class:`ROIPublisher` so the ROIs
-    take the same route as those drawn in the UI.
+    Uses the real :class:`ROIPublisher` so the ROIs take the same route as those
+    drawn in the UI.
     """
 
     def __init__(self, resources: DashboardResources, *, start: bool = True) -> None:
@@ -425,26 +442,14 @@ class _DetectorSession:
             for workflow_id in instrument_registry['dummy'].workflow_factory
             if workflow_id.name == 'panel_0_xy'
         )
-        self._job_id: JobId | None = None
-        self._commands = CommandService(sink=resources.command_sink)
+        self._writer = resources.desired_state_writer
         self.publisher = ROIPublisher(sink=resources.roi_sink)
         if start:
             self.start()
 
     def start(self) -> None:
-        """Start a fresh job generation, as committing the workflow does.
-
-        Supersedes any previous generation the way ``JobOrchestrator.commit``
-        does: stop the old job, then start one with a new ``job_number``.
-        """
-        if self._job_id is not None:
-            self._commands.send(JobCommand(job_id=self._job_id, action=JobAction.stop))
-        self._job_id = JobId(source_name=_DETECTOR_SOURCE, job_number=uuid.uuid4())
-        self._commands.send(
-            WorkflowConfig.from_params(
-                workflow_id=self.workflow_id, job_id=self._job_id
-            )
-        )
+        """Start a fresh job generation, as committing the workflow does."""
+        _want(self._writer, self.workflow_id, sources=(_DETECTOR_SOURCE,))
 
     def publish(self, rois: dict, geometry_type: ROIGeometryType = 'rectangle') -> None:
         """Publish the full ROI set for one geometry, as the UI does."""
@@ -599,9 +604,7 @@ class TestEmittedTimeCoords:
         monkeypatch.setattr(
             'ess.livedata.dashboard.fake_backend._UPDATE_PERIOD_SECONDS', 0.0
         )
-        spec = _spec(OutputsTemporality, 'temporal')
-        backend = FakeBackend(_registry(spec))
-        backend.submit(_config(spec))
+        backend = _started(_spec(OutputsTemporality, 'temporal'))
         return [_outputs(backend.poll()) for _ in range(2)]
 
     @pytest.mark.parametrize('output_name', ['per_update', 'total'])
@@ -628,8 +631,6 @@ class TestEmittedTimeCoords:
 @pytest.mark.parametrize('update', [0, 1, 7])
 def test_data_emitted_each_poll_when_due(update: int) -> None:
     # next_emit starts at 0, so each poll after the period emits fresh data.
-    spec = _spec(Outputs1D, 'wf1d')
-    backend = FakeBackend(_registry(spec))
-    backend.submit(_config(spec))
+    backend = _started(_spec(Outputs1D, 'wf1d'))
     data = [m for m in backend.poll() if m.stream.kind is StreamKind.LIVEDATA_DATA]
     assert len(data) == 1

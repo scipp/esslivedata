@@ -31,23 +31,19 @@ class Generation:
     """One commit of a workflow: its wire-level job_number and its config.
 
     The config is retained so data stamped with this generation can be
-    resolved back to the parameters it was computed with (provenance). It is
-    ``None`` for a generation adopted from heartbeat observation without a
-    persisted record: the job runs and its data is admitted, but its
-    parameters are unknown.
+    resolved back to the parameters it was computed with (provenance).
     """
 
     job_number: JobNumber
-    config: Mapping[str, Any] | None
+    config: Mapping[str, Any]
 
 
 @dataclass
 class _GenerationRecord:
     """Current and last generation of one workflow.
 
-    ``last`` exists for provenance of a stopped workflow's retained data and
-    for recognizing status heartbeats of a just-replaced job; only ``current``
-    admits data.
+    ``last`` exists for provenance of a stopped workflow's retained data; only
+    ``current`` admits data.
     """
 
     current: Generation | None = None
@@ -61,16 +57,16 @@ class ActiveJobRegistry:
 
     Owns the synchronization between the background ingestion thread and the
     UI thread. The ingestion thread holds ``ingestion_guard()`` while
-    processing messages; the UI thread calls ``begin_generation`` /
-    ``deactivate`` when committing or stopping workflows.
+    processing messages; ``begin_generation`` / ``deactivate`` are called when a
+    desired-state record starts or stops a workflow (a confirmed commit or stop
+    on the UI thread, or a record read back on the ingestion thread).
 
     Data lifecycle
     --------------
     The dashboard's data plane is keyed by stable ``DataKey``s, so buffered
     data is not evicted when a job stops — a stopped workflow's last data
     stays displayed under its keys. The one eviction point is
-    :py:meth:`begin_generation` (called from ``commit_workflow`` and from
-    heartbeat adoption): the workflow's buffers are cleared so the new
+    :py:meth:`begin_generation`: the workflow's buffers are cleared so the new
     generation starts blank and a windowed extractor can never aggregate
     across a parameter change.
     """
@@ -103,40 +99,20 @@ class ActiveJobRegistry:
                 and record.current.job_number == job_number
             )
 
-    def is_known_generation(
-        self, workflow_id: WorkflowId, job_number: JobNumber
-    ) -> bool:
-        """Check whether a job_number is the workflow's current or last generation.
-
-        Membership in the two-entry window, independent of whether the
-        generation's config is known: a just-stopped or just-replaced job is
-        known here even though it no longer admits data, so heartbeat adoption
-        does not mistake it for a new job.
-        """
-        with self._lock:
-            record = self._generations.get(workflow_id)
-            if record is None:
-                return False
-            return any(
-                gen is not None and gen.job_number == job_number
-                for gen in (record.current, record.last)
-            )
-
     def begin_generation(
         self,
         workflow_id: WorkflowId,
         job_number: JobNumber,
-        config: Mapping[str, Any] | None,
+        config: Mapping[str, Any],
     ) -> None:
         """Flip a workflow to a new generation and clear its buffered data.
 
-        Called at commit and on heartbeat adoption (``config`` is None when
-        adopting a job without a record): the previous current generation rotates into
-        ``last`` (its retained config still resolvable for provenance), the
-        generation that drops off the two-entry window has its job-status
-        entries pruned, and the workflow's DataService buffers are cleared —
-        atomically with respect to ingest (callers hold ``ingestion_guard``)
-        and to pulls (the clear holds the DataService lock across all keys).
+        The previous current generation rotates into ``last`` (its retained
+        config still resolvable for provenance), the generation that drops off
+        the two-entry window has its job-status entries pruned, and the
+        workflow's DataService buffers are cleared — atomically with respect to
+        ingest (callers hold ``ingestion_guard``) and to pulls (the clear holds
+        the DataService lock across all keys).
         This is the only place buffers are cleared.
         """
         with self._lock:

@@ -2,65 +2,122 @@
 # Copyright (c) 2025 Scipp contributors (https://github.com/scipp)
 """Tests for WorkflowStatusWidget and WorkflowStatusListWidget."""
 
+import itertools
+import uuid
+
 import panel as pn
 import pytest
 
 from ess.livedata.config.workflow_spec import JobId, WorkflowId
+from ess.livedata.core.desired_state import DesiredJob, DesiredWorkflow
 from ess.livedata.core.job import JobState, JobStatus
 from ess.livedata.core.timestamp import Timestamp
 from ess.livedata.dashboard.job_service import JobService
 from ess.livedata.dashboard.widgets.icons import get_icon
 from ess.livedata.dashboard.widgets.workflow_status_widget import (
+    JobDisplayState,
     SourceStatus,
     WorkflowStatusListWidget,
     WorkflowStatusWidget,
     _get_unconfigured_sources,
     _group_configs_by_equality,
     job_state_display_name,
+    project_job_states,
     worst_job_state,
 )
 
+D = JobDisplayState
+
+
+def _status(job_id: JobId, state: JobState = JobState.active) -> JobStatus:
+    return JobStatus(job_id=job_id, workflow_id=_WORKFLOW_ID, state=state)
+
+
+_WORKFLOW_ID = WorkflowId(instrument='test', name='wf', version=1)
+
+
+class TestProjectJobStates:
+    @pytest.fixture
+    def job_id(self) -> JobId:
+        return JobId(source_name='s1', job_number=uuid.uuid4())
+
+    def test_desired_and_observed_shows_observed_state(self, job_id):
+        for state, expected in [
+            (JobState.active, D.active),
+            (JobState.warning, D.warning),
+            (JobState.pending_context, D.pending_context),
+        ]:
+            observed = {job_id: _status(job_id, state)}
+            assert project_job_states([job_id], observed, stale=()) == {
+                job_id: expected
+            }
+
+    def test_desired_not_observed_is_pending(self, job_id):
+        assert project_job_states([job_id], {}, stale=()) == {job_id: D.pending}
+
+    def test_desired_with_stale_heartbeat_is_backend_down(self, job_id):
+        observed = {job_id: _status(job_id)}
+        assert project_job_states([job_id], observed, stale={job_id}) == {
+            job_id: D.backend_down
+        }
+
+    def test_desired_with_final_stopped_heartbeat_is_backend_down(self, job_id):
+        observed = {job_id: _status(job_id, JobState.stopped)}
+        assert project_job_states([job_id], observed, stale=()) == {
+            job_id: D.backend_down
+        }
+
+    def test_error_reported_by_worker_is_error(self, job_id):
+        observed = {job_id: _status(job_id, JobState.error)}
+        assert project_job_states([job_id], observed, stale=()) == {job_id: D.error}
+
+    def test_stale_error_is_backend_down(self, job_id):
+        """A rejected job is not in a worker's final heartbeat; it goes stale."""
+        observed = {job_id: _status(job_id, JobState.error)}
+        assert project_job_states([job_id], observed, stale={job_id}) == {
+            job_id: D.backend_down
+        }
+
+    def test_not_desired_but_heartbeating_is_stopping(self, job_id):
+        observed = {job_id: _status(job_id)}
+        assert project_job_states([], observed, stale=()) == {job_id: D.stopping}
+
+    def test_not_desired_and_gone_is_absent(self, job_id):
+        stale = {job_id: _status(job_id)}
+        stopped = {job_id: _status(job_id, JobState.stopped)}
+        assert project_job_states([], stale, stale={job_id}) == {}
+        assert project_job_states([], stopped, stale=()) == {}
+
 
 class TestWorstJobState:
-    def test_empty_defaults_to_active(self):
-        assert worst_job_state([]) == JobState.active
-
     def test_single_state_returned(self):
-        assert worst_job_state([JobState.warning]) == JobState.warning
+        assert worst_job_state([D.warning]) == D.warning
 
     def test_priority_order(self):
-        assert worst_job_state([JobState.active, JobState.stopped]) == JobState.stopped
-        assert (
-            worst_job_state([JobState.stopped, JobState.pending_context])
-            == JobState.pending_context
-        )
-        assert (
-            worst_job_state([JobState.pending_context, JobState.warning])
-            == JobState.warning
-        )
-        assert worst_job_state([JobState.warning, JobState.error]) == JobState.error
-
-    def test_pending_context_outranks_stopped_and_active(self):
-        states = [JobState.active, JobState.stopped, JobState.pending_context]
-        assert worst_job_state(states) == JobState.pending_context
-
-    def test_error_dominates(self):
-        states = [
-            JobState.warning,
-            JobState.pending_context,
-            JobState.error,
-            JobState.stopped,
+        order = [
+            D.stopping,
+            D.active,
+            D.finishing,
+            D.pending,
+            D.pending_context,
+            D.warning,
+            D.backend_down,
+            D.error,
         ]
-        assert worst_job_state(states) == JobState.error
+        for lower, higher in itertools.pairwise(order):
+            assert worst_job_state([lower, higher]) == higher
+            assert worst_job_state([higher, lower]) == higher
 
 
 class TestJobStateDisplayName:
-    def test_pending_context_is_friendly(self):
-        assert job_state_display_name(JobState.pending_context) == 'WAITING FOR CONTEXT'
+    def test_friendly_names(self):
+        assert job_state_display_name(D.pending_context) == 'WAITING FOR CONTEXT'
+        assert job_state_display_name(D.backend_down) == 'BACKEND DOWN'
 
     def test_other_states_use_upper_value(self):
-        assert job_state_display_name(JobState.active) == 'ACTIVE'
-        assert job_state_display_name(JobState.error) == 'ERROR'
+        assert job_state_display_name(D.active) == 'ACTIVE'
+        assert job_state_display_name(D.error) == 'ERROR'
+        assert job_state_display_name(D.stopping) == 'STOPPING'
 
 
 def _get_button_icons(buttons) -> list[str | None]:
@@ -115,10 +172,9 @@ class TestConfigGrouping:
 
     def test_single_source_single_group(self):
         """Test that a single source creates a single group."""
-        from ess.livedata.dashboard.job_orchestrator import JobConfig
 
         staged = {
-            'source1': JobConfig(params={'threshold': 100.0}, aux_source_names={}),
+            'source1': DesiredJob(params={'threshold': 100.0}, aux_source_names={}),
         }
         result = _group_configs_by_equality(staged, {})
 
@@ -128,11 +184,10 @@ class TestConfigGrouping:
 
     def test_identical_configs_grouped_together(self):
         """Test that sources with identical configs are grouped."""
-        from ess.livedata.dashboard.job_orchestrator import JobConfig
 
         staged = {
-            'source1': JobConfig(params={'threshold': 100.0}, aux_source_names={}),
-            'source2': JobConfig(params={'threshold': 100.0}, aux_source_names={}),
+            'source1': DesiredJob(params={'threshold': 100.0}, aux_source_names={}),
+            'source2': DesiredJob(params={'threshold': 100.0}, aux_source_names={}),
         }
         result = _group_configs_by_equality(staged, {})
 
@@ -141,11 +196,10 @@ class TestConfigGrouping:
 
     def test_different_configs_separate_groups(self):
         """Test that sources with different configs are in separate groups."""
-        from ess.livedata.dashboard.job_orchestrator import JobConfig
 
         staged = {
-            'source1': JobConfig(params={'threshold': 100.0}, aux_source_names={}),
-            'source2': JobConfig(params={'threshold': 200.0}, aux_source_names={}),
+            'source1': DesiredJob(params={'threshold': 100.0}, aux_source_names={}),
+            'source2': DesiredJob(params={'threshold': 200.0}, aux_source_names={}),
         }
         result = _group_configs_by_equality(staged, {})
 
@@ -155,13 +209,12 @@ class TestConfigGrouping:
 
     def test_modified_flag_set_when_differs_from_active(self):
         """Test that is_modified is True when staged differs from active."""
-        from ess.livedata.dashboard.job_orchestrator import JobConfig
 
         staged = {
-            'source1': JobConfig(params={'threshold': 200.0}, aux_source_names={}),
+            'source1': DesiredJob(params={'threshold': 200.0}, aux_source_names={}),
         }
         active = {
-            'source1': JobConfig(params={'threshold': 100.0}, aux_source_names={}),
+            'source1': DesiredJob(params={'threshold': 100.0}, aux_source_names={}),
         }
         result = _group_configs_by_equality(staged, active)
 
@@ -170,13 +223,12 @@ class TestConfigGrouping:
 
     def test_modified_flag_false_when_matches_active(self):
         """Test that is_modified is False when staged matches active."""
-        from ess.livedata.dashboard.job_orchestrator import JobConfig
 
         staged = {
-            'source1': JobConfig(params={'threshold': 100.0}, aux_source_names={}),
+            'source1': DesiredJob(params={'threshold': 100.0}, aux_source_names={}),
         }
         active = {
-            'source1': JobConfig(params={'threshold': 100.0}, aux_source_names={}),
+            'source1': DesiredJob(params={'threshold': 100.0}, aux_source_names={}),
         }
         result = _group_configs_by_equality(staged, active)
 
@@ -185,10 +237,9 @@ class TestConfigGrouping:
 
     def test_modified_when_source_not_in_active(self):
         """Test that is_modified is True when source is not in active config."""
-        from ess.livedata.dashboard.job_orchestrator import JobConfig
 
         staged = {
-            'source1': JobConfig(params={'threshold': 100.0}, aux_source_names={}),
+            'source1': DesiredJob(params={'threshold': 100.0}, aux_source_names={}),
         }
         active = {}
         result = _group_configs_by_equality(staged, active)
@@ -198,17 +249,16 @@ class TestConfigGrouping:
 
     def test_nested_dict_params_handled_correctly(self):
         """Test that nested dictionaries in params are handled correctly."""
-        from ess.livedata.dashboard.job_orchestrator import JobConfig
 
         # Nested dict in params (e.g., ROI configuration)
         staged = {
-            'source1': JobConfig(
+            'source1': DesiredJob(
                 params={'roi': {'x': [0, 10], 'y': [0, 20]}}, aux_source_names={}
             ),
-            'source2': JobConfig(
+            'source2': DesiredJob(
                 params={'roi': {'x': [0, 10], 'y': [0, 20]}}, aux_source_names={}
             ),
-            'source3': JobConfig(
+            'source3': DesiredJob(
                 params={'roi': {'x': [5, 15], 'y': [0, 20]}}, aux_source_names={}
             ),
         }
@@ -231,21 +281,19 @@ class TestUnconfiguredSources:
 
     def test_no_unconfigured_sources(self):
         """Test when all sources are configured."""
-        from ess.livedata.dashboard.job_orchestrator import JobConfig
 
         staged = {
-            'source1': JobConfig(params={}, aux_source_names={}),
-            'source2': JobConfig(params={}, aux_source_names={}),
+            'source1': DesiredJob(params={}, aux_source_names={}),
+            'source2': DesiredJob(params={}, aux_source_names={}),
         }
         result = _get_unconfigured_sources(['source1', 'source2'], staged)
         assert result == []
 
     def test_partial_configuration(self):
         """Test when some sources are configured."""
-        from ess.livedata.dashboard.job_orchestrator import JobConfig
 
         staged = {
-            'source1': JobConfig(params={}, aux_source_names={}),
+            'source1': DesiredJob(params={}, aux_source_names={}),
         }
         result = _get_unconfigured_sources(['source1', 'source2'], staged)
         assert result == ['source2']
@@ -494,6 +542,7 @@ class TestWorkflowStatusWidgetWithJobs:
     ):
         """Test that status shows ACTIVE when jobs are running."""
         # Stage and commit to create active job
+        job_orchestrator.clear_staged_configs(workflow_id)
         job_orchestrator.stage_config(
             workflow_id,
             source_name='source1',
@@ -597,6 +646,7 @@ class TestWorkflowStatusWidgetWithJobs:
     ):
         """Test status transitions from PENDING to ACTIVE when backend responds."""
         # Stage and commit to create active job
+        job_orchestrator.clear_staged_configs(workflow_id)
         job_orchestrator.stage_config(
             workflow_id,
             source_name='source1',
@@ -648,6 +698,38 @@ class TestWorkflowStatusWidgetWithJobs:
         # Should be STOPPED, not PENDING
         status, _, _, _, _ = workflow_status_widget._get_status_and_timing()
         assert status == 'STOPPED'
+
+    def test_stopped_workflow_still_heartbeating_shows_stopping(
+        self, workflow_status_widget, job_service, workflow_id, job_orchestrator
+    ):
+        job_ids = job_orchestrator.commit_workflow(workflow_id)
+        job_orchestrator.stop_workflow(workflow_id)
+        for job_id in job_ids:
+            job_service.status_updated(
+                JobStatus(job_id=job_id, workflow_id=workflow_id, state=JobState.active)
+            )
+
+        status, _, _, _, per_source = workflow_status_widget._get_status_and_timing()
+
+        assert status == 'STOPPING'
+        assert {s.state for s in per_source} == {JobDisplayState.stopping}
+
+    def test_final_stopped_heartbeat_shows_backend_down(
+        self, workflow_status_widget, job_service, workflow_id, job_orchestrator
+    ):
+        """A worker shutting down deactivates nothing: the job stays desired."""
+        job_ids = job_orchestrator.commit_workflow(workflow_id)
+        for job_id in job_ids:
+            job_service.status_updated(
+                JobStatus(
+                    job_id=job_id, workflow_id=workflow_id, state=JobState.stopped
+                )
+            )
+
+        status, _, _, _, _ = workflow_status_widget._get_status_and_timing()
+
+        assert status == 'BACKEND DOWN'
+        assert job_orchestrator.get_active_job_number(workflow_id) is not None
 
     def test_is_status_stale_returns_true_for_old_status(self, job_service):
         """Test that is_status_stale returns True for old status."""
@@ -835,7 +917,7 @@ class TestPerSourceStatus:
         status, _, _, _, per_source = workflow_status_widget._get_status_and_timing()
         assert status == 'PENDING'
         assert len(per_source) == 2
-        assert all(s.state == JobState.scheduled for s in per_source)
+        assert all(s.state == D.pending for s in per_source)
 
     def test_dots_html_empty_for_no_sources(self):
         """No sources produces no dots HTML."""
@@ -843,16 +925,16 @@ class TestPerSourceStatus:
 
     def test_dots_html_renders_single_source(self):
         """Single-source workflows still show a dot."""
-        sources = [SourceStatus('only_source', 'Only Source', JobState.active, None)]
+        sources = [SourceStatus('only_source', 'Only Source', D.active, None)]
         html = WorkflowStatusWidget._make_status_dots_html(sources)
         assert html.count('border-radius: 50%') == 1
 
     def test_dots_html_contains_dot_per_source(self):
         """Each source gets one dot span."""
         sources = [
-            SourceStatus('s1', 'S1', JobState.active, None),
-            SourceStatus('s2', 'S2', JobState.error, 'bad'),
-            SourceStatus('s3', 'S3', JobState.active, None),
+            SourceStatus('s1', 'S1', D.active, None),
+            SourceStatus('s2', 'S2', D.error, 'bad'),
+            SourceStatus('s3', 'S3', D.active, None),
         ]
         html = WorkflowStatusWidget._make_status_dots_html(sources)
         assert html.count('border-radius: 50%') == 3
@@ -860,9 +942,9 @@ class TestPerSourceStatus:
     def test_dots_html_includes_tooltip_with_source_name(self):
         """Dot tooltips contain source name and state."""
         sources = [
-            SourceStatus('mantle_detector', 'Mantle Detector', JobState.active, None),
+            SourceStatus('mantle_detector', 'Mantle Detector', D.active, None),
             SourceStatus(
-                'sans_detector', 'SANS Detector', JobState.error, 'ZeroDivisionError'
+                'sans_detector', 'SANS Detector', D.error, 'ZeroDivisionError'
             ),
         ]
         html = WorkflowStatusWidget._make_status_dots_html(sources)
@@ -877,25 +959,25 @@ class TestPerSourceStatus:
         )
 
         sources = [
-            SourceStatus('s1', 'S1', JobState.active, None),
-            SourceStatus('s2', 'S2', JobState.error, None),
+            SourceStatus('s1', 'S1', D.active, None),
+            SourceStatus('s2', 'S2', D.error, None),
         ]
         html = WorkflowStatusWidget._make_status_dots_html(sources)
         assert WorkflowWidgetStyles.STATUS_COLORS['active'] in html
         assert WorkflowWidgetStyles.STATUS_COLORS['error'] in html
 
-    def test_scheduled_dots_use_pending_color(self):
-        """Scheduled (pending) dots use blue, not green."""
+    def test_pending_dots_use_pending_color(self):
+        """Pending dots use blue, not green."""
         from ess.livedata.dashboard.widgets.workflow_status_widget import (
             WorkflowWidgetStyles,
         )
 
         sources = [
-            SourceStatus('s1', 'S1', JobState.scheduled, None),
-            SourceStatus('s2', 'S2', JobState.scheduled, None),
+            SourceStatus('s1', 'S1', D.pending, None),
+            SourceStatus('s2', 'S2', D.pending, None),
         ]
         html = WorkflowStatusWidget._make_status_dots_html(sources)
-        assert WorkflowWidgetStyles.STATUS_COLORS['scheduled'] in html
+        assert WorkflowWidgetStyles.STATUS_COLORS['pending'] in html
         assert WorkflowWidgetStyles.STATUS_COLORS['active'] not in html
 
     def test_status_dots_pane_in_header(
@@ -1156,3 +1238,56 @@ class TestWorkflowStatusListWidget:
         list_widget._is_visible = lambda: True
         list_widget._refresh_all()
         assert widget._status_badge.object != badge_after_active
+
+
+class TestUnknownEntries:
+    """Desired-state entries of workflows outside the registry."""
+
+    @pytest.fixture
+    def unknown(self) -> DesiredWorkflow:
+        workflow_id = WorkflowId(instrument='test_instrument', name='gone', version=2)
+        return DesiredWorkflow(
+            workflow_id=workflow_id,
+            job_number=uuid.uuid4(),
+            jobs={'s1': DesiredJob(params={}, aux_source_names={})},
+        )
+
+    @pytest.fixture
+    def list_widget(self, job_orchestrator, job_service):
+        widget = WorkflowStatusListWidget(
+            orchestrator=job_orchestrator, job_service=job_service
+        )
+        widget._refresh_all()
+        return widget
+
+    @staticmethod
+    def _remove_buttons(list_widget) -> list[pn.widgets.Button]:
+        return [
+            b
+            for b in list_widget.panel().select(pn.widgets.Button)
+            if 'lt-unknown-wf-gone-v2' in b.css_classes
+        ]
+
+    def test_entry_is_listed_with_remove_action(
+        self, list_widget, job_orchestrator, unknown
+    ):
+        job_orchestrator.apply_desired_updates([(unknown.workflow_id, unknown)])
+
+        assert list_widget._has_pending_work()
+        list_widget._refresh_all()
+
+        assert len(self._remove_buttons(list_widget)) == 1
+        assert not list_widget._has_pending_work()
+
+    def test_remove_writes_tombstone_and_unlists_entry(
+        self, list_widget, job_orchestrator, desired_state, unknown
+    ):
+        job_orchestrator.apply_desired_updates([(unknown.workflow_id, unknown)])
+        list_widget._refresh_all()
+
+        (button,) = self._remove_buttons(list_widget)
+        button.clicks += 1
+        list_widget._refresh_all()
+
+        assert desired_state.read(0) == [(unknown.workflow_id, None)]
+        assert self._remove_buttons(list_widget) == []

@@ -12,6 +12,7 @@ from ess.livedata.config.workflow_spec import (
     WorkflowOutputsBase,
     WorkflowSpec,
 )
+from ess.livedata.core.desired_state import InMemoryDesiredStateLog
 from ess.livedata.dashboard.active_job_registry import ActiveJobRegistry
 from ess.livedata.dashboard.command_service import CommandService
 from ess.livedata.dashboard.data_service import DataService
@@ -115,15 +116,21 @@ def active_job_registry(data_service, job_service):
 
 
 @pytest.fixture
+def desired_state():
+    """In-memory desired-state log, the writer the orchestrator writes to."""
+    return InMemoryDesiredStateLog()
+
+
+@pytest.fixture
 def job_orchestrator(
-    command_service, workflow_registry, active_job_registry, job_service
+    command_service, desired_state, workflow_registry, active_job_registry
 ):
     """Create a JobOrchestrator with fakes for testing."""
     return JobOrchestrator(
         command_service=command_service,
+        desired_state=desired_state,
         workflow_registry=workflow_registry,
         active_job_registry=active_job_registry,
-        job_service=job_service,
         config_store=None,
     )
 
