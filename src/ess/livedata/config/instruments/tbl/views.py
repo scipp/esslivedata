@@ -74,6 +74,18 @@ def get_multiblade_view(da: sc.DataArray, source_name: str) -> sc.DataArray:
     downstream, so strip 0, at +x, is already the leftmost strip. The geometry file
     carries no rotation; this orientation is implicit in its pixel offsets.
 
+    Each cell of the view holds the pixel
+
+    .. code-block:: text
+
+        detector_number = 1 + 2048 * (13 - blade) + 64 * (31 - wire) + strip
+
+    and carries it as the ``detector_number`` coord.
+
+    The numbering is the geometry file's. It has not been checked against the
+    detector readout or against real neutron data, so a wiring that differs from
+    the file would show up here as a mirrored blade or wire axis.
+
     ESTIA mounts the same hardware rotated 90 degrees about the beam, and its
     geometry file enumerates ``detector_number`` in a different order, so
     ``estia.views.get_multiblade_view`` folds with a different dimension order.

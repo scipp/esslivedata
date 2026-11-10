@@ -59,3 +59,9 @@ def test_multiblade_wires_run_downstream_along_the_beam(multiblade) -> None:
 def test_multiblade_strips_run_left_to_right_looking_downstream(multiblade) -> None:
     # NeXus x points left when looking downstream, so x decreases left to right.
     assert np.all(np.diff(_along(multiblade.coords['x'], 'strip')) < 0)
+
+
+def test_multiblade_detector_number_matches_documented_formula(multiblade) -> None:
+    blade, wire, strip = np.indices((14, 32, 64))
+    expected = 1 + 2048 * (13 - blade) + 64 * (31 - wire) + strip
+    np.testing.assert_array_equal(multiblade.data.values, expected)
