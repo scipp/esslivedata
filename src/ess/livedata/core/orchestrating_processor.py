@@ -15,6 +15,7 @@ from ess.livedata import __version__
 from ..config.device_contract import DeviceContract
 from ..core.command_dispatcher import CommandDispatcher
 from .context_outputs import ContextOutputExtractor
+from .desired_state import DesiredStateReader, DesiredTable, fold_updates
 from .job import (
     JobResult,
     JobState,
@@ -27,6 +28,7 @@ from .job import (
 )
 from .job_manager import JobFactory, JobManager, WorkflowData
 from .job_manager_adapter import JobManagerAdapter
+from .job_reconciler import JobReconciler
 from .message import (
     COMMANDS_STREAM_ID,
     RUN_CONTROL_STREAM_ID,
@@ -49,6 +51,10 @@ from .preprocessor import Accumulator, PreprocessorFactory
 from .timestamp import Duration, Timestamp
 
 logger = structlog.get_logger(__name__)
+
+#: Deadline for reading the desired-state topic to its end at startup. A worker
+#: that misses it exits rather than act on a partial table.
+DESIRED_STATE_BOOTSTRAP_TIMEOUT_S = 30.0
 
 
 class MessagePreprocessor[Tin, Tout]:
@@ -146,12 +152,21 @@ class MessagePreprocessor[Tin, Tout]:
 
 
 class OrchestratingProcessor[Tin, Tout]:
+    """Runs the jobs of one service, as wanted by the desired state.
+
+    The first :meth:`process` call reads ``desired_state`` to its end and raises
+    if that fails, so the worker never starts with a partial table. Each call
+    then applies new desired-state records and reconciles the jobs against the
+    table (:class:`JobReconciler`) before processing messages.
+    """
+
     def __init__(
         self,
         *,
         source: MessageSource[Message[Tin]],
         sink: MessageSink[Tout],
         preprocessor_factory: PreprocessorFactory[Tin, Tout],
+        desired_state: DesiredStateReader,
         service_name: str,
         message_batcher: MessageBatcher | None = None,
         job_threads: int = 1,
@@ -161,10 +176,16 @@ class OrchestratingProcessor[Tin, Tout]:
         self._sink = sink
         self._message_preprocessor = MessagePreprocessor(factory=preprocessor_factory)
         instrument = preprocessor_factory.instrument
+        job_factory = JobFactory(instrument=instrument, service_name=service_name)
         self._job_manager = JobManager(
-            job_factory=JobFactory(instrument=instrument, service_name=service_name),
+            job_factory=job_factory,
             context_reader=self._message_preprocessor.get_context,
             job_threads=job_threads,
+        )
+        self._desired_state = desired_state
+        self._desired_table: DesiredTable = {}
+        self._reconciler = JobReconciler(
+            job_manager=self._job_manager, job_factory=job_factory
         )
         self._job_manager_adapter = JobManagerAdapter(job_manager=self._job_manager)
         self._device_extractor = DeviceExtractor(
@@ -174,7 +195,7 @@ class OrchestratingProcessor[Tin, Tout]:
             registry=instrument.workflow_factory,
         )
         self._message_batcher = message_batcher or AdaptiveMessageBatcher()
-        self._config_processor = CommandDispatcher(
+        self._command_dispatcher = CommandDispatcher(
             job_manager_adapter=self._job_manager_adapter
         )
         self._last_status_update: Timestamp | None = None
@@ -202,25 +223,34 @@ class OrchestratingProcessor[Tin, Tout]:
     def process(self) -> None:
         # Transition from starting to running on first process cycle
         if not self._has_processed_first_batch:
+            self._desired_table = fold_updates(
+                {},
+                self._desired_state.bootstrap(DESIRED_STATE_BOOTSTRAP_TIMEOUT_S),
+            )
             self._has_processed_first_batch = True
             self._service_state = ServiceState.running
-            logger.info('service_running')
+            logger.info('service_running', desired_workflows=len(self._desired_table))
+
+        self._desired_table = fold_updates(
+            self._desired_table, self._desired_state.poll()
+        )
+        builds_pending = self._reconciler.reconcile(self._desired_table)
 
         messages = self._source.get_messages()
-        config_messages: list[Message[Tin]] = []
+        command_messages: list[Message[Tin]] = []
         run_control_messages: list[Message[RunStart | RunStop]] = []
         data_messages: list[Message[Tin]] = []
 
         for msg in messages:
             if msg.stream == COMMANDS_STREAM_ID:
-                config_messages.append(msg)
+                command_messages.append(msg)
             elif msg.stream == RUN_CONTROL_STREAM_ID:
                 run_control_messages.append(msg)
             else:
                 data_messages.append(msg)
 
-        # Handle config messages
-        result_messages = self._config_processor.process_messages(config_messages)
+        # Handle commands
+        result_messages = self._command_dispatcher.process_messages(command_messages)
 
         # Handle run control messages (run start/stop from filewriter topic)
         for msg in run_control_messages:
@@ -270,10 +300,9 @@ class OrchestratingProcessor[Tin, Tout]:
             self._empty_batches += 1
             self._maybe_log_metrics()
             self._sink.publish_messages(result_messages)
-            if not config_messages:
-                # Avoid busy-waiting if there is no data and no config messages.
-                # If there are config messages, we avoid sleeping, since config messages
-                # may trigger costly workflow creation.
+            if not builds_pending:
+                # Avoid busy-waiting if there is no data. Pending builds skip the
+                # sleep, since the reconciler builds one job per cycle.
                 time.sleep(0.1)
             return
 
@@ -320,11 +349,11 @@ class OrchestratingProcessor[Tin, Tout]:
                 return
         self._last_status_update = timestamp
 
-        # Publish job statuses
+        # Publish job statuses, including the jobs that failed to build
         job_statuses = self._job_manager.get_all_job_statuses()
         messages = [
             _job_status_to_message(status, timestamp=timestamp)
-            for status in job_statuses
+            for status in [*job_statuses, *self._reconciler.rejected]
         ]
 
         # Publish service heartbeat

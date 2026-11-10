@@ -6,7 +6,6 @@ from dataclasses import replace
 from typing import Any, Protocol
 
 import numpy as np
-import pydantic
 import scipp as sc
 import streaming_data_types
 import streaming_data_types.exceptions
@@ -499,15 +498,12 @@ class Ad00ToScippAdapter(
         )
 
 
-_COMMAND_ADAPTER = pydantic.TypeAdapter(Command)
-
-
 class CommandsAdapter(MessageAdapter[KafkaMessage, Message[Command]]):
     """Adapts Kafka messages from the livedata commands topic."""
 
     def adapt(self, message: KafkaMessage) -> Message[Command]:
         timestamp = Timestamp.from_ms(message.timestamp()[1])
-        command = _COMMAND_ADAPTER.validate_json(message.value())
+        command = Command.model_validate_json(message.value())
         return Message(stream=COMMANDS_STREAM_ID, timestamp=timestamp, value=command)
 
 

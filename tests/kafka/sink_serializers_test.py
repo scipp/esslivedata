@@ -25,7 +25,7 @@ from ess.livedata.config.acknowledgement import (
     AcknowledgementResponse,
     CommandAcknowledgement,
 )
-from ess.livedata.config.workflow_spec import JobId, WorkflowConfig, WorkflowId
+from ess.livedata.config.workflow_spec import JobId, WorkflowId
 from ess.livedata.core.job import (
     JobState,
     JobStatus,
@@ -317,33 +317,9 @@ class TestJobStatusToX5f2Serializer:
 
 
 class TestCommandSerializer:
-    def test_round_trip_workflow_config(self) -> None:
-        config = WorkflowConfig(
-            identifier=WorkflowId(instrument='dummy', name='wf', version=1),
-            job_id=JobId(source_name='detector_1', job_number=uuid.uuid4()),
-            message_id='msg-1',
-        )
-        msg = Message(
-            timestamp=Timestamp.from_ns(0),
-            stream=COMMANDS_STREAM_ID,
-            value=config,
-        )
-
-        result = CommandSerializer(instrument=INSTRUMENT).serialize(msg)
-
-        assert result.topic == f'{INSTRUMENT}_livedata_commands'
-        assert result.key is None
-        assert json.loads(result.value.decode('utf-8'))['kind'] == 'workflow_config'
-
-        decoded = CommandsAdapter().adapt(
-            FakeKafkaMessage(key=result.key, value=result.value, topic=result.topic)
-        )
-        assert decoded.stream == COMMANDS_STREAM_ID
-        assert decoded.value == config
-
     def test_round_trip_job_command(self) -> None:
         command = JobCommand(
-            action=JobAction.stop,
+            action=JobAction.reset,
             job_id=JobId(source_name='detector_1', job_number=uuid.uuid4()),
             message_id='msg-2',
         )
@@ -355,6 +331,7 @@ class TestCommandSerializer:
 
         result = CommandSerializer(instrument=INSTRUMENT).serialize(msg)
 
+        assert result.topic == f'{INSTRUMENT}_livedata_commands'
         assert result.key is None
         assert json.loads(result.value.decode('utf-8'))['kind'] == 'job_command'
 

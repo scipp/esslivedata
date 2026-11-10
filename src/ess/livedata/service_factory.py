@@ -14,6 +14,7 @@ import structlog
 from .config import config_names
 from .config.config_loader import load_config
 from .core import MessageSink, Processor
+from .core.desired_state import DesiredStateReader
 from .core.message import Message, MessageSource
 from .core.message_batcher import (
     AdaptiveMessageBatcher,
@@ -32,6 +33,7 @@ from .core.sciline_scheduler import (
 from .core.service import Service
 from .kafka import KafkaTopic
 from .kafka import consumer as kafka_consumer
+from .kafka.desired_state import KafkaDesiredStateReader
 from .kafka.message_adapter import AdaptingMessageSource, MessageAdapter
 from .kafka.sink import KafkaSink, UnrollingSinkAdapter
 from .kafka.sink_serializers import make_default_sink_serializer
@@ -61,6 +63,7 @@ class DataServiceBuilder[Traw, Tin, Tout]:
         log_level: int = logging.INFO,
         adapter: MessageAdapter | None = None,
         preprocessor_factory: PreprocessorFactory[Tin, Tout],
+        desired_state_topic: str,
         startup_messages: list[Message[Tout]] | None = None,
         processor_cls: type[Processor] = OrchestratingProcessor,
         job_threads: int = 5,
@@ -84,6 +87,8 @@ class DataServiceBuilder[Traw, Tin, Tout]:
             The message adapter to use for incoming messages.
         preprocessor_factory:
             The factory to use for creating preprocessors for messages.
+        desired_state_topic:
+            The desired-state topic the service's jobs are reconciled against.
         startup_messages:
             A list of messages to publish before starting the service.
         processor_cls:
@@ -110,6 +115,7 @@ class DataServiceBuilder[Traw, Tin, Tout]:
         self._instrument = instrument
         self._adapter = adapter
         self._preprocessor_factory = preprocessor_factory
+        self._desired_state_topic = desired_state_topic
         self._startup_messages = startup_messages or []
         self._processor_cls = processor_cls
         self._job_threads = job_threads
@@ -163,10 +169,17 @@ class DataServiceBuilder[Traw, Tin, Tout]:
             else:
                 source = KafkaMessageSource(consumer=consumer)
 
+            desired_state = resources.enter_context(
+                KafkaDesiredStateReader(
+                    kafka_config=kafka_config, topic=self._desired_state_topic
+                )
+            )
+
             # Ownership of resource stack transferred to the service
             return self.from_source(
                 source=source,
                 sink=sink,
+                desired_state=desired_state,
                 resources=resources.pop_all(),
                 raise_on_adapter_error=raise_on_adapter_error,
             )
@@ -178,6 +191,7 @@ class DataServiceBuilder[Traw, Tin, Tout]:
         self,
         consumer: KafkaConsumer,
         sink: MessageSink[Tout],
+        desired_state: DesiredStateReader,
         resources: ExitStack | None = None,
         raise_on_adapter_error: bool = False,
         use_background_source: bool = False,
@@ -193,6 +207,7 @@ class DataServiceBuilder[Traw, Tin, Tout]:
         return self.from_source(
             source=source,
             sink=sink,
+            desired_state=desired_state,
             resources=resources,
             raise_on_adapter_error=raise_on_adapter_error,
         )
@@ -201,6 +216,7 @@ class DataServiceBuilder[Traw, Tin, Tout]:
         self,
         source: MessageSource,
         sink: MessageSink[Tout],
+        desired_state: DesiredStateReader,
         resources: ExitStack | None = None,
         raise_on_adapter_error: bool = False,
     ) -> Service:
@@ -226,6 +242,7 @@ class DataServiceBuilder[Traw, Tin, Tout]:
             source=adapted_source,
             sink=sink,
             preprocessor_factory=self._preprocessor_factory,
+            desired_state=desired_state,
             service_name=self._service_name,
             job_threads=self._job_threads,
             stream_stats_provider=self._stream_counter,

@@ -101,7 +101,7 @@ class TestJobManagerAdapter:
         fake_job_manager.should_raise_key_error = True
 
         command = JobCommand(
-            action=JobAction.stop, job_id=_job_id(), message_id="test-msg-id"
+            action=JobAction.reset, job_id=_job_id(), message_id="test-msg-id"
         )
         result = adapter.job_command(command)
 
@@ -113,7 +113,7 @@ class TestJobManagerAdapter:
         fake_job_manager.should_raise_exception = True
 
         command = JobCommand(
-            action=JobAction.stop, job_id=_job_id(), message_id="test-msg-id"
+            action=JobAction.reset, job_id=_job_id(), message_id="test-msg-id"
         )
         result = adapter.job_command(command)
 

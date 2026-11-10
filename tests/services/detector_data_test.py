@@ -2,22 +2,15 @@
 # Copyright (c) 2025 Scipp contributors (https://github.com/scipp)
 
 import logging
-import uuid
 
 import pytest
 import scipp as sc
 from structlog.testing import capture_logs
 
 from ess.livedata.config import instrument_registry, workflow_spec
-from ess.livedata.config.workflow_spec import JobId
-from ess.livedata.core.job_manager import JobAction, JobCommand
 from ess.livedata.core.message import StreamKind
 from ess.livedata.services.detector_data import make_detector_service_builder
 from tests.helpers.livedata_app import LivedataApp
-
-
-def _job_id(source: str) -> JobId:
-    return JobId(source_name=source, job_number=uuid.uuid4())
 
 
 def _data_messages(sink) -> list:
@@ -79,15 +72,9 @@ def test_can_configure_and_stop_detector_workflow(
     workflow_id, _ = _get_workflow_from_registry(instrument, name=name)
 
     source_name = detector_source_name[instrument]
-    workflow_config = workflow_spec.WorkflowConfig(
-        identifier=workflow_id,
-        job_id=_job_id(source_name),
-        params=_UNWEIGHTED,
-    )
     # Trigger workflow start
-    app.publish_config_message(workflow_config)
+    app.commit_workflow(workflow_id, [source_name], params=_UNWEIGHTED)
     service.step()
-    # Config ack lands on response_messages, not the data sink
     assert len(_data_messages(sink)) == 0
 
     if instrument == 'loki':
@@ -129,8 +116,7 @@ def test_can_configure_and_stop_detector_workflow(
     assert _data_messages(sink)[2 * n_out + 1].value.nansum().value == 2000  # current
 
     # Stop workflow
-    command = JobCommand(action=JobAction.stop)
-    app.publish_config_message(command)
+    app.stop_workflow(workflow_id)
     app.publish_events(size=1000, time=10)
     service.step()
     app.publish_events(size=1000, time=20)
@@ -155,12 +141,7 @@ def test_loki_cumulative_resets_when_detector_carriage_moves() -> None:
     workflow_id, _ = _get_workflow_from_registry('loki', name='detector_xy_projection')
 
     source_name = 'loki_detector_0'
-    workflow_config = workflow_spec.WorkflowConfig(
-        identifier=workflow_id,
-        job_id=_job_id(source_name),
-        params=_UNWEIGHTED,
-    )
-    app.publish_config_message(workflow_config)
+    app.commit_workflow(workflow_id, [source_name], params=_UNWEIGHTED)
     service.step()
 
     def prime_carriage(*, position: float, time: int) -> None:
@@ -233,11 +214,7 @@ def test_odin_cumulative_resets_when_the_readout_resolution_changes() -> None:
     workflow_id, _ = _get_workflow_from_registry('odin')
 
     source_name = 'timepix3'
-    app.publish_config_message(
-        workflow_spec.WorkflowConfig(
-            identifier=workflow_id, job_id=_job_id(source_name)
-        )
-    )
+    app.commit_workflow(workflow_id, [source_name])
     service.step()
 
     n_out = _n_outputs('odin')
@@ -275,11 +252,7 @@ def test_magic_projection_stays_gated_until_rotation_readback_arrives() -> None:
     workflow_id, _ = _get_workflow_from_registry('magic', name='detector_projection')
 
     source_name = 'magic_detector_a'
-    app.publish_config_message(
-        workflow_spec.WorkflowConfig(
-            identifier=workflow_id, job_id=_job_id(source_name)
-        )
-    )
+    app.commit_workflow(workflow_id, [source_name])
     service.step()
 
     # Without the rotation context the job is gated: events accumulate, nothing is
@@ -311,12 +284,8 @@ def test_service_can_recover_after_bad_workflow_id_was_set(
     identifier = workflow_spec.WorkflowId(
         instrument='dummy', name='abcde12345', version=1
     )
-    bad_workflow_id = workflow_spec.WorkflowConfig(
-        identifier=identifier,  # Invalid workflow ID
-        job_id=_job_id('panel_0'),
-    )
     # Trigger workflow start
-    app.publish_config_message(bad_workflow_id)
+    app.commit_workflow(identifier, ['panel_0'])
 
     app.publish_events(size=2000, time=2)
     service.step()
@@ -324,17 +293,14 @@ def test_service_can_recover_after_bad_workflow_id_was_set(
     app.publish_events(size=3000, time=4)
     service.step()
 
-    # No error ack sent when message_id not set (error is logged server-side)
+    # No worker owns an unregistered workflow, so nothing runs
     assert len(_data_messages(sink)) == 0
 
-    good_workflow_config = workflow_spec.WorkflowConfig(
-        identifier=workflow_id, job_id=_job_id('panel_0')
-    )
     # Trigger workflow start
-    app.publish_config_message(good_workflow_config)
+    app.commit_workflow(workflow_id, ['panel_0'])
     app.publish_events(size=1000, time=5)
     service.step()
-    # Service recovered; data only -- the ack is on response_messages
+    # Service recovered
     assert len(_data_messages(sink)) == _n_outputs('dummy')
 
 
@@ -349,13 +315,8 @@ def test_active_workflow_keeps_running_when_bad_workflow_id_was_set(
     n_out = _n_outputs('dummy')
 
     # Start a valid workflow first
-    workflow_config = workflow_spec.WorkflowConfig(
-        identifier=workflow_id,
-        job_id=_job_id(detector_source_name['dummy']),
-    )
-    app.publish_config_message(workflow_config)
+    app.commit_workflow(workflow_id, [detector_source_name['dummy']])
     service.step()
-    # Config ack lands on response_messages, not the data sink
     assert len(_data_messages(sink)) == 0
 
     # Add events and verify workflow is running
@@ -365,13 +326,10 @@ def test_active_workflow_keeps_running_when_bad_workflow_id_was_set(
     assert _data_messages(sink)[0].value.values.sum() == 2000
 
     # Try to set an invalid workflow ID
-    bad_workflow_id = workflow_spec.WorkflowConfig(
-        identifier=workflow_spec.WorkflowId(
-            instrument='dummy', name='abcde12345', version=1
-        ),  # Invalid workflow ID
-        job_id=_job_id(detector_source_name['dummy']),
+    app.commit_workflow(
+        workflow_spec.WorkflowId(instrument='dummy', name='abcde12345', version=1),
+        [detector_source_name['dummy']],
     )
-    app.publish_config_message(bad_workflow_id)
 
     # Add more events and verify the original workflow is still running
     app.publish_events(size=3000, time=4)
@@ -388,13 +346,9 @@ def configured_dummy_detector() -> LivedataApp:
     service = app.service
     workflow_id, _ = _get_workflow_from_registry('dummy')
 
-    workflow_config = workflow_spec.WorkflowConfig(
-        identifier=workflow_id, job_id=_job_id('panel_0')
-    )
     # Trigger workflow start
-    app.publish_config_message(workflow_config)
-    # Process config message before data arrives. Without calling step() the order of
-    # processing of config vs data messages is not guaranteed.
+    app.commit_workflow(workflow_id, ['panel_0'])
+    # Build the job before data arrives.
     service.step()
     sink.messages.clear()  # Clear workflow start message
     return app

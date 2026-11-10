@@ -13,6 +13,12 @@ import pydantic
 from ess.livedata.config import config_names
 from ess.livedata.config.config_loader import load_config
 from ess.livedata.config.workflow_spec import DataKey, JobId, WorkflowId
+from ess.livedata.core.desired_state import (
+    DesiredJob,
+    DesiredStateWriter,
+    DesiredWorkflow,
+)
+from ess.livedata.core.job import JobState, JobStatus, ServiceStatus
 
 logger = logging.getLogger(__name__)
 
@@ -172,6 +178,98 @@ def wait_for_watermark_advance(topic: str, *, since: int, timeout: float = 30.0)
                 f"after {timeout} seconds"
             )
         time.sleep(0.2)
+
+
+class TopicTail[T]:
+    """Decoded messages of a single-partition topic, from its current end on.
+
+    Assigned at the high watermark without a consumer group, so it observes a
+    topic without consuming on anyone's behalf. :meth:`wait_for` keeps a
+    cursor, so consecutive waits see consecutive messages: waiting for one
+    message and then for another proves the order in which they were written.
+
+    Parameters
+    ----------
+    topic:
+        Topic to read.
+    decode:
+        Decodes a message value.
+    """
+
+    def __init__(self, topic: str, decode: Callable[[bytes], T]) -> None:
+        from confluent_kafka import Consumer, TopicPartition
+
+        config = load_config(namespace=config_names.kafka, env='dev')
+        self._consumer = Consumer(
+            {**config, 'group.id': f'tail-{uuid.uuid4()}', 'enable.auto.commit': False}
+        )
+        self._consumer.assign([TopicPartition(topic, 0, topic_high_watermark(topic))])
+        self._decode = decode
+        self._cursor = 0
+        #: Every message read so far, in topic order.
+        self.received: list[T] = []
+
+    def _poll(self) -> None:
+        for msg in self._consumer.consume(num_messages=1000, timeout=0.1):
+            if msg.error() is None:
+                self.received.append(self._decode(msg.value()))
+
+    def wait_for(self, predicate: Callable[[T], bool], timeout: float = 30.0) -> T:
+        """Return the next message after the cursor that satisfies ``predicate``.
+
+        Raises
+        ------
+        WaitTimeout:
+            If no such message arrives within the timeout.
+        """
+        deadline = time.time() + timeout
+        while True:
+            for index in range(self._cursor, len(self.received)):
+                if predicate(self.received[index]):
+                    self._cursor = index + 1
+                    return self.received[index]
+            if time.time() > deadline:
+                raise WaitTimeout(f"No matching message within {timeout} seconds")
+            self._poll()
+
+    @property
+    def cursor(self) -> int:
+        """Index in :attr:`received` after the message :meth:`wait_for` returned."""
+        return self._cursor
+
+    def close(self) -> None:
+        self._consumer.close()
+
+
+#: Decoded message of the heartbeat topic.
+Status = JobStatus | ServiceStatus
+
+
+def commit_workflow(
+    writer: DesiredStateWriter,
+    workflow_id: WorkflowId,
+    source_name: str,
+    params: pydantic.BaseModel,
+) -> JobId:
+    """Write a desired-state record wanting one job, as a commit; return its id."""
+    desired = DesiredWorkflow(
+        workflow_id=workflow_id,
+        job_number=uuid.uuid4(),
+        jobs={
+            source_name: DesiredJob(
+                params=params.model_dump(mode='json'), aux_source_names={}
+            )
+        },
+    )
+    writer.write(workflow_id, desired)
+    return JobId(source_name=source_name, job_number=desired.job_number)
+
+
+def job_in_state(job_id: JobId, state: JobState) -> Callable[[Status], bool]:
+    """Predicate for :meth:`TopicTail.wait_for` on the heartbeat topic."""
+    return lambda s: (
+        isinstance(s, JobStatus) and s.job_id == job_id and s.state == state
+    )
 
 
 def wait_for_condition(

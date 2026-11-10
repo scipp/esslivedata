@@ -9,7 +9,7 @@ from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from enum import StrEnum
-from typing import Annotated, Any, Literal
+from typing import Any, Literal
 
 import pydantic
 import scipp as sc
@@ -47,27 +47,13 @@ class WorkflowData:
     data: dict[StreamId, Any]
 
 
-class DifferentInstrument(Exception):
-    """
-    Raised when a workflow id does not match the instrument of this worker.
-
-    This is not considered an error, but rather a signal that the workflow should be
-    handled by a different worker.
-    """
-
-
-class WorkflowNotFoundError(Exception):
-    """Raised when a workflow specification is not found in this worker."""
-
-
 class JobAction(StrEnum):
-    pause = "pause"
-    resume = "resume"
     reset = "reset"
-    stop = "stop"
 
 
 class JobCommand(pydantic.BaseModel):
+    """Command for the jobs selected by ``job_id``, ``workflow_id``, or all jobs."""
+
     kind: Literal['job_command'] = 'job_command'
     message_id: str = pydantic.Field(
         default_factory=lambda: str(uuid.uuid4()),
@@ -82,18 +68,18 @@ class JobCommand(pydantic.BaseModel):
         default=None, description="ID of the job to control."
     )
     workflow_id: WorkflowId | None = pydantic.Field(
-        default=None, description="Workflow ID to cancel jobs for."
+        default=None, description="Workflow ID whose jobs to act on."
     )
     action: JobAction = pydantic.Field(description="Action to perform on the job.")
 
 
-Command = Annotated[WorkflowConfig | JobCommand, pydantic.Field(discriminator='kind')]
+Command = JobCommand
 """
 Wire type for the ``livedata_commands`` topic.
 
-Discriminated union of all command payloads sent from the dashboard to backend
-services. The ``kind`` literal field selects the variant. Use
-:class:`pydantic.TypeAdapter(Command)` for JSON validation/serialization.
+Imperative job commands with at-most-once delivery: workers read the topic from
+its end, so a command sent while a worker is down is never applied. Which jobs
+run is not a command but the desired state (:mod:`ess.livedata.core.desired_state`).
 """
 
 
@@ -140,6 +126,28 @@ class JobFactory:
 
         return result
 
+    def owns(self, workflow_id: WorkflowId) -> bool:
+        """Whether this worker runs the jobs of ``workflow_id``.
+
+        False for a workflow of another instrument or service, and for a
+        workflow id that is not registered, which no worker owns.
+        """
+        return (
+            workflow_id.instrument == self._instrument.name
+            and self._instrument.workflow_factory.get_service(workflow_id)
+            == self._service_name
+        )
+
+    def is_unregistered(self, workflow_id: WorkflowId) -> bool:
+        """Whether ``workflow_id`` names this instrument but no registered workflow.
+
+        Such a workflow is owned by no worker, e.g., after a version bump.
+        """
+        return (
+            workflow_id.instrument == self._instrument.name
+            and workflow_id not in self._instrument.workflow_factory
+        )
+
     def create(self, *, job_id: JobId, config: WorkflowConfig) -> Job:
         """Build a Job from its workflow config.
 
@@ -152,18 +160,12 @@ class JobFactory:
         available; see ADR 0002).
         """
         workflow_id = config.identifier
-        if workflow_id is None:
-            raise ValueError("WorkflowConfig must have an identifier to create a Job")
+        if not self.owns(workflow_id):
+            raise ValueError(
+                f"Workflow '{workflow_id}' is not run by service '{self._service_name}'"
+            )
         factory = self._instrument.workflow_factory
-        if (workflow_id.instrument != self._instrument.name) or (
-            factory.get_service(workflow_id) != self._service_name
-        ):
-            raise DifferentInstrument()
-
-        registration = factory.registration(workflow_id)
-        if registration is None:
-            raise WorkflowNotFoundError(f"WorkflowSpec with Id {workflow_id} not found")
-        workflow_spec = registration.spec
+        workflow_spec = factory[workflow_id]
 
         if workflow_spec.aux_sources is not None:
             rendered_aux_names = workflow_spec.aux_sources.render(
@@ -473,12 +475,6 @@ class JobManager:
         match action:
             case JobAction.reset:
                 self.reset_job(job_id)
-            case JobAction.stop:
-                self.stop_job(job_id)
-            case JobAction.pause:
-                raise NotImplementedError("Pause action not implemented yet")
-            case JobAction.resume:
-                raise NotImplementedError("Resume action not implemented yet")
             case _:
                 raise ValueError(f"Unknown job action: {action}")
 

@@ -52,9 +52,9 @@ The naming stack, from the Kafka wire inwards (see ADR 0004 and
 - **WorkflowSpec** — the declarative description of a workflow: title,
   source names, aux sources, parameter and output models
   (`config/workflow_spec.py`). Purely declarative; contains no runtime values.
-- **WorkflowConfig** — runtime parameter *values* for a spec, sent as a command
-  to start a job. Conflates "configure" and "start"; the split was considered
-  and dropped, see the `WorkflowConfig` docstring.
+- **WorkflowConfig** — build configuration of one job: workflow id, `JobId`
+  and runtime parameter *values* for a spec. In-process only; a worker creates
+  one per job from its `DesiredWorkflow` record.
 - **Job** — a running instance of a workflow, bound to a `JobId` and its input
   streams (`core/job.py`).
 - **JobNumber** — a `uuid.UUID` minted per commit; the persistent identity
@@ -193,11 +193,15 @@ The naming stack, from the Kafka wire inwards (see ADR 0004 and
 - **JobManager** — owns all job records; schedules, activates, gates, and
   finishes jobs, fans data out, gathers results and statuses
   (`core/job_manager.py`).
-- **Command** — wire type of the `livedata_commands` topic: discriminated union
-  `WorkflowConfig | JobCommand` (`core/job_manager.py`). Dispatched by
-  `CommandDispatcher` (`core/command_dispatcher.py`).
-- **JobCommand** — control message for a running job:
-  `pause`/`resume`/`reset`/`stop` (pause/resume unimplemented).
+- **Command** — wire type of the `livedata_commands` topic: `JobCommand`
+  (`core/job_manager.py`). Dispatched by `CommandDispatcher`
+  (`core/command_dispatcher.py`). Starting and stopping jobs is not a command
+  but a change of the desired state.
+- **JobCommand** — imperative command for running jobs, selected by `JobId`,
+  by `WorkflowId`, or all: `reset` only.
+- **JobReconciler** — stops and builds a worker's jobs so they match the
+  desired table; a job that fails to build is *rejected* and reported with
+  state `error` (`core/job_reconciler.py`).
 - **JobSchedule** — optional start/end times (raw-data timestamps) governing
   activation and finish.
 - **JobState** — wire-facing per-job status enum: `scheduled`, `active`,
@@ -276,7 +280,7 @@ The naming stack, from the Kafka wire inwards (see ADR 0004 and
   what used to be called handlers. Still the standard word for UI/event
   callbacks (Panel/Bokeh event handlers, `SessionUpdater` custom/cleanup
   handlers, signal handlers) — don't reuse it for backend concepts.
-- **config** — spans `WorkflowConfig` (runtime start command), instrument
+- **config** — spans `WorkflowConfig` (per-job build configuration), instrument
   configuration (`Instrument`, YAML), and dashboard `ConfigStore` (UI
   persistence). Always qualify.
 - **state / status** — `JobState` (wire enum) vs `JobPhase` (internal lifecycle)
