@@ -22,8 +22,9 @@ and timestamp-bound invariants) and
 Add new corruption modes here so both layers pick them up.
 
 :func:`malformed_desired_records` is the analogous corpus for the JSON records
-of the desired-state topic, used by ``tests/core/desired_state_test.py`` and
-``tests/kafka/desired_state_test.py``.
+of the desired-state topic, used by ``tests/core/desired_state_test.py``,
+``tests/kafka/desired_state_test.py`` (Kafka reader) and
+``tests/services/hostile_desired_state_test.py`` (worker).
 """
 
 from __future__ import annotations

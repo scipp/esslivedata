@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: BSD-3-Clause
 # Copyright (c) 2025 Scipp contributors (https://github.com/scipp)
 """
-Service for publishing commands and configuration updates.
+Service for publishing commands to the livedata commands topic.
 """
 
 import time

@@ -116,7 +116,8 @@ The naming stack, from the Kafka wire inwards (see ADR 0004 and
   (`core/message.py`), driving job schedule transitions.
 - **Heartbeat** — periodic (~2 s) status publication from each backend worker:
   a `ServiceStatus` envelope carrying per-job `JobStatus` entries
-  (`core/job.py`). The dashboard adopts running jobs from heartbeats (ADR 0008).
+  (`core/job.py`). Heartbeats are the observed state; the dashboard compares
+  them with the desired state (ADR 0012).
 
 ### Detector views
 

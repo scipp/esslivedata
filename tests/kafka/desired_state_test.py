@@ -3,8 +3,8 @@
 """Tests for the Kafka reader and writer of the desired-state topic.
 
 A real consumer or producer needs a broker, so hand-rolled fakes stand in for
-``confluent_kafka.Consumer`` and ``confluent_kafka.Producer``. Records are
-encoded with the real codec.
+``confluent_kafka.Consumer`` (in ``tests/helpers/desired_state_consumer.py``)
+and ``confluent_kafka.Producer``. Records are encoded with the real codec.
 """
 
 from __future__ import annotations
@@ -28,6 +28,13 @@ from ess.livedata.kafka.desired_state import (
     KafkaDesiredStateReader,
     KafkaDesiredStateWriter,
 )
+from tests.helpers.desired_state_consumer import (
+    FakeDesiredStateConsumer,
+    FakeRecord,
+    eof,
+    make_reader,
+    record,
+)
 from tests.helpers.hostile_wire import malformed_desired_records
 
 TOPIC = 'dummy_livedata_desired'
@@ -43,101 +50,9 @@ def desired(workflow_id: WorkflowId) -> DesiredWorkflow:
     )
 
 
-class _Msg:
-    def __init__(
-        self,
-        key: bytes | None = None,
-        value: bytes | None = None,
-        *,
-        offset: int = 0,
-        error: KafkaError | None = None,
-    ) -> None:
-        self._key = key
-        self._value = value
-        self._offset = offset
-        self._error = error
-
-    def key(self) -> bytes | None:
-        return self._key
-
-    def value(self) -> bytes | None:
-        return self._value
-
-    def offset(self) -> int:
-        return self._offset
-
-    def error(self) -> KafkaError | None:
-        return self._error
-
-
-def record(workflow_id: WorkflowId, value: DesiredWorkflow | None) -> _Msg:
-    return _Msg(*encode_desired_record(workflow_id, value))
-
-
-def eof() -> _Msg:
-    return _Msg(error=KafkaError(KafkaError._PARTITION_EOF))
-
-
-class _Partition:
-    pass
-
-
-class _TopicMetadata:
-    def __init__(self, partitions: int) -> None:
-        self.partitions = {p: _Partition() for p in range(partitions)}
-
-
-class _ClusterMetadata:
-    def __init__(self, topics: dict[str, int]) -> None:
-        self.topics = {name: _TopicMetadata(n) for name, n in topics.items()}
-
-
-class FakeConsumer:
-    """Serves scripted ``consume`` batches; an exhausted script means no data."""
-
-    def __init__(self, config: dict[str, Any], topics: dict[str, int]) -> None:
-        self.config = config
-        self.batches: list[list[_Msg]] = []
-        self.assignments: list[list] = []
-        self.closed = False
-        self._topics = topics
-
-    def list_topics(self, timeout: float | None = None) -> _ClusterMetadata:
-        return _ClusterMetadata(self._topics)
-
-    def assign(self, partitions: list) -> None:
-        self.assignments.append(partitions)
-
-    def consume(self, num_messages: int, timeout: float) -> list[_Msg]:
-        if self.batches:
-            return self.batches.pop(0)
-        time.sleep(timeout)
-        return []
-
-    def close(self) -> None:
-        self.closed = True
-
-
-def make_reader(
-    topics: dict[str, int] | None = None,
-) -> tuple[KafkaDesiredStateReader, FakeConsumer]:
-    consumers: list[FakeConsumer] = []
-
-    def factory(config: dict[str, Any]) -> FakeConsumer:
-        consumers.append(FakeConsumer(config, {TOPIC: 1} if topics is None else topics))
-        return consumers[0]
-
-    reader = KafkaDesiredStateReader(
-        kafka_config={'bootstrap.servers': 'test'},
-        topic=TOPIC,
-        consumer_factory=factory,
-    )
-    return reader, consumers[0]
-
-
 class TestKafkaDesiredStateReader:
     def test_assigns_partition_zero_from_beginning_without_commits(self) -> None:
-        _, consumer = make_reader()
+        _, consumer = make_reader(TOPIC)
         [[partition]] = consumer.assignments
         assert (partition.topic, partition.partition) == (TOPIC, 0)
         assert partition.offset == OFFSET_BEGINNING
@@ -146,15 +61,15 @@ class TestKafkaDesiredStateReader:
         assert consumer.config['bootstrap.servers'] == 'test'
 
     def test_group_id_is_unique_per_reader(self) -> None:
-        _, first = make_reader()
-        _, second = make_reader()
+        _, first = make_reader(TOPIC)
+        _, second = make_reader(TOPIC)
         assert first.config['group.id'] != second.config['group.id']
 
     def test_missing_topic_raises_and_closes_consumer(self) -> None:
-        consumers: list[FakeConsumer] = []
+        consumers: list[FakeDesiredStateConsumer] = []
 
-        def factory(config: dict[str, Any]) -> FakeConsumer:
-            consumers.append(FakeConsumer(config, {}))
+        def factory(config: dict[str, Any]) -> FakeDesiredStateConsumer:
+            consumers.append(FakeDesiredStateConsumer(config, {}))
             return consumers[0]
 
         with pytest.raises(ValueError, match='not found'):
@@ -165,58 +80,58 @@ class TestKafkaDesiredStateReader:
 
     def test_topic_with_several_partitions_raises(self) -> None:
         with pytest.raises(ValueError, match='1 partition'):
-            make_reader({TOPIC: 3})
+            make_reader(TOPIC, {TOPIC: 3})
 
     def test_bootstrap_of_empty_topic_returns_at_eof(self) -> None:
-        reader, consumer = make_reader()
+        reader, consumer = make_reader(TOPIC)
         consumer.batches = [[eof()]]
         assert reader.bootstrap(timeout_s=5.0) == []
 
     def test_bootstrap_returns_records_up_to_eof(self) -> None:
-        reader, consumer = make_reader()
+        reader, consumer = make_reader(TOPIC)
         a, b = desired(WF_A), desired(WF_B)
         consumer.batches = [[record(WF_A, a)], [], [record(WF_B, b), eof()]]
         assert reader.bootstrap(timeout_s=5.0) == [(WF_A, a), (WF_B, b)]
 
     def test_bootstrap_keeps_tombstones(self) -> None:
-        reader, consumer = make_reader()
+        reader, consumer = make_reader(TOPIC)
         consumer.batches = [[record(WF_A, desired(WF_A)), record(WF_A, None), eof()]]
         updates = reader.bootstrap(timeout_s=5.0)
         assert updates[-1] == (WF_A, None)
 
     def test_bootstrap_raises_if_eof_is_not_reached_in_time(self) -> None:
-        reader, consumer = make_reader()
+        reader, consumer = make_reader(TOPIC)
         consumer.batches = [[record(WF_A, desired(WF_A))]]
         with pytest.raises(TimeoutError, match=TOPIC):
             reader.bootstrap(timeout_s=0.05)
 
     def test_bootstrap_waits_through_transient_consumer_error(self) -> None:
-        reader, consumer = make_reader()
+        reader, consumer = make_reader(TOPIC)
         a = desired(WF_A)
-        transient = _Msg(error=KafkaError(KafkaError._TRANSPORT))
+        transient = FakeRecord(error=KafkaError(KafkaError._TRANSPORT))
         consumer.batches = [[transient], [record(WF_A, a), eof()]]
         assert reader.bootstrap(timeout_s=5.0) == [(WF_A, a)]
 
     def test_fatal_consumer_error_raises(self) -> None:
-        reader, consumer = make_reader()
-        fatal = _Msg(error=KafkaError(KafkaError.TOPIC_AUTHORIZATION_FAILED))
+        reader, consumer = make_reader(TOPIC)
+        fatal = FakeRecord(error=KafkaError(KafkaError.TOPIC_AUTHORIZATION_FAILED))
         consumer.batches = [[fatal]]
         with pytest.raises(KafkaException):
             reader.bootstrap(timeout_s=5.0)
 
     def test_undecodable_records_are_skipped_and_counted(self) -> None:
-        reader, consumer = make_reader()
+        reader, consumer = make_reader(TOPIC)
         malformed = malformed_desired_records('dummy')
         a = desired(WF_A)
         consumer.batches = [
-            [_Msg(key, value) for key, value in malformed.values()]
+            [FakeRecord(key, value) for key, value in malformed.values()]
             + [record(WF_A, a), eof()]
         ]
         assert reader.bootstrap(timeout_s=5.0) == [(WF_A, a)]
         assert reader.undecodable_records == len(malformed)
 
     def test_poll_returns_records_since_bootstrap_without_blocking(self) -> None:
-        reader, consumer = make_reader()
+        reader, consumer = make_reader(TOPIC)
         consumer.batches = [[eof()]]
         reader.bootstrap(timeout_s=5.0)
         b = desired(WF_B)
@@ -227,12 +142,12 @@ class TestKafkaDesiredStateReader:
         assert time.monotonic() - start < 0.1
 
     def test_poll_reports_consumer_error_as_no_updates(self) -> None:
-        reader, consumer = make_reader()
-        consumer.batches = [[_Msg(error=KafkaError(KafkaError._TRANSPORT))]]
+        reader, consumer = make_reader(TOPIC)
+        consumer.batches = [[FakeRecord(error=KafkaError(KafkaError._TRANSPORT))]]
         assert reader.poll() == []
 
     def test_close_closes_consumer(self) -> None:
-        reader, consumer = make_reader()
+        reader, consumer = make_reader(TOPIC)
         with reader:
             pass
         assert consumer.closed
