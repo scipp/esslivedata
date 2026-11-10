@@ -42,6 +42,10 @@ in bytes by ``queued.max.messages.kbytes``, so large payloads hit that bound
 before this one. ``consumer_lag`` in ``dashboard_ingest_metrics`` covers both.
 """
 
+# The write blocks the IOLoop thread shared by all sessions, so the timeout
+# bounds how long a broker outage freezes the UI.
+_DESIRED_STATE_WRITE_TIMEOUT_S = 3.0
+
 
 def _total_lag(source: KafkaMessageSource) -> int | None:
     lag = source.get_consumer_lag()
@@ -104,7 +108,9 @@ class DashboardKafkaTransport(Transport[DashboardResources]):
                 KafkaDesiredStateReader(kafka_config=kafka_config, topic=desired_topic)
             )
             desired_state_writer = KafkaDesiredStateWriter(
-                kafka_config=kafka_config, topic=desired_topic
+                kafka_config=kafka_config,
+                topic=desired_topic,
+                timeout_s=_DESIRED_STATE_WRITE_TIMEOUT_S,
             )
 
             # Create ROI sink

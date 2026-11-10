@@ -1526,9 +1526,7 @@ class WorkflowStatusListWidget:
             icon_name='trash',
             button_color=ButtonStyles.DANGER_RED,
             hover_color=ButtonStyles.DANGER_HOVER,
-            on_click_callback=lambda: self._orchestrator.remove_unknown_workflow(
-                workflow_id
-            ),
+            on_click_callback=lambda: self._confirm_remove_unknown(workflow_id),
             css_classes=[
                 'lt-unknown-wf',
                 f'lt-unknown-wf-{workflow_id.name}-v{workflow_id.version}',
@@ -1548,6 +1546,23 @@ class WorkflowStatusListWidget:
                 'align-items': 'center',
             },
         )
+
+    def _confirm_remove_unknown(self, workflow_id: WorkflowId) -> None:
+        """Open a confirmation modal; on confirm, tombstone the entry."""
+        modal = ConfirmationModal(
+            title='Remove desired workflow',
+            message=(
+                f'Removing <code>{html.escape(str(workflow_id))}</code> stops its '
+                'jobs on any backend worker whose workflow registry still '
+                'contains it. Proceed?'
+            ),
+            on_confirm=lambda: self._orchestrator.remove_unknown_workflow(workflow_id),
+            confirm_label='Remove',
+            confirm_css_classes=['lt-confirm-proceed'],
+            on_close=lambda: self._modal_container.remove(modal.modal),
+        )
+        self._modal_container.append(modal.modal)
+        modal.show()
 
     def _show_derived_devices(self) -> None:
         """Mount (once) and open the derived-devices overview modal."""

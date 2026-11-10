@@ -1240,6 +1240,8 @@ class TestWorkflowStatusListWidget:
         assert widget._status_badge.object != badge_after_active
 
 
+# Opening or closing a pn.Modal outside a Bokeh server warns; irrelevant here.
+@pytest.mark.filterwarnings('ignore::panel.util.warnings.PanelUserWarning')
 class TestUnknownEntries:
     """Desired-state entries of workflows outside the registry."""
 
@@ -1261,12 +1263,23 @@ class TestUnknownEntries:
         return widget
 
     @staticmethod
-    def _remove_buttons(list_widget) -> list[pn.widgets.Button]:
+    def _buttons(list_widget, css_class: str) -> list[pn.widgets.Button]:
         return [
             b
             for b in list_widget.panel().select(pn.widgets.Button)
-            if 'lt-unknown-wf-gone-v2' in b.css_classes
+            if css_class in b.css_classes
         ]
+
+    def _remove_buttons(self, list_widget) -> list[pn.widgets.Button]:
+        return self._buttons(list_widget, 'lt-unknown-wf-gone-v2')
+
+    @pytest.fixture
+    def clicked_remove(self, list_widget, job_orchestrator, unknown):
+        job_orchestrator.apply_desired_updates([(unknown.workflow_id, unknown)])
+        list_widget._refresh_all()
+        (button,) = self._remove_buttons(list_widget)
+        button.clicks += 1
+        return list_widget
 
     def test_entry_is_listed_with_remove_action(
         self, list_widget, job_orchestrator, unknown
@@ -1279,15 +1292,29 @@ class TestUnknownEntries:
         assert len(self._remove_buttons(list_widget)) == 1
         assert not list_widget._has_pending_work()
 
-    def test_remove_writes_tombstone_and_unlists_entry(
-        self, list_widget, job_orchestrator, desired_state, unknown
-    ):
-        job_orchestrator.apply_desired_updates([(unknown.workflow_id, unknown)])
-        list_widget._refresh_all()
+    def test_remove_click_asks_for_confirmation(self, clicked_remove, desired_state):
+        clicked_remove._refresh_all()
 
-        (button,) = self._remove_buttons(list_widget)
-        button.clicks += 1
-        list_widget._refresh_all()
+        assert desired_state.read(0) == []
+        assert len(self._buttons(clicked_remove, 'lt-confirm-proceed')) == 1
+        assert len(self._remove_buttons(clicked_remove)) == 1
+
+    def test_confirm_writes_tombstone_and_unlists_entry(
+        self, clicked_remove, desired_state, unknown
+    ):
+        (confirm,) = self._buttons(clicked_remove, 'lt-confirm-proceed')
+        confirm.clicks += 1
+        clicked_remove._refresh_all()
 
         assert desired_state.read(0) == [(unknown.workflow_id, None)]
-        assert self._remove_buttons(list_widget) == []
+        assert self._remove_buttons(clicked_remove) == []
+        assert self._buttons(clicked_remove, 'lt-confirm-proceed') == []
+
+    def test_cancel_writes_nothing_and_keeps_entry(self, clicked_remove, desired_state):
+        (cancel,) = self._buttons(clicked_remove, 'lt-confirm-cancel')
+        cancel.clicks += 1
+        clicked_remove._refresh_all()
+
+        assert desired_state.read(0) == []
+        assert len(self._remove_buttons(clicked_remove)) == 1
+        assert self._buttons(clicked_remove, 'lt-confirm-cancel') == []
