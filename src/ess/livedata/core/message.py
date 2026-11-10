@@ -22,6 +22,7 @@ class StreamKind(StrEnum):
     LIVEDATA_COMMANDS = "livedata_commands"
     LIVEDATA_RESPONSES = "livedata_responses"
     LIVEDATA_DATA = "livedata_data"
+    LIVEDATA_DESIRED = "livedata_desired"
     LIVEDATA_NICOS_DATA = "livedata_nicos_data"
     LIVEDATA_CONTEXT = "livedata_context"
     LIVEDATA_ROI = "livedata_roi"

@@ -155,10 +155,7 @@ class JobStatusToX5f2Serializer(_TopicResolvingSerializer[JobStatus]):
 
 
 class CommandSerializer(_TopicResolvingSerializer[Command]):
-    """
-    Serializes :class:`Command` messages (discriminated union of
-    :class:`WorkflowConfig` and :class:`JobCommand`) for the commands topic.
-    """
+    """Serializes :class:`Command` messages for the commands topic."""
 
     def _encode(self, message: Message[Command]) -> tuple[None, bytes]:
         return None, message.value.model_dump_json().encode('utf-8')

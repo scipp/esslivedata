@@ -4,24 +4,17 @@ import uuid
 
 import pytest
 
-from ess.livedata.config.workflow_spec import JobId, WorkflowConfig, WorkflowId
+from ess.livedata.config.workflow_spec import JobId
 from ess.livedata.core.job_manager import JobAction, JobCommand
 from ess.livedata.core.message import COMMANDS_STREAM_ID
 from ess.livedata.dashboard.command_service import CommandService
 from ess.livedata.fakes import FakeMessageSink
 
 
-def _workflow_config(source: str = "src") -> WorkflowConfig:
-    return WorkflowConfig(
-        identifier=WorkflowId(instrument="dummy", name="wf", version=1),
-        job_id=JobId(source_name=source, job_number=uuid.uuid4()),
-    )
-
-
 def _job_command(source: str = "src") -> JobCommand:
     return JobCommand(
         job_id=JobId(source_name=source, job_number=uuid.uuid4()),
-        action=JobAction.stop,
+        action=JobAction.reset,
     )
 
 
@@ -39,7 +32,7 @@ class TestCommandService:
     def test_send_single_command(
         self, command_service: CommandService, fake_sink: FakeMessageSink
     ):
-        config = _workflow_config()
+        config = _job_command()
         command_service.send(config)
 
         assert len(fake_sink.published_messages) == 1
@@ -52,7 +45,7 @@ class TestCommandService:
     def test_send_batch(
         self, command_service: CommandService, fake_sink: FakeMessageSink
     ):
-        commands = [_workflow_config("a"), _job_command("b"), _workflow_config("c")]
+        commands = [_job_command("a"), _job_command("b"), _job_command("c")]
         command_service.send_batch(commands)
 
         assert len(fake_sink.published_messages) == 1
@@ -71,7 +64,7 @@ class TestCommandService:
     def test_multiple_sends_create_multiple_batches(
         self, command_service: CommandService, fake_sink: FakeMessageSink
     ):
-        command_service.send(_workflow_config("a"))
+        command_service.send(_job_command("a"))
         command_service.send(_job_command("b"))
 
         assert len(fake_sink.published_messages) == 2

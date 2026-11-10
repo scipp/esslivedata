@@ -21,12 +21,8 @@ import scipp as sc
 from confluent_kafka import KafkaError, KafkaException
 from streaming_data_types import dataarray_da00
 
-from ess.livedata.config.workflow_spec import (
-    JobId,
-    WorkflowConfig,
-    WorkflowId,
-)
-from ess.livedata.core.job_manager import Command
+from ess.livedata.config.workflow_spec import JobId
+from ess.livedata.core.job_manager import Command, JobAction, JobCommand
 from ess.livedata.core.message import (
     COMMANDS_STREAM_ID,
     Message,
@@ -136,8 +132,8 @@ def _command_message() -> Message[Command]:
     return Message(
         timestamp=Timestamp.from_ns(0),
         stream=COMMANDS_STREAM_ID,
-        value=WorkflowConfig(
-            identifier=WorkflowId(instrument='dummy', name='wf', version=1),
+        value=JobCommand(
+            action=JobAction.reset,
             job_id=JobId(source_name='detector_1', job_number=uuid.uuid4()),
         ),
     )
@@ -174,7 +170,7 @@ class TestPublish:
         assert call['topic'] == f'{INSTRUMENT}_livedata_commands'
         assert call['key'] is None
         decoded = json.loads(call['value'].decode('utf-8'))
-        assert decoded['kind'] == 'workflow_config'
+        assert decoded['kind'] == 'job_command'
 
     def test_publishes_each_message_once(
         self, sink_factory, producer: _FakeProducer

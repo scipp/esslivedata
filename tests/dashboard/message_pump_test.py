@@ -6,7 +6,19 @@ from contextlib import contextmanager
 import pytest
 import scipp as sc
 
-from ess.livedata.config.workflow_spec import JobId, ResultKey, WorkflowId
+from ess.livedata.config.workflow_spec import (
+    REDUCTION,
+    JobId,
+    ResultKey,
+    WorkflowId,
+    WorkflowSpec,
+)
+from ess.livedata.core.desired_state import (
+    DesiredJob,
+    DesiredUpdate,
+    DesiredWorkflow,
+    InMemoryDesiredStateLog,
+)
 from ess.livedata.core.message import (
     RESPONSES_STREAM_ID,
     STATUS_STREAM_ID,
@@ -15,11 +27,14 @@ from ess.livedata.core.message import (
     StreamKind,
 )
 from ess.livedata.dashboard.active_job_registry import ActiveJobRegistry
+from ess.livedata.dashboard.command_service import CommandService
 from ess.livedata.dashboard.data_service import DataService, DataServiceSubscriber
 from ess.livedata.dashboard.extractors import LatestValueExtractor
+from ess.livedata.dashboard.job_orchestrator import JobOrchestrator
 from ess.livedata.dashboard.job_service import JobService
 from ess.livedata.dashboard.message_pump import MessagePump
 from ess.livedata.dashboard.service_registry import ServiceRegistry
+from ess.livedata.fakes import FakeMessageSink
 
 
 def make_job_number() -> uuid.UUID:
@@ -41,7 +56,11 @@ class FakeJobOrchestrator:
 
     def __init__(self, known_workflows: set[WorkflowId] | None = None):
         self.acknowledgements: list[tuple[str, str, str | None]] = []
+        self.desired_updates: list[DesiredUpdate] = []
         self._known_workflows = known_workflows
+
+    def apply_desired_updates(self, updates: list[DesiredUpdate]) -> None:
+        self.desired_updates.extend(updates)
 
     def process_acknowledgement(
         self, message_id: str, response: str, error_message: str | None = None
@@ -75,9 +94,11 @@ def _make_message_pump(
     service_registry=None,
     job_orchestrator=None,
     active_job_registry=None,
+    desired_state=None,
 ) -> MessagePump:
     return MessagePump(
         message_source=message_source,
+        desired_state=desired_state or InMemoryDesiredStateLog().reader(),
         data_service=data_service,
         job_service=job_service,
         service_registry=service_registry or ServiceRegistry(),
@@ -658,8 +679,9 @@ class TestMessagePumpGenerationFiltering:
         assert result_key.data_key not in data_service
 
     def test_accepts_job_status_for_any_generation_of_known_workflow(self) -> None:
-        """Heartbeats are the observation feed for adoption (ADR 0008): they
-        are admitted per known workflow, regardless of job_number."""
+        """Heartbeats are the observed state, which includes jobs no longer
+        desired: they are admitted per known workflow, regardless of
+        job_number."""
         from ess.livedata.core.job import JobState, JobStatus
 
         old_number = make_job_number()
@@ -700,53 +722,73 @@ class TestMessagePumpGenerationFiltering:
 
         assert len(job_service.job_statuses) == 0
 
-    def test_ack_activating_job_admits_data_from_same_batch(self) -> None:
-        """Control messages are handled before data messages in a batch: an
-        ack that activates a job must admit that job's data even when the
-        data message precedes the ack in consumption order."""
-        from ess.livedata.config.acknowledgement import (
-            AcknowledgementResponse,
-            CommandAcknowledgement,
+    def test_record_from_another_writer_admits_data_from_same_batch(self) -> None:
+        """Desired-state records are applied before messages: a generation
+        another writer just committed admits the same pass's data."""
+        workflow_id = WorkflowId(instrument="test", name="wf", version=1)
+        spec = WorkflowSpec(
+            instrument="test",
+            name="wf",
+            version=1,
+            title="Workflow",
+            description="",
+            source_names=["det1"],
+            group=REDUCTION,
         )
-
         source = FakeMessageSource()
         data_service = DataService()
         job_service = JobService()
         registry = ActiveJobRegistry(data_service=data_service, job_service=job_service)
-        job_number = make_job_number()
-
-        workflow_id = WorkflowId(instrument="test", name="wf", version=1)
-
-        class ActivatingJobOrchestrator:
-            def process_acknowledgement(
-                self, message_id: str, response: str, error_message: str | None = None
-            ) -> None:
-                registry.begin_generation(workflow_id, job_number, config={})
-
+        log = InMemoryDesiredStateLog()
+        orchestrator = JobOrchestrator(
+            command_service=CommandService(sink=FakeMessageSink()),
+            desired_state=log,
+            workflow_registry={workflow_id: spec},
+            active_job_registry=registry,
+        )
         message_pump = _make_message_pump(
             message_source=source,
             data_service=data_service,
             job_service=job_service,
-            job_orchestrator=ActivatingJobOrchestrator(),
+            job_orchestrator=orchestrator,
             active_job_registry=registry,
+            desired_state=log.reader(),
         )
-
+        desired = DesiredWorkflow(
+            workflow_id=workflow_id,
+            job_number=make_job_number(),
+            jobs={"det1": DesiredJob(params={}, aux_source_names={})},
+        )
+        log.write(workflow_id, desired)
         result_key = ResultKey(
             workflow_id=workflow_id,
-            job_id=JobId(source_name="det1", job_number=job_number),
+            job_id=JobId(source_name="det1", job_number=desired.job_number),
             output_name="result",
         )
-        data = sc.DataArray(sc.array(dims=['x'], values=[1, 2]))
-        source.add_message(result_key.model_dump_json(), data)
-        source.add_config_message(
-            CommandAcknowledgement(
-                message_id="m1", device="det1", response=AcknowledgementResponse.ACK
-            )
+        source.add_message(
+            result_key.model_dump_json(), sc.DataArray(sc.array(dims=['x'], values=[1]))
         )
 
         message_pump.update()
 
         assert result_key.data_key in data_service
+
+    def test_desired_records_alone_count_as_consumed(self) -> None:
+        """Records change shared state, so sessions must be woken for them."""
+        log = InMemoryDesiredStateLog()
+        orchestrator = FakeJobOrchestrator()
+        message_pump = _make_message_pump(
+            message_source=FakeMessageSource(),
+            data_service=DataService(),
+            job_service=JobService(),
+            job_orchestrator=orchestrator,
+            desired_state=log.reader(),
+        )
+        workflow_id = WorkflowId(instrument="test", name="wf", version=1)
+        log.write(workflow_id, None)
+
+        assert message_pump.update() == 1
+        assert orchestrator.desired_updates == [(workflow_id, None)]
 
 
 def _data_stream_id(key: ResultKey) -> StreamId:

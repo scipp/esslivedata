@@ -110,7 +110,7 @@ class DashboardBase(ServiceBase, ABC):
         if auto_start and transport != 'fake':
             raise ValueError(
                 "auto_start requires transport='fake'; with other transports it "
-                "would issue real start commands (or stay PENDING with no backend)."
+                "would start real jobs (or stay PENDING with no backend)."
             )
         name = f'{instrument}_{dashboard_name}'
         super().__init__(name=name, log_level=log_level)

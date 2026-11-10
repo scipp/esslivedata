@@ -9,6 +9,7 @@ def infra_kwargs() -> dict:
     return {
         "livedata_commands_topic": "cmd",
         "livedata_data_topic": "data",
+        "livedata_desired_topic": "desired",
         "livedata_responses_topic": "resp",
         "livedata_context_topic": "context",
         "livedata_roi_topic": "roi",

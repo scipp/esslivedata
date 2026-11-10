@@ -8,6 +8,7 @@ import structlog
 
 from ..config.acknowledgement import CommandAcknowledgement
 from ..config.workflow_spec import ResultKey
+from ..core.desired_state import DesiredStateReader
 from ..core.job import JobStatus, ServiceStatus
 from ..core.message import (
     RESPONSES_STREAM_ID,
@@ -32,12 +33,14 @@ class MessagePump:
     This class consumes messages from a message source and forwards them to a data
     forwarder, which caches them in a local data service. A transaction mechanism
     isolates the potentially frequent updates from Kafka, ensuring that the GUI
-    receives a consistent and current view of the data.
+    receives a consistent and current view of the data. New records of the
+    desired-state topic are applied to the JobOrchestrator on the same pass.
     """
 
     def __init__(
         self,
         message_source: MessageSource,
+        desired_state: DesiredStateReader,
         data_service: DataService,
         job_service: JobService,
         service_registry: ServiceRegistry,
@@ -45,6 +48,7 @@ class MessagePump:
         active_job_registry: ActiveJobRegistry,
     ) -> None:
         self._message_source = message_source
+        self._desired_state = desired_state
         self._data_service = data_service
         self._job_service = job_service
         self._service_registry = service_registry
@@ -59,26 +63,29 @@ class MessagePump:
         Returns
         -------
         :
-            Number of messages consumed. Non-zero means shared state may have
-            changed and sessions are worth waking.
+            Number of messages and desired-state records consumed. Non-zero
+            means shared state may have changed and sessions are worth waking.
         """
+        desired_updates = self._desired_state.poll()
         messages = self._message_source.get_messages()
         self._logger.debug("Consumed %d messages", len(messages))
 
-        if not messages:
+        if not messages and not desired_updates:
             return 0
 
         # The ingestion guard serializes message processing against generation
         # flips in ActiveJobRegistry.begin_generation() (called from the UI
-        # thread at commit). Without this, a flip could clear DataService
-        # buffers mid-batch, leaving a mix of old- and new-generation data.
+        # thread at commit, and below for records read back). Without this, a
+        # flip could clear DataService buffers mid-batch, leaving a mix of old-
+        # and new-generation data.
         #
         # Control messages (status, command acks) never touch DataService, so
         # they are handled outside the transaction: the transaction holds the
         # DataService lock for its duration, and JobService/ServiceRegistry
-        # callbacks must not run under it. Handling them first also lets an
-        # ack that activates a job admit the same batch's data for that job
-        # instead of dropping it at the active filter.
+        # updates must not run under it.
+        #
+        # Desired-state records go first, so a generation another writer just
+        # committed admits the same batch's data.
         #
         # Data updates are batched in a transaction so a pull observes the
         # whole batch atomically and subscribers get one notification per
@@ -88,12 +95,13 @@ class MessagePump:
         #   should trigger an update.
         control_streams = (STATUS_STREAM_ID, RESPONSES_STREAM_ID)
         with self._active_job_registry.ingestion_guard():
+            self._job_orchestrator.apply_desired_updates(desired_updates)
             self._forward_messages([m for m in messages if m.stream in control_streams])
             with self._data_service.transaction():
                 self._forward_messages(
                     [m for m in messages if m.stream not in control_streams]
                 )
-        return len(messages)
+        return len(messages) + len(desired_updates)
 
     def _forward_messages(self, messages: list[Message[Any]]) -> None:
         for message in messages:
@@ -116,10 +124,9 @@ class MessagePump:
         Data messages are admitted only if their wire job_number is the
         workflow's current generation (:class:`ActiveJobRegistry`); stale or
         unknown generations are counted and dropped. Job status messages are
-        admitted for any known workflow: they are the observation feed for
-        job adoption and desired/observed reconciliation (ADR 0008), so
-        unknown job_numbers must reach the JobOrchestrator instead of being
-        filtered here.
+        admitted for any job of a known workflow: they are the observed
+        state the status display compares with the desired state, which
+        includes jobs no longer desired but still running.
 
         Parameters
         ----------

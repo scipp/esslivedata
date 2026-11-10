@@ -736,50 +736,20 @@ class JobSchedule:
 
 class WorkflowConfig(BaseModel):
     """
-    Model for workflow configuration.
+    Build configuration of one job: workflow, job identity, and parameter values.
 
-    This model is used to set the parameter values for a specific workflow. The values
-    correspond to the parameters defined in the workflow specification
-    :py:class:`WorkflowSpec`.
-
-    Note on message_id vs job_number
-    --------------------------------
-    These two identifiers serve fundamentally different purposes:
-
-    - ``message_id``: Transient identifier for command/response correlation
-      (ACK pattern). Frontend generates it, backend echoes it in
-      CommandAcknowledgement. Discarded once ACK is received. Used only for
-      the request/response handshake.
-
-    - ``job_number``: Persistent job identity for the entire job lifecycle.
-      Used in JobId for result routing, job commands (stop/reset), and data
-      correlation.
-
-    This message conflates "configure" and "start" into a single command, so both
-    fields are present. Splitting them was considered and dropped: it would let several
-    clients start independent jobs from one shared configuration, and there is only one
-    client that starts jobs. NICOS consumes contracted outputs and resets them, keyed by
-    ``WorkflowId`` (ADR 0006); it does not configure or start.
+    The values correspond to the parameters defined in the workflow specification
+    :py:class:`WorkflowSpec`. A worker creates one per job it builds from the
+    desired state (see :mod:`ess.livedata.core.desired_state`).
     """
 
-    kind: Literal['workflow_config'] = 'workflow_config'
     identifier: WorkflowId = Field(
         description="Hash of the workflow, used to identify the workflow."
     )
-    message_id: str = Field(
-        default_factory=lambda: str(uuid.uuid4()),
-        description=(
-            "Transient identifier for command/response correlation. An initiator that "
-            "tracks the reply sets this; one that does not may omit it, in which case "
-            "an id is generated for the ack it ignores. Distinct from job_id which "
-            "identifies the job itself."
-        ),
-    )
     job_id: JobId = Field(
         description=(
-            "Identity of the job this config starts. Carries both source_name and "
-            "job_number; used for result routing and job control commands. Distinct "
-            "from message_id which is only for command acknowledgement correlation."
+            "Identity of the job to build. Carries both source_name and "
+            "job_number; used for result routing and job control commands."
         ),
     )
     schedule: JobSchedule = Field(
@@ -802,7 +772,6 @@ class WorkflowConfig(BaseModel):
         cls,
         workflow_id: WorkflowId,
         job_id: JobId,
-        message_id: str | None = None,
         params: dict | None = None,
         aux_source_names: dict | None = None,
     ) -> WorkflowConfig:
@@ -814,10 +783,7 @@ class WorkflowConfig(BaseModel):
         workflow_id:
             Identifier for the workflow
         job_id:
-            Identity of the job this config starts.
-        message_id:
-            Message ID for command acknowledgement correlation. Omit to let an id
-            be generated for an ack the initiator does not consume.
+            Identity of the job to build.
         params:
             Workflow parameters as dict, or None if no params
         aux_source_names:
@@ -826,17 +792,14 @@ class WorkflowConfig(BaseModel):
         Returns
         -------
         :
-            WorkflowConfig instance ready to be sent to backend
+            WorkflowConfig instance
         """
-        fields: dict[str, Any] = {
-            "identifier": workflow_id,
-            "job_id": job_id,
-            "aux_source_names": aux_source_names or {},
-            "params": params or {},
-        }
-        if message_id is not None:
-            fields["message_id"] = message_id
-        return cls(**fields)
+        return cls(
+            identifier=workflow_id,
+            job_id=job_id,
+            aux_source_names=aux_source_names or {},
+            params=params or {},
+        )
 
 
 _CORRELATABLE = (Temporality.window, Temporality.series)

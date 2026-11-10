@@ -3,13 +3,13 @@
 from __future__ import annotations
 
 import time
-from collections.abc import Callable
+from collections.abc import Collection
 from uuid import UUID
 
 import structlog
 
-from ess.livedata.config.workflow_spec import JobId, WorkflowId
-from ess.livedata.core.job import JobState, JobStatus
+from ess.livedata.config.workflow_spec import JobId
+from ess.livedata.core.job import JobStatus
 
 logger = structlog.get_logger(__name__)
 
@@ -26,7 +26,6 @@ class JobService:
         self._job_statuses: dict[JobId, JobStatus] = {}
         self._job_status_timestamps: dict[JobId, int] = {}
         self._heartbeat_timeout_ns = heartbeat_timeout_ns
-        self._on_status_updated: Callable[[JobStatus], None] | None = None
         self._version = 0
 
     @property
@@ -39,14 +38,6 @@ class JobService:
         still reaches the browser promptly.
         """
         return self._version
-
-    @property
-    def on_status_updated(self) -> Callable[[JobStatus], None] | None:
-        return self._on_status_updated
-
-    @on_status_updated.setter
-    def on_status_updated(self, callback: Callable[[JobStatus], None]) -> None:
-        self._on_status_updated = callback
 
     @property
     def job_statuses(self) -> dict[JobId, JobStatus]:
@@ -64,22 +55,6 @@ class JobService:
         self._job_statuses[job_status.job_id] = job_status
         self._job_status_timestamps[job_status.job_id] = time.time_ns()
         self._version += 1
-        if self._on_status_updated is not None:
-            self._on_status_updated(job_status)
-
-    def fresh_running_job_ids(self, workflow_id: WorkflowId) -> list[JobId]:
-        """Job ids of the workflow with a fresh, non-stopped observed status.
-
-        Iterates a snapshot: callers run on the UI or update thread while
-        ``status_updated`` inserts from the ingestion thread.
-        """
-        return [
-            job_id
-            for job_id, status in self.job_statuses.items()
-            if status.workflow_id == workflow_id
-            and status.state != JobState.stopped
-            and not self.is_status_stale(job_id)
-        ]
 
     def is_status_stale(self, job_id: JobId) -> bool:
         """Check if a job's status is stale (no recent heartbeat).
@@ -103,16 +78,26 @@ class JobService:
 
         return age_ns > self._heartbeat_timeout_ns
 
-    def prune_stale(self) -> None:
+    def prune_stale(self, keep: Collection[JobId]) -> None:
         """Drop statuses whose heartbeat aged past the staleness window.
 
         A job that stopped heartbeating (worker gone, job long stopped) is no
         longer observed; keeping its last status would otherwise accumulate
-        entries forever now that heartbeats are admitted per workflow rather
-        than per known job_number. A revived job re-adds itself with its next
+        entries forever, since heartbeats are admitted per workflow rather than
+        per known job_number. A revived job re-adds itself with its next
         heartbeat.
+
+        Parameters
+        ----------
+        keep:
+            Jobs whose stale status is kept, so that a desired job whose
+            worker went down shows as such rather than as never observed.
         """
-        stale = [jid for jid in self._job_statuses if self.is_status_stale(jid)]
+        stale = [
+            jid
+            for jid in self._job_statuses
+            if jid not in keep and self.is_status_stale(jid)
+        ]
         for jid in stale:
             logger.debug("Pruning stale job status %s", jid)
             self._job_statuses.pop(jid, None)

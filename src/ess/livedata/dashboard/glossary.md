@@ -19,16 +19,23 @@ the disambiguation of overloaded words live in `src/ess/livedata/glossary.md`.
   (`dashboard/stream_manager.py`).
 - **MessagePump** — the dashboard's Kafka-to-DataService message pump
   (`dashboard/message_pump.py`): pulls from the transport's MessageSource,
-  filters by active generation, writes into DataService, routes status and
+  folds new desired-state records into JobOrchestrator, filters by active
+  generation, writes into DataService, routes status and reset
   acknowledgements. Distinct from JobOrchestrator and PlotOrchestrator.
 
 ### Job and workflow lifecycle
 
 - **JobOrchestrator** — owns the two-phase workflow lifecycle
-  (stage → commit → stop): a commit mints one job number, starts the set of
-  per-source jobs sharing it, publishes the commands, and tracks
-  acknowledgements until confirmed or timed out
-  (`dashboard/job_orchestrator.py`).
+  (stage → commit → stop): a commit mints one job number and writes one
+  `DesiredWorkflow` record for the per-source jobs sharing it; a stop writes a
+  tombstone. Either takes effect only once the writer confirms the record is
+  stored. The current generation of each workflow is derived from the desired
+  table, so records from other dashboards are followed and nothing is
+  re-published (`dashboard/job_orchestrator.py`).
+- **Unknown entry** — a desired-table record whose workflow is not in this
+  dashboard's workflow registry (e.g. renamed or removed). Listed in the
+  Workflows tab with a remove action that writes a tombstone; the dashboard
+  never removes one by itself.
 - **JobService** — read model of the latest `JobStatus` per JobId, with
   heartbeat staleness detection (`dashboard/job_service.py`).
 - **ActiveJobRegistry** — thread-safe record of each workflow's current
@@ -36,8 +43,12 @@ the disambiguation of overloaded words live in `src/ess/livedata/glossary.md`.
   (`dashboard/active_job_registry.py`).
 - **WorkflowController** — thin interface between widgets and JobOrchestrator
   (`dashboard/workflow_controller.py`).
-- **Adoption** — deriving the currently-running generation from live heartbeats
-  instead of persisted job identity (ADR 0008).
+- **Job display state** — what the workflow status widget shows per job,
+  projected from desired job, heartbeat and staleness by `project_job_states`
+  (`dashboard/widgets/workflow_status_widget.py`): PENDING (desired, no
+  heartbeat yet), BACKEND DOWN (desired, heartbeat stale or final `stopped`),
+  STOPPING (no longer desired, still heartbeating), otherwise the job's
+  reported state.
 - **ServiceRegistry** — backend worker health derived from heartbeats
   (`dashboard/service_registry.py`).
 

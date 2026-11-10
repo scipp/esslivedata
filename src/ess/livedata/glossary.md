@@ -22,8 +22,8 @@ The naming stack, from the Kafka wire inwards (see ADR 0004 and
   object (`config/instrument.py`) bundling detector/monitor names, streams,
   and the workflow factory. Registered in `config/instruments/`.
 - **Topic** — a Kafka topic name (plain `str` alias in `kafka/stream_mapping.py`).
-  The fixed per-instrument livedata topics (commands, data, responses, roi,
-  status) are declared in `LivedataTopics`.
+  The fixed per-instrument livedata topics (commands, context, data, desired,
+  responses, roi, status) are declared in `LivedataTopics`.
 - **Source name** — the producer-declared name inside a FlatBuffers message
   (EV44/F144 field). `(topic, source_name)` (`InputStreamKey`) is the raw Kafka
   identity of a message and exists only at the Kafka boundary.
@@ -52,9 +52,9 @@ The naming stack, from the Kafka wire inwards (see ADR 0004 and
 - **WorkflowSpec** — the declarative description of a workflow: title,
   source names, aux sources, parameter and output models
   (`config/workflow_spec.py`). Purely declarative; contains no runtime values.
-- **WorkflowConfig** — runtime parameter *values* for a spec, sent as a command
-  to start a job. Conflates "configure" and "start"; the split was considered
-  and dropped, see the `WorkflowConfig` docstring.
+- **WorkflowConfig** — build configuration of one job: workflow id, `JobId`
+  and runtime parameter *values* for a spec. In-process only; a worker creates
+  one per job from its `DesiredWorkflow` record.
 - **Job** — a running instance of a workflow, bound to a `JobId` and its input
   streams (`core/job.py`).
 - **JobNumber** — a `uuid.UUID` minted per commit; the persistent identity
@@ -63,6 +63,17 @@ The naming stack, from the Kafka wire inwards (see ADR 0004 and
 - **Generation** — the epoch defined by one commit's `job_number`: results
   stamped with an older job number belong to a previous generation and are
   filtered out; a new generation clears buffers (ADR 0007/0008).
+- **Desired state** — the jobs that should run, as opposed to the jobs that
+  run (*observed state*, from heartbeats). Kept on the compacted
+  `livedata_desired` topic, keyed by `WorkflowId`, one `DesiredWorkflow`
+  record (job number plus a `DesiredJob` per source) per workflow
+  (`core/desired_state.py`).
+- **Desired table** — `dict[WorkflowId, DesiredWorkflow]` obtained by reading
+  the desired-state topic from offset 0 and folding its records in order
+  (`fold_updates`).
+- **Tombstone** — a Kafka record with a null value. On a compacted topic it
+  removes its key; on the desired-state topic it removes the workflow from the
+  desired table, so none of its jobs should run.
 - **ResultKey** — wire key of one workflow output:
   `(workflow_id, job_id, output_name)`. Embeds the per-commit job number.
 - **DataKey** — stable identity `(workflow_id, source_name, output_name)`,
@@ -105,7 +116,8 @@ The naming stack, from the Kafka wire inwards (see ADR 0004 and
   (`core/message.py`), driving job schedule transitions.
 - **Heartbeat** — periodic (~2 s) status publication from each backend worker:
   a `ServiceStatus` envelope carrying per-job `JobStatus` entries
-  (`core/job.py`). The dashboard adopts running jobs from heartbeats (ADR 0008).
+  (`core/job.py`). Heartbeats are the observed state; the dashboard compares
+  them with the desired state (ADR 0012).
 
 ### Detector views
 
@@ -182,11 +194,15 @@ The naming stack, from the Kafka wire inwards (see ADR 0004 and
 - **JobManager** — owns all job records; schedules, activates, gates, and
   finishes jobs, fans data out, gathers results and statuses
   (`core/job_manager.py`).
-- **Command** — wire type of the `livedata_commands` topic: discriminated union
-  `WorkflowConfig | JobCommand` (`core/job_manager.py`). Dispatched by
-  `CommandDispatcher` (`core/command_dispatcher.py`).
-- **JobCommand** — control message for a running job:
-  `pause`/`resume`/`reset`/`stop` (pause/resume unimplemented).
+- **Command** — wire type of the `livedata_commands` topic: `JobCommand`
+  (`core/job_manager.py`). Dispatched by `CommandDispatcher`
+  (`core/command_dispatcher.py`). Starting and stopping jobs is not a command
+  but a change of the desired state.
+- **JobCommand** — imperative command for running jobs, selected by `JobId`,
+  by `WorkflowId`, or all: `reset` only.
+- **JobReconciler** — stops and builds a worker's jobs so they match the
+  desired table; a job that fails to build is *rejected* and reported with
+  state `error` (`core/job_reconciler.py`).
 - **JobSchedule** — optional start/end times (raw-data timestamps) governing
   activation and finish.
 - **JobState** — wire-facing per-job status enum: `scheduled`, `active`,
@@ -265,7 +281,7 @@ The naming stack, from the Kafka wire inwards (see ADR 0004 and
   what used to be called handlers. Still the standard word for UI/event
   callbacks (Panel/Bokeh event handlers, `SessionUpdater` custom/cleanup
   handlers, signal handlers) — don't reuse it for backend concepts.
-- **config** — spans `WorkflowConfig` (runtime start command), instrument
+- **config** — spans `WorkflowConfig` (per-job build configuration), instrument
   configuration (`Instrument`, YAML), and dashboard `ConfigStore` (UI
   persistence). Always qualify.
 - **state / status** — `JobState` (wire enum) vs `JobPhase` (internal lifecycle)

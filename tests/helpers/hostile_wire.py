@@ -20,9 +20,17 @@ Used by ``tests/kafka/adapter_robustness_test.py`` (adapter-level containment
 and timestamp-bound invariants) and
 ``tests/services/hostile_input_liveness_test.py`` (service-level liveness).
 Add new corruption modes here so both layers pick them up.
+
+:func:`malformed_desired_records` is the analogous corpus for the JSON records
+of the desired-state topic, used by ``tests/core/desired_state_test.py``,
+``tests/kafka/desired_state_test.py`` (Kafka reader) and
+``tests/services/hostile_desired_state_test.py`` (worker).
 """
 
 from __future__ import annotations
+
+import json
+import uuid
 
 import numpy as np
 from streaming_data_types import (
@@ -224,5 +232,44 @@ def malformed_corpus(source_name: str) -> dict[str, bytes]:
         'wrong_schema_f144': f144_log(source_name, timestamp_ns=REALISTIC_EPOCH_NS),
         'unmapped_source': ev44_events(
             'not_a_known_source', reference_time_ns=REALISTIC_EPOCH_NS
+        ),
+    }
+
+
+def malformed_desired_records(
+    instrument: str,
+) -> dict[str, tuple[bytes | None, bytes | None]]:
+    """Malformed desired-state records as Kafka ``(key, value)``, keyed by case id.
+
+    A record stays on the compacted topic, and is re-read at every start, until
+    its key is overwritten. Every entry must be skipped (logged and counted)
+    without affecting the records around it.
+    """
+    key = f'{instrument}/wf/1'.encode()
+    valid = {
+        'workflow_id': {'instrument': instrument, 'name': 'wf', 'version': 1},
+        'job_number': str(uuid.UUID(int=1)),
+        'jobs': {'det': {'params': {}, 'aux_source_names': {}}},
+    }
+
+    def value(**overrides: object) -> bytes:
+        return json.dumps({**valid, **overrides}).encode()
+
+    return {
+        'no_key': (None, value()),
+        'no_key_tombstone': (None, None),
+        'key_not_utf8': (b'\xff\xfe/wf/1', value()),
+        'key_two_parts': (f'{instrument}/wf'.encode(), value()),
+        'key_version_not_int': (f'{instrument}/wf/one'.encode(), None),
+        'value_garbage': (key, garbage_bytes()),
+        'value_empty': (key, b''),
+        'value_truncated': (key, value()[:20]),
+        'value_not_object': (key, b'[]'),
+        'value_null_jobs': (key, json.dumps({**valid, 'jobs': None}).encode()),
+        'value_bad_job_number': (key, value(job_number='not-a-uuid')),
+        'value_job_not_object': (key, value(jobs={'det': 'start'})),
+        'value_other_workflow': (
+            key,
+            value(workflow_id={'instrument': instrument, 'name': 'wf', 'version': 2}),
         ),
     }

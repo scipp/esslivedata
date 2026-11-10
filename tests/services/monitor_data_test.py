@@ -10,20 +10,13 @@ duplicated here.
 
 import json
 import logging
-import uuid
 
 import pytest
 
 from ess.livedata.config import instrument_registry, workflow_spec
-from ess.livedata.config.workflow_spec import JobId
-from ess.livedata.core.job_manager import JobAction, JobCommand
 from ess.livedata.core.message import StreamKind
 from ess.livedata.services.monitor_data import make_monitor_service_builder
 from tests.helpers.livedata_app import LivedataApp
-
-
-def _job_id(source: str) -> JobId:
-    return JobId(source_name=source, job_number=uuid.uuid4())
 
 
 def _data_messages(sink) -> list:
@@ -69,13 +62,9 @@ def test_can_configure_and_stop_monitor_workflow(
     workflow_id, _ = _get_workflow_from_registry(instrument)
 
     source_name = first_monitor_source_name[instrument]
-    workflow_config = workflow_spec.WorkflowConfig(
-        identifier=workflow_id, job_id=_job_id(source_name)
-    )
     # Trigger workflow start
-    app.publish_config_message(workflow_config)
+    app.commit_workflow(workflow_id, [source_name])
     service.step()
-    # Config ack lands on response_messages, not the data sink
     assert len(sink.messages) == 0
 
     # Each workflow call returns six results: the cumulative/current histograms
@@ -120,8 +109,7 @@ def test_can_configure_and_stop_monitor_workflow(
     assert latest_outputs()['cumulative'].values.sum() == 7000
 
     # Stop workflow
-    command = JobCommand(action=JobAction.stop)
-    app.publish_config_message(command)
+    app.stop_workflow(workflow_id)
     app.publish_monitor_events(size=1000, time=10)
     service.step()
     app.publish_monitor_events(size=1000, time=20)

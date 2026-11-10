@@ -135,3 +135,11 @@ kafka-topics --create --bootstrap-server kafka:29092 \
   --config retention.ms=30000 \
   --config segment.bytes=104857600 \
   --config segment.ms=60000
+
+# Desired-state table (one record per workflow). Pure compaction keeps the latest
+# record per key indefinitely. One partition, never changed: the partition of a
+# key depends on the partition count.
+kafka-topics --create --bootstrap-server kafka:29092 \
+  --topic ${LIVEDATA_INSTRUMENT}_livedata_desired \
+  --partitions 1 \
+  --config cleanup.policy=compact

@@ -52,7 +52,7 @@ def test_rapid_recommit_admits_only_latest_generation(
     Recommitting repeatedly under a live producer admits only the last commit.
 
     Each commit flips the dashboard's generation and clears the workflow's
-    buffers before its commands reach the backend, so results computed for a
+    buffers before the backend reads its record, so results computed for a
     superseded generation can still arrive afterwards. None of them may reach
     DataService: what is buffered must carry the final generation's job_number
     alone.
@@ -60,7 +60,7 @@ def test_rapid_recommit_admits_only_latest_generation(
     Scope: this asserts the admission property, not the drop *count*
     (``ActiveJobRegistry.stale_count``). Counting is not reliably observable at
     this layer, because a superseded result usually does not exist to be
-    dropped. The dashboard's stop reaches the backend within about 100 ms while
+    dropped. A superseding record reaches the backend within about 100 ms while
     a monitor workflow publishes roughly once a second, so a flip typically
     finds nothing of the old generation in flight; and a generation superseded
     before the backend ever starts it publishes nothing at all, which is what a
@@ -91,7 +91,7 @@ def test_rapid_recommit_admits_only_latest_generation(
 
     # Burst of recommits with nothing awaited in between, so the flips land
     # while the backend is still producing for the generation established above
-    # and still working through the queued commands. This is the race: results
+    # and still working through the queued records. This is the race: results
     # of superseded generations are in flight exactly here.
     job_numbers = {first_job.job_number}
     for _ in range(_BURST_RECOMMITS):

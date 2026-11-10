@@ -23,6 +23,7 @@ import pytest
 import scipp as sc
 
 from ess.livedata.config.workflow_spec import DataKey, JobId, ResultKey, WorkflowId
+from ess.livedata.core.desired_state import InMemoryDesiredStateLog
 from ess.livedata.core.job import JobState, JobStatus
 from ess.livedata.core.message import STATUS_STREAM_ID, StreamId, StreamKind
 from ess.livedata.dashboard.active_job_registry import ActiveJobRegistry
@@ -132,15 +133,17 @@ def _make_system(*workflow_specs):
         data_service=data_service, job_service=job_service
     )
 
+    desired_state = InMemoryDesiredStateLog()
     job_orchestrator = JobOrchestrator(
+        desired_state=desired_state,
         command_service=CommandService(sink=fake_sink),
         workflow_registry=registry,
         active_job_registry=active_job_registry,
-        job_service=job_service,
     )
 
     message_pump = MessagePump(
         message_source=fake_sink,  # unused; we call forward() directly
+        desired_state=desired_state.reader(),
         data_service=data_service,
         job_service=job_service,
         service_registry=ServiceRegistry(),
@@ -340,11 +343,11 @@ class TestRestartCleanup:
 
         assert len(job_service.job_statuses) == 1
 
-    def test_status_beyond_window_is_observed_but_not_adopted(self, workflow_spec):
+    def test_status_beyond_window_is_observed_but_not_current(self, workflow_spec):
         """Two recommits push the first generation out of the (current, last)
-        window. Its heartbeats are still observed (ADR 0008) — the job is an
-        orphan for reconciliation to stop — but they do not displace the
-        committed current generation."""
+        window. Its heartbeats are still observed -- the job shows as stopping
+        until its worker stops it -- but they do not displace the committed
+        current generation."""
         message_pump, job_orchestrator, _, job_service = _make_system(workflow_spec)
         workflow_id = workflow_spec.get_id()
 
@@ -364,29 +367,6 @@ class TestRestartCleanup:
             job_orchestrator.get_active_job_number(workflow_id)
             == job_ids_3[0].job_number
         )
-
-    def test_recommit_does_not_leak_superseded_job_states(self, workflow_spec):
-        """A recommit drops the superseded generation's tracked job states.
-
-        Regression for #1080: job_number is fresh per commit, so recommit
-        keys are new; the old jobs' final heartbeats fall outside the current
-        set and can no longer self-clean. Without explicit cleanup, tracked
-        states grow by one per source on every restart-commit, unbounded.
-        """
-        _, job_orchestrator, _, _ = _make_system(workflow_spec)
-        workflow_id = workflow_spec.get_id()
-
-        job_ids_1 = job_orchestrator.commit_workflow(workflow_id)
-        for job_id in job_ids_1:
-            job_orchestrator.on_job_status_updated(
-                JobStatus(job_id=job_id, workflow_id=workflow_id, state=JobState.active)
-            )
-        assert set(job_orchestrator._job_states) == set(job_ids_1)
-
-        job_ids_2 = job_orchestrator.commit_workflow(workflow_id)
-
-        assert set(job_orchestrator._job_states).isdisjoint(job_ids_1)
-        assert set(job_ids_1).isdisjoint(job_ids_2)
 
     def test_other_workflow_data_survives_recommit(
         self, workflow_spec, workflow_spec_2

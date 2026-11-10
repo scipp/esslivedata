@@ -14,6 +14,10 @@ from ess.livedata.config.streams import get_stream_mapping, stream_kind_to_topic
 from ess.livedata.core.job_manager import Command
 from ess.livedata.core.message import StreamKind
 from ess.livedata.kafka import consumer as kafka_consumer
+from ess.livedata.kafka.desired_state import (
+    KafkaDesiredStateReader,
+    KafkaDesiredStateWriter,
+)
 from ess.livedata.kafka.message_adapter import AdaptingMessageSource
 from ess.livedata.kafka.routes import RoutingAdapterBuilder
 from ess.livedata.kafka.sink import KafkaSink
@@ -38,6 +42,10 @@ in bytes by ``queued.max.messages.kbytes``, so large payloads hit that bound
 before this one. ``consumer_lag`` in ``dashboard_ingest_metrics`` covers both.
 """
 
+# The write blocks the IOLoop thread shared by all sessions, so the timeout
+# bounds how long a broker outage freezes the UI.
+_DESIRED_STATE_WRITE_TIMEOUT_S = 3.0
+
 
 def _total_lag(source: KafkaMessageSource) -> int | None:
     lag = source.get_consumer_lag()
@@ -49,7 +57,8 @@ class DashboardKafkaTransport(Transport[DashboardResources]):
     Kafka-based transport for the dashboard.
 
     Sets up Kafka consumers and producers for dashboard message streams,
-    including data consumption and command/ROI publishing.
+    including data consumption, command/ROI publishing, and reading and writing
+    the desired-state topic.
 
     Parameters
     ----------
@@ -92,6 +101,18 @@ class DashboardKafkaTransport(Transport[DashboardResources]):
                 )
             )
 
+            desired_topic = stream_kind_to_topic(
+                instrument=self._instrument, kind=StreamKind.LIVEDATA_DESIRED
+            )
+            desired_state_reader = self._exit_stack.enter_context(
+                KafkaDesiredStateReader(kafka_config=kafka_config, topic=desired_topic)
+            )
+            desired_state_writer = KafkaDesiredStateWriter(
+                kafka_config=kafka_config,
+                topic=desired_topic,
+                timeout_s=_DESIRED_STATE_WRITE_TIMEOUT_S,
+            )
+
             # Create ROI sink
             roi_sink = self._exit_stack.enter_context(
                 KafkaSink[sc.DataArray](
@@ -107,6 +128,8 @@ class DashboardKafkaTransport(Transport[DashboardResources]):
             return DashboardResources(
                 message_source=message_source,
                 command_sink=command_sink,
+                desired_state_writer=desired_state_writer,
+                desired_state_reader=desired_state_reader,
                 roi_sink=roi_sink,
                 consumer_lag=lambda: _total_lag(kafka_source),
             )

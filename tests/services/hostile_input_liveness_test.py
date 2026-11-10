@@ -24,13 +24,11 @@ input that stalls one need not stall the other.
 
 from __future__ import annotations
 
-import uuid
 from collections.abc import Callable
 
 import pytest
 
 from ess.livedata.config import instrument_registry, workflow_spec
-from ess.livedata.config.workflow_spec import JobId
 from ess.livedata.core.message import StreamKind
 from ess.livedata.core.message_batcher import (
     AdaptiveMessageBatcher,
@@ -106,11 +104,7 @@ class MonitorServiceHarness:
         )
         self._time_ns = hostile_wire.REALISTIC_EPOCH_NS
         self._seed = 0
-        workflow_config = workflow_spec.WorkflowConfig(
-            identifier=_monitor_workflow_id('dummy'),
-            job_id=JobId(source_name=SOURCE, job_number=uuid.uuid4()),
-        )
-        self.app.publish_config_message(workflow_config)
+        self.app.commit_workflow(_monitor_workflow_id('dummy'), [SOURCE])
         self.app.step()
 
     def publish_payload(self, payload: bytes) -> None:

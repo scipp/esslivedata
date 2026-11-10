@@ -9,6 +9,7 @@ from confluent_kafka import KafkaException
 
 from ess.livedata.dashboard.dashboard_services import DashboardServices
 from ess.livedata.dashboard.ingest_monitor import IngestMonitor
+from ess.livedata.dashboard.job_service import JobService
 
 
 class _FakeRegistry:
@@ -109,8 +110,8 @@ class _FakeJobOrchestrator:
     def expire_pending_commands(self) -> None:
         pass
 
-    def reconcile_observed_jobs(self) -> None:
-        pass
+    def get_desired_job_ids(self) -> set:
+        return set()
 
 
 class _RecordingPlotOrchestrator:
@@ -146,6 +147,7 @@ def test_stop_shuts_down_the_orchestrator_after_the_update_loop() -> None:
     events: list[str] = []
     target = _make_loop_target(_FakeMessagePump())
     target.job_orchestrator = _FakeJobOrchestrator()
+    target.job_service = JobService()
     target.plot_orchestrator = _RecordingPlotOrchestrator(events)
     target._transport = _RecordingTransport(events)
     target._update_thread = None

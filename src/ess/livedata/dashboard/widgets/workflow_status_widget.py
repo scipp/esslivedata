@@ -16,15 +16,16 @@ from __future__ import annotations
 
 import html
 import json
-from collections.abc import Callable, Iterable
+from collections.abc import Callable, Collection, Iterable, Mapping
 from dataclasses import dataclass
+from enum import StrEnum
 from typing import TYPE_CHECKING, ClassVar
 
 import panel as pn
 
 from ess.livedata.config.device_contract import DeviceContract
-from ess.livedata.config.workflow_spec import WorkflowId, WorkflowSpec
-from ess.livedata.core.job import JobState
+from ess.livedata.config.workflow_spec import JobId, WorkflowId, WorkflowSpec
+from ess.livedata.core.job import JobState, JobStatus
 
 from ..derived_devices import (
     affected_device_names,
@@ -32,7 +33,6 @@ from ..derived_devices import (
     view_device_names,
 )
 from ..format_utils import extract_error_summary
-from ..job_orchestrator import StoppedReason
 from ..notifications import show_error
 from .buttons import ButtonStyles, create_tool_button
 from .configuration_widget import ConfigurationModal
@@ -42,7 +42,9 @@ from .icons import get_icon
 from .styles import Colors, ErrorBox, HoverColors, StatusColors, WarningBox
 
 if TYPE_CHECKING:
-    from ..job_orchestrator import JobConfig, JobOrchestrator
+    from ess.livedata.core.desired_state import DesiredJob
+
+    from ..job_orchestrator import JobOrchestrator
     from ..job_service import JobService
     from ..session_updater import SessionUpdater
 
@@ -59,7 +61,8 @@ class WorkflowWidgetStyles:
         'pending_context': StatusColors.PENDING,
         'pending': StatusColors.PENDING,
         'finishing': StatusColors.PENDING,
-        'scheduled': StatusColors.PENDING,
+        'backend_down': StatusColors.ERROR,
+        'stopping': StatusColors.MUTED,
     }
     MODIFIED_BORDER_COLOR = StatusColors.WARNING
     UNCONFIGURED_BG = WarningBox.BG
@@ -84,13 +87,91 @@ class WorkflowWidgetStyles:
     TOOLBAR_HEIGHT = 32
 
 
+class JobDisplayState(StrEnum):
+    """Displayed state of one job: its desired state compared with heartbeats.
+
+    A desired job that heartbeats shows its observed :class:`JobState`
+    (``active``, ``warning``, ``error``, ...). The others are derived, see
+    :func:`project_job_states`.
+    """
+
+    active = 'active'
+    finishing = 'finishing'
+    warning = 'warning'
+    pending_context = 'pending_context'
+    error = 'error'
+    pending = 'pending'
+    backend_down = 'backend_down'
+    stopping = 'stopping'
+
+
+# Display state of a desired job that heartbeats, by observed state; a
+# ``stopped`` heartbeat is the worker's final one and shows as backend down.
+_OBSERVED_DISPLAY_STATES: dict[JobState, JobDisplayState] = {
+    JobState.scheduled: JobDisplayState.pending,
+    JobState.active: JobDisplayState.active,
+    JobState.finishing: JobDisplayState.finishing,
+    JobState.warning: JobDisplayState.warning,
+    JobState.pending_context: JobDisplayState.pending_context,
+    JobState.error: JobDisplayState.error,
+}
+
+
+def project_job_states(
+    wanted: Collection[JobId],
+    observed: Mapping[JobId, JobStatus],
+    stale: Collection[JobId],
+) -> dict[JobId, JobDisplayState]:
+    """Compare desired jobs with observed heartbeats, per job.
+
+    - Desired and heartbeating: the observed state (e.g. ``active``, or
+      ``error`` for a job the worker rejected or that failed at runtime).
+    - ``pending``: desired, not observed yet.
+    - ``backend_down``: desired and observed earlier, but the heartbeats
+      stopped: they went stale (crash) or the last one reported ``stopped``
+      (graceful worker shutdown).
+    - ``stopping``: not desired any more, still heartbeating.
+
+    Parameters
+    ----------
+    wanted:
+        Jobs the desired table wants.
+    observed:
+        Last observed status per job.
+    stale:
+        Jobs whose last status is older than the heartbeat timeout.
+
+    Returns
+    -------
+    :
+        Display state per job. Jobs neither desired nor heartbeating are absent.
+    """
+    states: dict[JobId, JobDisplayState] = {}
+    for job_id in wanted:
+        status = observed.get(job_id)
+        if status is None:
+            states[job_id] = JobDisplayState.pending
+        elif job_id in stale or status.state == JobState.stopped:
+            states[job_id] = JobDisplayState.backend_down
+        else:
+            states[job_id] = _OBSERVED_DISPLAY_STATES[status.state]
+    for job_id, status in observed.items():
+        if (
+            job_id not in wanted
+            and job_id not in stale
+            and status.state != JobState.stopped
+        ):
+            states[job_id] = JobDisplayState.stopping
+    return states
+
+
 @dataclass(frozen=True)
 class SourceStatus:
     """Status of a single source within a workflow."""
 
     source_name: str
     display_title: str
-    state: JobState
+    state: JobDisplayState
     error_summary: str | None
 
 
@@ -102,51 +183,44 @@ class MessageBox:
     is_error: bool
 
 
-# Priority of job states for worst-state aggregation; higher wins.
-_JOB_STATE_PRIORITY: dict[JobState, int] = {
-    JobState.error: 4,
-    JobState.warning: 3,
-    JobState.pending_context: 2,
-    JobState.stopped: 1,
-    JobState.active: 0,
+# Priority of display states for worst-state aggregation; higher wins. A job
+# still stopping ranks lowest: it does not describe the desired jobs.
+_DISPLAY_STATE_PRIORITY: dict[JobDisplayState, int] = {
+    JobDisplayState.error: 7,
+    JobDisplayState.backend_down: 6,
+    JobDisplayState.warning: 5,
+    JobDisplayState.pending_context: 4,
+    JobDisplayState.pending: 3,
+    JobDisplayState.finishing: 2,
+    JobDisplayState.active: 1,
+    JobDisplayState.stopping: 0,
 }
 
-# Display names for status states whose raw value is not user-friendly.
-_JOB_STATE_DISPLAY_NAMES: dict[JobState, str] = {
-    JobState.pending_context: 'WAITING FOR CONTEXT',
+# Display names for states whose raw value is not user-friendly.
+_DISPLAY_NAMES: dict[JobDisplayState, str] = {
+    JobDisplayState.active: 'RUNNING',
+    JobDisplayState.pending_context: 'WAITING FOR CONTEXT',
+    JobDisplayState.backend_down: 'BACKEND DOWN',
 }
 
 
-def worst_job_state(states: Iterable[JobState]) -> JobState:
-    """Return the highest-priority state for aggregating a workflow's sources.
+def worst_job_state(states: Iterable[JobDisplayState]) -> JobDisplayState:
+    """Return the highest-priority state for aggregating a workflow's jobs.
 
-    Priority is error > warning > pending_context > stopped > active. States not
-    listed in the priority table are treated as lowest priority.
+    Priority is error > backend_down > warning > pending_context > pending >
+    finishing > active > stopping.
 
     Parameters
     ----------
     states:
-        Job states of the sources contributing to a single workflow.
-
-    Returns
-    -------
-    :
-        The aggregated worst state, defaulting to ``JobState.active`` for an
-        empty input.
+        Display states of the jobs of a single workflow; must not be empty.
     """
-    worst = JobState.active
-    best_priority = _JOB_STATE_PRIORITY.get(worst, -1)
-    for state in states:
-        priority = _JOB_STATE_PRIORITY.get(state, -1)
-        if priority > best_priority:
-            best_priority = priority
-            worst = state
-    return worst
+    return max(states, key=_DISPLAY_STATE_PRIORITY.__getitem__)
 
 
-def job_state_display_name(state: JobState) -> str:
-    """Return the user-facing status label for a job state."""
-    return _JOB_STATE_DISPLAY_NAMES.get(state, state.value.upper())
+def job_state_display_name(state: JobDisplayState) -> str:
+    """Return the user-facing status label for a display state."""
+    return _DISPLAY_NAMES.get(state, state.value.upper().replace('_', ' '))
 
 
 @dataclass(frozen=True)
@@ -170,8 +244,8 @@ def _make_hashable_key(config_dict: dict) -> str:
 
 
 def _group_configs_by_equality(
-    staged: dict[str, JobConfig],
-    active: dict[str, JobConfig],
+    staged: dict[str, DesiredJob],
+    active: dict[str, DesiredJob],
 ) -> list[ConfigGroup]:
     """
     Group sources by config equality for display.
@@ -230,7 +304,7 @@ def _group_configs_by_equality(
 
 
 def _get_unconfigured_sources(
-    all_sources: list[str], staged: dict[str, JobConfig]
+    all_sources: list[str], staged: dict[str, DesiredJob]
 ) -> list[str]:
     """Get sources that are not yet configured."""
     return sorted(set(all_sources) - set(staged.keys()))
@@ -845,7 +919,7 @@ class WorkflowStatusWidget:
     def _make_status_dots_html(sources: list[SourceStatus]) -> str:
         """Generate HTML for per-source status indicator dots.
 
-        Each dot represents one source, colored by its job state.
+        Each dot represents one job, colored by its display state.
         """
         if not sources:
             return ''
@@ -854,7 +928,7 @@ class WorkflowStatusWidget:
             color = WorkflowWidgetStyles.STATUS_COLORS.get(
                 s.state.value, WorkflowWidgetStyles.STATUS_COLORS['stopped']
             )
-            tooltip = f'{s.display_title}: {s.state.value}'
+            tooltip = f'{s.display_title}: {job_state_display_name(s.state).lower()}'
             if s.error_summary:
                 tooltip += f' \u2014 {s.error_summary}'
             dots.append(
@@ -875,7 +949,8 @@ class WorkflowStatusWidget:
     ) -> tuple[str, str, str, MessageBox | None, list[SourceStatus]]:
         """Get workflow status, color, timing, message, and per-source statuses.
 
-        Iterates job statuses once to extract aggregated and per-source info.
+        Compares the desired jobs with the observed job statuses
+        (:func:`project_job_states`); the badge shows the worst state.
 
         Returns
         -------
@@ -889,68 +964,78 @@ class WorkflowStatusWidget:
         # startup cost for a rarely-used module.
         from datetime import UTC, datetime
 
-        active_job_number = self._orchestrator.get_active_job_number(self._workflow_id)
-
-        if active_job_number is None:
-            reason = self._orchestrator.get_stopped_reason(self._workflow_id)
-            timing = (
-                'Backend shut down' if reason == StoppedReason.backend_shutdown else ''
-            )
+        job_number = self._orchestrator.get_active_job_number(self._workflow_id)
+        wanted = (
+            []
+            if job_number is None
+            else [
+                JobId(source_name=source_name, job_number=job_number)
+                for source_name in self._orchestrator.get_active_config(
+                    self._workflow_id
+                )
+            ]
+        )
+        observed = {
+            job_id: status
+            for job_id, status in self._job_service.job_statuses.items()
+            if status.workflow_id == self._workflow_id
+        }
+        stale = {
+            job_id for job_id in observed if self._job_service.is_status_stale(job_id)
+        }
+        states = project_job_states(wanted, observed, stale)
+        if not states:
             return (
                 'STOPPED',
                 WorkflowWidgetStyles.STATUS_COLORS['stopped'],
-                timing,
+                '',
                 None,
                 [],
             )
 
-        # Single pass over job statuses to collect status, timing, and messages
-        has_fresh_backend_status = False
-        states: list[JobState] = []
+        per_source: list[SourceStatus] = []
+        for job_id, state in states.items():
+            status = observed.get(job_id)
+            error_message = None if status is None else status.error_message
+            per_source.append(
+                SourceStatus(
+                    source_name=job_id.source_name,
+                    display_title=self._orchestrator.get_source_title(
+                        job_id.source_name
+                    ),
+                    state=state,
+                    error_summary=extract_error_summary(error_message)
+                    if error_message
+                    else None,
+                )
+            )
+        # Desired jobs first, each group in workflow spec order.
+        spec_order = {
+            name: i for i, name in enumerate(self._workflow_spec.source_names)
+        }
+        per_source.sort(
+            key=lambda s: (
+                s.state == JobDisplayState.stopping,
+                spec_order.get(s.source_name, len(spec_order)),
+            )
+        )
+
+        # Timing and messages come from the desired jobs that heartbeat.
         earliest_start = None
         first_error = None
         first_warning = None
-        per_source: dict[str, SourceStatus] = {}
-
-        for job_status in self._job_service.job_statuses.values():
-            if job_status.workflow_id != self._workflow_id:
+        for job_id in wanted:
+            status = observed.get(job_id)
+            if status is None or job_id in stale:
                 continue
-            if job_status.job_id.job_number != active_job_number:
-                continue
-            if self._job_service.is_status_stale(job_status.job_id):
-                continue
+            start = status.start_time
+            if start is not None and (earliest_start is None or start < earliest_start):
+                earliest_start = start
+            if first_error is None and status.error_message:
+                first_error = extract_error_summary(status.error_message)
+            if first_warning is None and status.warning_message:
+                first_warning = status.warning_message
 
-            has_fresh_backend_status = True
-
-            # Collect per-source status
-            error_summary = (
-                extract_error_summary(job_status.error_message)
-                if job_status.error_message
-                else None
-            )
-            source_name = job_status.job_id.source_name
-            per_source[source_name] = SourceStatus(
-                source_name=source_name,
-                display_title=self._orchestrator.get_source_title(source_name),
-                state=job_status.state,
-                error_summary=error_summary,
-            )
-
-            states.append(job_status.state)
-
-            # Timing: track earliest start
-            start = job_status.start_time
-            if start is not None:
-                if earliest_start is None or start < earliest_start:
-                    earliest_start = start
-
-            # Capture first error and first warning message
-            if first_error is None and error_summary:
-                first_error = error_summary
-            if first_warning is None and job_status.warning_message:
-                first_warning = job_status.warning_message
-
-        worst_state = worst_job_state(states)
         if first_error is not None:
             message_box = MessageBox(text=f'Error: {first_error}', is_error=True)
         elif first_warning is not None:
@@ -958,43 +1043,18 @@ class WorkflowStatusWidget:
         else:
             message_box = None
 
-        # Order per-source statuses by workflow spec order
-        spec_order = {
-            name: i for i, name in enumerate(self._workflow_spec.source_names)
-        }
-        per_source_list = sorted(
-            per_source.values(),
-            key=lambda s: spec_order.get(s.source_name, len(spec_order)),
-        )
-
-        if not has_fresh_backend_status:
-            # Show expected sources as pending dots
-            pending_sources = [
-                SourceStatus(
-                    source_name=name,
-                    display_title=self._orchestrator.get_source_title(name),
-                    state=JobState.scheduled,
-                    error_summary=None,
-                )
-                for name in self._workflow_spec.source_names
-                if name in self._orchestrator.get_active_config(self._workflow_id)
-            ]
-            return (
-                'PENDING',
-                WorkflowWidgetStyles.STATUS_COLORS['pending'],
-                'Waiting for backend...',
-                None,
-                pending_sources,
-            )
-
+        worst_state = worst_job_state(states.values())
         status_text = job_state_display_name(worst_state)
         status_color = WorkflowWidgetStyles.STATUS_COLORS.get(
             worst_state.value, WorkflowWidgetStyles.STATUS_COLORS['stopped']
         )
 
-        # Build timing text
         if earliest_start is None:
-            timing_text = 'Starting...'
+            timing_text = (
+                'Waiting for backend...'
+                if worst_state == JobDisplayState.pending
+                else ''
+            )
         else:
             start_dt = earliest_start.to_datetime(tz=UTC)
             now = datetime.now(tz=UTC)
@@ -1013,7 +1073,7 @@ class WorkflowStatusWidget:
 
             timing_text = f'{start_dt.strftime("%H:%M:%S")} ({duration_str})'
 
-        return status_text, status_color, timing_text, message_box, per_source_list
+        return status_text, status_color, timing_text, message_box, per_source
 
     def _on_header_click(self, event) -> None:
         """Handle header click to toggle expand/collapse."""
@@ -1263,6 +1323,8 @@ class WorkflowStatusListWidget:
         self._gate_checkbox: pn.widgets.Checkbox | None = None
         self._gate_banner: pn.pane.HTML | None = None
         self._last_gate_version: int = orchestrator.get_gate_version()
+        self._unknown_section = pn.Column(sizing_mode='stretch_width', margin=0)
+        self._last_unknown_version: int | None = None
 
         self._derived_devices = DerivedDevicesOverview(
             orchestrator=orchestrator,
@@ -1292,6 +1354,7 @@ class WorkflowStatusListWidget:
         self._panel = pn.Column(
             header_row,
             *gate_banner,
+            self._unknown_section,
             self._modal_container,
             sizing_mode='stretch_width',
         )
@@ -1436,6 +1499,72 @@ class WorkflowStatusListWidget:
             'with no prompt.</div>'
         )
 
+    def _sync_unknown_section(self) -> None:
+        """List desired-state entries of workflows unknown to this dashboard.
+
+        Each row offers removal (a tombstone). Rebuilt only when the entries
+        change.
+        """
+        version = self._orchestrator.get_unknown_workflows_version()
+        if version == self._last_unknown_version:
+            return
+        self._last_unknown_version = version
+        self._unknown_section.objects = [
+            self._create_unknown_row(desired.workflow_id, len(desired.jobs))
+            for desired in self._orchestrator.get_unknown_workflows()
+        ]
+
+    def _create_unknown_row(self, workflow_id: WorkflowId, n_jobs: int) -> pn.Row:
+        text = pn.pane.HTML(
+            f'<span style="font-size: 13px; color: {WarningBox.TEXT};">'
+            f'Desired workflow <code>{html.escape(str(workflow_id))}</code> '
+            f'({n_jobs} job(s)) is not in this dashboard\'s workflow registry.'
+            '</span>',
+            sizing_mode='stretch_width',
+            margin=0,
+        )
+        remove_btn = create_tool_button(
+            icon_name='trash',
+            button_color=ButtonStyles.DANGER_RED,
+            hover_color=ButtonStyles.DANGER_HOVER,
+            on_click_callback=lambda: self._confirm_remove_unknown(workflow_id),
+            css_classes=[
+                'lt-unknown-wf',
+                f'lt-unknown-wf-{workflow_id.name}-v{workflow_id.version}',
+            ],
+            description='Remove from the desired state',
+        )
+        return pn.Row(
+            text,
+            remove_btn,
+            sizing_mode='stretch_width',
+            margin=(0, 0, 8, 0),
+            styles={
+                'background': WarningBox.BG,
+                'border-left': f'4px solid {WarningBox.BORDER}',
+                'padding': '4px 12px',
+                'border-radius': '4px',
+                'align-items': 'center',
+            },
+        )
+
+    def _confirm_remove_unknown(self, workflow_id: WorkflowId) -> None:
+        """Open a confirmation modal; on confirm, tombstone the entry."""
+        modal = ConfirmationModal(
+            title='Remove desired workflow',
+            message=(
+                f'Removing <code>{html.escape(str(workflow_id))}</code> stops its '
+                'jobs on any backend worker whose workflow registry still '
+                'contains it. Proceed?'
+            ),
+            on_confirm=lambda: self._orchestrator.remove_unknown_workflow(workflow_id),
+            confirm_label='Remove',
+            confirm_css_classes=['lt-confirm-proceed'],
+            on_close=lambda: self._modal_container.remove(modal.modal),
+        )
+        self._modal_container.append(modal.modal)
+        modal.show()
+
     def _show_derived_devices(self) -> None:
         """Mount (once) and open the derived-devices overview modal."""
         if self._derived_devices.modal not in self._modal_container:
@@ -1517,6 +1646,11 @@ class WorkflowStatusListWidget:
             return True
         if self._orchestrator.get_gate_version() != self._last_gate_version:
             return True
+        if (
+            self._orchestrator.get_unknown_workflows_version()
+            != self._last_unknown_version
+        ):
+            return True
         return any(widget.has_pending_work() for widget in self._widgets.values())
 
     def _refresh_all(self) -> None:
@@ -1531,6 +1665,7 @@ class WorkflowStatusListWidget:
             # Fallback: onload didn't fire (non-server context).
             self._populate_pending()
         self._sync_gate_checkbox()
+        self._sync_unknown_section()
         for widget in self._widgets.values():
             widget.refresh()
 

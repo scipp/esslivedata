@@ -8,8 +8,20 @@ from dataclasses import dataclass
 
 import pytest
 
+from ess.livedata.config import config_names
+from ess.livedata.config.config_loader import load_config
+from ess.livedata.config.streams import stream_kind_to_topic
+from ess.livedata.core.desired_state import fold_updates
+from ess.livedata.core.job import JobStatus, ServiceStatus
+from ess.livedata.core.message import StreamKind
+from ess.livedata.kafka.desired_state import (
+    KafkaDesiredStateReader,
+    KafkaDesiredStateWriter,
+)
+from ess.livedata.kafka.x5f2_compat import x5f2_to_status
 from ess.livedata.scripts.dev import ensure_topics_exist
 from tests.integration.backend import DashboardBackend
+from tests.integration.helpers import TopicTail
 from tests.integration.service_process import ServiceGroup, ServiceProcess
 
 logger = logging.getLogger(__name__)
@@ -93,12 +105,17 @@ def create_service_group(
 
 
 @pytest.fixture
-def dashboard_backend(request) -> Generator[DashboardBackend, None, None]:
+def dashboard_backend(
+    desired_state: KafkaDesiredStateWriter, request
+) -> Generator[DashboardBackend, None, None]:
     """
     Pytest fixture providing a DashboardBackend instance.
 
     The backend is automatically started and stopped, using the 'dummy'
-    instrument by default. Tests can override the instrument and log level:
+    instrument by default. It starts with an empty desired table, and the
+    table is emptied again after the test (see ``desired_state``), so commits
+    made through the backend do not leak into other tests. Tests can override
+    the instrument and log level:
 
     @pytest.mark.instrument('bifrost')
     @pytest.mark.log_level('DEBUG')
@@ -297,3 +314,51 @@ def reduction_services(request) -> Generator[ServiceGroup, None, None]:
             ),
         },
     )
+
+
+def _clear_desired_state(writer: KafkaDesiredStateWriter, topic: str) -> None:
+    """Tombstone every workflow in the desired table."""
+    config = load_config(namespace=config_names.kafka, env='dev')
+    with KafkaDesiredStateReader(kafka_config=config, topic=topic) as reader:
+        for workflow_id in fold_updates({}, reader.bootstrap(timeout_s=30.0)):
+            writer.write(workflow_id, None)
+
+
+@pytest.fixture
+def desired_state(request) -> Generator[KafkaDesiredStateWriter, None, None]:
+    """
+    Pytest fixture providing a writer of the instrument's desired-state topic.
+
+    The topic is compacted and outlives the test, and every worker that starts
+    reads it from the beginning. The table is therefore emptied before and after
+    the test. Request this fixture before the services fixture, so that services
+    start with an empty table. ``dashboard_backend``, and therefore
+    ``integration_env``, requests it first.
+    """
+    instrument, _ = _get_instrument_and_log_level(request)
+    ensure_topics_exist(instrument)
+    topic = stream_kind_to_topic(
+        instrument=instrument, kind=StreamKind.LIVEDATA_DESIRED
+    )
+    writer = KafkaDesiredStateWriter(
+        kafka_config=load_config(namespace=config_names.kafka, env='dev'),
+        topic=topic,
+    )
+    _clear_desired_state(writer, topic)
+    yield writer
+    _clear_desired_state(writer, topic)
+
+
+@pytest.fixture
+def heartbeats(
+    request,
+) -> Generator[TopicTail[JobStatus | ServiceStatus], None, None]:
+    """Pytest fixture providing the job and service statuses published from now on."""
+    instrument, _ = _get_instrument_and_log_level(request)
+    ensure_topics_exist(instrument)
+    tail = TopicTail(
+        stream_kind_to_topic(instrument=instrument, kind=StreamKind.LIVEDATA_STATUS),
+        x5f2_to_status,
+    )
+    yield tail
+    tail.close()

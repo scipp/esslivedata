@@ -68,7 +68,7 @@ flowchart TB
         ADMsg["Message&lt;DataArray&gt;<br/>(area detector)"]
         LogMsg["Message&lt;LogData&gt;"]
         DataMsg["Message&lt;DataArray&gt;<br/>(livedata data/ROI)"]
-        CmdMsg["Message&lt;RawConfigItem&gt;"]
+        CmdMsg["Message&lt;JobCommand&gt;"]
         RespMsg["Message&lt;CommandAcknowledgement&gt;"]
         StatusMsg["Message&lt;JobStatus | ServiceStatus&gt;"]
     end
@@ -144,7 +144,7 @@ flowchart TB
 
 `StreamId` contains `kind` (StreamKind enum) and `name` (specific identifier). Isolates internal code from Kafka topic names.
 
-StreamKind values: `UNKNOWN`, `MONITOR_COUNTS`, `MONITOR_EVENTS`, `DETECTOR_EVENTS`, `AREA_DETECTOR`, `LOG`, `DEVICE`, `LIVEDATA_COMMANDS`, `LIVEDATA_RESPONSES`, `LIVEDATA_DATA`, `LIVEDATA_NICOS_DATA`, `LIVEDATA_ROI`, `LIVEDATA_STATUS`, `RUN_CONTROL`.
+StreamKind values: `UNKNOWN`, `MONITOR_COUNTS`, `MONITOR_EVENTS`, `DETECTOR_EVENTS`, `AREA_DETECTOR`, `LOG`, `DEVICE`, `LIVEDATA_COMMANDS`, `LIVEDATA_RESPONSES`, `LIVEDATA_DATA`, `LIVEDATA_DESIRED`, `LIVEDATA_NICOS_DATA`, `LIVEDATA_CONTEXT`, `LIVEDATA_ROI`, `LIVEDATA_STATUS`, `RUN_CONTROL`.
 
 ## Stream Mapping
 
@@ -152,7 +152,7 @@ Isolates ESSlivedata from Kafka topic structure: Kafka uses `(topic, source_name
 
 ### StreamMapping and StreamLUT
 
-`InputStreamKey` = `(topic, source_name)`. `StreamLUT` = dict mapping InputStreamKey to internal name. `StreamMapping` holds LUTs for detectors, monitors, area_detectors, and logs, plus dedicated topic names for each livedata-internal stream (commands, responses, data, ROI, status). Adapters use stream_lut to convert Kafka identifiers to StreamId.
+`InputStreamKey` = `(topic, source_name)`. `StreamLUT` = dict mapping InputStreamKey to internal name. `StreamMapping` holds LUTs for detectors, monitors, area_detectors, and logs, plus dedicated topic names for each livedata-internal stream (commands, context, data, desired state, responses, ROI, status). Adapters use stream_lut to convert Kafka identifiers to StreamId.
 
 ## Message Adapters
 
@@ -172,7 +172,9 @@ Isolates ESSlivedata from Kafka topic structure: Kafka uses `(topic, source_name
 
 **Livedata data and ROI (DA00)**: `KafkaToDa00Adapter` → `Da00ToScippAdapter`. Both use the same adapter chain but with different `StreamKind` (`LIVEDATA_DATA` vs `LIVEDATA_ROI`).
 
-**Commands and Responses (JSON)**: `CommandsAdapter` extracts key/value from compacted Kafka topic. `ResponsesAdapter` deserializes JSON `CommandAcknowledgement`.
+**Commands and Responses (JSON)**: `CommandsAdapter` deserializes JSON `JobCommand` (reset only). `ResponsesAdapter` deserializes JSON `CommandAcknowledgement`.
+
+**Desired state (JSON)**: The compacted desired-state topic does not go through the message source chain or the adapters. `KafkaDesiredStateReader` (see `kafka/desired_state.py`) owns its consumer, reads the topic from offset 0, and decodes each keyed record into a `(WorkflowId, DesiredWorkflow | None)` update, where `None` is a tombstone. A bounded `BackgroundMessageSource` queue could drop a record, and a dropped record would leave the desired table wrong until the next write. See [ADR 0012](../adr/0012-desired-state-topic-for-job-control.md).
 
 **Status (X5F2)**: `X5f2ToStatusAdapter` produces `Message[JobStatus | ServiceStatus]`, discriminating on the `message_type` field.
 

@@ -7,12 +7,14 @@ import pytest
 
 from ess.livedata.config.workflow_spec import (
     REDUCTION,
-    WorkflowConfig,
     WorkflowId,
     WorkflowSpec,
 )
-from ess.livedata.core.job_manager import JobCommand
-from ess.livedata.core.message import COMMANDS_STREAM_ID
+from ess.livedata.core.desired_state import (
+    DesiredTable,
+    InMemoryDesiredStateLog,
+    fold_updates,
+)
 from ess.livedata.dashboard.command_service import CommandService
 from ess.livedata.dashboard.workflow_controller import WorkflowController
 from ess.livedata.fakes import FakeMessageSink
@@ -22,7 +24,7 @@ class WorkflowControllerFixture(NamedTuple):
     """Container for workflow controller fixture components."""
 
     controller: WorkflowController
-    fake_message_sink: FakeMessageSink
+    desired_state: InMemoryDesiredStateLog
     config_store: dict[WorkflowId, dict]
 
 
@@ -33,37 +35,9 @@ class SomeWorkflowParams(pydantic.BaseModel):
     mode: str = "fast"
 
 
-def get_sent_commands(sink: FakeMessageSink) -> list[WorkflowConfig | JobCommand]:
-    """Extract all commands sent to the COMMANDS stream."""
-    result: list[WorkflowConfig | JobCommand] = []
-    for messages in sink.published_messages:
-        result.extend(
-            msg.value
-            for msg in messages
-            if msg.stream == COMMANDS_STREAM_ID
-            and isinstance(msg.value, WorkflowConfig | JobCommand)
-        )
-    return result
-
-
-def get_sent_workflow_configs(
-    sink: FakeMessageSink,
-) -> list[tuple[str, WorkflowConfig]]:
-    """Extract workflow configs with source names from the sink."""
-    result = []
-    for messages in sink.published_messages:
-        result.extend(
-            (msg.value.job_id.source_name, msg.value)
-            for msg in messages
-            if msg.stream == COMMANDS_STREAM_ID
-            and isinstance(msg.value, WorkflowConfig)
-        )
-    return result
-
-
-def get_batch_calls(sink: FakeMessageSink) -> list[int]:
-    """Extract batch call sizes from the sink."""
-    return [len(messages) for messages in sink.published_messages]
+def desired_table(log: InMemoryDesiredStateLog) -> DesiredTable:
+    """The desired table the log holds."""
+    return fold_updates({}, log.read(0))
 
 
 @pytest.fixture
@@ -122,7 +96,6 @@ def fake_config_store() -> dict[str, dict]:
 @pytest.fixture
 def workflow_controller(
     command_service: CommandService,
-    fake_message_sink: FakeMessageSink,
     fake_config_store: dict[str, dict],
     source_names: list[str],
     workflow_registry: dict[WorkflowId, WorkflowSpec],
@@ -136,11 +109,12 @@ def workflow_controller(
 
     ds = DataService()
     js = JobService()
+    desired_state = InMemoryDesiredStateLog()
     job_orchestrator = JobOrchestrator(
+        desired_state=desired_state,
         command_service=command_service,
         workflow_registry=workflow_registry,
         active_job_registry=ActiveJobRegistry(data_service=ds, job_service=js),
-        job_service=js,
         config_store=fake_config_store,
     )
 
@@ -150,7 +124,7 @@ def workflow_controller(
     )
     return WorkflowControllerFixture(
         controller=controller,
-        fake_message_sink=fake_message_sink,
+        desired_state=desired_state,
         config_store=fake_config_store,
     )
 
@@ -169,17 +143,10 @@ class TestWorkflowController:
         workflow_controller.controller.start_workflow(workflow_id, source_names, config)
 
         # Assert
-        sent_configs = get_sent_workflow_configs(workflow_controller.fake_message_sink)
-        assert len(sent_configs) == len(source_names)
-
-        for source_name in source_names:
-            # Find the config for this source
-            source_config = next(
-                (sc for sc in sent_configs if sc[0] == source_name), None
-            )
-            assert source_config is not None
-            assert source_config[1].identifier == workflow_id
-            assert source_config[1].params == {"threshold": 150.0, "mode": "accurate"}
+        desired = desired_table(workflow_controller.desired_state)[workflow_id]
+        assert list(desired.jobs) == source_names
+        for job in desired.jobs.values():
+            assert job.params == {"threshold": 150.0, "mode": "accurate"}
 
     def test_start_workflow_saves_persistent_config(
         self,
@@ -217,10 +184,9 @@ class TestWorkflowController:
         workflow_controller.controller.start_workflow(workflow_id, source_names, config)
 
         # Assert
-        sent_configs = get_sent_workflow_configs(workflow_controller.fake_message_sink)
-        for _, workflow_config in sent_configs:
-            assert workflow_config.identifier == workflow_id
-            assert workflow_config.params == {"threshold": 100.0, "mode": "fast"}
+        desired = desired_table(workflow_controller.desired_state)[workflow_id]
+        for job in desired.jobs.values():
+            assert job.params == {"threshold": 100.0, "mode": "fast"}
 
     def test_start_workflow_raises_for_nonexistent_workflow(
         self,
@@ -237,14 +203,11 @@ class TestWorkflowController:
                 nonexistent_workflow_id, source_names, config
             )
 
-        # Should not have sent any configs
-        sent_configs = get_sent_workflow_configs(workflow_controller.fake_message_sink)
-        assert len(sent_configs) == 0
+        assert desired_table(workflow_controller.desired_state) == {}
 
     def test_persistent_config_stores_multiple_workflows(
         self,
         command_service: CommandService,
-        fake_message_sink: FakeMessageSink,
         fake_config_store: dict[str, dict],
         source_names: list[str],
     ):
@@ -291,10 +254,10 @@ class TestWorkflowController:
         ds = DataService()
         js = JobService()
         job_orchestrator = JobOrchestrator(
+            desired_state=InMemoryDesiredStateLog(),
             command_service=command_service,
             workflow_registry=registry,
             active_job_registry=ActiveJobRegistry(data_service=ds, job_service=js),
-            job_service=js,
             config_store=config_store,
         )
 
@@ -434,81 +397,34 @@ class TestWorkflowController:
 
         # Assert
         assert result == []
-        sent_configs = get_sent_workflow_configs(workflow_controller.fake_message_sink)
-        assert len(sent_configs) == 0  # No configs sent to sources
+        assert desired_table(workflow_controller.desired_state) == {}
 
-    def test_start_workflow_sends_commands_in_batch(
+    def test_start_workflow_writes_one_record(
         self,
         workflow_controller: WorkflowControllerFixture,
         workflow_id: WorkflowId,
         source_names: list[str],
     ):
-        """Test that start_workflow sends commands in a single batch."""
         config = SomeWorkflowParams(threshold=150.0, mode="accurate")
 
-        # Act
         workflow_controller.controller.start_workflow(workflow_id, source_names, config)
 
-        # Assert - should have made exactly one batch call with all sources
-        batch_calls = get_batch_calls(workflow_controller.fake_message_sink)
-        assert len(batch_calls) == 1
-        assert batch_calls[0] == len(source_names)
+        assert len(workflow_controller.desired_state.read(0)) == 1
 
-        # Verify all commands were sent
-        sent_configs = get_sent_workflow_configs(workflow_controller.fake_message_sink)
-        assert len(sent_configs) == len(source_names)
-
-    def test_start_workflow_stops_old_jobs(
+    def test_restart_replaces_the_record(
         self,
         workflow_controller: WorkflowControllerFixture,
         workflow_id: WorkflowId,
         source_names: list[str],
     ):
-        """Test that starting a workflow stops any existing jobs."""
-        from ess.livedata.core.job_manager import JobAction, JobCommand
-
-        config = SomeWorkflowParams(threshold=150.0, mode="accurate")
-
-        # Start first workflow
-        workflow_controller.controller.start_workflow(workflow_id, source_names, config)
-        sent_configs_1 = get_sent_workflow_configs(
-            workflow_controller.fake_message_sink
+        controller = workflow_controller.controller
+        first = controller.start_workflow(
+            workflow_id, source_names, SomeWorkflowParams(threshold=150.0)
         )
-        assert len(sent_configs_1) == len(source_names)
-
-        # Clear sink to track second workflow
-        workflow_controller.fake_message_sink.published_messages.clear()
-
-        # Start same workflow again with different config
-        config_2 = SomeWorkflowParams(threshold=300.0, mode="fast")
-        workflow_controller.controller.start_workflow(
-            workflow_id, source_names, config_2
+        second = controller.start_workflow(
+            workflow_id, source_names, SomeWorkflowParams(threshold=300.0)
         )
 
-        # Check that stop and start commands were sent together in same batch
-        sent_commands = get_sent_commands(workflow_controller.fake_message_sink)
-
-        # Should have stop commands for old jobs + start commands for new jobs
-        stop_commands = [
-            cmd
-            for cmd in sent_commands
-            if isinstance(cmd, JobCommand) and cmd.action == JobAction.stop
-        ]
-        start_commands = get_sent_workflow_configs(
-            workflow_controller.fake_message_sink
-        )
-
-        assert len(stop_commands) == len(source_names)
-        assert len(start_commands) == len(source_names)
-
-        # Verify the stop commands target the right sources
-        stopped_job_sources = {
-            cmd.job_id.source_name for cmd in stop_commands if cmd.job_id is not None
-        }
-        assert stopped_job_sources == set(source_names)
-
-        # Verify stop and start are in same batch
-        batch_calls = get_batch_calls(workflow_controller.fake_message_sink)
-        assert len(batch_calls) == 1
-        # Total batch size = stop commands + start commands
-        assert batch_calls[0] == len(source_names) * 2
+        desired = desired_table(workflow_controller.desired_state)[workflow_id]
+        assert desired.job_number == second[0].job_number != first[0].job_number
+        assert desired.jobs['detector_1'].params['threshold'] == 300.0

@@ -50,6 +50,7 @@ def make_reduction_service_builder(
         log_level=log_level,
         adapter=adapter,
         preprocessor_factory=preprocessor_factory,
+        desired_state_topic=stream_mapping.topics.livedata_desired,
         stream_counter=stream_counter,
         outer_source_wrapper=lambda src: DeviceSynthesizer(src, devices=devices),
     )

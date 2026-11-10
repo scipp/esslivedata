@@ -14,13 +14,16 @@ import yaml
 from ess.livedata.config.workflow_spec import (
     REDUCTION,
     AuxSources,
-    WorkflowConfig,
     WorkflowId,
     WorkflowOutputsBase,
     WorkflowSpec,
 )
-from ess.livedata.core.job_manager import JobAction, JobCommand
-from ess.livedata.core.message import COMMANDS_STREAM_ID
+from ess.livedata.core.desired_state import (
+    DesiredStateWriter,
+    DesiredTable,
+    InMemoryDesiredStateLog,
+    fold_updates,
+)
 from ess.livedata.dashboard.active_job_registry import ActiveJobRegistry
 from ess.livedata.dashboard.command_service import CommandService
 from ess.livedata.dashboard.config_store import FileBackedConfigStore
@@ -169,37 +172,9 @@ def workflow_with_enum_params() -> WorkflowSpec:
     )
 
 
-def get_sent_commands(sink: FakeMessageSink) -> list[WorkflowConfig | JobCommand]:
-    """Extract all commands sent to the COMMANDS stream."""
-    result: list[WorkflowConfig | JobCommand] = []
-    for messages in sink.published_messages:
-        result.extend(
-            msg.value
-            for msg in messages
-            if msg.stream == COMMANDS_STREAM_ID
-            and isinstance(msg.value, WorkflowConfig | JobCommand)
-        )
-    return result
-
-
-def get_sent_workflow_configs(
-    sink: FakeMessageSink,
-) -> list[tuple[str, WorkflowConfig]]:
-    """Extract workflow configs with source names from the sink."""
-    result = []
-    for messages in sink.published_messages:
-        result.extend(
-            (msg.value.job_id.source_name, msg.value)
-            for msg in messages
-            if msg.stream == COMMANDS_STREAM_ID
-            and isinstance(msg.value, WorkflowConfig)
-        )
-    return result
-
-
-def get_batch_calls(sink: FakeMessageSink) -> list[int]:
-    """Extract batch call sizes from the sink."""
-    return [len(messages) for messages in sink.published_messages]
+def desired_table(log: InMemoryDesiredStateLog) -> DesiredTable:
+    """The desired table the log holds."""
+    return fold_updates({}, log.read(0))
 
 
 def make_orchestrator(
@@ -210,18 +185,19 @@ def make_orchestrator(
     job_service: JobService | None = None,
     notification_queue: NotificationQueue | None = None,
     clock: Callable[[], float] = time.time,
+    desired_state: DesiredStateWriter | None = None,
 ) -> JobOrchestrator:
     """Build a JobOrchestrator from one or more WorkflowSpecs for testing."""
     registry = {spec.get_id(): spec for spec in specs}
     ds = data_service if data_service is not None else DataService()
     js = job_service if job_service is not None else JobService()
     return JobOrchestrator(
+        desired_state=desired_state or InMemoryDesiredStateLog(),
         command_service=CommandService(
             sink=fake_sink if fake_sink is not None else FakeMessageSink()
         ),
         workflow_registry=registry,
         active_job_registry=ActiveJobRegistry(data_service=ds, job_service=js),
-        job_service=js,
         config_store=config_store,
         notification_queue=notification_queue,
         clock=clock,
@@ -694,114 +670,56 @@ class TestJobOrchestratorCommit:
         with pytest.raises(ValueError, match="No staged configs"):
             orchestrator.commit_workflow(workflow_id)
 
-    def test_commit_workflow_sends_workflow_configs_to_backend(
+    def test_commit_workflow_writes_staged_configs_as_one_record(
         self,
         workflow_with_params: WorkflowSpec,
     ):
-        """Verify correct WorkflowConfig messages sent for each source."""
         workflow_id = workflow_with_params.get_id()
-        fake_sink = FakeMessageSink()
-        orchestrator = make_orchestrator(workflow_with_params, fake_sink=fake_sink)
+        log = InMemoryDesiredStateLog()
+        orchestrator = make_orchestrator(workflow_with_params, desired_state=log)
+        for source_name in ("det_1", "det_2"):
+            orchestrator.stage_config(
+                workflow_id,
+                source_name=source_name,
+                params={"threshold": 75.0, "mode": "accurate"},
+                aux_source_names={},
+            )
 
-        # Stage configs
-        orchestrator.stage_config(
-            workflow_id,
-            source_name="det_1",
-            params={"threshold": 75.0, "mode": "accurate"},
-            aux_source_names={},
-        )
-        orchestrator.stage_config(
-            workflow_id,
-            source_name="det_2",
-            params={"threshold": 75.0, "mode": "accurate"},
-            aux_source_names={},
-        )
-
-        # Commit
         job_ids = orchestrator.commit_workflow(workflow_id)
 
-        # Assert: FakeMessageSink received correct WorkflowConfig for each source
-        sent_configs = get_sent_workflow_configs(fake_sink)
-        assert len(sent_configs) == 2
+        ((written_id, desired),) = log.read(0)
+        assert written_id == workflow_id
+        assert desired.job_number == job_ids[0].job_number
+        assert set(desired.jobs) == {"det_1", "det_2"}
+        for job in desired.jobs.values():
+            assert job.params == {"threshold": 75.0, "mode": "accurate"}
 
-        # Check each source received a config
-        source_names = {config[0] for config in sent_configs}
-        assert source_names == {"det_1", "det_2"}
-
-        # Verify config contents
-        for source_name, config in sent_configs:
-            assert isinstance(config, WorkflowConfig)
-            assert config.identifier == workflow_id
-            assert config.params["threshold"] == 75.0
-            assert config.params["mode"] == "accurate"
-            # Job number should match the returned JobIds
-            matching_job = next(
-                job for job in job_ids if job.source_name == source_name
-            )
-            assert config.job_id == matching_job
-
-    def test_commit_workflow_stops_previous_jobs_on_second_commit(
+    def test_second_commit_replaces_the_record(
         self,
         workflow_with_params: WorkflowSpec,
     ):
-        """Verify second commit sends stop commands for previous jobs."""
+        """Workers stop the superseded jobs; the dashboard sends no stops."""
         workflow_id = workflow_with_params.get_id()
         fake_sink = FakeMessageSink()
-        orchestrator = make_orchestrator(workflow_with_params, fake_sink=fake_sink)
-
-        # Commit first workflow
-        orchestrator.stage_config(
-            workflow_id,
-            source_name="det_1",
-            params={"threshold": 50.0, "mode": "first"},
-            aux_source_names={},
-        )
-        orchestrator.stage_config(
-            workflow_id,
-            source_name="det_2",
-            params={"threshold": 50.0, "mode": "first"},
-            aux_source_names={},
+        log = InMemoryDesiredStateLog()
+        orchestrator = make_orchestrator(
+            workflow_with_params, fake_sink=fake_sink, desired_state=log
         )
         first_job_ids = orchestrator.commit_workflow(workflow_id)
-
-        # Clear sink to track second commit
-        fake_sink.published_messages.clear()
-
-        # Commit second workflow
         orchestrator.stage_config(
             workflow_id,
             source_name="det_1",
             params={"threshold": 100.0, "mode": "second"},
             aux_source_names={},
         )
-        orchestrator.stage_config(
-            workflow_id,
-            source_name="det_2",
-            params={"threshold": 100.0, "mode": "second"},
-            aux_source_names={},
-        )
+
         second_job_ids = orchestrator.commit_workflow(workflow_id)
 
-        # Assert: stop commands sent for first workflow's jobs
-        sent_commands = get_sent_commands(fake_sink)
-        stop_commands = [
-            cmd
-            for cmd in sent_commands
-            if isinstance(cmd, JobCommand) and cmd.action == JobAction.stop
-        ]
-
-        assert len(stop_commands) == 2
-        stopped_job_ids = {cmd.job_id for cmd in stop_commands}
-        assert stopped_job_ids == set(first_job_ids)
-
-        # Verify new workflow configs were sent
-        sent_configs = get_sent_workflow_configs(fake_sink)
-        assert len(sent_configs) == 2
-
-        # Verify the new configs have different job_number than old ones
-        new_job_number = sent_configs[0][1].job_id.job_number
-        assert new_job_number != first_job_ids[0].job_number
-        assert new_job_number == second_job_ids[0].job_number
+        desired = desired_table(log)[workflow_id]
+        assert desired.job_number == second_job_ids[0].job_number
+        assert desired.job_number != first_job_ids[0].job_number
+        assert desired.jobs["det_1"].params["mode"] == "second"
+        assert fake_sink.published_messages == []
 
     def test_clear_staged_configs_then_commit_raises_error(
         self,
@@ -903,48 +821,19 @@ class TestJobOrchestratorCommit:
 class TestJobOrchestratorStop:
     """Test stop_workflow functionality."""
 
-    def test_stop_workflow_sends_stop_commands_to_backend(
+    def test_stop_workflow_writes_tombstone(
         self,
         workflow_with_params: WorkflowSpec,
     ):
-        """Verify stop_workflow sends stop commands for all active jobs."""
         workflow_id = workflow_with_params.get_id()
-        fake_sink = FakeMessageSink()
-        orchestrator = make_orchestrator(workflow_with_params, fake_sink=fake_sink)
+        log = InMemoryDesiredStateLog()
+        orchestrator = make_orchestrator(workflow_with_params, desired_state=log)
+        orchestrator.commit_workflow(workflow_id)
 
-        # Start a workflow
-        orchestrator.stage_config(
-            workflow_id,
-            source_name="det_1",
-            params={"threshold": 50.0, "mode": "custom"},
-            aux_source_names={},
-        )
-        orchestrator.stage_config(
-            workflow_id,
-            source_name="det_2",
-            params={"threshold": 50.0, "mode": "custom"},
-            aux_source_names={},
-        )
-        job_ids = orchestrator.commit_workflow(workflow_id)
+        assert orchestrator.stop_workflow(workflow_id) is True
 
-        # Clear sink to track stop commands
-        fake_sink.published_messages.clear()
-
-        # Stop the workflow
-        result = orchestrator.stop_workflow(workflow_id)
-
-        # Assert: stop commands sent for all jobs
-        assert result is True
-        sent_commands = get_sent_commands(fake_sink)
-        stop_commands = [
-            cmd
-            for cmd in sent_commands
-            if isinstance(cmd, JobCommand) and cmd.action == JobAction.stop
-        ]
-
-        assert len(stop_commands) == 2
-        stopped_job_ids = {cmd.job_id for cmd in stop_commands}
-        assert stopped_job_ids == set(job_ids)
+        assert log.read(1) == [(workflow_id, None)]
+        assert desired_table(log) == {}
 
     def test_stop_workflow_clears_active_job_state(
         self,
@@ -1013,38 +902,6 @@ class TestJobOrchestratorStop:
         assert staged["det_1"].params["threshold"] == 50.0
         assert staged["det_1"].params["mode"] == "custom"
         assert staged["det_1"].aux_source_names["monitor"] == "monitor_1"
-
-    def test_stop_workflow_persists_stopped_state(
-        self,
-        workflow_with_params: WorkflowSpec,
-    ):
-        """Verify stop_workflow persists stopped state to config store."""
-        workflow_id = workflow_with_params.get_id()
-
-        config_store: dict[str, dict] = {}
-        orchestrator = make_orchestrator(
-            workflow_with_params, config_store=config_store
-        )
-
-        # Start a workflow
-        orchestrator.stage_config(
-            workflow_id,
-            source_name="det_1",
-            params={"threshold": 50.0, "mode": "custom"},
-            aux_source_names={},
-        )
-        orchestrator.commit_workflow(workflow_id)
-
-        # Verify active job is in config store
-        assert 'current_job' in config_store[str(workflow_id)]
-
-        # Stop the workflow
-        orchestrator.stop_workflow(workflow_id)
-
-        # Verify current_job is removed from config store; the stopped job
-        # itself is not persisted (retention does not survive a restart)
-        assert 'current_job' not in config_store[str(workflow_id)]
-        assert 'previous_job' not in config_store[str(workflow_id)]
 
     def test_stop_workflow_allows_immediate_restart(
         self,
@@ -1441,9 +1298,9 @@ class MutableClock:
 
 
 class TestPendingCommandExpiry:
-    """Test expiry of pending commands whose acknowledgement never arrives."""
+    """Test expiry of resets whose acknowledgement never arrives."""
 
-    def test_unacknowledged_command_produces_error_notification_after_timeout(
+    def test_unacknowledged_reset_produces_error_notification_after_timeout(
         self, workflow_with_params: WorkflowSpec
     ):
         workflow_id = workflow_with_params.get_id()
@@ -1457,6 +1314,7 @@ class TestPendingCommandExpiry:
             workflow_id, source_name="det_1", params={}, aux_source_names={}
         )
         orchestrator.commit_workflow(workflow_id)
+        orchestrator.reset_workflow(workflow_id)
 
         clock.advance(PENDING_COMMAND_TIMEOUT_SECONDS + 1.0)
         orchestrator.expire_pending_commands()
@@ -1483,6 +1341,7 @@ class TestPendingCommandExpiry:
             workflow_id, source_name="det_1", params={}, aux_source_names={}
         )
         orchestrator.commit_workflow(workflow_id)
+        orchestrator.reset_workflow(workflow_id)
 
         clock.advance(PENDING_COMMAND_TIMEOUT_SECONDS - 1.0)
         orchestrator.expire_pending_commands()
@@ -1503,6 +1362,7 @@ class TestPendingCommandExpiry:
             workflow_id, source_name="det_1", params={}, aux_source_names={}
         )
         orchestrator.commit_workflow(workflow_id)
+        orchestrator.reset_workflow(workflow_id)
 
         clock.advance(PENDING_COMMAND_TIMEOUT_SECONDS + 1.0)
         orchestrator.expire_pending_commands()

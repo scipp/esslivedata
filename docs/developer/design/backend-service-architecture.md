@@ -88,14 +88,15 @@ This architecture provides clear separation with distinct responsibilities:
 
 **OrchestratingProcessor**: Full job-based processing for all backend services:
 
-- Configuration message handling
+- Job reconciliation against the desired state
+- Command handling (reset)
 - Time-based message batching
 - Preprocessing via accumulators
 - Job lifecycle management
 - Workflow execution
 - Periodic status reporting (every 2 seconds)
 
-**Processing Flow**: Source → Split config/data → Route config to jobs → Batch data by time → Preprocess/accumulate → Push to JobManager → Compute workflows → Publish results
+**Processing Flow**: Reconcile jobs against the desired state → Source → Split commands/data → Apply commands to jobs → Batch data by time → Preprocess/accumulate → Push to JobManager → Compute workflows → Publish results
 
 ### Service Layer
 
@@ -113,16 +114,21 @@ All backend services (monitor_data, detector_data, data_reduction, timeseries) u
 sequenceDiagram
     participant S as Service
     participant OP as OrchestratingProcessor
+    participant DR as DesiredStateReader
+    participant JR as JobReconciler
     participant CP as CommandDispatcher
     participant MP as MessagePreprocessor
     participant JM as JobManager
     participant Sink as MessageSink
 
     S->>OP: process()
+    OP->>DR: poll() (bootstrap() on first call)
+    OP->>JR: reconcile(desired_table)
+    JR->>JM: stop_job() / schedule_job()
     OP->>OP: Get messages from source
-    OP->>OP: Split config vs data messages
-    OP->>CP: process_messages(config_msgs)
-    CP->>JM: schedule_job() / job_command()
+    OP->>OP: Split command vs data messages
+    OP->>CP: process_messages(command_msgs)
+    CP->>JM: job_command() (reset)
     OP->>JM: Report status
     OP->>OP: Batch data messages by time
     OP->>MP: preprocess_messages(batch)
@@ -134,7 +140,7 @@ sequenceDiagram
     OP->>Sink: publish_messages(results + status)
 ```
 
-**CommandDispatcher** (see `core/command_dispatcher.py`) handles `workflow_config` and `job_command` messages, delegating to **JobManagerAdapter** (see `core/job_manager_adapter.py`), which bridges CommandDispatcher and JobManager. Other key features: time-based batching, preprocessing accumulation, job lifecycle management, periodic status reporting.
+**JobReconciler** (see `core/job_reconciler.py`) starts and stops jobs so that they match the desired table, read from the desired-state topic (see [ADR 0012](../adr/0012-desired-state-topic-for-job-control.md)). It builds at most one job per cycle. A job that fails to build is reported in the heartbeat with state `error`. **CommandDispatcher** (see `core/command_dispatcher.py`) handles `job_command` messages (reset only), delegating to **JobManagerAdapter** (see `core/job_manager_adapter.py`), which bridges CommandDispatcher and JobManager. Other key features: time-based batching, preprocessing accumulation, job lifecycle management, periodic status reporting.
 
 ## Message Flow in Backend Services
 
@@ -156,8 +162,6 @@ stateDiagram-v2
     scheduled --> active: Time reached
     active --> finishing: End time reached
     active --> [*]: stop_job()
-    active --> paused: pause()
-    paused --> active: resume()
     scheduled --> [*]: stop_job()
     finishing --> [*]: stop_job()
 
@@ -167,7 +171,7 @@ stateDiagram-v2
     warning --> active: Successful processing
 ```
 
-**Job States**: `scheduled` (waiting for start time) → `active` (processing) → `finishing` (end time reached). `stop_job()` removes the job from the system. `paused` is defined but pause/resume raise `NotImplementedError` (placeholder for future use). Error states: `error` (finalization failure), `warning` (processing error).
+**Job States**: `scheduled` (waiting for start time) → `active` (processing) → `finishing` (end time reached). `stop_job()` removes the job from the system. Error states: `error` (finalization failure), `warning` (processing error).
 
 ### JobManager
 

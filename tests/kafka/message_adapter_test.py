@@ -1,6 +1,7 @@
 # SPDX-License-Identifier: BSD-3-Clause
 # Copyright (c) 2025 Scipp contributors (https://github.com/scipp)
 import numpy as np
+import pydantic
 import pytest
 import scipp as sc
 from streaming_data_types import (
@@ -792,29 +793,6 @@ def fake_message_with_value(message: KafkaMessage, value: str) -> Message[str]:
 
 
 class TestCommandsAdapter:
-    def test_decodes_workflow_config(self) -> None:
-        import uuid
-
-        from ess.livedata.config.workflow_spec import (
-            JobId,
-            WorkflowConfig,
-            WorkflowId,
-        )
-
-        config = WorkflowConfig(
-            identifier=WorkflowId(instrument='dummy', name='wf', version=1),
-            job_id=JobId(source_name='det1', job_number=uuid.uuid4()),
-        )
-        message = FakeKafkaMessage(
-            key=None,
-            value=config.model_dump_json().encode('utf-8'),
-            topic="dummy_livedata_commands",
-        )
-        adapter = CommandsAdapter()
-        adapted_message = adapter.adapt(message)
-        assert adapted_message.stream == COMMANDS_STREAM_ID
-        assert adapted_message.value == config
-
     def test_decodes_job_command(self) -> None:
         import uuid
 
@@ -822,7 +800,7 @@ class TestCommandsAdapter:
         from ess.livedata.core.job_manager import JobAction, JobCommand
 
         command = JobCommand(
-            action=JobAction.stop,
+            action=JobAction.reset,
             job_id=JobId(source_name='det1', job_number=uuid.uuid4()),
         )
         message = FakeKafkaMessage(
@@ -832,7 +810,17 @@ class TestCommandsAdapter:
         )
         adapter = CommandsAdapter()
         adapted_message = adapter.adapt(message)
+        assert adapted_message.stream == COMMANDS_STREAM_ID
         assert adapted_message.value == command
+
+    def test_rejects_other_command_kinds(self) -> None:
+        message = FakeKafkaMessage(
+            key=None,
+            value=b'{"kind": "workflow_config"}',
+            topic="dummy_livedata_commands",
+        )
+        with pytest.raises(pydantic.ValidationError):
+            CommandsAdapter().adapt(message)
 
 
 class TestResponsesAdapter:

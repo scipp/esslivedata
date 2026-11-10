@@ -9,18 +9,12 @@ duplicated here.
 """
 
 import logging
-import uuid
 
 import pytest
 
 from ess.livedata.config import instrument_registry, workflow_spec
-from ess.livedata.config.workflow_spec import JobId
 from ess.livedata.services.timeseries import make_timeseries_service_builder
 from tests.helpers.livedata_app import LivedataApp
-
-
-def _job_id(source: str) -> JobId:
-    return JobId(source_name=source, job_number=uuid.uuid4())
 
 
 def _get_workflow_from_registry(
@@ -61,13 +55,9 @@ def test_updates_are_published_immediately(
     workflow_id, _ = _get_workflow_from_registry(instrument)
 
     source_name = first_motion_source_name[instrument]
-    workflow_config = workflow_spec.WorkflowConfig(
-        identifier=workflow_id, job_id=_job_id(source_name)
-    )
     # Trigger workflow start
-    app.publish_config_message(workflow_config)
+    app.commit_workflow(workflow_id, [source_name])
     service.step()
-    # Config ack lands on response_messages, not the data sink
     assert len(sink.messages) == 0
 
     app.publish_log_message(source_name=source_name, time=1, value=1.5)
@@ -102,10 +92,7 @@ def test_duplicate_f144_messages_do_not_trigger_workflow() -> None:
     workflow_id, _ = _get_workflow_from_registry(instrument)
 
     source_name = first_motion_source_name[instrument]
-    workflow_config = workflow_spec.WorkflowConfig(
-        identifier=workflow_id, job_id=_job_id(source_name)
-    )
-    app.publish_config_message(workflow_config)
+    app.commit_workflow(workflow_id, [source_name])
     service.step()
 
     # First message — accepted, workflow produces a result
@@ -133,10 +120,10 @@ def test_duplicate_f144_messages_do_not_trigger_workflow() -> None:
 
 
 class TestDataBeforeConfig:
-    """Tests for the race condition where f144 data arrives before WorkflowConfig.
+    """Tests for the race condition where f144 data arrives before the commit.
 
     When the timeseries service starts, Kafka may deliver f144 data before the
-    dashboard's WorkflowConfig arrives. The ToNXlog accumulator consumes this data
+    dashboard's commit arrives. The ToNXlog accumulator consumes this data
     but no jobs exist yet. These tests verify that jobs still receive the data
     via context seeding once they are created.
 
@@ -170,15 +157,9 @@ class TestDataBeforeConfig:
         app.service.step()
         assert len(app.sink.messages) == 0
 
-        # Config arrives for both sources — jobs scheduled
-        config_a = workflow_spec.WorkflowConfig(
-            identifier=workflow_id, job_id=_job_id(source_a)
-        )
-        config_b = workflow_spec.WorkflowConfig(
-            identifier=workflow_id, job_id=_job_id(source_b)
-        )
-        app.publish_config_message(config_a)
-        app.publish_config_message(config_b)
+        # Commit for both sources — one job scheduled per step
+        app.commit_workflow(workflow_id, [source_a, source_b])
+        app.service.step()
         app.service.step()
 
         # Only stream B gets new data — this triggers activation of ALL
@@ -205,15 +186,9 @@ class TestDataBeforeConfig:
         app.service.step()
         assert len(app.sink.messages) == 0
 
-        # Config for both sources
-        config_a = workflow_spec.WorkflowConfig(
-            identifier=workflow_id, job_id=_job_id(source_a)
-        )
-        config_b = workflow_spec.WorkflowConfig(
-            identifier=workflow_id, job_id=_job_id(source_b)
-        )
-        app.publish_config_message(config_a)
-        app.publish_config_message(config_b)
+        # Commit for both sources — one job scheduled per step
+        app.commit_workflow(workflow_id, [source_a, source_b])
+        app.service.step()
         app.service.step()
 
         # Stream A: resend (same timestamp, rejected by accumulator)
@@ -235,10 +210,7 @@ class TestDataBeforeConfig:
         app, source_a, _, workflow_id = self._setup()
 
         # Config arrives first — job is created, no data yet
-        config_a = workflow_spec.WorkflowConfig(
-            identifier=workflow_id, job_id=_job_id(source_a)
-        )
-        app.publish_config_message(config_a)
+        app.commit_workflow(workflow_id, [source_a])
         app.service.step()
         assert len(app.sink.messages) == 0
 

@@ -72,6 +72,22 @@ services:
 The CA variable and mount are not required for `PLAINTEXT` or
 `SASL_PLAINTEXT` connections.
 
+## Desired-State Topic
+
+Which workflows run is stored on the Kafka topic `<instrument>_livedata_desired`, one record per workflow. Backend services read it from the beginning at every start and restore the jobs it lists. The dashboard writes it when a user starts or stops a workflow (see [ADR 0012](../developer/adr/0012-desired-state-topic-for-job-control.md)).
+
+The topic is the only durable copy of this state, so its configuration is a requirement:
+
+```
+cleanup.policy=compact    # compact only; "delete" or "compact,delete" silently drops
+                          # the record of a workflow that runs longer than retention.ms
+partitions=1              # never change: the partition of a record depends on the count
+replication.factor=3
+min.insync.replicas=2     # needs at least 3 brokers
+```
+
+A backend service exits with an error, and the dashboard does not start, if the topic is missing, has more than one partition, or cannot be read to its end within 30 s.
+
 ## Dashboard Configuration Persistence
 
 The ESSlivedata dashboard stores user configurations (workflow settings, plotter configurations, etc.) locally on disk to preserve settings across restarts.

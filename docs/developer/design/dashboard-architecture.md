@@ -4,7 +4,7 @@
 
 The Livedata dashboard is a real-time data visualization system built on Panel/HoloViews. It consumes processed detector data from Kafka, displays it as interactive plots, and publishes user commands back to backend services. The architecture supports multiple concurrent browser sessions with shared state and per-session rendering.
 
-Data updates arrive at ~1 Hz. User controls (workflow start/stop, plot configuration) result in commands published to Kafka for backend consumption.
+Data updates arrive at ~1 Hz. Workflow start and stop write records to the desired-state topic, which the backend reconciles against. Resets and ROI edits are published to Kafka for backend consumption.
 
 ## System Context
 
@@ -15,6 +15,7 @@ flowchart TD
     StatusTopic(["Livedata Status Topic"])
     ResponsesTopic(["Livedata Responses Topic"])
     CommandsTopic(["Livedata Commands Topic"])
+    DesiredTopic(["Livedata Desired-State Topic"])
 
     subgraph BackendServices["Livedata Backend Services"]
         MonitorData["monitor_data"]
@@ -36,16 +37,19 @@ flowchart TD
     ResponsesTopic --> DashboardApp
     DashboardApp -- publishes --> CommandsTopic
     CommandsTopic --> DataReduction
+    DashboardApp -- writes --> DesiredTopic
+    DesiredTopic --> DashboardApp
+    DesiredTopic --> BackendServices
 
     classDef kafka fill:#fff3e0,stroke:#ef6c00,color:#e65100;
     classDef backend fill:#e3f2fd,stroke:#1976d2,color:#0d47a1;
     classDef dashboard fill:#ede7f6,stroke:#7b1fa2,color:#4a148c;
-    class DataTopic,StatusTopic,ResponsesTopic,CommandsTopic,ECDCTopic kafka;
+    class DataTopic,StatusTopic,ResponsesTopic,CommandsTopic,DesiredTopic,ECDCTopic kafka;
     class MonitorData,DetectorData,DataReduction backend;
     class DashboardApp dashboard;
 ```
 
-The dashboard publishes job commands (start/stop workflows) to the Commands topic and receives acknowledgements via the Responses topic. Job and service status updates arrive via the Status topic.
+The dashboard starts and stops workflows by writing the desired-state topic, one record per workflow (see [ADR 0012](../adr/0012-desired-state-topic-for-job-control.md)). It reads the topic back to know which jobs should run. Job and service status updates (the observed state) arrive via the Status topic. Reset commands go to the Commands topic, and their acknowledgements arrive via the Responses topic.
 
 ## Layered Architecture
 
@@ -145,7 +149,7 @@ sequenceDiagram
     Sub->>UI: Update plot data (via Pipe)
 ```
 
-The `MessagePump` (see `dashboard/message_pump.py`) consumes from the `MessageSource`, filters messages by active job numbers, and stores data in `DataService`. Status messages and command acknowledgements are routed to `JobOrchestrator`.
+The `MessagePump` (see `dashboard/message_pump.py`) consumes from the `MessageSource`, filters messages by active job numbers, and stores data in `DataService`. It also polls the desired-state reader. Status messages go to `JobService` and `ServiceRegistry`. Records read back from the desired-state topic and command acknowledgements are routed to `JobOrchestrator`.
 
 `DataService` (see `dashboard/data_service.py`) is a dict-like store keyed by `DataKey` (the job-number-stripped form of `ResultKey`). Subscribers register interest in specific keys and receive batched notifications via a transaction mechanism.
 
@@ -159,26 +163,27 @@ stateDiagram-v2
     Staging --> Staging: stage_config() (more sources)
     Staging --> Committed: commit_workflow()
     Committed --> [*]: stop_workflow()
-    Committed --> Committed: Receives acknowledgement
+    Committed --> Committed: commit_workflow() (new generation)
 
     note right of Staging
         Per-source configs staged
-        in memory. No Kafka commands
-        sent yet.
+        in memory. Nothing written
+        to Kafka yet.
     end note
 
     note right of Committed
-        Commands sent to backend.
-        PendingCommandTracker awaits
-        acknowledgements.
+        Desired-state record written
+        and confirmed. Workers build
+        the jobs when they read it.
     end note
 ```
 
 Key responsibilities:
 - **Staging**: Collects per-source configurations before committing. Subscribers are notified of staging changes for UI preview.
-- **Commit**: Sends `JobCommand` messages via `CommandService`, assigns job numbers, activates jobs in `ActiveJobRegistry`.
-- **Stop**: Sends stop commands, deactivates jobs (which cleans up `DataService` buffers via `ActiveJobRegistry`).
-- **Acknowledgement processing**: Tracks pending commands and processes backend responses.
+- **Commit**: Writes one desired-state record with a new job number and waits until the writer confirms it is stored. Only then does it begin the new generation in `ActiveJobRegistry`, which clears the workflow's `DataService` buffers. A failed write is reported and changes nothing.
+- **Stop**: Writes a tombstone for the workflow and, once it is stored, deactivates the workflow in `ActiveJobRegistry`. The last results stay displayed until the next commit.
+- **Read-back**: Applies records read from the desired-state topic, including those of other writers, to each workflow's current generation (`apply_desired_updates`). Entries for workflows outside the registry are listed as unknown entries, which only the user removes.
+- **Reset**: Sends reset commands via `CommandService` and tracks their acknowledgements.
 
 `WorkflowController` (see `dashboard/workflow_controller.py`) is the interface between widgets and `JobOrchestrator`. It translates Pydantic model parameters into orchestrator calls and creates `WorkflowConfigurationAdapter` instances for the configuration UI.
 

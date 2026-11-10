@@ -5,8 +5,7 @@ from __future__ import annotations
 import structlog
 
 from ..config.acknowledgement import CommandAcknowledgement
-from ..config.workflow_spec import WorkflowConfig
-from .job_manager import Command, JobCommand
+from .job_manager import Command
 from .job_manager_adapter import JobManagerAdapter
 from .message import RESPONSES_STREAM_ID, Message
 
@@ -30,20 +29,8 @@ class CommandDispatcher:
         response_messages: list[Message[CommandAcknowledgement]] = []
         for message in messages:
             command = message.value
-            logger.info(
-                'processing_command', kind=command.kind, value=command.model_dump()
-            )
-            try:
-                if isinstance(command, WorkflowConfig):
-                    result = self._job_manager_adapter.set_workflow_with_config(command)
-                elif isinstance(command, JobCommand):
-                    result = self._job_manager_adapter.job_command(command)
-                else:
-                    logger.error('unknown_command_kind', kind=command.kind)
-                    continue
-            except Exception:
-                logger.exception('error_processing_command', kind=command.kind)
-                continue
+            logger.info('processing_command', value=command.model_dump())
+            result = self._job_manager_adapter.job_command(command)
             if result is not None:
                 response_messages.append(
                     Message(stream=RESPONSES_STREAM_ID, value=result)

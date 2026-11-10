@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: BSD-3-Clause
 # Copyright (c) 2025 Scipp contributors (https://github.com/scipp)
-"""Integration test for the stop path: a commanded stop halts backend work."""
+"""Integration test for the stop path: a stop halts backend work."""
 
 import time
 
@@ -34,7 +34,7 @@ def test_stop_workflow_halts_backend_publishing(
     integration_env: IntegrationEnv,
 ) -> None:
     """
-    A commanded stop actually stops backend work, not just the dashboard status.
+    A stop actually stops backend work, not just the dashboard status.
 
     JobOrchestrator.stop_workflow also deactivates the workflow dashboard-side,
     so DataService would filter out late results even if the backend kept
@@ -42,7 +42,7 @@ def test_stop_workflow_halts_backend_publishing(
     vacuously whether or not the worker process actually stopped consuming
     and producing. The only assertion that proves the backend itself halted
     is on Kafka: the results topic's high watermark must stop advancing, and
-    stay stopped, after the stop command is issued.
+    stay stopped, after the stop's tombstone is written.
 
     Uses ``job_orchestrator.stop_workflow`` directly, the same call the
     dashboard's stop button makes (``WorkflowStatusWidget._on_stop_click``).
@@ -63,7 +63,7 @@ def test_stop_workflow_halts_backend_publishing(
 
     assert backend.job_orchestrator.stop_workflow(WORKFLOW_ID)
 
-    # Watermark stalls once the worker consumes the stop command...
+    # Watermark stalls once the worker reads the tombstone...
     stalled_watermark = wait_for_watermark_stall(DATA_TOPIC)
     # ...and stays stalled: a real gap separates detection from
     # reconfirmation, so this rules out a late trickle rather than

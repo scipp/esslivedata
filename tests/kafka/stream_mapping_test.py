@@ -27,6 +27,7 @@ def full_mapping() -> StreamMapping:
         },
         livedata_commands_topic="cmd",
         livedata_data_topic="data",
+        livedata_desired_topic="desired",
         livedata_responses_topic="resp",
         livedata_context_topic="context",
         livedata_roi_topic="roi",
@@ -66,6 +67,7 @@ class TestStreamMappingFiltered:
         f = full_mapping.filtered(set())
         assert f.topics.livedata_commands == "cmd"
         assert f.topics.livedata_data == "data"
+        assert f.topics.livedata_desired == "desired"
         assert f.topics.livedata_responses == "resp"
         assert f.topics.livedata_roi == "roi"
         assert f.topics.livedata_status == "status"

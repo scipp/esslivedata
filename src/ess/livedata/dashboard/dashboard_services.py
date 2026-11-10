@@ -47,6 +47,10 @@ logger = structlog.get_logger(__name__)
 # to evict one that is merely on a slow link.
 DEFAULT_SESSION_STALE_TIMEOUT = 60.0
 
+# Deadline for reading the desired-state topic to its end at startup. A dashboard
+# that misses it fails to start rather than show a partial desired state.
+DESIRED_STATE_BOOTSTRAP_TIMEOUT_S = 30.0
+
 
 class DashboardServices:
     """
@@ -176,14 +180,13 @@ class DashboardServices:
             try:
                 consumed = self.message_pump.update()
                 pumped = time.monotonic()
-                # Expire pending commands whose acknowledgement never arrived, so
-                # a silently dropped send surfaces as an error toast rather than a
-                # workflow stuck waiting for the backend. Cheap scan of a tiny dict.
+                # Expire resets whose acknowledgement never arrived, so a
+                # silently dropped send surfaces as an error toast. Cheap scan
+                # of a tiny dict.
                 self.job_orchestrator.expire_pending_commands()
-                # Compare desired run-state against observed heartbeats and
-                # re-issue stops while they contradict (ADR 0008). Also prunes
-                # observed statuses whose heartbeat aged out.
-                self.job_orchestrator.reconcile_observed_jobs()
+                self.job_service.prune_stale(
+                    keep=self.job_orchestrator.get_desired_job_ids()
+                )
                 self.session_registry.cleanup_stale_sessions()
                 # Run-state poll before the flush: a commit observed here
                 # resets the affected layers' presentation, so the same pass's
@@ -299,13 +302,17 @@ class DashboardServices:
 
         self.job_orchestrator = JobOrchestrator(
             command_service=self.command_service,
+            desired_state=self._transport_resources.desired_state_writer,
             workflow_registry=self.processor_factory,
             active_job_registry=active_job_registry,
-            job_service=self.job_service,
             config_store=self.workflow_config_store,
             instrument_config=self.instrument_config,
             notification_queue=self.notification_queue,
             on_change=self.wakeup_hub.wake_all,
+        )
+        desired_state = self._transport_resources.desired_state_reader
+        self.job_orchestrator.apply_desired_updates(
+            desired_state.bootstrap(DESIRED_STATE_BOOTSTRAP_TIMEOUT_S)
         )
 
         self.workflow_controller = WorkflowController(
@@ -316,6 +323,7 @@ class DashboardServices:
 
         self.message_pump = MessagePump(
             self._transport_resources.message_source,
+            desired_state=desired_state,
             data_service=self.data_service,
             job_service=self.job_service,
             service_registry=self.service_registry,

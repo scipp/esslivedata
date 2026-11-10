@@ -16,8 +16,8 @@ def test_workflow_can_start_and_receive_data(integration_env: IntegrationEnv) ->
     """
     A workflow started by the dashboard yields results for the job it created.
 
-    The wire content is the round trip: the start command reaches a real
-    backend service, which runs the workflow on real ev44 data and publishes
+    The wire content is the round trip: the desired-state record reaches a
+    real backend service, which runs the workflow on real ev44 data and publishes
     results the dashboard admits under the job it just created. Which outputs
     the workflow declares is a workflow-spec fact, pinned by the workflow and
     service unit tests, and deliberately not re-asserted here.

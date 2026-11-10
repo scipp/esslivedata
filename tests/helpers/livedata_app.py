@@ -6,6 +6,8 @@ Helper class for testing ESSlivedata services.
 
 from __future__ import annotations
 
+import uuid
+from collections.abc import Iterable
 from dataclasses import dataclass
 
 import numpy as np
@@ -20,6 +22,12 @@ from ess.livedata import Service, StreamKind
 from ess.livedata.config.env import StreamingEnv
 from ess.livedata.config.instruments import get_config
 from ess.livedata.config.streams import stream_kind_to_topic
+from ess.livedata.config.workflow_spec import WorkflowId
+from ess.livedata.core.desired_state import (
+    DesiredJob,
+    DesiredWorkflow,
+    InMemoryDesiredStateLog,
+)
 from ess.livedata.core.job_manager import Command
 from ess.livedata.core.message_batcher import NaiveMessageBatcher
 from ess.livedata.fakes import FakeMessageSink
@@ -48,12 +56,13 @@ class FakeConsumer(KafkaConsumer):
 
 @dataclass(kw_only=True)
 class LivedataApp:
-    """A testable "application" with a fake consumer and sink."""
+    """A testable "application" with a fake consumer, sink, and desired state."""
 
     service: Service
     consumer: FakeConsumer
     sink: FakeMessageSink
     instrument: str
+    desired_state: InMemoryDesiredStateLog
 
     def __post_init__(self) -> None:
         self.detector_topic = stream_kind_to_topic(
@@ -82,23 +91,59 @@ class LivedataApp:
         """
         sink = FakeMessageSink()
         consumer = FakeConsumer()
+        desired_state = InMemoryDesiredStateLog()
         if use_naive_message_batcher:
             builder.message_batcher = NaiveMessageBatcher()
         service = builder.from_consumer(
             consumer=consumer,
             sink=UnrollingSinkAdapter(sink),
+            desired_state=desired_state.reader(),
             raise_on_adapter_error=False,
             use_background_source=False,
         )
         return LivedataApp(
-            service=service, consumer=consumer, sink=sink, instrument=builder.instrument
+            service=service,
+            consumer=consumer,
+            sink=sink,
+            instrument=builder.instrument,
+            desired_state=desired_state,
         )
 
     def step(self) -> None:
         """Run one step of the service."""
         self.service.step()
 
-    def publish_config_message(self, command: Command) -> None:
+    def commit_workflow(
+        self,
+        workflow_id: WorkflowId,
+        source_names: Iterable[str],
+        *,
+        params: dict | None = None,
+        aux_source_names: dict[str, str] | None = None,
+    ) -> DesiredWorkflow:
+        """Write a desired-state record wanting one job per source, as a commit.
+
+        The service builds at most one job per step, so a commit with several
+        sources needs as many steps.
+        """
+        desired = DesiredWorkflow(
+            workflow_id=workflow_id,
+            job_number=uuid.uuid4(),
+            jobs={
+                name: DesiredJob(
+                    params=params or {}, aux_source_names=aux_source_names or {}
+                )
+                for name in source_names
+            },
+        )
+        self.desired_state.write(workflow_id, desired)
+        return desired
+
+    def stop_workflow(self, workflow_id: WorkflowId) -> None:
+        """Write a desired-state tombstone, so none of the workflow's jobs run."""
+        self.desired_state.write(workflow_id, None)
+
+    def publish_command(self, command: Command) -> None:
         self.publish_command_json(command.model_dump_json())
 
     def publish_command_json(self, raw: str) -> None:

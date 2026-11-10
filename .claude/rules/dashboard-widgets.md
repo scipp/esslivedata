@@ -118,6 +118,8 @@ tags them with visually inert classes, a stable contract that refactors must kee
 |---|---|
 | `lt-tool`, `lt-tool-{icon_name}` | every tool button; download button is `lt-tool-download` |
 | `lt-wf-{workflow_id.name}` | workflow rows (name slug, not display title) |
+| `lt-unknown-wf`, `lt-unknown-wf-{name}-v{version}` | remove button of a desired-state entry for a workflow outside the registry |
+| `lt-confirm-proceed`, `lt-confirm-cancel` | confirm and cancel buttons of a `ConfirmationModal` (NICOS device gate, unknown-entry removal) |
 | `lt-grid-{title-slug}` | per-grid rows in Manage Plots (grids have no stable name) |
 | `lt-cell-r{row}c{col}` | every button in a plot cell's titlebar |
 | `lt-empty-cell`, `lt-empty-cell-r{row}c{col}` | empty grid cells (never answered by `lt-cell-*`) |
@@ -154,9 +156,8 @@ python -m ess.livedata.dashboard.reduction --instrument dummy --transport fake \
 ```
 
 Regenerate a fixture by configuring via the UI and copying `workflow_configs.yaml`
-(strip `current_job`, keep `jobs`) and `plot_configs.yaml` back. Browser tests
-launch via `_fake_dashboard(...)` without a port, so the OS picks a free one; never
-hand a test a port literal.
+and `plot_configs.yaml` back. Browser tests launch via `_fake_dashboard(...)` without
+a port, so the OS picks a free one; never hand a test a port literal.
 
 **Navigation**
 

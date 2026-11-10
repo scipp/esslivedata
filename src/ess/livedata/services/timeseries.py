@@ -55,6 +55,7 @@ def make_timeseries_service_builder(
         log_level=log_level,
         adapter=adapter,
         preprocessor_factory=preprocessor_factory,
+        desired_state_topic=stream_mapping.topics.livedata_desired,
         stream_counter=stream_counter,
         message_batcher=NaiveMessageBatcher(),
         # Wraps the source so the wavelength_lut workflow's primary

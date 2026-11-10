@@ -4,7 +4,7 @@ Integration tests verify end-to-end behavior of ESSlivedata by running actual se
 
 ## Scope
 
-Every test here needs a broker, is marked `@pytest.mark.integration`, and asserts something *only the wire can show*: that a command became a durable Kafka record, that a real service consumed it, that a real service's output is what the dashboard consumes. Behavior that a fake transport or an injected clock can pin belongs in `tests/dashboard/` or `tests/services/` — an integration test that duplicates it buys nothing and costs tens of seconds of wall clock. Tests that need no broker do not belong here at all: they would silently run in the default suite while `tox -e integration` never selects them.
+Every test here needs a broker, is marked `@pytest.mark.integration`, and asserts something *only the wire can show*: that a desired-state record or command became a durable Kafka record, that a real service consumed it, that a real service's output is what the dashboard consumes. Behavior that a fake transport or an injected clock can pin belongs in `tests/dashboard/` or `tests/services/` — an integration test that duplicates it buys nothing and costs tens of seconds of wall clock. Tests that need no broker do not belong here at all: they would silently run in the default suite while `tox -e integration` never selects them.
 
 `helpers.py` is a helper library rather than a test module, so it has its own unit tests in `helpers_test.py` (unmarked, broker-free, and intentionally part of the default suite).
 
@@ -18,7 +18,9 @@ Every test here needs a broker, is marked `@pytest.mark.integration`, and assert
 
 See `conftest.py` for fixture details:
 - `integration_env`: Full integration environment (backend + services)
-- `dashboard_backend`: Just the backend without services
+- `dashboard_backend`: Just the backend without services; requests `desired_state`
+- `desired_state`: Writer of the desired-state topic; empties the table before and after the test, so commits do not leak between tests
+- `heartbeats`: Job and service statuses published from now on
 - `monitor_services`, `detector_services`, `reduction_services`: Specific service combinations
 
 ## Test Helpers
@@ -63,10 +65,9 @@ def test_my_workflow(integration_env):
     # Make assertions about the jobs we created
     assert job_ids[0] in job_data
     assert len(job_data[job_ids[0]]) > 0  # At least one result key
-
-    # Clean up
-    backend.workflow_controller.stop_workflow(workflow_id)
 ```
+
+No cleanup is needed: the `desired_state` fixture empties the desired table after the test.
 
 ## Best Practices
 

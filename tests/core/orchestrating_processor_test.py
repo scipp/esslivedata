@@ -10,13 +10,17 @@ import scipp as sc
 from ess.livedata.config.instrument import Instrument
 from ess.livedata.config.workflow_spec import (
     JobId,
-    WorkflowConfig,
     WorkflowId,
     WorkflowOutputsBase,
 )
-from ess.livedata.core.job import JobResult
+from ess.livedata.core.desired_state import (
+    DesiredJob,
+    DesiredUpdate,
+    DesiredWorkflow,
+    InMemoryDesiredStateLog,
+)
+from ess.livedata.core.job import JobResult, JobState, JobStatus
 from ess.livedata.core.message import (
-    COMMANDS_STREAM_ID,
     Message,
     StreamId,
     StreamKind,
@@ -99,6 +103,16 @@ class FakeFactory:
         return self._accumulators.get(key.name)
 
 
+def _desired(
+    workflow_id: WorkflowId, source_name: str, params: dict | None = None
+) -> DesiredWorkflow:
+    return DesiredWorkflow(
+        workflow_id=workflow_id,
+        job_number=uuid.uuid4(),
+        jobs={source_name: DesiredJob(params=params or {}, aux_source_names={})},
+    )
+
+
 def _make_processor(
     factory: FakeFactory,
     source_messages: list[list[Message]],
@@ -109,6 +123,7 @@ def _make_processor(
         source=FakeMessageSource(source_messages),
         sink=sink,
         preprocessor_factory=factory,
+        desired_state=InMemoryDesiredStateLog().reader(),
         service_name='test_service',
         message_batcher=NaiveMessageBatcher(),
     )
@@ -318,16 +333,18 @@ class TestEmptyBatchContextReplay:
     @staticmethod
     def _processor(
         instrument: Instrument, batches: list[list[Message]]
-    ) -> tuple[OrchestratingProcessor, FakeMessageSink]:
+    ) -> tuple[OrchestratingProcessor, FakeMessageSink, InMemoryDesiredStateLog]:
         sink = FakeMessageSink()
+        desired_state = InMemoryDesiredStateLog()
         processor = OrchestratingProcessor(
             source=FakeMessageSource(batches),
             sink=sink,
             preprocessor_factory=LogdataPreprocessorFactory(instrument=instrument),
+            desired_state=desired_state.reader(),
             service_name='timeseries',
             message_batcher=NaiveMessageBatcher(),
         )
-        return processor, sink
+        return processor, sink, desired_state
 
     @staticmethod
     def _tick() -> Message:
@@ -338,34 +355,21 @@ class TestEmptyBatchContextReplay:
         )
 
     @staticmethod
-    def _schedule(workflow_id: Any) -> Message:
-        job_id = JobId(source_name=CHOPPER_CASCADE_SOURCE, job_number=uuid.uuid4())
-        config = WorkflowConfig.from_params(
-            workflow_id=workflow_id, job_id=job_id, params=None, aux_source_names=None
-        )
-        return Message(
-            timestamp=Timestamp.from_ns(200),
-            stream=COMMANDS_STREAM_ID,
-            value=config,
-        )
-
-    @staticmethod
     def _data_messages(sink: FakeMessageSink) -> list[Message]:
         return [m for m in sink.messages if m.stream.kind is StreamKind.LIVEDATA_DATA]
 
     def test_tick_cached_before_schedule_fires_job_once(self) -> None:
         instrument, workflow_id = self._make_instrument()
-        processor, sink = self._processor(
-            instrument, [[self._tick()], [self._schedule(workflow_id)]]
-        )
+        processor, sink, desired_state = self._processor(instrument, [[self._tick()]])
 
         # First poll: the tick arrives and is cached in the ToNXlog context
         # accumulator. No job is scheduled, so nothing fires.
         processor.process()
         assert self._data_messages(sink) == []
 
-        # Second poll: the operator schedules the job. The data batch is empty,
+        # Second poll: the operator commits the job. The data batch is empty,
         # so activation can only come from the cached tick being replayed.
+        desired_state.write(workflow_id, _desired(workflow_id, CHOPPER_CASCADE_SOURCE))
         processor.process()
         assert len(self._data_messages(sink)) == 1
 
@@ -373,11 +377,85 @@ class TestEmptyBatchContextReplay:
         instrument, _ = self._make_instrument()
         # Tick arrives, then an empty poll: with no job scheduled there is
         # nothing to activate and nothing to publish.
-        processor, sink = self._processor(instrument, [[self._tick()], []])
+        processor, sink, _ = self._processor(instrument, [[self._tick()], []])
 
         processor.process()
         processor.process()
         assert self._data_messages(sink) == []
+
+
+class _FailingDesiredStateReader:
+    def bootstrap(self, timeout_s: float) -> list[DesiredUpdate]:
+        raise TimeoutError('no end of partition')
+
+    def poll(self) -> list[DesiredUpdate]:
+        return []
+
+
+class TestDesiredState:
+    """The processor runs the jobs that the desired-state topic wants."""
+
+    @staticmethod
+    def _job_statuses(messages: list[Message]) -> list[JobStatus]:
+        return [m.value for m in messages if isinstance(m.value, JobStatus)]
+
+    def test_bootstrap_failure_propagates(self) -> None:
+        sink = FakeMessageSink()
+        processor = OrchestratingProcessor(
+            source=FakeMessageSource([[]]),
+            sink=sink,
+            preprocessor_factory=FakeFactory({}),
+            desired_state=_FailingDesiredStateReader(),
+            service_name='timeseries',
+        )
+        with pytest.raises(TimeoutError):
+            processor.process()
+        assert sink.published_messages == []
+
+    def test_job_wanted_at_startup_is_reported(self) -> None:
+        instrument, workflow_id = TestEmptyBatchContextReplay._make_instrument()
+        processor, sink, desired_state = TestEmptyBatchContextReplay._processor(
+            instrument, [[]]
+        )
+        desired = _desired(workflow_id, CHOPPER_CASCADE_SOURCE)
+        desired_state.write(workflow_id, desired)
+
+        processor.process()
+
+        [status] = self._job_statuses(sink.status_messages)
+        assert status.job_id == JobId(
+            source_name=CHOPPER_CASCADE_SOURCE, job_number=desired.job_number
+        )
+
+    def test_rejected_job_is_reported_as_error_in_heartbeat(self) -> None:
+        instrument, workflow_id = TestEmptyBatchContextReplay._make_instrument()
+        processor, sink, desired_state = TestEmptyBatchContextReplay._processor(
+            instrument, [[]]
+        )
+        desired = _desired(workflow_id, CHOPPER_CASCADE_SOURCE, params={'bad': 1})
+        desired_state.write(workflow_id, desired)
+
+        processor.process()
+
+        [status] = self._job_statuses(sink.status_messages)
+        assert status.job_id.job_number == desired.job_number
+        assert status.state == JobState.error
+        assert 'bad' in status.error_message
+
+    def test_tombstone_written_between_cycles_stops_job(self) -> None:
+        instrument, workflow_id = TestEmptyBatchContextReplay._make_instrument()
+        processor, sink, desired_state = TestEmptyBatchContextReplay._processor(
+            instrument, [[], []]
+        )
+        desired_state.write(workflow_id, _desired(workflow_id, CHOPPER_CASCADE_SOURCE))
+        processor.process()
+        assert len(self._job_statuses(sink.status_messages)) == 1
+
+        desired_state.write(workflow_id, None)
+        processor.process()
+        processor.finalize()
+
+        assert self._job_statuses(sink.published_messages[-1]) == []
 
 
 class TestJobResultToMessage:

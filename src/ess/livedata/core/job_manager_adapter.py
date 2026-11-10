@@ -5,18 +5,17 @@ from __future__ import annotations
 import structlog
 
 from ..config.acknowledgement import AcknowledgementResponse, CommandAcknowledgement
-from ..config.workflow_spec import WorkflowConfig
-from .job_manager import DifferentInstrument, JobCommand, JobManager
+from .job_manager import JobCommand, JobManager
 
 logger = structlog.get_logger(__name__)
 
 
 class JobManagerAdapter:
     """
-    Translates Command messages dispatched by CommandDispatcher into JobManager calls.
+    Applies a JobCommand dispatched by CommandDispatcher to the JobManager.
 
-    A WorkflowConfig is translated into a new scheduled job and a JobCommand into
-    a job action, each wrapped in a CommandAcknowledgement for the frontend.
+    The result is wrapped in a CommandAcknowledgement for the initiator, or None
+    if this worker has no job the command selects.
     """
 
     def __init__(self, *, job_manager: JobManager) -> None:
@@ -26,9 +25,8 @@ class JobManagerAdapter:
         try:
             affected = self._job_manager.job_command(command)
         except KeyError:
-            # Job not found. Similar to DifferentInstrument for workflows: multiple
-            # backend services receive the same commands, but only the one owning the
-            # job should respond.
+            # Job not found: multiple backend services receive the same commands,
+            # but only the one owning the job should respond.
             logger.debug(
                 "job_not_found",
                 job_id=str(command.job_id),
@@ -52,41 +50,5 @@ class JobManagerAdapter:
             return CommandAcknowledgement(
                 message_id=command.message_id,
                 device=str(command.job_id) if command.job_id else "all",
-                response=AcknowledgementResponse.ACK,
-            )
-
-    def set_workflow_with_config(
-        self, config: WorkflowConfig
-    ) -> CommandAcknowledgement | None:
-        try:
-            _ = self._job_manager.schedule_job(config=config)
-        except DifferentInstrument:
-            # We have multiple backend services that handle jobs, e.g., data_reduction
-            # and monitor_data. The frontend simply sends a WorkflowConfig message and
-            # does not make assumptions which service will handle it. The workflows
-            # for each backend are part of a different instrument, e.g., 'dream' for
-            # data_reduction and 'dream_beam_monitors' for monitor_data, which is
-            # included in the identifier. This should thus work safely, but the question
-            # is whether it should be filtered out earlier.
-            logger.debug(
-                "workflow_not_found",
-                workflow_id=str(config.identifier),
-                message="Assuming handled by another worker",
-            )
-            return None
-        except Exception as e:
-            logger.exception(
-                "workflow_start_failed", workflow_id=str(config.identifier)
-            )
-            return CommandAcknowledgement(
-                message_id=config.message_id,
-                device=config.job_id.source_name,
-                response=AcknowledgementResponse.ERR,
-                message=str(e),
-            )
-        else:
-            return CommandAcknowledgement(
-                message_id=config.message_id,
-                device=config.job_id.source_name,
                 response=AcknowledgementResponse.ACK,
             )
