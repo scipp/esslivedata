@@ -46,8 +46,9 @@ def name_image_dims(da: sc.DataArray, source_name: str) -> sc.DataArray:
 
 
 _MULTIBLADE_SIZES = {'blade': 14, 'wire': 32, 'strip': 64}
-#: Permutation of the geometry file's detector_number order that reverses blade and
-#: wire; see get_multiblade_view.
+#: Positional indices (0-based) along the ``detector_number`` dim that reverse blade
+#: and wire. These are array positions, not detector_number values, which start at 1;
+#: see get_multiblade_view.
 _MULTIBLADE_ORDER = (
     np.arange(math.prod(_MULTIBLADE_SIZES.values()))
     .reshape(tuple(_MULTIBLADE_SIZES.values()))[::-1, ::-1, :]
@@ -94,6 +95,10 @@ def get_multiblade_view(da: sc.DataArray, source_name: str) -> sc.DataArray:
     changed to match the other.
     """
     # Scipp has no negative slice step; one list index permutes all pixels at once.
+    # This runs on every batch and copies the events: about 2 ms per call, growing
+    # to about 10 ms at 10M events. Grouping the events in view order would avoid
+    # it, but the wavelength view takes pixel positions from the geometry file in
+    # file order, so the grouping order must stay the file's.
     return da['detector_number', _MULTIBLADE_ORDER].fold(
         dim='detector_number', sizes=_MULTIBLADE_SIZES
     )
