@@ -64,9 +64,11 @@ class ROIPublisher:
 
         # ROI requests carry no meaningful event-time: the selection applies to
         # data accumulated since run start, regardless of when the request was made.
-        # Stamp at epoch 0 so the event-time message batcher treats the request as
-        # already-current and applies it to the next processed window, instead of
-        # holding it until the data watermark catches up to wall-clock-now.
+        # Stamp at epoch 0 rather than wall-clock-now, which would read as data time.
+        # The rate-aware batcher ignores the stamp (``UNTIMED_STREAM_KINDS``) and
+        # delivers the request with the next batch; ``SimpleMessageBatcher`` reads
+        # epoch 0 as already-current instead of holding the request until the data
+        # watermark catches up.
         msg = Message(
             value=data_array, stream=stream_id, timestamp=Timestamp.from_ns(0)
         )

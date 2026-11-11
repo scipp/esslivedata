@@ -87,7 +87,11 @@ GATED_STREAM_KINDS = frozenset(
 #: stamp ahead of the data drags the window ahead of it.  So these messages
 #: never touch the clock: they skip the high-water mark, window placement and
 #: anchors, and ride along with the next batch emitted -- after one stall
-#: interval as a zero-length batch if no other traffic closes a window.
+#: interval as a zero-length batch if no other traffic closes a window.  Only
+#: the newest message per stream is held, so the buffer stays bounded however
+#: long that takes: before the first timed message there is no window, hence
+#: no data time to deliver them at, and a producer may re-emit its value
+#: periodically throughout.
 UNTIMED_STREAM_KINDS = frozenset({StreamKind.LIVEDATA_ROI, StreamKind.LIVEDATA_CONTEXT})
 
 MIN_DIFFS_FOR_GATE = 4
@@ -618,7 +622,7 @@ class RateAwareMessageBatcher(MessageBatcher):
         self._overflow: list[Message[Any]] = []
         self._non_gated: list[Message[Any]] = []
         self._future: list[Message[Any]] = []
-        self._untimed: list[Message[Any]] = []
+        self._untimed: dict[StreamId, Message[Any]] = {}
         self._clock = clock
         self._last_close_wall = clock()
         self._max_backlog_s = max_backlog_s
@@ -691,7 +695,7 @@ class RateAwareMessageBatcher(MessageBatcher):
         timed = []
         for msg in messages:
             if msg.stream.kind in UNTIMED_STREAM_KINDS:
-                self._untimed.append(msg)
+                self._untimed[msg.stream] = msg
             else:
                 timed.append(msg)
         messages = timed
@@ -778,8 +782,7 @@ class RateAwareMessageBatcher(MessageBatcher):
         self._last_close_wall = self._clock()
         for stream in self._streams.values():
             stream.refresh_grid(end_time, self._batch_length)
-        messages = messages + self._untimed
-        self._untimed = []
+        messages = messages + self._drain_untimed()
         return MessageBatch(start_time=start_time, end_time=end_time, messages=messages)
 
     def _route_message(self, msg: Message[Any], window: _ActiveWindow) -> None:
@@ -1104,7 +1107,11 @@ class RateAwareMessageBatcher(MessageBatcher):
                     anchor_ns=anchor.to_ns(),
                     buffered_messages=len(buffered),
                 )
-            self._refresh_stream_registry(window)
+            # Untimed messages alone say nothing about the timed streams:
+            # counting them absent would evict every stream's rate estimate
+            # after a few ROI edits or context values during a pause.
+            if buffered:
+                self._refresh_stream_registry(window)
             messages = self._drain_window() + self._future
             self._future = []
             return self._emit_batch(window, max(anchor, window.start), messages)
@@ -1135,6 +1142,11 @@ class RateAwareMessageBatcher(MessageBatcher):
         messages = list(self._non_gated)
         for stream in self._streams.values():
             messages.extend(stream.messages)
+        return messages
+
+    def _drain_untimed(self) -> list[Message[Any]]:
+        messages = list(self._untimed.values())
+        self._untimed = {}
         return messages
 
     def _drain_window(self) -> list[Message[Any]]:
@@ -1184,9 +1196,8 @@ class RateAwareMessageBatcher(MessageBatcher):
         batch = MessageBatch(
             start_time=window.start,
             end_time=end_time,
-            messages=messages + self._untimed,
+            messages=messages + self._drain_untimed(),
         )
-        self._untimed = []
         new_window = _ActiveWindow(start=end_time, end=end_time + self._batch_length)
         self._active_window = new_window
         # Drain overflow into the new window.  Timestamps that still fall

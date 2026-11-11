@@ -2739,6 +2739,44 @@ class TestStallBackstop:
         arrivals.append((1080.0, Message(timestamp=ts(0), stream=roi, value='')))
         assert_delivered_in_order(arrivals)
 
+    def test_roi_requests_in_a_pause_keep_rate_estimates(self):
+        """A batch flushed for ROI requests alone says nothing about the data
+        streams.  It must not count them as absent, or a few ROI edits while
+        the beam is off would evict every stream's rate estimate."""
+        roi = StreamId(kind=StreamKind.LIVEDATA_ROI, name='roi')
+        clock = FakeClock()
+        batcher, _ = make_converged_batcher(rate_hz=14.0, clock=clock)
+        flushed = 0
+        for _ in range(8):
+            request = Message(timestamp=ts(0), stream=roi, value='')
+            flushed += batcher.batch([request]) is not None
+            for _ in range(150):
+                clock.advance(0.1)
+                flushed += batcher.batch([]) is not None
+        assert flushed == 8
+        assert batcher.is_gating(DETECTOR)
+
+    def test_untimed_values_before_the_first_data_keep_only_the_newest(self):
+        """Before the first timed message there is no window to deliver into.
+        A context producer re-emits its value periodically, so a service
+        started while the beam is off must hold the newest value per stream
+        rather than all of them."""
+        lut = StreamId(kind=StreamKind.LIVEDATA_CONTEXT, name='lut')
+        roi = StreamId(kind=StreamKind.LIVEDATA_ROI, name='roi')
+        clock = FakeClock()
+        batcher = RateAwareMessageBatcher(batch_length_s=1.0, clock=clock)
+        for k in range(100):
+            value = Message(timestamp=ts(2000.0 + k), stream=lut, value=str(k))
+            assert batcher.batch([value]) is None
+            clock.advance(1.0)
+        request = Message(timestamp=ts(0), stream=roi, value='')
+        assert batcher.batch([request]) is None
+        first = msg(1000.0)
+        batch = batcher.batch([first])
+        assert batch is not None
+        assert batch.messages == [first, value, request]
+        assert batch.start_time == batch.end_time == first.timestamp
+
     def test_quiet_stream_does_not_trigger_the_backstop(self):
         """Without buffered traffic there is nothing to re-place onto: a
         quiet stream is not a stall, and the data clock must not advance on
