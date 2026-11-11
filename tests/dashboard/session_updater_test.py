@@ -576,6 +576,16 @@ class TestSessionUpdater:
 
         assert not updater.heartbeat_widget.severed
 
+    def test_hidden_tab_grace_reaches_browser_heartbeat(self):
+        updater = SessionUpdater(
+            session_id=SessionId('session-1'),
+            session_registry=SessionRegistry(),
+            notification_queue=NotificationQueue(),
+            hidden_tab_grace_seconds=12.5,
+        )
+
+        assert updater.heartbeat_widget.hidden_grace_ms == 12500
+
     def test_username_forwarded_to_registry(self):
         session_id = SessionId('session-1')
         registry = SessionRegistry()

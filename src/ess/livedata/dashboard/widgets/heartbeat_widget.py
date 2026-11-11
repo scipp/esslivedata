@@ -18,6 +18,15 @@ from panel.reactive import ReactiveHTML
 
 from ..session_paused import RESUME_URL_KEY, SESSION_PAUSED_PATH
 
+# Seconds a browser tab may stay hidden before it stops sending heartbeats. The
+# reaper then drops the session after its stale timeout, so a hidden tab costs
+# the server nothing after grace plus timeout, in every browser. Reaping is not
+# free for the user: the tab reloads when shown again, losing open dialogs and
+# unsaved forms. Four minutes plus the 60 s stale timeout matches what Chrome's
+# timer throttling used to do to hidden tabs, and leaves room for switching to
+# another application (a window fully covered by another may count as hidden).
+DEFAULT_HIDDEN_TAB_GRACE = 240.0
+
 
 class HeartbeatWidget(ReactiveHTML):
     """
@@ -38,6 +47,15 @@ class HeartbeatWidget(ReactiveHTML):
     counter:
         The heartbeat counter, incremented by JavaScript. Watch this parameter
         to detect browser liveness.
+    hidden_grace_ms:
+        How long the tab may stay hidden before the heartbeat stops, so that
+        the server reaps the session. Browsers throttle background timers
+        differently: Chrome fires them about once a minute after five minutes
+        hidden, Firefox does not throttle a page holding an open WebSocket at
+        all. Stopping on a fixed grace makes a hidden tab cost the same in
+        every browser. Visibility comes from the ``visibilitychange`` event,
+        which no browser throttles; the heartbeat resumes when the tab is
+        shown again, unless the session was reaped meanwhile.
     severed:
         Set by the server once it has reaped the session. The browser then
         leaves for the paused page (see :mod:`..session_paused`), remembering
@@ -51,6 +69,11 @@ class HeartbeatWidget(ReactiveHTML):
         default=0,
         doc="Heartbeat counter incremented by browser JS",
     )
+    hidden_grace_ms = param.Integer(
+        default=int(DEFAULT_HIDDEN_TAB_GRACE * 1000),
+        bounds=(0, None),
+        doc="Hidden time before heartbeats stop",
+    )
     severed = param.Boolean(
         default=False,
         doc="Set by the server on reap; the browser then leaves the page",
@@ -60,14 +83,31 @@ class HeartbeatWidget(ReactiveHTML):
     _template = """<div id="heartbeat" style="display:none;"></div>"""
 
     # The render script runs when the component loads.
-    # It sets up a periodic interval that increments data.counter.
+    # It sets up a periodic interval that increments data.counter, skipped once
+    # the tab has been hidden for longer than the grace.
     # Note: Use -= 1 or += 1, NOT ++ or -- (those break param sync, see Panel #4925)
     _scripts: ClassVar = {
         'render': """
-            state.interval_id = setInterval(() => {
+            const hidden = () => document.visibilityState === 'hidden';
+            const beat = () => {
                 // Increment counter, wrap around to avoid overflow
                 const newVal = (data.counter + 1) % 2147483647;
                 data.counter = newVal;
+            };
+            state.hidden_since = hidden() ? Date.now() : null;
+            state.on_visibility = () => {
+                state.hidden_since = hidden() ? Date.now() : null;
+                // Beat at once when shown, not an interval later: the session
+                // may be close to its stale timeout.
+                if (state.hidden_since === null) beat();
+            };
+            document.addEventListener('visibilitychange', state.on_visibility);
+            state.interval_id = setInterval(() => {
+                if (state.hidden_since !== null
+                    && Date.now() - state.hidden_since > data.hidden_grace_ms) {
+                    return;
+                }
+                beat();
             }, data.interval_ms);
         """,
         'severed': f"""
@@ -82,6 +122,7 @@ class HeartbeatWidget(ReactiveHTML):
             if (state.interval_id) {
                 clearInterval(state.interval_id);
             }
+            document.removeEventListener('visibilitychange', state.on_visibility);
         """,
     }
 

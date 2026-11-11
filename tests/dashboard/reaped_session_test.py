@@ -1,23 +1,25 @@
 # SPDX-License-Identifier: BSD-3-Clause
 # Copyright (c) 2026 Scipp contributors (https://github.com/scipp)
-"""A reaped session whose browser is still connected must leave the dashboard.
+"""A hidden tab is reaped after a grace, and comes back when shown.
 
-The reaper decides on the browser heartbeat alone, and browsers throttle the
-heartbeat timer of hidden tabs (Chrome: about once a minute after five minutes),
-so it reaps tabs that are merely in the background. Left on the page, such a tab
-accepts input that changes shared state but never updates again (#1348). The
-tab must instead park on the paused page while hidden and come back in a fresh,
-live session, on the tab it was showing, once shown.
+A tab hidden for longer than the grace stops sending heartbeats, so the reaper
+drops its session while its websocket is still open. Left on the page, such a
+tab would accept input that changes shared state but never update again
+(#1348). It must instead park on the paused page while hidden and come back in
+a fresh, live session, on the tab it was showing, once shown. A tab shown again
+before the reap keeps its session.
 
 Hiding the tab is emulated by overriding ``document.visibilityState`` from an
 init script, so the override survives the navigations under test; the switch
-lives in ``sessionStorage`` for the same reason. Stopping the page's timers
-stands in for the throttled heartbeat.
+lives in ``sessionStorage`` for the same reason.
 
 Runs via ``pytest -m browser`` (excluded from the default run).
 """
 
 from __future__ import annotations
+
+from collections.abc import Iterator
+from contextlib import contextmanager
 
 import pytest
 
@@ -32,11 +34,13 @@ from tests.helpers.browser import (
     open_browser,
 )
 
-# Well above page load plus the first heartbeat, so the session is reaped for
-# the stopped timers and not before it ever heartbeats.
+# Well above page load plus the first heartbeat, so a session is reaped for
+# being hidden and not before it ever heartbeats.
 SESSION_STALE_TIMEOUT_SECONDS = 15
-# The registry reaps from the background update thread, between its other work.
-REAP_TIMEOUT_MS = 3 * SESSION_STALE_TIMEOUT_SECONDS * 1000
+HIDDEN_TAB_GRACE_SECONDS = 2
+# Grace plus stale timeout, with margin: the registry reaps from the background
+# update thread, between its other work.
+REAP_TIMEOUT_MS = 2 * (HIDDEN_TAB_GRACE_SECONDS + SESSION_STALE_TIMEOUT_SECONDS) * 1000
 # How long a hidden tab is watched for staying parked.
 PARKED_MS = 3000
 
@@ -50,10 +54,6 @@ Object.defineProperty(Document.prototype, 'visibilityState', {{
   }},
 }});
 """
-_STOP_TIMERS_JS = """() => {
-  const top = setTimeout(() => {}, 0);
-  for (let i = 0; i <= top; i++) { clearInterval(i); clearTimeout(i); }
-}"""
 
 
 def _active_tab(dash: Dashboard) -> str:
@@ -70,11 +70,13 @@ def _set_visibility(dash: Dashboard, state: str) -> None:
     )
 
 
-@pytest.mark.browser
-def test_reaped_hidden_tab_parks_and_resumes_on_its_tab_when_shown() -> None:
+@contextmanager
+def _dashboard_on_detectors() -> Iterator[Dashboard]:
     with (
         fake_dashboard(
-            "dummy", session_stale_timeout_seconds=SESSION_STALE_TIMEOUT_SECONDS
+            "dummy",
+            session_stale_timeout_seconds=SESSION_STALE_TIMEOUT_SECONDS,
+            hidden_tab_grace_seconds=HIDDEN_TAB_GRACE_SECONDS,
         ) as fake,
         open_browser() as browser,
     ):
@@ -83,13 +85,39 @@ def test_reaped_hidden_tab_parks_and_resumes_on_its_tab_when_shown() -> None:
         dash = Dashboard(context.new_page())
         dash.page.goto(fake.url, wait_until="networkidle")
         dash.goto_tab("Detectors")
-        assert_updating(dash, "session before the reap")
-        # The active tab rides in the URL, so the resumed session reopens it.
+        # The active tab rides in the URL, so a resumed session reopens it.
         dash.page.wait_for_url(f"**/?{TAB_QUERY_PARAM}=Detectors")
+        yield dash
+
+
+@pytest.mark.browser
+def test_tab_shown_before_the_reap_keeps_its_session() -> None:
+    with _dashboard_on_detectors() as dash:
+        # Survives only if the page is never left: a reaped tab that is visible
+        # goes through the paused page straight back to the same URL.
+        dash.page.evaluate("() => { window.__lt_never_left = true; }")
+        _set_visibility(dash, 'hidden')
+        # Past the grace, so heartbeats have stopped. The last one went out up
+        # to one heartbeat interval (5 s) before hiding, so this stays well
+        # short of the reap.
+        dash.page.wait_for_timeout((HIDDEN_TAB_GRACE_SECONDS + 3) * 1000)
+        _set_visibility(dash, 'visible')
+        # Long past the point where the session would have been reaped had the
+        # heartbeat not resumed.
+        dash.page.wait_for_timeout((SESSION_STALE_TIMEOUT_SECONDS + 5) * 1000)
+        assert dash.page.evaluate("() => window.__lt_never_left === true"), (
+            "a tab shown before the reap lost its session"
+        )
+        assert_updating(dash, "session shown again before the reap")
+
+
+@pytest.mark.browser
+def test_hidden_tab_parks_after_grace_and_resumes_on_its_tab_when_shown() -> None:
+    with _dashboard_on_detectors() as dash:
+        assert_updating(dash, "session before the reap")
         dashboard_url = dash.page.url
 
         _set_visibility(dash, 'hidden')
-        dash.page.evaluate(_STOP_TIMERS_JS)
         dash.page.wait_for_url(f"**/{SESSION_PAUSED_PATH}", timeout=REAP_TIMEOUT_MS)
 
         dash.page.wait_for_timeout(PARKED_MS)

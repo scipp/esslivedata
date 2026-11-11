@@ -25,6 +25,7 @@ from .session_registry import SessionId
 from .session_updater import SessionUpdater
 from .theme import DEFAULT_THEME, THEMES, Theme
 from .transport import NullTransport, Transport
+from .widgets.heartbeat_widget import DEFAULT_HIDDEN_TAB_GRACE
 from .widgets.styles import PhoneLayout
 
 # Bokeh's own reaper, distinct from the registry's: seconds an unused Bokeh
@@ -108,6 +109,7 @@ class DashboardBase(ServiceBase, ABC):
         theme: str = DEFAULT_THEME.name,
         session_stale_timeout_seconds: float = DEFAULT_SESSION_STALE_TIMEOUT,
         unused_session_lifetime_seconds: float = DEFAULT_UNUSED_SESSION_LIFETIME,
+        hidden_tab_grace_seconds: float = DEFAULT_HIDDEN_TAB_GRACE,
     ):
         if auto_start and transport != 'fake':
             raise ValueError(
@@ -124,6 +126,7 @@ class DashboardBase(ServiceBase, ABC):
         self._basic_auth_password = basic_auth_password
         self._basic_auth_cookie_secret = basic_auth_cookie_secret
         self._unused_session_lifetime_seconds = unused_session_lifetime_seconds
+        self._hidden_tab_grace_seconds = hidden_tab_grace_seconds
         if theme not in THEMES:
             raise ValueError(f"Unknown theme {theme!r}; expected one of {[*THEMES]}")
         self._theme = THEMES[theme]
@@ -222,6 +225,7 @@ class DashboardBase(ServiceBase, ABC):
             username=pn.state.user,
             document=pn.state.curdoc,
             wakeup_hub=self._services.wakeup_hub,
+            hidden_tab_grace_seconds=self._hidden_tab_grace_seconds,
         )
 
     def _start_periodic_callback(

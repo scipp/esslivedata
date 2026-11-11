@@ -2,14 +2,14 @@
 # Copyright (c) 2026 Scipp contributors (https://github.com/scipp)
 """Static page a reaped session's browser moves to.
 
-The stale-session reaper cannot tell a hidden tab whose heartbeat timer the
-browser throttled from a browser that vanished, so it reaps both. A tab that is
-still connected must not stay on the dashboard page afterwards: its widgets
-would keep accepting input and act on shared state while the session never
-updates again. Instead the tab leaves for this page, which has no Bokeh session,
-closes the websocket, and costs the server nothing while the tab stays hidden.
-Once the tab is visible again, the page reloads the dashboard URL the tab was
-on, which starts a fresh session.
+A tab hidden for longer than its grace stops sending heartbeats (see
+``HeartbeatWidget.hidden_grace_ms``), so the stale-session reaper drops its
+session although its websocket is still open. Such a tab must not stay on the
+dashboard page afterwards: its widgets would keep accepting input and act on
+shared state while the session never updates again. Instead the tab leaves for
+this page, which has no Bokeh session, closes the websocket, and costs the
+server nothing while the tab stays hidden. Once the tab is visible again, the
+page reloads the dashboard URL the tab was on, which starts a fresh session.
 
 The dashboard URL travels in ``sessionStorage`` (per tab, same origin), not in
 the query string, so this page cannot be used as an open redirect.
