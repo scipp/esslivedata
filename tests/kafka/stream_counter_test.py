@@ -270,6 +270,26 @@ class TestStreamCounterOutOfOrder:
         assert entry.max_out_of_order_s == 3.0
         assert entry.out_of_order_partition == 5
 
+    def test_future_payload_time_does_not_become_the_reference(self) -> None:
+        """One payload stamped far ahead of its Kafka create time must not make
+        every later, correctly stamped message read as out of order."""
+        counter = StreamCounter()
+        counter.record_lag("t", "s", "ev44", 1.0, timestamp=_at(10.0), partition=0)
+        counter.record_lag(
+            "t",
+            "s",
+            "ev44",
+            -(LAG_FUTURE_TOLERANCE_S + 1e6),
+            timestamp=_at(1e6),
+            partition=1,
+        )
+        counter.record_lag("t", "s", "ev44", 1.0, timestamp=_at(11.0), partition=0)
+        report = counter.drain_lag()
+        assert report is not None
+        (entry,) = report.streams
+        assert entry.max_out_of_order_s == 0.0
+        assert entry.out_of_order_partition is None
+
     def test_order_is_tracked_per_stream(self) -> None:
         counter = StreamCounter()
         counter.record_lag("t", "a", "ev44", 1.0, timestamp=_at(10.0), partition=0)

@@ -102,6 +102,9 @@ class StreamCounter:
         consumption order is measured by how far ``timestamp`` lies behind the
         newest payload time already consumed for the same stream; the window
         keeps the largest such distance and the partition of that message.
+        A payload time ahead of the Kafka create time by more than the future
+        tolerance does not become the newest: it would make every later message
+        of the stream read as out of order.
         Sources with known EPICS noise suffixes are dropped, mirroring
         :meth:`record`.
         """
@@ -109,11 +112,11 @@ class StreamCounter:
             return
         key = (topic, source_name, schema)
         newest = self._newest.get(key)
-        if newest is None or timestamp > newest:
-            self._newest[key] = timestamp
-            out_of_order_s = 0.0
-        else:
+        out_of_order_s = 0.0
+        if newest is not None and timestamp <= newest:
             out_of_order_s = (newest - timestamp).to_seconds()
+        elif lag_s >= -self._lag_future_tolerance_s:
+            self._newest[key] = timestamp
         entry = self._lag.get(key)
         if entry is None:
             entry = self._lag[key] = _LagEntry(min_s=lag_s, max_s=lag_s, count=1)
