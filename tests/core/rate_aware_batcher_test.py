@@ -2554,20 +2554,91 @@ class TestStallBackstop:
         assert delivered == 20, f"delivered {delivered} of 20 sparse messages"
         assert not [e for e in logs if e['event'] == 'batcher_stall_recovery']
 
-    def test_quiet_trailing_batch_does_not_thrash(self):
-        """A partial batch left by a stopped stream is quietness, not a
-        stall: placement already agrees with the buffered traffic, so the
-        backstop must re-arm silently instead of re-placing the window and
-        logging a recovery every threshold interval."""
+    def test_trailing_batch_is_flushed_at_the_data_frontier(self):
+        """A partial batch left by a stopped stream is delivered once the
+        stall threshold elapses.  The batch ends at its newest message, so
+        data time advances only as far as the data reached, and the window
+        is not re-placed (#1129)."""
         clock = FakeClock()
         batcher, start = make_converged_batcher(rate_hz=14.0, clock=clock)
-        batcher.batch(msgs_at(14.0, start, 0.5))  # half a window, no close
-        before = batcher._active_window.start
+        trailing = msgs_at(14.0, start, 0.5)
+        assert batcher.batch(trailing) is None  # half a window, no close
+        window_start = batcher._active_window.start
+        delivered = []
         with capture_logs() as logs:
             for _ in range(1000):
                 clock.advance(0.1)
-                assert batcher.batch([]) is None
-        assert batcher._active_window.start == before
+                if (batch := batcher.batch([])) is not None:
+                    delivered.append(batch)
+        assert len(delivered) == 1
+        assert delivered[0].messages == trailing
+        assert delivered[0].start_time == window_start
+        assert delivered[0].end_time == trailing[-1].timestamp
+        assert not [e for e in logs if e['event'] == 'batcher_stall_recovery']
+
+    def test_late_message_in_a_pause_is_delivered_without_rewinding(self):
+        """A message stamped seconds behind the window, followed by a pause
+        longer than the stall threshold, is late data (seen on ESTIA, #1452).
+        It must be delivered without data time going backwards -- the
+        dashboard reads a backwards ``time`` as a restarted timeline and
+        drops its history."""
+        clock = FakeClock()
+        batcher, start = make_converged_batcher(rate_hz=14.0, clock=clock)
+        batches: list[MessageBatch] = []
+
+        def poll(messages: list[Message[str]]) -> None:
+            if (batch := batcher.batch(messages)) is not None:
+                batches.append(batch)
+
+        with capture_logs() as logs:
+            for k in range(5):
+                poll(msgs_at(14.0, start + k, 1.0))
+                clock.advance(1.0)
+            for _ in range(5):  # drain pending closes
+                poll([])
+            late = msg(batcher._active_window.start.to_ns() / 1e9 - 3.0, value='late')
+            poll([late])
+            for _ in range(200):  # pause: 20 s without traffic
+                clock.advance(0.1)
+                poll([])
+        assert late in [m for batch in batches for m in batch.messages]
+        ends = [batch.end_time for batch in batches]
+        assert ends == sorted(ends)
+        assert not [e for e in logs if e['event'] == 'batcher_stall_recovery']
+
+    @pytest.mark.parametrize('seed', range(3))
+    def test_sparse_disordered_stream_never_rewinds_data_time(self, seed):
+        """A sparse stream with out-of-order arrivals: one detector stream at
+        ~0.4 messages/s on the 14 Hz pulse grid (as ESTIA's, #1452), arriving
+        up to 1.5 s out of timestamp order.  Without a misplaced window there
+        is nothing to correct, so batch end times must never decrease, and
+        nothing may be lost."""
+        rng = random.Random(seed)
+        stamps: list[float] = []
+        t = 1000.0
+        while t < 1000.0 + 1800.0:
+            t += rng.expovariate(1 / 2.5)
+            stamps.append(round(t * 14) / 14)
+        arrivals = sorted((s + rng.uniform(0.0, 1.5), s) for s in stamps)
+        clock = FakeClock(start=arrivals[0][0])
+        batcher = RateAwareMessageBatcher(batch_length_s=1.0, clock=clock)
+        delivered = 0
+        last_end: Timestamp | None = None
+        i = 0
+        with capture_logs() as logs:
+            while i < len(arrivals) or clock.now < arrivals[-1][0] + 30.0:
+                clock.advance(0.1)
+                polled: list[Message[str]] = []
+                while i < len(arrivals) and arrivals[i][0] <= clock.now:
+                    polled.append(msg(arrivals[i][1]))
+                    i += 1
+                if (batch := batcher.batch(polled)) is None:
+                    continue
+                delivered += len(batch.messages)
+                if last_end is not None:
+                    assert batch.end_time >= last_end
+                last_end = batch.end_time
+        assert delivered == len(stamps)
         assert not [e for e in logs if e['event'] == 'batcher_stall_recovery']
 
     def test_quiet_stream_does_not_trigger_the_backstop(self):
@@ -2597,8 +2668,9 @@ class TestStallBackstop:
     def test_stuck_clock_is_delivered_and_bounded(self, stream, offset):
         """A producer whose timestamp stops advancing can never satisfy a
         gate or reach the timeout, and as the only traffic nothing else
-        closes the window.  The backstop must deliver it anyway, and hold no
-        more than a couple of stall intervals' worth."""
+        closes the window.  The backstop must deliver it anyway, hold no
+        more than a stall interval's worth, and not advance data time past
+        the frozen stamp on wall-time evidence."""
         clock = FakeClock()
         batcher, _ = make_converged_batcher(rate_hz=14.0, clock=clock)
         for _ in range(5):  # drain pending timeout closes
@@ -2611,13 +2683,14 @@ class TestStallBackstop:
             out = batcher.batch([msg(frozen, stream=stream)])
             if out is not None:
                 delivered += len(out.messages)
+                assert out.end_time <= ts(frozen)
             held = len(batcher._buffered_messages()) + len(batcher._future)
             peak = max(peak, held)
         assert delivered > 0
         assert delivered + held == 600, "stuck-clock traffic was lost"
-        # One message per call and per batch length of wall time: a close
-        # takes a stall check to establish growth and one more to fire.
-        assert peak <= 3 * _STALL_THRESHOLD_BATCHES
+        # One message per call and per batch length of wall time, flushed
+        # once per stall interval.
+        assert peak <= _STALL_THRESHOLD_BATCHES + 1
 
     def test_backstop_waits_out_the_threshold(self):
         """A window parked ahead of traffic recovers via the backstop, but
