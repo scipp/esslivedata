@@ -158,8 +158,11 @@ From coarse to fine: **grid → cell → layer → plotter → presenter → fig
 - **Frame** (dashboard) / **FrameClock** — the frame-gated flush cycle batching
   plot updates per session (`dashboard/frame_clock.py`, ADR 0005). Unrelated to
   the neutron pulse-frame sense.
-- **Reaper** — background teardown of dead browser sessions off their own IOLoop
-  (`dashboard/session_updater.py`, ADR 0007).
+- **Reaper** — background teardown of browser sessions without a recent
+  heartbeat, off their own IOLoop (`dashboard/session_updater.py`, ADR 0007).
+  Such a session's browser has vanished, or its tab has been hidden for longer
+  than the grace and stopped its heartbeat; the latter is sent to the paused
+  page (`dashboard/session_paused.py`).
 
 ### Configuration and transport
 

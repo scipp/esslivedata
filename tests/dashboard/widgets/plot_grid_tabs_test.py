@@ -124,6 +124,62 @@ class TestPlotGridTabsInitialization:
 
         assert widget.tabs.tabs_location == theme.tabs_location
 
+    # Tab indices below: Workflows (0) and Manage Plots (1) precede the grids;
+    # the fixtures pass no system status widget.
+    @pytest.fixture
+    def make_tabs(
+        self,
+        plot_orchestrator,
+        workflow_registry,
+        plotting_controller,
+        workflow_status_widget,
+        plot_data_service,
+        session_updater,
+    ):
+        def make(**kwargs) -> PlotGridTabs:
+            return PlotGridTabs(
+                plot_orchestrator=plot_orchestrator,
+                workflow_registry=workflow_registry,
+                plotting_controller=plotting_controller,
+                workflow_status_widget=workflow_status_widget,
+                plot_data_service=plot_data_service,
+                session_updater=session_updater,
+                **kwargs,
+            )
+
+        return make
+
+    def test_initial_tab_opens_named_grid(self, plot_orchestrator, make_tabs):
+        plot_orchestrator.add_grid(title='Grid 1', nrows=2, ncols=2)
+        plot_orchestrator.add_grid(title='Grid 2', nrows=2, ncols=2)
+
+        widget = make_tabs(initial_tab='Grid 2')
+
+        assert widget.active_tab_index == 3
+
+    def test_initial_tab_opens_named_static_tab(self, plot_orchestrator, make_tabs):
+        plot_orchestrator.add_grid(title='Grid 1', nrows=2, ncols=2)
+
+        widget = make_tabs(initial_tab='Manage Plots')
+
+        assert widget.active_tab_index == 1
+
+    def test_initial_tab_skips_disabled_grids(self, plot_orchestrator, make_tabs):
+        hidden = plot_orchestrator.add_grid(title='Hidden', nrows=2, ncols=2)
+        plot_orchestrator.add_grid(title='Shown', nrows=2, ncols=2)
+        plot_orchestrator.set_grid_enabled(hidden, enabled=False)
+
+        widget = make_tabs(initial_tab='Shown')
+
+        assert widget.active_tab_index == 2
+
+    def test_unknown_initial_tab_opens_default(self, plot_orchestrator, make_tabs):
+        plot_orchestrator.add_grid(title='Grid 1', nrows=2, ncols=2)
+
+        widget = make_tabs(initial_tab='Removed meanwhile')
+
+        assert widget.active_tab_index == 0
+
     def test_new_grid_appears_on_poll(self, plot_orchestrator, plot_grid_tabs):
         """A grid added after construction appears as a tab on the next poll."""
         plot_orchestrator.add_grid(title='New Grid', nrows=3, ncols=3)

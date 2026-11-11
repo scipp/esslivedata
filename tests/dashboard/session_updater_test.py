@@ -466,7 +466,7 @@ class TestSessionUpdater:
         callback = FakeCallback()
         updater.set_periodic_callback(callback)
 
-        updater.cleanup(defer_document_teardown=True)
+        updater.cleanup(reaped=True)
 
         # Not stopped on the calling thread; instead scheduled onto the IOLoop.
         assert not callback.stopped
@@ -493,7 +493,7 @@ class TestSessionUpdater:
         updater.register_cleanup_handler(lambda: tier2.append(1))
         updater.register_document_teardown_handler(lambda: tier1.append(1))
 
-        updater.cleanup(defer_document_teardown=True)
+        updater.cleanup(reaped=True)
 
         # Deliberately do NOT run the scheduled tick.
         assert tier2 == [1]
@@ -511,7 +511,7 @@ class TestSessionUpdater:
         tier1: list[int] = []
         updater.register_document_teardown_handler(lambda: tier1.append(1))
 
-        updater.cleanup(defer_document_teardown=True)
+        updater.cleanup(reaped=True)
         assert tier1 == []
 
         document.run_next_tick_callbacks()
@@ -529,7 +529,7 @@ class TestSessionUpdater:
         tier2: list[int] = []
         updater.register_cleanup_handler(lambda: tier2.append(1))
 
-        updater.cleanup(defer_document_teardown=True)  # must not raise
+        updater.cleanup(reaped=True)  # must not raise
 
         assert tier2 == [1]
         assert not callback.stopped
@@ -546,11 +546,45 @@ class TestSessionUpdater:
         tier1: list[int] = []
         updater.register_document_teardown_handler(lambda: tier1.append(1))
 
-        updater.cleanup()  # defer_document_teardown=False
+        updater.cleanup()
 
         assert callback.stopped
         assert tier1 == [1]
         assert document.next_tick_callbacks == []
+
+    def test_reaped_session_tells_browser_to_leave_once_tick_fires(self):
+        # #1348: a reaped tab may still be connected; left on the page it would
+        # act on shared state without ever updating again.
+        registry = SessionRegistry()
+        document = FakeDocument()
+        updater = _make_updater(SessionId('session-1'), registry, document=document)
+
+        updater.cleanup(reaped=True)
+        assert not updater.heartbeat_widget.reaped
+
+        document.run_next_tick_callbacks()
+        assert updater.heartbeat_widget.reaped
+
+    def test_clean_close_does_not_tell_browser_to_leave(self):
+        # The websocket is already gone on the clean path; nobody to tell.
+        registry = SessionRegistry()
+        updater = _make_updater(
+            SessionId('session-1'), registry, document=FakeDocument()
+        )
+
+        updater.cleanup()
+
+        assert not updater.heartbeat_widget.reaped
+
+    def test_hidden_tab_grace_reaches_browser_heartbeat(self):
+        updater = SessionUpdater(
+            session_id=SessionId('session-1'),
+            session_registry=SessionRegistry(),
+            notification_queue=NotificationQueue(),
+            hidden_tab_grace_seconds=12.5,
+        )
+
+        assert updater.heartbeat_widget.hidden_grace_ms == 12500
 
     def test_username_forwarded_to_registry(self):
         session_id = SessionId('session-1')
