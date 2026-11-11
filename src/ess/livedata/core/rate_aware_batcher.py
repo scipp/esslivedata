@@ -470,10 +470,16 @@ class _GatedStream:
     def refresh_grid(self, batch_start: Timestamp, batch_length: Duration) -> None:
         """Build or rebuild the pulse grid from the estimator.
 
-        No-op if the estimator hasn't converged.  Streams whose rate is below one pulse
-        per batch (``int_rate * batch_length_s < 1``) cannot reliably fill a slot per
-        batch; any prior grid is dropped and the stream reverts to opportunistic
-        (non-gated) delivery.
+        Without an integer rate estimate any prior grid is dropped: a grid must not
+        outlive the evidence it was built from.  A sparse stream on a 14 Hz pulse
+        clock (ESTIA's detector at ~0.3 messages/s, #1455) has random multiples of
+        1/14 s between messages, and every so often the last ``DIFF_BUFFER_SIZE`` of
+        them snap to 1 Hz for a few dozen messages.  Kept, such a grid rounds
+        off-grid messages up to half a second ahead, so gated closes run the window
+        ahead of the data and later messages land behind it.  Streams whose rate is
+        below one pulse per batch (``int_rate * batch_length_s < 1``) cannot reliably
+        fill a slot per batch; any prior grid is dropped likewise and the stream
+        reverts to opportunistic (non-gated) delivery.
 
         The origin is preserved across rebuilds while it stays within
         ``_MAX_ORIGIN_OFFSET_BATCHES`` of ``batch_start``.  A fresh candidate is
@@ -483,10 +489,8 @@ class _GatedStream:
         replaying an old topic).
         """
         int_rate = self.estimator.integer_rate_hz
-        if int_rate is None or int_rate <= 0:
-            return
         batch_length_s = batch_length.to_seconds()
-        if int_rate * batch_length_s < 1.0:
+        if int_rate is None or int_rate * batch_length_s < 1.0:
             self.grid = None
             return
         origin = self._choose_origin(batch_start, batch_length)

@@ -32,6 +32,7 @@ from ess.livedata.core.rate_aware_batcher import (
     DEFAULT_MAX_BACKLOG_BATCHES,
     DEFAULT_MAX_BACKLOG_BYTES,
     DEFAULT_MAX_BACKLOG_S,
+    DIFF_BUFFER_SIZE,
     MIN_DIFFS_FOR_GATE,
     UNKNOWN_PAYLOAD_BYTES,
     RateAwareMessageBatcher,
@@ -1707,6 +1708,22 @@ class TestSubHzGatedStream:
         assert held in r2.messages
 
 
+class TestLostRateEstimate:
+    def test_grid_is_dropped_once_traffic_leaves_it(self):
+        """A grid must not outlive its rate estimate.  A sparse stream on a
+        14 Hz pulse clock (ESTIA, #1455) intermittently snaps to 1 Hz; a grid
+        kept from such a spell rounds later off-grid messages onto it and
+        runs the window ahead of the data."""
+        batcher, t0 = make_converged_batcher(rate_hz=1.0)
+        assert batcher.is_gating(DETECTOR)
+        rng = random.Random(0)
+        t = t0
+        for _ in range(2 * DIFF_BUFFER_SIZE):
+            t += rng.randint(14, 60) / 14
+            batcher.batch([msg(t)])
+        assert not batcher.is_gating(DETECTOR)
+
+
 class TestSubRateExclusion:
     """Streams whose integer rate is below 1 pulse / batch_length are excluded.
 
@@ -2676,8 +2693,9 @@ class TestStallBackstop:
         """Replay of 13 h of ESTIA's detector stream on 2026-11-11 (#1452), in
         the order the file writer consumed it.  The stream is sparse (~0.3
         messages/s), and out of order by up to 103 s between 09:16 and 10:00.
-        Without the late-data flush, this replay rewinds data time at 08:53
-        and 12:29, the latter matching the production rewind that cost the
+        With a 1 Hz grid kept from a spell of spurious rate estimates (#1455)
+        and no late-data flush, this replay rewinds data time at 08:53 and
+        12:29, the latter matching the production rewind that cost the
         dashboard its timeseries history to within a millisecond."""
         lines = _ESTIA_PULSE_GAPS.read_text().splitlines()
         gaps = [
