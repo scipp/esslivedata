@@ -2574,14 +2574,15 @@ class TestStallBackstop:
         assert delivered[0].messages == trailing
         assert delivered[0].start_time == window_start
         assert delivered[0].end_time == trailing[-1].timestamp
-        assert not [e for e in logs if e['event'] == 'batcher_stall_recovery']
+        assert not logs
 
     def test_late_message_in_a_pause_is_delivered_without_rewinding(self):
         """A message stamped seconds behind the window, followed by a pause
         longer than the stall threshold, is late data (seen on ESTIA, #1452).
         It must be delivered without data time going backwards -- the
         dashboard reads a backwards ``time`` as a restarted timeline and
-        drops its history."""
+        drops its history.  The delivery is logged with the distance behind
+        the window, as nothing downstream shows that the data was late."""
         clock = FakeClock()
         batcher, start = make_converged_batcher(rate_hz=14.0, clock=clock)
         batches: list[MessageBatch] = []
@@ -2596,7 +2597,8 @@ class TestStallBackstop:
                 clock.advance(1.0)
             for _ in range(5):  # drain pending closes
                 poll([])
-            late = msg(batcher._active_window.start.to_ns() / 1e9 - 3.0, value='late')
+            window_start = batcher._active_window.start
+            late = msg(window_start.to_ns() / 1e9 - 3.0, value='late')
             poll([late])
             for _ in range(200):  # pause: 20 s without traffic
                 clock.advance(0.1)
@@ -2604,7 +2606,10 @@ class TestStallBackstop:
         assert late in [m for batch in batches for m in batch.messages]
         ends = [batch.end_time for batch in batches]
         assert ends == sorted(ends)
-        assert not [e for e in logs if e['event'] == 'batcher_stall_recovery']
+        (event,) = logs
+        assert event['event'] == 'batcher_late_data_flushed'
+        assert event['window_start_ns'] == window_start.to_ns()
+        assert event['anchor_ns'] == late.timestamp.to_ns()
 
     @pytest.mark.parametrize('seed', range(3))
     def test_sparse_disordered_stream_never_rewinds_data_time(self, seed):

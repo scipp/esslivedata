@@ -1033,6 +1033,9 @@ class RateAwareMessageBatcher(MessageBatcher):
         next window opens there.  Data time thus advances only as far as
         data actually reached and never runs backwards; traffic arriving
         later for the flushed range is late data, handled the same way.
+        An anchor behind ``window.start`` is logged: it is the only trace
+        such late data leaves, since nothing downstream can tell it from
+        data that was on time.
         The distance bound costs nothing when the window *is* misplaced
         ahead of the traffic by less: data time catches up within one stall
         interval, and the flush delivers the traffic in the meantime.
@@ -1061,6 +1064,13 @@ class RateAwareMessageBatcher(MessageBatcher):
         self._last_close_wall = self._clock()
         tolerance = _STALL_THRESHOLD_BATCHES * self._batch_length
         if anchor >= window.start - tolerance:
+            if anchor < window.start:
+                logger.info(
+                    'batcher_late_data_flushed',
+                    window_start_ns=window.start.to_ns(),
+                    anchor_ns=anchor.to_ns(),
+                    buffered_messages=len(buffered),
+                )
             self._refresh_stream_registry(window)
             messages = self._drain_window() + self._future
             self._future = []

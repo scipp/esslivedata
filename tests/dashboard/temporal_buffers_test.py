@@ -652,6 +652,21 @@ class TestTemporalBuffer:
         assert list(result.coords['time'].values) == [5.0, 6.0]
         assert list(result.values) == [5.0, 6.0]
 
+    def test_repeated_time_is_appended(self):
+        """A frame stamped at the newest buffered time is no regression.
+
+        The backend delivers late data in a batch that ends where the previous
+        one did (#1452), so two consecutive results can carry the same time.
+        """
+        buffer = TemporalBuffer()
+        buffer.set_required_timespan(100.0)
+        for time_value, value in ((10.0, 1.0), (11.0, 2.0), (11.0, 3.0), (12.0, 4.0)):
+            buffer.add(make_single_slice([value], time_value=time_value))
+
+        result = buffer.get()
+        assert list(result.coords['time'].values) == [10.0, 11.0, 11.0, 12.0]
+        assert list(result['x', 0].values) == [1.0, 2.0, 3.0, 4.0]
+
     def test_non_time_dim_size_change_resets_without_error(self):
         """A changed non-time shape (e.g. ROI count) resets instead of raising.
 
