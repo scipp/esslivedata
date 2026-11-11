@@ -20,6 +20,7 @@ from .design import LivedataDesign
 from .fake_backend import FakeBackendTransport
 from .kafka_transport import DashboardKafkaTransport
 from .loop_monitor import start_loop_monitor
+from .session_paused import SESSION_PAUSED_PATH, SessionPausedHandler
 from .session_registry import SessionId
 from .session_updater import SessionUpdater
 from .theme import DEFAULT_THEME, THEMES, Theme
@@ -471,6 +472,7 @@ class DashboardBase(ServiceBase, ABC):
                 check_unused_sessions_milliseconds=int(
                     self._unused_session_lifetime_seconds * 1000
                 ),
+                extra_patterns=[(f'/{SESSION_PAUSED_PATH}', SessionPausedHandler)],
             )
         except KeyboardInterrupt:
             self._logger.info("Keyboard interrupt received, shutting down...")

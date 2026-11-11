@@ -16,6 +16,8 @@ from typing import ClassVar
 import param
 from panel.reactive import ReactiveHTML
 
+from ..session_paused import RESUME_URL_KEY, SESSION_PAUSED_PATH
+
 
 class HeartbeatWidget(ReactiveHTML):
     """
@@ -36,6 +38,10 @@ class HeartbeatWidget(ReactiveHTML):
     counter:
         The heartbeat counter, incremented by JavaScript. Watch this parameter
         to detect browser liveness.
+    severed:
+        Set by the server once it has reaped the session. The browser then
+        leaves for the paused page (see :mod:`..session_paused`), remembering
+        its URL so the page can reload it.
     """
 
     interval_ms = param.Integer(
@@ -44,6 +50,10 @@ class HeartbeatWidget(ReactiveHTML):
     counter = param.Integer(
         default=0,
         doc="Heartbeat counter incremented by browser JS",
+    )
+    severed = param.Boolean(
+        default=False,
+        doc="Set by the server on reap; the browser then leaves the page",
     )
 
     # Invisible container - the div exists but takes no space
@@ -59,6 +69,14 @@ class HeartbeatWidget(ReactiveHTML):
                 const newVal = (data.counter + 1) % 2147483647;
                 data.counter = newVal;
             }, data.interval_ms);
+        """,
+        'severed': f"""
+            if (data.severed) {{
+                try {{
+                    sessionStorage.setItem('{RESUME_URL_KEY}', window.location.href);
+                }} catch (e) {{}}
+                window.location.replace('{SESSION_PAUSED_PATH}');
+            }}
         """,
         'remove': """
             if (state.interval_id) {

@@ -12,12 +12,12 @@ class FakeSessionUpdater:
 
     def __init__(self, *, raise_on_cleanup: bool = False):
         self.cleanup_called = False
-        self.deferred_document_teardown: bool | None = None
+        self.reaped: bool | None = None
         self._raise_on_cleanup = raise_on_cleanup
 
-    def cleanup(self, *, defer_document_teardown: bool = False) -> None:
+    def cleanup(self, *, reaped: bool = False) -> None:
         self.cleanup_called = True
-        self.deferred_document_teardown = defer_document_teardown
+        self.reaped = reaped
         if self._raise_on_cleanup:
             raise ValueError("Cleanup error")
 
@@ -78,13 +78,26 @@ class TestSessionRegistry:
         assert stale == []
         assert registry.is_active(session_id)
 
-    def test_heartbeat_registers_unknown_session(self):
+    def test_heartbeat_from_unknown_session_is_ignored(self):
         registry = SessionRegistry()
         session_id = SessionId('session-1')
 
         registry.heartbeat(session_id)
 
-        assert registry.is_active(session_id)
+        assert not registry.is_active(session_id)
+
+    def test_heartbeat_after_reap_does_not_resurrect_session(self):
+        # A housekeeping tick already queued when the reaper ran still sends
+        # its heartbeat; the session must stay reaped.
+        registry = SessionRegistry(stale_timeout_seconds=0.01)
+        session_id = SessionId('session-1')
+        registry.register(session_id, FakeSessionUpdater())
+        time.sleep(0.02)
+        registry.cleanup_stale_sessions()
+
+        registry.heartbeat(session_id)
+
+        assert not registry.is_active(session_id)
 
     def test_cleanup_stale_sessions(self):
         registry = SessionRegistry(stale_timeout_seconds=0.05)
@@ -128,7 +141,7 @@ class TestSessionRegistry:
         assert updater.cleanup_called
         # #955: reaper runs off the session's IOLoop, so document-mutating
         # teardown must be deferred onto the IOLoop.
-        assert updater.deferred_document_teardown is True
+        assert updater.reaped is True
 
     def test_unregister_calls_updater_cleanup(self):
         registry = SessionRegistry()
@@ -140,7 +153,7 @@ class TestSessionRegistry:
 
         assert updater.cleanup_called
         # Clean disconnect runs on the session's IOLoop, so teardown runs inline.
-        assert updater.deferred_document_teardown is False
+        assert updater.reaped is False
 
     def test_cleanup_error_does_not_stop_other_cleanups(self):
         registry = SessionRegistry(stale_timeout_seconds=0.01)

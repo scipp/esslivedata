@@ -375,7 +375,7 @@ class SessionUpdater:
         for event in notifications:
             show_notification(event)
 
-    def cleanup(self, *, defer_document_teardown: bool = False) -> None:
+    def cleanup(self, *, reaped: bool = False) -> None:
         """
         Tear down the session in two tiers.
 
@@ -387,18 +387,26 @@ class SessionUpdater:
         Tier 1 (Bokeh document mutation) stops the periodic callback and runs
         the document-teardown handlers (:meth:`register_document_teardown_handler`).
         Document state may only be mutated on the owning session's IOLoop, so on
-        the stale-session reaper path (``defer_document_teardown=True``) it is
-        scheduled via the captured document's ``add_next_tick_callback`` instead
-        of running on the calling thread. Scheduling into an already-destroyed
-        document is tolerated: tier 2 has already severed everything.
+        the stale-session reaper path (``reaped=True``) it is scheduled via the
+        captured document's ``add_next_tick_callback`` instead of running on the
+        calling thread. Scheduling into an already-destroyed document is
+        tolerated: tier 2 has already severed everything.
+
+        A reaped session's browser may still be connected: a hidden tab whose
+        heartbeat timer the browser throttled looks exactly like a vanished
+        one. Its widgets would keep accepting input and act on shared state,
+        yet never update again. Reaped tier 1 therefore also tells the browser
+        to leave the page (:attr:`HeartbeatWidget.severed`), which closes the
+        websocket; the browser reloads into a fresh session once the tab is
+        visible again.
 
         Parameters
         ----------
-        defer_document_teardown:
-            Schedule tier 1 onto the session's IOLoop instead of running it
-            inline. Set by the background stale-session reaper, which is not on
-            the session's IOLoop; the clean ``on_session_destroyed`` path runs
-            on the IOLoop and leaves this ``False``.
+        reaped:
+            Set by the background stale-session reaper, which is not on the
+            session's IOLoop. The clean ``on_session_destroyed`` path runs on
+            the IOLoop, with the websocket already gone, and leaves this
+            ``False``.
         """
         # Tier 2: sever shared state. Safe on any thread.
         self._severed = True
@@ -409,9 +417,11 @@ class SessionUpdater:
         self._cleanup_handlers.clear()
 
         # Tier 1: Bokeh document mutation. Must run on the session's IOLoop.
-        if defer_document_teardown and self._document is not None:
+        if not reaped:
+            self._document_teardown()
+        elif self._document is not None:
             try:
-                self._document.add_next_tick_callback(self._document_teardown)
+                self._document.add_next_tick_callback(self._reaped_document_teardown)
             except Exception:
                 logger.debug(
                     "Skipping deferred document teardown for session %s: "
@@ -419,9 +429,14 @@ class SessionUpdater:
                     self._session_id,
                 )
         else:
-            self._document_teardown()
+            self._reaped_document_teardown()
 
         logger.debug("SessionUpdater cleaned up for session %s", self._session_id)
+
+    def _reaped_document_teardown(self) -> None:
+        """Send the browser away, then tear down as on the clean path."""
+        self._heartbeat_widget.severed = True
+        self._document_teardown()
 
     def _document_teardown(self) -> None:
         """Stop the periodic callback and dispose document-bound widgets.

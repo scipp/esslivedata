@@ -136,7 +136,10 @@ class SessionRegistry:
         """
         Update heartbeat timestamp for a session.
 
-        Called from each session's periodic callback.
+        Called from each session's periodic callback. A heartbeat from an
+        unknown session is ignored: sessions register when their updater is
+        created, so an unknown one has been reaped or unregistered, and a tick
+        that was already queued must not bring it back.
 
         Parameters
         ----------
@@ -147,12 +150,7 @@ class SessionRegistry:
             if session_id in self._sessions:
                 self._sessions[session_id].last_heartbeat = time.monotonic()
             else:
-                # Session not yet registered - register it now
-                logger.debug(
-                    "Session %s sent heartbeat before registration, registering",
-                    session_id,
-                )
-                self._sessions[session_id] = SessionInfo(session_id=session_id)
+                logger.debug("Ignoring heartbeat from unknown session %s", session_id)
 
     def cleanup_stale_sessions(self) -> list[SessionId]:
         """
@@ -184,7 +182,7 @@ class SessionRegistry:
         for session_id, updater in stale_sessions:
             if updater is not None:
                 try:
-                    updater.cleanup(defer_document_teardown=True)
+                    updater.cleanup(reaped=True)
                 except Exception:
                     logger.exception(
                         "Error cleaning up updater for stale session %s", session_id
