@@ -226,6 +226,19 @@ def _tab_stylesheet(icons: Sequence[str], theme: Theme) -> str:
         """
 
 
+#: URL query parameter naming the active tab by its title.
+TAB_QUERY_PARAM = 'tab'
+
+_TAB_URL_JS = f"""
+const tab = cb_obj.tabs[cb_obj.active];
+if (tab !== undefined) {{
+  const url = new URL(window.location.href);
+  url.searchParams.set('{TAB_QUERY_PARAM}', tab.title);
+  window.history.replaceState(window.history.state, '', url);
+}}
+"""
+
+
 class _BatchedTabs(pn.Tabs):
     """Tabs subclass that batches Bokeh model updates on tab switch.
 
@@ -297,6 +310,10 @@ class PlotGridTabs:
         of one tab per grid (see ``plot_overview``).
     figure_toolbars
         Initial state of :attr:`figure_toolbar_toggle`.
+    initial_tab
+        Title of the tab to open, from the ``tab`` URL query parameter that
+        this widget keeps in sync with the active tab. Grid titles need not be
+        unique; the first match wins. An unknown title opens the default tab.
     """
 
     def __init__(
@@ -312,6 +329,7 @@ class PlotGridTabs:
         theme: Theme = DEFAULT_THEME,
         phone: bool = False,
         figure_toolbars: bool = True,
+        initial_tab: str | None = None,
     ) -> None:
         self._orchestrator = plot_orchestrator
         self._workflow_registry = dict(workflow_registry)
@@ -510,6 +528,22 @@ class PlotGridTabs:
         # shared version, so request an immediate in-session tick rather than
         # waiting for the housekeeping cadence.
         self._session_updater = session_updater
+
+        # Open the tab named in the URL. After the reveal hook is wired, so a
+        # grid opened this way is populated before it is first rendered, and
+        # before the tick-requesting watcher, which must not schedule a tick
+        # before the browser has attached.
+        if initial_tab is not None:
+            titles = [title for title, _, _ in static_tabs] + [
+                self._orchestrator.peek_grid(grid_id).title
+                for grid_id in self._tabbed_grid_ids()
+            ]
+            if initial_tab in titles:
+                self._tabs.active = titles.index(initial_tab)
+        # Mirror the active tab into the URL, so a reload (or a reaped session
+        # resuming from the paused page) reopens it. ``replaceState`` adds no
+        # history entry: the back button would not switch tabs.
+        self._tabs.jscallback(active=_TAB_URL_JS)
         self._tabs.param.watch(self._on_active_tab_changed, 'active')
 
         # Two-tier teardown, run on both the clean disconnect

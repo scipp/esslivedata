@@ -28,7 +28,7 @@ from .dashboard_services import DEFAULT_SESSION_STALE_TIMEOUT
 from .session_updater import SessionUpdater
 from .theme import DEFAULT_THEME, THEMES
 from .widgets.log_producer_widget import LogProducerWidget
-from .widgets.plot_grid_tabs import PlotGridTabs
+from .widgets.plot_grid_tabs import TAB_QUERY_PARAM, PlotGridTabs
 from .widgets.system_status_widget import SystemStatusWidget
 from .widgets.workflow_status_widget import WorkflowStatusListWidget
 
@@ -223,6 +223,11 @@ class ReductionApp(DashboardBase):
             phone=phone,
             # ``?toolbars=hidden`` lets a screen be bookmarked with toolbars off.
             figure_toolbars=pn.state.session_args.get('toolbars') != [b'hidden'],
+            initial_tab=(
+                tab[0].decode(errors='replace')
+                if (tab := pn.state.session_args.get(TAB_QUERY_PARAM))
+                else None
+            ),
         )
 
         # PlotGridTabs registers its own two-tier teardown on the session

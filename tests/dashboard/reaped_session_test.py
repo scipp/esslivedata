@@ -7,7 +7,7 @@ heartbeat timer of hidden tabs (Chrome: about once a minute after five minutes),
 so it reaps tabs that are merely in the background. Left on the page, such a tab
 accepts input that changes shared state but never updates again (#1348). The
 tab must instead park on the paused page while hidden and come back in a fresh,
-live session once shown.
+live session, on the tab it was showing, once shown.
 
 Hiding the tab is emulated by overriding ``document.visibilityState`` from an
 init script, so the override survives the navigations under test; the switch
@@ -24,6 +24,7 @@ import pytest
 pytest.importorskip("playwright.sync_api")
 
 from ess.livedata.dashboard.session_paused import SESSION_PAUSED_PATH
+from ess.livedata.dashboard.widgets.plot_grid_tabs import TAB_QUERY_PARAM
 from tests.helpers.browser import (
     Dashboard,
     assert_updating,
@@ -55,6 +56,10 @@ _STOP_TIMERS_JS = """() => {
 }"""
 
 
+def _active_tab(dash: Dashboard) -> str:
+    return dash.page.locator(".bk-tab.bk-active").first.inner_text().strip()
+
+
 def _set_visibility(dash: Dashboard, state: str) -> None:
     dash.page.evaluate(
         "([key, state]) => {"
@@ -66,7 +71,7 @@ def _set_visibility(dash: Dashboard, state: str) -> None:
 
 
 @pytest.mark.browser
-def test_reaped_hidden_tab_parks_and_resumes_when_shown() -> None:
+def test_reaped_hidden_tab_parks_and_resumes_on_its_tab_when_shown() -> None:
     with (
         fake_dashboard(
             "dummy", session_stale_timeout_seconds=SESSION_STALE_TIMEOUT_SECONDS
@@ -79,6 +84,8 @@ def test_reaped_hidden_tab_parks_and_resumes_when_shown() -> None:
         dash.page.goto(fake.url, wait_until="networkidle")
         dash.goto_tab("Detectors")
         assert_updating(dash, "session before the reap")
+        # The active tab rides in the URL, so the resumed session reopens it.
+        dash.page.wait_for_url(f"**/?{TAB_QUERY_PARAM}=Detectors")
         dashboard_url = dash.page.url
 
         _set_visibility(dash, 'hidden')
@@ -92,5 +99,6 @@ def test_reaped_hidden_tab_parks_and_resumes_when_shown() -> None:
 
         _set_visibility(dash, 'visible')
         dash.page.wait_for_url(dashboard_url)
-        dash.goto_tab("Detectors")
+        dash.settle()
+        assert _active_tab(dash) == "Detectors"
         assert_updating(dash, "session resumed from the paused page")
