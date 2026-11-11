@@ -18,6 +18,7 @@ service would experience.
 
 import math
 import random
+from pathlib import Path
 
 import numpy as np
 import pytest
@@ -109,6 +110,51 @@ def longest_silence(
             last_delivery = t
         worst = max(worst, t - last_delivery)
     return worst
+
+
+def assert_delivered_in_order(
+    arrivals: list[tuple[float, Message[str]]], poll_s: float = 0.1
+) -> None:
+    """Feed messages to a batcher by wall-clock arrival time and check delivery.
+
+    Polls every ``poll_s`` of wall time, as the service loop does, handing over
+    each message once its arrival time has passed, and keeps polling for 30 s
+    past the last arrival so the backstop can flush.  Every message must be
+    delivered, batch end times must never decrease, and no stall recovery may
+    re-place the window: with correctly stamped data there is nothing to
+    correct.
+    """
+    arrivals = sorted(arrivals, key=lambda arrival: arrival[0])
+    start = arrivals[0][0]
+    clock = FakeClock(start=start)
+    batcher = RateAwareMessageBatcher(batch_length_s=1.0, clock=clock)
+    delivered = 0
+    last_end: Timestamp | None = None
+    i = 0
+    with capture_logs() as logs:
+        for k in range(math.ceil((arrivals[-1][0] - start + 30.0) / poll_s)):
+            # Multiply rather than accumulate, so poll times do not drift.
+            clock.now = start + k * poll_s
+            polled: list[Message[str]] = []
+            while i < len(arrivals) and arrivals[i][0] <= clock.now:
+                polled.append(arrivals[i][1])
+                i += 1
+            if (batch := batcher.batch(polled)) is None:
+                continue
+            delivered += len(batch.messages)
+            if last_end is not None:
+                assert batch.end_time >= last_end
+            last_end = batch.end_time
+    assert delivered == len(arrivals)
+    assert not [e for e in logs if e['event'] == 'batcher_stall_recovery']
+
+
+# Pulse times of ESTIA's detector stream on 2026-11-11, stored as pulse gaps.
+# The period is the ESS timing system's, 11 ns longer than 1/14 s; it rebuilds
+# the recorded times to within 1 ns.
+_ESTIA_PULSE_GAPS = Path(__file__).with_name('estia_pulse_gaps.txt')
+_ESTIA_FIRST_PULSE_NS = 1_794_355_204_124_794_111
+_ESTIA_PULSE_PERIOD_NS = 71_428_582.785433
 
 
 def make_converged_batcher(
@@ -2624,27 +2670,35 @@ class TestStallBackstop:
         while t < 1000.0 + 1800.0:
             t += rng.expovariate(1 / 2.5)
             stamps.append(round(t * 14) / 14)
-        arrivals = sorted((s + rng.uniform(0.0, 1.5), s) for s in stamps)
-        clock = FakeClock(start=arrivals[0][0])
-        batcher = RateAwareMessageBatcher(batch_length_s=1.0, clock=clock)
-        delivered = 0
-        last_end: Timestamp | None = None
-        i = 0
-        with capture_logs() as logs:
-            while i < len(arrivals) or clock.now < arrivals[-1][0] + 30.0:
-                clock.advance(0.1)
-                polled: list[Message[str]] = []
-                while i < len(arrivals) and arrivals[i][0] <= clock.now:
-                    polled.append(msg(arrivals[i][1]))
-                    i += 1
-                if (batch := batcher.batch(polled)) is None:
-                    continue
-                delivered += len(batch.messages)
-                if last_end is not None:
-                    assert batch.end_time >= last_end
-                last_end = batch.end_time
-        assert delivered == len(stamps)
-        assert not [e for e in logs if e['event'] == 'batcher_stall_recovery']
+        assert_delivered_in_order([(s + rng.uniform(0.0, 1.5), msg(s)) for s in stamps])
+
+    def test_recorded_estia_stream_never_rewinds_data_time(self):
+        """Replay of 13 h of ESTIA's detector stream on 2026-11-11 (#1452), in
+        the order the file writer consumed it.  The stream is sparse (~0.3
+        messages/s), and out of order by up to 103 s between 09:16 and 10:00.
+        Without the late-data flush, this replay rewinds data time at 08:53
+        and 12:29, the latter matching the production rewind that cost the
+        dashboard its timeseries history to within a millisecond."""
+        lines = _ESTIA_PULSE_GAPS.read_text().splitlines()
+        gaps = [
+            int(v) for line in lines if not line.startswith('#') for v in line.split()
+        ]
+        pulses = np.concatenate([[0], np.cumsum(gaps)])
+        offsets = np.round(pulses * _ESTIA_PULSE_PERIOD_NS).astype(np.int64)
+        stamps = _ESTIA_FIRST_PULSE_NS + offsets
+        # A message is consumed once the newest one before it was produced,
+        # as with a partition delivering late.  Wall time is relative to the
+        # first message: the constant producer lag does not matter.
+        arrivals_ns = np.maximum.accumulate(stamps) - stamps[0]
+        arrivals = [
+            (arrival / 1e9, Message(timestamp=ts_ns, stream=DETECTOR, value=''))
+            for arrival, ts_ns in zip(
+                arrivals_ns.tolist(),
+                map(Timestamp.from_ns, stamps.tolist()),
+                strict=True,
+            )
+        ]
+        assert_delivered_in_order(arrivals)
 
     def test_quiet_stream_does_not_trigger_the_backstop(self):
         """Without buffered traffic there is nothing to re-place onto: a
