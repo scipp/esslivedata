@@ -78,6 +78,18 @@ GATED_STREAM_KINDS = frozenset(
     }
 )
 
+#: Kinds whose timestamps are not data time.  Livedata publishes these itself
+#: and consumers keep only the latest value: ROI requests are stamped at epoch
+#: 0, context values with the producing job's time, which follows another
+#: service's clock (e.g. Kafka time of f144 chopper logs, ~35 s ahead of
+#: ESTIA's detector pulse times).  Either stamp, taken as data time, misplaces
+#: the window: epoch 0 drags a stall recovery back to 1970, and a context
+#: stamp ahead of the data drags the window ahead of it.  So these messages
+#: never touch the clock: they skip the high-water mark, window placement and
+#: anchors, and ride along with the next batch emitted -- after one stall
+#: interval as a zero-length batch if no other traffic closes a window.
+UNTIMED_STREAM_KINDS = frozenset({StreamKind.LIVEDATA_ROI, StreamKind.LIVEDATA_CONTEXT})
+
 MIN_DIFFS_FOR_GATE = 4
 DIFF_BUFFER_SIZE = 32
 ABSENT_BATCHES_FOR_EVICTION = 5
@@ -602,6 +614,7 @@ class RateAwareMessageBatcher(MessageBatcher):
         self._overflow: list[Message[Any]] = []
         self._non_gated: list[Message[Any]] = []
         self._future: list[Message[Any]] = []
+        self._untimed: list[Message[Any]] = []
         self._clock = clock
         self._last_close_wall = clock()
         self._max_backlog_s = max_backlog_s
@@ -671,6 +684,13 @@ class RateAwareMessageBatcher(MessageBatcher):
         self._pending_batch_length = Duration.from_seconds(batch_length_s)
 
     def batch(self, messages: list[Message[Any]]) -> MessageBatch | None:
+        timed = []
+        for msg in messages:
+            if msg.stream.kind in UNTIMED_STREAM_KINDS:
+                self._untimed.append(msg)
+            else:
+                timed.append(msg)
+        messages = timed
         if messages:
             latest = max(m.timestamp for m in messages)
             self._high_water_mark = self._clamped_hwm(latest)
@@ -754,6 +774,8 @@ class RateAwareMessageBatcher(MessageBatcher):
         self._last_close_wall = self._clock()
         for stream in self._streams.values():
             stream.refresh_grid(end_time, self._batch_length)
+        messages = messages + self._untimed
+        self._untimed = []
         return MessageBatch(start_time=start_time, end_time=end_time, messages=messages)
 
     def _route_message(self, msg: Message[Any], window: _ActiveWindow) -> None:
@@ -1009,12 +1031,14 @@ class RateAwareMessageBatcher(MessageBatcher):
         advance on wall-time evidence alone.
 
         Held-back traffic counts as buffered: a window that nothing closes
-        strands ``_future`` just as it strands the buckets.
+        strands ``_future`` just as it strands the buckets.  So do untimed
+        messages (``UNTIMED_STREAM_KINDS``): an ROI edit while the beam is
+        off must still reach its job.
         """
         threshold = _STALL_THRESHOLD_BATCHES * self.batch_length_s
         if self._clock() - self._last_close_wall < threshold:
             return False
-        return bool(self._buffered_messages() or self._future)
+        return bool(self._buffered_messages() or self._future or self._untimed)
 
     def _recover_from_stall(self, window: _ActiveWindow) -> MessageBatch | None:
         """Deliver the buffered traffic, or re-place a misplaced window at it.
@@ -1060,7 +1084,12 @@ class RateAwareMessageBatcher(MessageBatcher):
         reaches it.
         """
         buffered = self._buffered_messages() + self._future
-        anchor = plausible_anchor([m.timestamp for m in buffered], self._batch_length)
+        # Only untimed messages buffered: deliver them where the window stands.
+        anchor = (
+            plausible_anchor([m.timestamp for m in buffered], self._batch_length)
+            if buffered
+            else window.start
+        )
         self._last_close_wall = self._clock()
         tolerance = _STALL_THRESHOLD_BATCHES * self._batch_length
         if anchor >= window.start - tolerance:
@@ -1149,8 +1178,11 @@ class RateAwareMessageBatcher(MessageBatcher):
     ) -> MessageBatch:
         """Emit ``[window.start, end_time]`` and open the next window at its end."""
         batch = MessageBatch(
-            start_time=window.start, end_time=end_time, messages=messages
+            start_time=window.start,
+            end_time=end_time,
+            messages=messages + self._untimed,
         )
+        self._untimed = []
         new_window = _ActiveWindow(start=end_time, end=end_time + self._batch_length)
         self._active_window = new_window
         # Drain overflow into the new window.  Timestamps that still fall

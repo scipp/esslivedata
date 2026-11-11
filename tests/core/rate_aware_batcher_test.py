@@ -2700,6 +2700,27 @@ class TestStallBackstop:
         ]
         assert_delivered_in_order(arrivals)
 
+    def test_context_stamped_ahead_of_the_data_is_not_data_time(self):
+        """A context value is stamped with its producer's clock, which can
+        run ahead of the detector's (by ~35 s on ESTIA).  Taken as data time
+        it would drag the window ahead of the data, and a stall recovery
+        back again."""
+        context = StreamId(kind=StreamKind.LIVEDATA_CONTEXT, name='lut')
+        stamps = [round((1000.0 + 2.5 * k) * 14) / 14 for k in range(400)]
+        arrivals = [(s, msg(s)) for s in stamps]
+        arrivals += [(s, msg(s + 35.0, stream=context)) for s in stamps[::40]]
+        assert_delivered_in_order(arrivals)
+
+    def test_roi_request_in_a_pause_is_delivered_without_rewinding(self):
+        """An ROI request is stamped at epoch 0.  Arriving alone during a
+        pause in the data (beam off) it must still reach its job, without
+        dragging data time back to 1970."""
+        roi = StreamId(kind=StreamKind.LIVEDATA_ROI, name='roi')
+        stamps = [1000.0 + k for k in range(60)] + [1120.0 + k for k in range(60)]
+        arrivals = [(s, msg(s)) for s in stamps]
+        arrivals.append((1080.0, Message(timestamp=ts(0), stream=roi, value='')))
+        assert_delivered_in_order(arrivals)
+
     def test_quiet_stream_does_not_trigger_the_backstop(self):
         """Without buffered traffic there is nothing to re-place onto: a
         quiet stream is not a stall, and the data clock must not advance on
