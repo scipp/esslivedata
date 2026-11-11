@@ -25,6 +25,11 @@ from ..session_paused import RESUME_URL_KEY, SESSION_PAUSED_PATH
 # unsaved forms. Four minutes plus the 60 s stale timeout matches what Chrome's
 # timer throttling used to do to hidden tabs, and leaves room for switching to
 # another application (a window fully covered by another may count as hidden).
+#
+# Four minutes is also the largest grace Chrome honours. After five minutes
+# hidden it fires the heartbeat timer about once a minute, which is right at
+# the stale timeout, so with a larger grace a hidden Chrome tab is reaped
+# erratically from then on instead of at grace plus timeout.
 DEFAULT_HIDDEN_TAB_GRACE = 240.0
 
 
@@ -56,7 +61,7 @@ class HeartbeatWidget(ReactiveHTML):
         every browser. Visibility comes from the ``visibilitychange`` event,
         which no browser throttles; the heartbeat resumes when the tab is
         shown again, unless the session was reaped meanwhile.
-    severed:
+    reaped:
         Set by the server once it has reaped the session. The browser then
         leaves for the paused page (see :mod:`..session_paused`), remembering
         its URL so the page can reload it.
@@ -74,7 +79,7 @@ class HeartbeatWidget(ReactiveHTML):
         bounds=(0, None),
         doc="Hidden time before heartbeats stop",
     )
-    severed = param.Boolean(
+    reaped = param.Boolean(
         default=False,
         doc="Set by the server on reap; the browser then leaves the page",
     )
@@ -110,8 +115,8 @@ class HeartbeatWidget(ReactiveHTML):
                 beat();
             }, data.interval_ms);
         """,
-        'severed': f"""
-            if (data.severed) {{
+        'reaped': f"""
+            if (data.reaped) {{
                 try {{
                     sessionStorage.setItem('{RESUME_URL_KEY}', window.location.href);
                 }} catch (e) {{}}

@@ -404,7 +404,7 @@ class SessionUpdater:
         exactly like a vanished one. Its widgets would keep accepting input and
         act on shared state, yet never update again. Reaped tier 1 therefore
         also tells the browser to leave the page
-        (:attr:`HeartbeatWidget.severed`), which closes the websocket; the
+        (:attr:`HeartbeatWidget.reaped`), which closes the websocket; the
         browser reloads into a fresh session once the tab is visible again.
 
         Parameters
@@ -442,7 +442,7 @@ class SessionUpdater:
 
     def _reaped_document_teardown(self) -> None:
         """Send the browser away, then tear down as on the clean path."""
-        self._heartbeat_widget.severed = True
+        self._heartbeat_widget.reaped = True
         self._document_teardown()
 
     def _document_teardown(self) -> None:

@@ -314,6 +314,8 @@ class PlotGridTabs:
         Title of the tab to open, from the ``tab`` URL query parameter that
         this widget keeps in sync with the active tab. Grid titles need not be
         unique; the first match wins. An unknown title opens the default tab.
+        The URL is rewritten only when the active tab index changes, so it
+        keeps the old title if the active grid is renamed from another session.
     """
 
     def __init__(

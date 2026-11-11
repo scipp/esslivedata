@@ -357,7 +357,9 @@ def get_arg_parser() -> argparse.ArgumentParser:
         default=DEFAULT_HIDDEN_TAB_GRACE,
         help='Seconds a browser tab may stay hidden before it stops sending '
         'heartbeats. The session is then dropped after the stale timeout and '
-        'the tab reloads into a new session when shown again.',
+        'the tab reloads into a new session when shown again. Values above the '
+        'default are not honoured in Chrome, which throttles the heartbeat timer '
+        'of a tab hidden for five minutes.',
     )
     parser.add_argument(
         '--check',

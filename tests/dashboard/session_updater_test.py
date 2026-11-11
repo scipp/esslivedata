@@ -560,10 +560,10 @@ class TestSessionUpdater:
         updater = _make_updater(SessionId('session-1'), registry, document=document)
 
         updater.cleanup(reaped=True)
-        assert not updater.heartbeat_widget.severed
+        assert not updater.heartbeat_widget.reaped
 
         document.run_next_tick_callbacks()
-        assert updater.heartbeat_widget.severed
+        assert updater.heartbeat_widget.reaped
 
     def test_clean_close_does_not_tell_browser_to_leave(self):
         # The websocket is already gone on the clean path; nobody to tell.
@@ -574,7 +574,7 @@ class TestSessionUpdater:
 
         updater.cleanup()
 
-        assert not updater.heartbeat_widget.severed
+        assert not updater.heartbeat_widget.reaped
 
     def test_hidden_tab_grace_reaches_browser_heartbeat(self):
         updater = SessionUpdater(
