@@ -280,7 +280,7 @@ def _create_base_reduction_workflow():
         ``_add_time_coords``) and break coord matching across the accumulator sum.
         """
         arc_idx = _arc_energy_to_index[region.arc]
-        arc_data = data['arc', arc_idx]
+        arc_data = data['arc', arc_idx].transpose(['tube', 'channel', 'pixel'])
         flat = arc_data.flatten(dims=('channel', 'pixel'), to='position')
         selected = flat['position', region.pixel_start : region.pixel_stop]
         counts = selected.sum()

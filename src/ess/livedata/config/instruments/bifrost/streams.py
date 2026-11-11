@@ -42,9 +42,19 @@ def _bifrost_generator() -> Generator[tuple[str, tuple[int, int]]]:
 
 detector_fakes = dict(_bifrost_generator())
 
-# Detector number configuration
-detector_number = sc.arange('detector_number', 1, 5 * 3 * 9 * 100 + 1, unit=None).fold(
-    dim='detector_number', sizes={'arc': 5, 'tube': 3, 'channel': 9, 'pixel': 100}
+# Each of the 45 triplet NXdetector groups holds a (tube, pixel) block of a global
+# numbering, detector_number = 1 + 2700 * arc + 900 * tube + 100 * channel + pixel.
+# essspectroscopy's merge_triplets stacks the triplets sorted by (arc, channel), so
+# the Q-map workflows' EmptyDetector has dims (arc, channel, tube, pixel). Events
+# are grouped in this order, and assemble_detector_data attaches the EmptyDetector's
+# pixel positions by array position, so the order must match merge_triplets'.
+detector_number = (
+    sc.arange('detector_number', 1, 5 * 3 * 9 * 100 + 1, unit=None)
+    .fold(
+        dim='detector_number', sizes={'arc': 5, 'tube': 3, 'channel': 9, 'pixel': 100}
+    )
+    .transpose(['arc', 'channel', 'tube', 'pixel'])
+    .copy()
 )
 
 

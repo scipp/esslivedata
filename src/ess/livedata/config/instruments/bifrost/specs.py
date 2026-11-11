@@ -294,6 +294,7 @@ def _logical_view(obj: sc.Variable | sc.DataArray, source_name: str) -> sc.DataA
     da = sc.DataArray(obj) if isinstance(obj, sc.Variable) else obj
     return (
         da.to(dtype='float32')
+        .transpose(['arc', 'tube', 'channel', 'pixel'])
         .flatten(dims=('arc', 'tube'), to='arc/tube')
         .flatten(dims=('channel', 'pixel'), to='channel/pixel')
     )

@@ -15,6 +15,7 @@ from ess.livedata.config.instruments.bifrost import specs
 from ess.livedata.config.instruments.bifrost.factories import (
     _create_base_reduction_workflow,
 )
+from ess.livedata.config.instruments.bifrost.streams import detector_number
 from ess.livedata.core.timestamp import Timestamp
 
 
@@ -283,20 +284,17 @@ class TestUnifiedDetectorViewLayout:
 
     @pytest.fixture
     def raw_detector(self) -> sc.DataArray:
-        """Raw combined detector data with dims (arc, tube, channel, pixel).
+        """Raw combined detector data shaped like the configured detector_number.
 
         Values are bounded so float32 count sums stay exact for conservation.
         """
-        n = 5 * 3 * 9 * 100
         values = sc.array(
             dims=['flat'],
-            values=[i % 7 for i in range(n)],
+            values=[i % 7 for i in range(detector_number.size)],
             unit='counts',
             dtype='float64',
         )
-        return sc.DataArray(
-            values.fold('flat', sizes={'arc': 5, 'tube': 3, 'channel': 9, 'pixel': 100})
-        )
+        return sc.DataArray(values.fold('flat', sizes=detector_number.sizes))
 
     @pytest.fixture
     def cumulative_histogram(self, raw_detector: sc.DataArray) -> sc.DataArray:
@@ -315,6 +313,13 @@ class TestUnifiedDetectorViewLayout:
         image = specs._logical_view(raw_detector, 'unified_detector')
         assert image.dims == ('arc/tube', 'channel/pixel')
         assert image.sizes == {'arc/tube': 15, 'channel/pixel': 900}
+
+    def test_logical_view_places_pixels_by_arc_tube_and_channel_pixel(self) -> None:
+        image = specs._logical_view(sc.DataArray(detector_number), 'unified_detector')
+        row = np.arange(15)[:, None]  # 3 * arc + tube
+        column = np.arange(900)[None, :]  # 100 * channel + pixel
+        # detector_number = 1 + 2700 * arc + 900 * tube + 100 * channel + pixel
+        np.testing.assert_array_equal(image.values, 1 + 900 * row + column)
 
     @pytest.mark.parametrize('pixels_per_tube', [1, 10, 100])
     def test_spectrum_transform_groups_pixels_per_arc(
