@@ -409,6 +409,8 @@ class OrchestratingProcessor[Tin, Tout]:
                 min_lag_s=round(lag.min_s, 3),
                 max_lag_s=round(lag.max_s, 3),
                 count=lag.count,
+                max_out_of_order_s=round(lag.max_out_of_order_s, 3),
+                out_of_order_partition=lag.out_of_order_partition,
             )
 
     def finalize(self, *, error: str | None = None) -> None:
