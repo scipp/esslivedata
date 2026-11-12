@@ -656,7 +656,7 @@ class TestTemporalBuffer:
         """A frame stamped at the newest buffered time is no regression.
 
         The backend delivers late data in a batch that ends where the previous
-        one did (#1452), so two consecutive results can carry the same time.
+        one did, so two consecutive results can carry the same time.
         """
         buffer = TemporalBuffer()
         buffer.set_required_timespan(100.0)

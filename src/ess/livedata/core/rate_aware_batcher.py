@@ -87,11 +87,11 @@ GATED_STREAM_KINDS = frozenset(
 #: stamp ahead of the data drags the window ahead of it.  So these messages
 #: never touch the clock: they skip the high-water mark, window placement and
 #: anchors, and ride along with the next batch emitted -- after one stall
-#: interval as a zero-length batch if no other traffic closes a window.  Only
-#: the newest message per stream is held, so the buffer stays bounded however
-#: long that takes: before the first timed message there is no window, hence
-#: no data time to deliver them at, and a producer may re-emit its value
-#: periodically throughout.
+#: interval as a zero-length batch if no other traffic closes a window.
+#: Between batches, a newer message replaces an older one on the same stream,
+#: so the buffer stays bounded however long the next batch takes: before the
+#: first timed message there is no window, hence no data time to deliver them
+#: at, and a producer may re-emit its value periodically throughout.
 UNTIMED_STREAM_KINDS = frozenset({StreamKind.LIVEDATA_ROI, StreamKind.LIVEDATA_CONTEXT})
 
 MIN_DIFFS_FOR_GATE = 4
@@ -476,7 +476,8 @@ class _GatedStream:
 
         Without an integer rate estimate any prior grid is dropped: a grid must not
         outlive the evidence it was built from.  A sparse stream on a 14 Hz pulse
-        clock (ESTIA's detector at ~0.3 messages/s, #1455) has random multiples of
+        clock (a well-shielded detector whose EFU emits only when neutrons arrive,
+        e.g. ESTIA's at ~0.3 messages/s) has random multiples of
         1/14 s between messages, and every so often the last ``DIFF_BUFFER_SIZE`` of
         them snap to 1 Hz for a few dozen messages.  Kept, such a grid rounds
         off-grid messages up to half a second ahead, so gated closes run the window

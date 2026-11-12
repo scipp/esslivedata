@@ -1711,9 +1711,9 @@ class TestSubHzGatedStream:
 class TestLostRateEstimate:
     def test_grid_is_dropped_once_traffic_leaves_it(self):
         """A grid must not outlive its rate estimate.  A sparse stream on a
-        14 Hz pulse clock (ESTIA, #1455) intermittently snaps to 1 Hz; a grid
-        kept from such a spell rounds later off-grid messages onto it and
-        runs the window ahead of the data."""
+        14 Hz pulse clock intermittently snaps to 1 Hz; a grid kept from such
+        a spell rounds later off-grid messages onto it and runs the window
+        ahead of the data."""
         batcher, t0 = make_converged_batcher(rate_hz=1.0)
         assert batcher.is_gating(DETECTOR)
         rng = random.Random(0)
@@ -2621,7 +2621,7 @@ class TestStallBackstop:
         """A partial batch left by a stopped stream is delivered once the
         stall threshold elapses.  The batch ends at its newest message, so
         data time advances only as far as the data reached, and the window
-        is not re-placed (#1129)."""
+        is not re-placed."""
         clock = FakeClock()
         batcher, start = make_converged_batcher(rate_hz=14.0, clock=clock)
         trailing = msgs_at(14.0, start, 0.5)
@@ -2641,7 +2641,7 @@ class TestStallBackstop:
 
     def test_late_message_in_a_pause_is_delivered_without_rewinding(self):
         """A message stamped seconds behind the window, followed by a pause
-        longer than the stall threshold, is late data (seen on ESTIA, #1452).
+        longer than the stall threshold, is late data.
         It must be delivered without data time going backwards -- the
         dashboard reads a backwards ``time`` as a restarted timeline and
         drops its history.  The delivery is logged with the distance behind
@@ -2677,8 +2677,8 @@ class TestStallBackstop:
     @pytest.mark.parametrize('seed', range(3))
     def test_sparse_disordered_stream_never_rewinds_data_time(self, seed):
         """A sparse stream with out-of-order arrivals: one detector stream at
-        ~0.4 messages/s on the 14 Hz pulse grid (as ESTIA's, #1452), arriving
-        up to 1.5 s out of timestamp order.  Without a misplaced window there
+        ~0.4 messages/s on the 14 Hz pulse grid, arriving up to 1.5 s out of
+        timestamp order.  Without a misplaced window there
         is nothing to correct, so batch end times must never decrease, and
         nothing may be lost."""
         rng = random.Random(seed)
@@ -2690,10 +2690,10 @@ class TestStallBackstop:
         assert_delivered_in_order([(s + rng.uniform(0.0, 1.5), msg(s)) for s in stamps])
 
     def test_recorded_estia_stream_never_rewinds_data_time(self):
-        """Replay of 13 h of ESTIA's detector stream on 2026-11-11 (#1452), in
+        """Replay of 13 h of ESTIA's detector stream on 2026-11-11, in
         the order the file writer consumed it.  The stream is sparse (~0.3
         messages/s), and out of order by up to 103 s between 09:16 and 10:00.
-        With a 1 Hz grid kept from a spell of spurious rate estimates (#1455)
+        With a 1 Hz grid kept from a spell of spurious rate estimates
         and no late-data flush, this replay rewinds data time at 08:53 and
         12:29, the latter matching the production rewind that cost the
         dashboard its timeseries history to within a millisecond."""
