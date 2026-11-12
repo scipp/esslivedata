@@ -18,6 +18,7 @@ service would experience.
 
 import math
 import random
+from pathlib import Path
 
 import numpy as np
 import pytest
@@ -31,6 +32,7 @@ from ess.livedata.core.rate_aware_batcher import (
     DEFAULT_MAX_BACKLOG_BATCHES,
     DEFAULT_MAX_BACKLOG_BYTES,
     DEFAULT_MAX_BACKLOG_S,
+    DIFF_BUFFER_SIZE,
     MIN_DIFFS_FOR_GATE,
     UNKNOWN_PAYLOAD_BYTES,
     RateAwareMessageBatcher,
@@ -109,6 +111,51 @@ def longest_silence(
             last_delivery = t
         worst = max(worst, t - last_delivery)
     return worst
+
+
+def assert_delivered_in_order(
+    arrivals: list[tuple[float, Message[str]]], poll_s: float = 0.1
+) -> None:
+    """Feed messages to a batcher by wall-clock arrival time and check delivery.
+
+    Polls every ``poll_s`` of wall time, as the service loop does, handing over
+    each message once its arrival time has passed, and keeps polling for 30 s
+    past the last arrival so the backstop can flush.  Every message must be
+    delivered, batch end times must never decrease, and no stall recovery may
+    re-place the window: with correctly stamped data there is nothing to
+    correct.
+    """
+    arrivals = sorted(arrivals, key=lambda arrival: arrival[0])
+    start = arrivals[0][0]
+    clock = FakeClock(start=start)
+    batcher = RateAwareMessageBatcher(batch_length_s=1.0, clock=clock)
+    delivered = 0
+    last_end: Timestamp | None = None
+    i = 0
+    with capture_logs() as logs:
+        for k in range(math.ceil((arrivals[-1][0] - start + 30.0) / poll_s)):
+            # Multiply rather than accumulate, so poll times do not drift.
+            clock.now = start + k * poll_s
+            polled: list[Message[str]] = []
+            while i < len(arrivals) and arrivals[i][0] <= clock.now:
+                polled.append(arrivals[i][1])
+                i += 1
+            if (batch := batcher.batch(polled)) is None:
+                continue
+            delivered += len(batch.messages)
+            if last_end is not None:
+                assert batch.end_time >= last_end
+            last_end = batch.end_time
+    assert delivered == len(arrivals)
+    assert not [e for e in logs if e['event'] == 'batcher_stall_recovery']
+
+
+# Pulse times of ESTIA's detector stream on 2026-11-11, stored as pulse gaps.
+# The period is the ESS timing system's, 11 ns longer than 1/14 s; it rebuilds
+# the recorded times to within 1 ns.
+_ESTIA_PULSE_GAPS = Path(__file__).with_name('estia_pulse_gaps.txt')
+_ESTIA_FIRST_PULSE_NS = 1_794_355_204_124_794_111
+_ESTIA_PULSE_PERIOD_NS = 71_428_582.785433
 
 
 def make_converged_batcher(
@@ -1661,6 +1708,22 @@ class TestSubHzGatedStream:
         assert held in r2.messages
 
 
+class TestLostRateEstimate:
+    def test_grid_is_dropped_once_traffic_leaves_it(self):
+        """A grid must not outlive its rate estimate.  A sparse stream on a
+        14 Hz pulse clock intermittently snaps to 1 Hz; a grid kept from such
+        a spell rounds later off-grid messages onto it and runs the window
+        ahead of the data."""
+        batcher, t0 = make_converged_batcher(rate_hz=1.0)
+        assert batcher.is_gating(DETECTOR)
+        rng = random.Random(0)
+        t = t0
+        for _ in range(2 * DIFF_BUFFER_SIZE):
+            t += rng.randint(14, 60) / 14
+            batcher.batch([msg(t)])
+        assert not batcher.is_gating(DETECTOR)
+
+
 class TestSubRateExclusion:
     """Streams whose integer rate is below 1 pulse / batch_length are excluded.
 
@@ -2554,21 +2617,165 @@ class TestStallBackstop:
         assert delivered == 20, f"delivered {delivered} of 20 sparse messages"
         assert not [e for e in logs if e['event'] == 'batcher_stall_recovery']
 
-    def test_quiet_trailing_batch_does_not_thrash(self):
-        """A partial batch left by a stopped stream is quietness, not a
-        stall: placement already agrees with the buffered traffic, so the
-        backstop must re-arm silently instead of re-placing the window and
-        logging a recovery every threshold interval."""
+    def test_trailing_batch_is_flushed_at_the_data_frontier(self):
+        """A partial batch left by a stopped stream is delivered once the
+        stall threshold elapses.  The batch ends at its newest message, so
+        data time advances only as far as the data reached, and the window
+        is not re-placed."""
         clock = FakeClock()
         batcher, start = make_converged_batcher(rate_hz=14.0, clock=clock)
-        batcher.batch(msgs_at(14.0, start, 0.5))  # half a window, no close
-        before = batcher._active_window.start
+        trailing = msgs_at(14.0, start, 0.5)
+        assert batcher.batch(trailing) is None  # half a window, no close
+        window_start = batcher._active_window.start
+        delivered = []
         with capture_logs() as logs:
             for _ in range(1000):
                 clock.advance(0.1)
-                assert batcher.batch([]) is None
-        assert batcher._active_window.start == before
-        assert not [e for e in logs if e['event'] == 'batcher_stall_recovery']
+                if (batch := batcher.batch([])) is not None:
+                    delivered.append(batch)
+        assert len(delivered) == 1
+        assert delivered[0].messages == trailing
+        assert delivered[0].start_time == window_start
+        assert delivered[0].end_time == trailing[-1].timestamp
+        assert not logs
+
+    def test_late_message_in_a_pause_is_delivered_without_rewinding(self):
+        """A message stamped seconds behind the window, followed by a pause
+        longer than the stall threshold, is late data.
+        It must be delivered without data time going backwards -- the
+        dashboard reads a backwards ``time`` as a restarted timeline and
+        drops its history.  The delivery is logged with the distance behind
+        the window, as nothing downstream shows that the data was late."""
+        clock = FakeClock()
+        batcher, start = make_converged_batcher(rate_hz=14.0, clock=clock)
+        batches: list[MessageBatch] = []
+
+        def poll(messages: list[Message[str]]) -> None:
+            if (batch := batcher.batch(messages)) is not None:
+                batches.append(batch)
+
+        with capture_logs() as logs:
+            for k in range(5):
+                poll(msgs_at(14.0, start + k, 1.0))
+                clock.advance(1.0)
+            for _ in range(5):  # drain pending closes
+                poll([])
+            window_start = batcher._active_window.start
+            late = msg(window_start.to_ns() / 1e9 - 3.0, value='late')
+            poll([late])
+            for _ in range(200):  # pause: 20 s without traffic
+                clock.advance(0.1)
+                poll([])
+        assert late in [m for batch in batches for m in batch.messages]
+        ends = [batch.end_time for batch in batches]
+        assert ends == sorted(ends)
+        (event,) = logs
+        assert event['event'] == 'batcher_late_data_flushed'
+        assert event['window_start_ns'] == window_start.to_ns()
+        assert event['anchor_ns'] == late.timestamp.to_ns()
+
+    @pytest.mark.parametrize('seed', range(3))
+    def test_sparse_disordered_stream_never_rewinds_data_time(self, seed):
+        """A sparse stream with out-of-order arrivals: one detector stream at
+        ~0.4 messages/s on the 14 Hz pulse grid, arriving up to 1.5 s out of
+        timestamp order.  Without a misplaced window there
+        is nothing to correct, so batch end times must never decrease, and
+        nothing may be lost."""
+        rng = random.Random(seed)
+        stamps: list[float] = []
+        t = 1000.0
+        while t < 1000.0 + 1800.0:
+            t += rng.expovariate(1 / 2.5)
+            stamps.append(round(t * 14) / 14)
+        assert_delivered_in_order([(s + rng.uniform(0.0, 1.5), msg(s)) for s in stamps])
+
+    def test_recorded_estia_stream_never_rewinds_data_time(self):
+        """Replay of 13 h of ESTIA's detector stream on 2026-11-11, in
+        the order the file writer consumed it.  The stream is sparse (~0.3
+        messages/s), and out of order by up to 103 s between 09:16 and 10:00.
+        With a 1 Hz grid kept from a spell of spurious rate estimates
+        and no late-data flush, this replay rewinds data time at 08:53 and
+        12:29, the latter matching the production rewind that cost the
+        dashboard its timeseries history to within a millisecond."""
+        lines = _ESTIA_PULSE_GAPS.read_text().splitlines()
+        gaps = [
+            int(v) for line in lines if not line.startswith('#') for v in line.split()
+        ]
+        pulses = np.concatenate([[0], np.cumsum(gaps)])
+        offsets = np.round(pulses * _ESTIA_PULSE_PERIOD_NS).astype(np.int64)
+        stamps = _ESTIA_FIRST_PULSE_NS + offsets
+        # A message is consumed once the newest one before it was produced,
+        # as with a partition delivering late.  Wall time is relative to the
+        # first message: the constant producer lag does not matter.
+        arrivals_ns = np.maximum.accumulate(stamps) - stamps[0]
+        arrivals = [
+            (arrival / 1e9, Message(timestamp=ts_ns, stream=DETECTOR, value=''))
+            for arrival, ts_ns in zip(
+                arrivals_ns.tolist(),
+                map(Timestamp.from_ns, stamps.tolist()),
+                strict=True,
+            )
+        ]
+        assert_delivered_in_order(arrivals)
+
+    def test_context_stamped_ahead_of_the_data_is_not_data_time(self):
+        """A context value is stamped with its producer's clock, which can
+        run ahead of the detector's (by ~35 s on ESTIA).  Taken as data time
+        it would drag the window ahead of the data, and a stall recovery
+        back again."""
+        context = StreamId(kind=StreamKind.LIVEDATA_CONTEXT, name='lut')
+        stamps = [round((1000.0 + 2.5 * k) * 14) / 14 for k in range(400)]
+        arrivals = [(s, msg(s)) for s in stamps]
+        arrivals += [(s, msg(s + 35.0, stream=context)) for s in stamps[::40]]
+        assert_delivered_in_order(arrivals)
+
+    def test_roi_request_in_a_pause_is_delivered_without_rewinding(self):
+        """An ROI request is stamped at epoch 0.  Arriving alone during a
+        pause in the data (beam off) it must still reach its job, without
+        dragging data time back to 1970."""
+        roi = StreamId(kind=StreamKind.LIVEDATA_ROI, name='roi')
+        stamps = [1000.0 + k for k in range(60)] + [1120.0 + k for k in range(60)]
+        arrivals = [(s, msg(s)) for s in stamps]
+        arrivals.append((1080.0, Message(timestamp=ts(0), stream=roi, value='')))
+        assert_delivered_in_order(arrivals)
+
+    def test_roi_requests_in_a_pause_keep_rate_estimates(self):
+        """A batch flushed for ROI requests alone says nothing about the data
+        streams.  It must not count them as absent, or a few ROI edits while
+        the beam is off would evict every stream's rate estimate."""
+        roi = StreamId(kind=StreamKind.LIVEDATA_ROI, name='roi')
+        clock = FakeClock()
+        batcher, _ = make_converged_batcher(rate_hz=14.0, clock=clock)
+        flushed = 0
+        for _ in range(8):
+            request = Message(timestamp=ts(0), stream=roi, value='')
+            flushed += batcher.batch([request]) is not None
+            for _ in range(150):
+                clock.advance(0.1)
+                flushed += batcher.batch([]) is not None
+        assert flushed == 8
+        assert batcher.is_gating(DETECTOR)
+
+    def test_untimed_values_before_the_first_data_keep_only_the_newest(self):
+        """Before the first timed message there is no window to deliver into.
+        A context producer re-emits its value periodically, so a service
+        started while the beam is off must hold the newest value per stream
+        rather than all of them."""
+        lut = StreamId(kind=StreamKind.LIVEDATA_CONTEXT, name='lut')
+        roi = StreamId(kind=StreamKind.LIVEDATA_ROI, name='roi')
+        clock = FakeClock()
+        batcher = RateAwareMessageBatcher(batch_length_s=1.0, clock=clock)
+        for k in range(100):
+            value = Message(timestamp=ts(2000.0 + k), stream=lut, value=str(k))
+            assert batcher.batch([value]) is None
+            clock.advance(1.0)
+        request = Message(timestamp=ts(0), stream=roi, value='')
+        assert batcher.batch([request]) is None
+        first = msg(1000.0)
+        batch = batcher.batch([first])
+        assert batch is not None
+        assert batch.messages == [first, value, request]
+        assert batch.start_time == batch.end_time == first.timestamp
 
     def test_quiet_stream_does_not_trigger_the_backstop(self):
         """Without buffered traffic there is nothing to re-place onto: a
@@ -2597,8 +2804,9 @@ class TestStallBackstop:
     def test_stuck_clock_is_delivered_and_bounded(self, stream, offset):
         """A producer whose timestamp stops advancing can never satisfy a
         gate or reach the timeout, and as the only traffic nothing else
-        closes the window.  The backstop must deliver it anyway, and hold no
-        more than a couple of stall intervals' worth."""
+        closes the window.  The backstop must deliver it anyway, hold no
+        more than a stall interval's worth, and not advance data time past
+        the frozen stamp on wall-time evidence."""
         clock = FakeClock()
         batcher, _ = make_converged_batcher(rate_hz=14.0, clock=clock)
         for _ in range(5):  # drain pending timeout closes
@@ -2611,13 +2819,14 @@ class TestStallBackstop:
             out = batcher.batch([msg(frozen, stream=stream)])
             if out is not None:
                 delivered += len(out.messages)
+                assert out.end_time <= ts(frozen)
             held = len(batcher._buffered_messages()) + len(batcher._future)
             peak = max(peak, held)
         assert delivered > 0
         assert delivered + held == 600, "stuck-clock traffic was lost"
-        # One message per call and per batch length of wall time: a close
-        # takes a stall check to establish growth and one more to fire.
-        assert peak <= 3 * _STALL_THRESHOLD_BATCHES
+        # One message per call and per batch length of wall time, flushed
+        # once per stall interval.
+        assert peak <= _STALL_THRESHOLD_BATCHES + 1
 
     def test_backstop_waits_out_the_threshold(self):
         """A window parked ahead of traffic recovers via the backstop, but

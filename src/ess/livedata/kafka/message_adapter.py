@@ -64,6 +64,8 @@ class KafkaMessage(Protocol):
 
     def topic(self) -> str: ...
 
+    def partition(self) -> int: ...
+
 
 class FakeKafkaMessage(KafkaMessage):
     def __init__(
@@ -74,12 +76,14 @@ class FakeKafkaMessage(KafkaMessage):
         topic: str,
         timestamp: int = 0,
         timestamp_type: int = 0,
+        partition: int = 0,
     ):
         self._key = key
         self._value = value
         self._topic = topic
         self._timestamp = timestamp
         self._timestamp_type = timestamp_type
+        self._partition = partition
 
     def error(self) -> Any | None:
         return None
@@ -95,6 +99,9 @@ class FakeKafkaMessage(KafkaMessage):
 
     def topic(self) -> str:
         return self._topic
+
+    def partition(self) -> int:
+        return self._partition
 
     def __eq__(self, other: object) -> bool:
         if not isinstance(other, FakeKafkaMessage):
@@ -178,8 +185,9 @@ class KafkaAdapter[T](MessageAdapter[KafkaMessage, Message[T]]):
     def _record_lag(
         self, message: KafkaMessage, source_name: str, timestamp: Timestamp
     ) -> None:
-        """Record producer lag (Kafka create time minus payload time) in the
-        stream counter, keyed by (topic, source, wire schema).
+        """Record producer lag (Kafka create time minus payload time) and
+        consumption order in the stream counter, keyed by (topic, source, wire
+        schema).
         """
         if self._stream_counter is None:
             return
@@ -188,7 +196,12 @@ class KafkaAdapter[T](MessageAdapter[KafkaMessage, Message[T]]):
             return
         lag_s = (kafka_ms * 1_000_000 - timestamp.to_ns()) / 1e9
         self._stream_counter.record_lag(
-            message.topic(), source_name, self.schema, lag_s
+            message.topic(),
+            source_name,
+            self.schema,
+            lag_s,
+            timestamp=timestamp,
+            partition=message.partition(),
         )
 
 

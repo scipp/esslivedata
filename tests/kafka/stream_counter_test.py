@@ -8,8 +8,15 @@ from ess.livedata.core.job import (
     StreamStat,
     StreamStatsProvider,
 )
+from ess.livedata.core.timestamp import Timestamp
 from ess.livedata.kafka.stream_counter import StreamCounter
 from ess.livedata.kafka.stream_mapping import InputStreamKey
+
+T0 = Timestamp.from_ns(1_000_000_000_000)
+
+
+def _at(seconds: float) -> Timestamp:
+    return Timestamp.from_ns(T0.to_ns() + int(seconds * 1e9))
 
 
 class TestStreamCounter:
@@ -140,7 +147,9 @@ class TestStreamCounterLag:
     def test_aggregates_min_max_count_per_key(self) -> None:
         counter = StreamCounter()
         for lag in (1.0, 3.0, 2.0):
-            counter.record_lag("topic_a", "source_1", "ev44", lag)
+            counter.record_lag(
+                "topic_a", "source_1", "ev44", lag, timestamp=T0, partition=0
+            )
         report = counter.drain_lag()
         assert report is not None
         (entry,) = report.streams
@@ -153,24 +162,24 @@ class TestStreamCounterLag:
 
     def test_distinct_keys_by_topic_source_schema(self) -> None:
         counter = StreamCounter()
-        counter.record_lag("t", "s", "ev44", 1.0)
-        counter.record_lag("t", "s", "da00", 1.0)
-        counter.record_lag("t", "other", "ev44", 1.0)
+        counter.record_lag("t", "s", "ev44", 1.0, timestamp=T0, partition=0)
+        counter.record_lag("t", "s", "da00", 1.0, timestamp=T0, partition=0)
+        counter.record_lag("t", "other", "ev44", 1.0, timestamp=T0, partition=0)
         report = counter.drain_lag()
         assert report is not None
         assert len(report.streams) == 3
 
     def test_drain_lag_resets(self) -> None:
         counter = StreamCounter()
-        counter.record_lag("t", "s", "ev44", 1.0)
+        counter.record_lag("t", "s", "ev44", 1.0, timestamp=T0, partition=0)
         counter.drain_lag()
         assert counter.drain_lag() is None
 
     def test_streams_ordered_by_key(self) -> None:
         counter = StreamCounter()
-        counter.record_lag("t_b", "s", "ev44", 1.0)
-        counter.record_lag("t_a", "s", "f144", 1.0)
-        counter.record_lag("t_a", "s", "ev44", 1.0)
+        counter.record_lag("t_b", "s", "ev44", 1.0, timestamp=T0, partition=0)
+        counter.record_lag("t_a", "s", "f144", 1.0, timestamp=T0, partition=0)
+        counter.record_lag("t_a", "s", "ev44", 1.0, timestamp=T0, partition=0)
         report = counter.drain_lag()
         assert report is not None
         keys = [(s.topic, s.source, s.schema) for s in report.streams]
@@ -182,16 +191,16 @@ class TestStreamCounterLag:
 
     def test_ignores_epics_noise_suffixes(self) -> None:
         counter = StreamCounter()
-        counter.record_lag("motion", "PV.DMOV", "f144", 1.0)
-        counter.record_lag("motion", "PV.VAL", "f144", 1.0)
-        counter.record_lag("motion", "PV.RBV", "f144", 1.0)
+        counter.record_lag("motion", "PV.DMOV", "f144", 1.0, timestamp=T0, partition=0)
+        counter.record_lag("motion", "PV.VAL", "f144", 1.0, timestamp=T0, partition=0)
+        counter.record_lag("motion", "PV.RBV", "f144", 1.0, timestamp=T0, partition=0)
         report = counter.drain_lag()
         assert report is not None
         assert [s.source for s in report.streams] == ["PV.RBV"]
 
     def _level(self, lag_s: float) -> int:
         counter = StreamCounter()
-        counter.record_lag("t", "s", "ev44", lag_s)
+        counter.record_lag("t", "s", "ev44", lag_s, timestamp=T0, partition=0)
         report = counter.drain_lag()
         assert report is not None
         return report.level(report.streams[0])
@@ -210,9 +219,81 @@ class TestStreamCounterLag:
 
     def test_level_is_per_stream(self) -> None:
         counter = StreamCounter()
-        counter.record_lag("t", "stale", "ev44", LAG_WARN_THRESHOLD_S + 5)
-        counter.record_lag("t", "future", "ev44", -(LAG_FUTURE_TOLERANCE_S + 1))
+        counter.record_lag(
+            "t", "stale", "ev44", LAG_WARN_THRESHOLD_S + 5, timestamp=T0, partition=0
+        )
+        counter.record_lag(
+            "t",
+            "future",
+            "ev44",
+            -(LAG_FUTURE_TOLERANCE_S + 1),
+            timestamp=T0,
+            partition=0,
+        )
         report = counter.drain_lag()
         assert report is not None
         by_source = {lag.source: report.level(lag) for lag in report.streams}
         assert by_source == {"stale": logging.WARNING, "future": logging.ERROR}
+
+
+class TestStreamCounterOutOfOrder:
+    def test_in_order_stream_reports_no_reordering(self) -> None:
+        counter = StreamCounter()
+        for t in (0.0, 1.0, 2.0):
+            counter.record_lag("t", "s", "ev44", 1.0, timestamp=_at(t), partition=0)
+        report = counter.drain_lag()
+        assert report is not None
+        (entry,) = report.streams
+        assert entry.max_out_of_order_s == 0.0
+        assert entry.out_of_order_partition is None
+
+    def test_reports_largest_distance_behind_newest_and_its_partition(self) -> None:
+        counter = StreamCounter()
+        for t, partition in ((10.0, 0), (12.0, 1), (11.5, 2), (9.0, 3), (12.5, 4)):
+            counter.record_lag(
+                "t", "s", "ev44", 1.0, timestamp=_at(t), partition=partition
+            )
+        report = counter.drain_lag()
+        assert report is not None
+        (entry,) = report.streams
+        assert entry.max_out_of_order_s == 3.0
+        assert entry.out_of_order_partition == 3
+
+    def test_newest_payload_time_carries_across_drains(self) -> None:
+        counter = StreamCounter()
+        counter.record_lag("t", "s", "ev44", 1.0, timestamp=_at(10.0), partition=0)
+        counter.drain_lag()
+        counter.record_lag("t", "s", "ev44", 1.0, timestamp=_at(7.0), partition=5)
+        report = counter.drain_lag()
+        assert report is not None
+        (entry,) = report.streams
+        assert entry.max_out_of_order_s == 3.0
+        assert entry.out_of_order_partition == 5
+
+    def test_future_payload_time_does_not_become_the_reference(self) -> None:
+        """One payload stamped far ahead of its Kafka create time must not make
+        every later, correctly stamped message read as out of order."""
+        counter = StreamCounter()
+        counter.record_lag("t", "s", "ev44", 1.0, timestamp=_at(10.0), partition=0)
+        counter.record_lag(
+            "t",
+            "s",
+            "ev44",
+            -(LAG_FUTURE_TOLERANCE_S + 1e6),
+            timestamp=_at(1e6),
+            partition=1,
+        )
+        counter.record_lag("t", "s", "ev44", 1.0, timestamp=_at(11.0), partition=0)
+        report = counter.drain_lag()
+        assert report is not None
+        (entry,) = report.streams
+        assert entry.max_out_of_order_s == 0.0
+        assert entry.out_of_order_partition is None
+
+    def test_order_is_tracked_per_stream(self) -> None:
+        counter = StreamCounter()
+        counter.record_lag("t", "a", "ev44", 1.0, timestamp=_at(10.0), partition=0)
+        counter.record_lag("t", "b", "ev44", 1.0, timestamp=_at(5.0), partition=1)
+        report = counter.drain_lag()
+        assert report is not None
+        assert [s.max_out_of_order_s for s in report.streams] == [0.0, 0.0]
