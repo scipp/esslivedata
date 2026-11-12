@@ -177,6 +177,10 @@ def sample_geometry(position: Position[NXsample, SampleRun]) -> SampleGeometry:
     Stamped onto the accumulated histogram by :func:`compute_detector_histogram`.
     Inserted only in wavelength mode; TOA views set :data:`SampleGeometry` to
     ``None``.
+
+    Reads the position, not the sample's ``NeXusTransformation``, so it depends on
+    exactly what ``Ltotal`` depends on: a workflow that sets the position directly
+    does not read the sample chain here either, and does not wait for its motors.
     """
     return SampleGeometry(position)
 
