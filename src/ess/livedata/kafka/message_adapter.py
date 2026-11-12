@@ -271,11 +271,13 @@ class KafkaToF144Adapter(KafkaAdapter[logdata_f144.ExtractedLogData]):
     timestamp.  The forwarder resends each value on a periodic heartbeat with
     the EPICS timestamp of the last *change*, so for a static PV the payload
     time is arbitrarily old and says nothing about when the message was
-    emitted.  The envelope is livedata's transport clock (batch window
-    placement, scheduling), which needs the emission time: a stale envelope
-    drags the batch window weeks into the past whenever the log stream is the
-    only traffic (#1313).  The payload keeps the EPICS timestamp, which is
-    what science consumers (``ToNXlog``) use.
+    emitted.  In the ``timeseries`` service, where logs are the primary data,
+    the envelope is the transport clock (batch window placement, scheduling),
+    which needs the emission time: a stale envelope drags the batch window
+    weeks into the past (#1313).  Other services keep logs out of the batcher
+    (``OrchestratingProcessor``'s unclocked kinds), since Kafka time is not the
+    data time of their event streams (#1133).  The payload keeps the EPICS
+    timestamp, which is what science consumers (``ToNXlog``) use.
 
     The Kafka time is the producer's create time or the broker's append time,
     depending on topic configuration; either is wire metadata rather than the

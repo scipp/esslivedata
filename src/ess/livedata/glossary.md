@@ -166,6 +166,11 @@ The naming stack, from the Kafka wire inwards (see ADR 0004 and
   strategies producing them (`core/message_batcher.py`). Under overload the
   rate-aware batcher sheds its stalest backlog to stay close to live data
   (see the freshness policy in `core/rate_aware_batcher.py`).
+- **Unclocked stream** — a stream whose message timestamps are not data time
+  (logs, devices, ROI requests, context values by default). It bypasses the
+  batcher and its latest state is pushed to jobs with the next batch, or with
+  a liveness push at the last batch end (`OrchestratingProcessor`). The
+  `timeseries` service has none: logs are its primary data.
 - **Accumulator** — protocol accumulating data over time
   (`add`/`get`/`clear`, `core/preprocessor.py`). *Batch* accumulators are consumed
   on `get()`; *context* accumulators (`is_context = True`) are idempotent and

@@ -41,13 +41,12 @@ def make_timeseries_service_builder(
     )
     service_name = 'timeseries'
     preprocessor_factory = LogdataPreprocessorFactory(instrument=instrument_obj)
-    # The default batcher processes messages in batches, not emitting messages unless
-    # the current batch is considered "complete", by the first message after the batch
-    # interval arriving. This works for monitor and detector processing (including for
-    # logs that are processed as part of the overall stream of messages on the same
-    # service). However, this service processes only logs, where that logic would
-    # indefinitely withhold the last log message. We use the NaiveMessageBatcher here,
-    # which emits messages as soon as they arrive.
+    # Logs are this service's primary data, so they define data time here instead
+    # of bypassing the batcher as in other services (``unclocked_kinds``). The default
+    # batcher emits a batch only once it is "complete", i.e., once the first message
+    # after the batch interval arrives. For sparse logs that would indefinitely
+    # withhold the last log message, so we use the NaiveMessageBatcher, which emits
+    # messages as soon as they arrive.
     devices = instrument_obj.devices
     return DataServiceBuilder(
         instrument=instrument,
@@ -57,6 +56,7 @@ def make_timeseries_service_builder(
         preprocessor_factory=preprocessor_factory,
         stream_counter=stream_counter,
         message_batcher=NaiveMessageBatcher(),
+        unclocked_kinds=frozenset(),
         # Wraps the source so the wavelength_lut workflow's primary
         # ``chopper_cascade`` trigger and per-chopper ``delay_setpoint`` streams
         # are synthesized in-process. This in-process synthesis is expected to

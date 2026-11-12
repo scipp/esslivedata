@@ -2598,7 +2598,7 @@ class TestStallBackstop:
         raise AssertionError("disjoint-epoch message was never delivered")
 
     def test_sparse_stream_closes_via_timeout_not_backstop(self):
-        """A stream sparser than the stall threshold (e.g. a log value every
+        """A stream sparser than the stall threshold (e.g. a message every
         15 s) must keep closing via the timeout on each arrival.  The stall
         check runs only when nothing closes; checked first, it would preempt
         the timeout, re-place the window, and reset the HWM on every arrival
@@ -2717,65 +2717,6 @@ class TestStallBackstop:
             )
         ]
         assert_delivered_in_order(arrivals)
-
-    def test_context_stamped_ahead_of_the_data_is_not_data_time(self):
-        """A context value is stamped with its producer's clock, which can
-        run ahead of the detector's (by ~35 s on ESTIA).  Taken as data time
-        it would drag the window ahead of the data, and a stall recovery
-        back again."""
-        context = StreamId(kind=StreamKind.LIVEDATA_CONTEXT, name='lut')
-        stamps = [round((1000.0 + 2.5 * k) * 14) / 14 for k in range(400)]
-        arrivals = [(s, msg(s)) for s in stamps]
-        arrivals += [(s, msg(s + 35.0, stream=context)) for s in stamps[::40]]
-        assert_delivered_in_order(arrivals)
-
-    def test_roi_request_in_a_pause_is_delivered_without_rewinding(self):
-        """An ROI request is stamped at epoch 0.  Arriving alone during a
-        pause in the data (beam off) it must still reach its job, without
-        dragging data time back to 1970."""
-        roi = StreamId(kind=StreamKind.LIVEDATA_ROI, name='roi')
-        stamps = [1000.0 + k for k in range(60)] + [1120.0 + k for k in range(60)]
-        arrivals = [(s, msg(s)) for s in stamps]
-        arrivals.append((1080.0, Message(timestamp=ts(0), stream=roi, value='')))
-        assert_delivered_in_order(arrivals)
-
-    def test_roi_requests_in_a_pause_keep_rate_estimates(self):
-        """A batch flushed for ROI requests alone says nothing about the data
-        streams.  It must not count them as absent, or a few ROI edits while
-        the beam is off would evict every stream's rate estimate."""
-        roi = StreamId(kind=StreamKind.LIVEDATA_ROI, name='roi')
-        clock = FakeClock()
-        batcher, _ = make_converged_batcher(rate_hz=14.0, clock=clock)
-        flushed = 0
-        for _ in range(8):
-            request = Message(timestamp=ts(0), stream=roi, value='')
-            flushed += batcher.batch([request]) is not None
-            for _ in range(150):
-                clock.advance(0.1)
-                flushed += batcher.batch([]) is not None
-        assert flushed == 8
-        assert batcher.is_gating(DETECTOR)
-
-    def test_untimed_values_before_the_first_data_keep_only_the_newest(self):
-        """Before the first timed message there is no window to deliver into.
-        A context producer re-emits its value periodically, so a service
-        started while the beam is off must hold the newest value per stream
-        rather than all of them."""
-        lut = StreamId(kind=StreamKind.LIVEDATA_CONTEXT, name='lut')
-        roi = StreamId(kind=StreamKind.LIVEDATA_ROI, name='roi')
-        clock = FakeClock()
-        batcher = RateAwareMessageBatcher(batch_length_s=1.0, clock=clock)
-        for k in range(100):
-            value = Message(timestamp=ts(2000.0 + k), stream=lut, value=str(k))
-            assert batcher.batch([value]) is None
-            clock.advance(1.0)
-        request = Message(timestamp=ts(0), stream=roi, value='')
-        assert batcher.batch([request]) is None
-        first = msg(1000.0)
-        batch = batcher.batch([first])
-        assert batch is not None
-        assert batch.messages == [first, value, request]
-        assert batch.start_time == batch.end_time == first.timestamp
 
     def test_quiet_stream_does_not_trigger_the_backstop(self):
         """Without buffered traffic there is nothing to re-place onto: a

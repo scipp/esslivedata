@@ -36,8 +36,10 @@ live rather than complete: the stalest surplus of bulk data is shed, and the
 window jumps to the newest retained data instead of replaying a queue it can
 never clear.  Operators steer beam, samples and detector commissioning from
 this output, where a stale reading is worse than an intermittent hole.  Only
-``GATED_STREAM_KINDS`` can be shed -- control, log and context data never
-reach the overflow, so the selectivity is structural rather than stated.
+``GATED_STREAM_KINDS`` can be shed -- other kinds never reach the overflow,
+so the selectivity is structural rather than stated.  Log, device, ROI and
+context streams do not reach this batcher at all: their timestamps are not
+data time, so ``OrchestratingProcessor`` keeps them out of it.
 Shedding is an exception state to be fixed upstream, not a mode to run in:
 drops are counted, logged (``batcher_backlog_shedding``) and reported via
 ``drain_metrics``.  The bounds and their sizing rationale are documented at
@@ -77,22 +79,6 @@ GATED_STREAM_KINDS = frozenset(
         StreamKind.AREA_DETECTOR,
     }
 )
-
-#: Kinds whose timestamps are not data time.  Livedata publishes these itself
-#: and consumers keep only the latest value: ROI requests are stamped at epoch
-#: 0, context values with the producing job's time, which follows another
-#: service's clock (e.g. Kafka time of f144 chopper logs, ~35 s ahead of
-#: ESTIA's detector pulse times).  Either stamp, taken as data time, misplaces
-#: the window: epoch 0 drags a stall recovery back to 1970, and a context
-#: stamp ahead of the data drags the window ahead of it.  So these messages
-#: never touch the clock: they skip the high-water mark, window placement and
-#: anchors, and ride along with the next batch emitted -- after one stall
-#: interval as a zero-length batch if no other traffic closes a window.
-#: Between batches, a newer message replaces an older one on the same stream,
-#: so the buffer stays bounded however long the next batch takes: before the
-#: first timed message there is no window, hence no data time to deliver them
-#: at, and a producer may re-emit its value periodically throughout.
-UNTIMED_STREAM_KINDS = frozenset({StreamKind.LIVEDATA_ROI, StreamKind.LIVEDATA_CONTEXT})
 
 MIN_DIFFS_FOR_GATE = 4
 DIFF_BUFFER_SIZE = 32
@@ -623,7 +609,6 @@ class RateAwareMessageBatcher(MessageBatcher):
         self._overflow: list[Message[Any]] = []
         self._non_gated: list[Message[Any]] = []
         self._future: list[Message[Any]] = []
-        self._untimed: dict[StreamId, Message[Any]] = {}
         self._clock = clock
         self._last_close_wall = clock()
         self._max_backlog_s = max_backlog_s
@@ -693,13 +678,6 @@ class RateAwareMessageBatcher(MessageBatcher):
         self._pending_batch_length = Duration.from_seconds(batch_length_s)
 
     def batch(self, messages: list[Message[Any]]) -> MessageBatch | None:
-        timed = []
-        for msg in messages:
-            if msg.stream.kind in UNTIMED_STREAM_KINDS:
-                self._untimed[msg.stream] = msg
-            else:
-                timed.append(msg)
-        messages = timed
         if messages:
             latest = max(m.timestamp for m in messages)
             self._high_water_mark = self._clamped_hwm(latest)
@@ -721,7 +699,7 @@ class RateAwareMessageBatcher(MessageBatcher):
 
         # Stall recovery is a last resort, checked only when nothing closes:
         # checking it first would preempt the timeout close of a stream
-        # sparser than the stall threshold (e.g. a log value every 15 s),
+        # sparser than the stall threshold (e.g. a message every 15 s),
         # flushing a partial window on every arrival instead of closing it.
         if self._is_batch_complete(window):
             return self._close_batch(window)
@@ -783,7 +761,6 @@ class RateAwareMessageBatcher(MessageBatcher):
         self._last_close_wall = self._clock()
         for stream in self._streams.values():
             stream.refresh_grid(end_time, self._batch_length)
-        messages = messages + self._drain_untimed()
         return MessageBatch(start_time=start_time, end_time=end_time, messages=messages)
 
     def _route_message(self, msg: Message[Any], window: _ActiveWindow) -> None:
@@ -1039,14 +1016,12 @@ class RateAwareMessageBatcher(MessageBatcher):
         advance on wall-time evidence alone.
 
         Held-back traffic counts as buffered: a window that nothing closes
-        strands ``_future`` just as it strands the buckets.  So do untimed
-        messages (``UNTIMED_STREAM_KINDS``): an ROI edit while the beam is
-        off must still reach its job.
+        strands ``_future`` just as it strands the buckets.
         """
         threshold = _STALL_THRESHOLD_BATCHES * self.batch_length_s
         if self._clock() - self._last_close_wall < threshold:
             return False
-        return bool(self._buffered_messages() or self._future or self._untimed)
+        return bool(self._buffered_messages() or self._future)
 
     def _recover_from_stall(self, window: _ActiveWindow) -> MessageBatch | None:
         """Deliver the buffered traffic, or re-place a misplaced window at it.
@@ -1092,12 +1067,7 @@ class RateAwareMessageBatcher(MessageBatcher):
         reaches it.
         """
         buffered = self._buffered_messages() + self._future
-        # Only untimed messages buffered: deliver them where the window stands.
-        anchor = (
-            plausible_anchor([m.timestamp for m in buffered], self._batch_length)
-            if buffered
-            else window.start
-        )
+        anchor = plausible_anchor([m.timestamp for m in buffered], self._batch_length)
         self._last_close_wall = self._clock()
         tolerance = _STALL_THRESHOLD_BATCHES * self._batch_length
         if anchor >= window.start - tolerance:
@@ -1108,11 +1078,7 @@ class RateAwareMessageBatcher(MessageBatcher):
                     anchor_ns=anchor.to_ns(),
                     buffered_messages=len(buffered),
                 )
-            # Untimed messages alone say nothing about the timed streams:
-            # counting them absent would evict every stream's rate estimate
-            # after a few ROI edits or context values during a pause.
-            if buffered:
-                self._refresh_stream_registry(window)
+            self._refresh_stream_registry(window)
             messages = self._drain_window() + self._future
             self._future = []
             return self._emit_batch(window, max(anchor, window.start), messages)
@@ -1143,11 +1109,6 @@ class RateAwareMessageBatcher(MessageBatcher):
         messages = list(self._non_gated)
         for stream in self._streams.values():
             messages.extend(stream.messages)
-        return messages
-
-    def _drain_untimed(self) -> list[Message[Any]]:
-        messages = list(self._untimed.values())
-        self._untimed = {}
         return messages
 
     def _drain_window(self) -> list[Message[Any]]:
@@ -1197,7 +1158,7 @@ class RateAwareMessageBatcher(MessageBatcher):
         batch = MessageBatch(
             start_time=window.start,
             end_time=end_time,
-            messages=messages + self._drain_untimed(),
+            messages=messages,
         )
         new_window = _ActiveWindow(start=end_time, end=end_time + self._batch_length)
         self._active_window = new_window

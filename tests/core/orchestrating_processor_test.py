@@ -9,6 +9,7 @@ import scipp as sc
 
 from ess.livedata.config.instrument import Instrument
 from ess.livedata.config.workflow_spec import (
+    AuxSources,
     JobId,
     WorkflowConfig,
     WorkflowId,
@@ -21,13 +22,21 @@ from ess.livedata.core.message import (
     StreamId,
     StreamKind,
 )
-from ess.livedata.core.message_batcher import MessageBatch, NaiveMessageBatcher
+from ess.livedata.core.message_batcher import (
+    AdaptiveMessageBatcher,
+    MessageBatch,
+    MessageBatcher,
+    NaiveMessageBatcher,
+)
 from ess.livedata.core.orchestrating_processor import (
+    DEFAULT_UNCLOCKED_KINDS,
+    LIVENESS_BATCHES,
     MessagePreprocessor,
     OrchestratingProcessor,
     _job_result_to_message,
 )
 from ess.livedata.core.preprocessor import Accumulator
+from ess.livedata.core.rate_aware_batcher import RateAwareMessageBatcher
 from ess.livedata.core.timestamp import Timestamp
 from ess.livedata.fakes import FakeMessageSink, FakeMessageSource
 from ess.livedata.preprocessors.accumulators import LogData
@@ -38,6 +47,7 @@ from ess.livedata.workflows.wavelength_lut_workflow_specs import (
 )
 
 from .job_test import FakeProcessor
+from .rate_aware_batcher_test import FakeClock, ts
 
 
 class FakeContextAccumulator(Accumulator[Any, sc.DataArray]):
@@ -87,13 +97,15 @@ class FakeNonContextAccumulator(Accumulator[Any, sc.DataArray]):
 class FakeFactory:
     """Factory that returns pre-configured accumulators by stream name."""
 
-    def __init__(self, accumulators: dict[str, Accumulator]) -> None:
+    def __init__(
+        self, accumulators: dict[str, Accumulator], instrument: Instrument | None = None
+    ) -> None:
         self._accumulators = accumulators
         # OrchestratingProcessor loads the device contract from this instrument
         # at construction, so it must be a package-backed instrument. 'tbl' has
-        # no device_contract.yaml, yielding an empty contract — these tests do
-        # not schedule jobs, so the contract content is irrelevant.
-        self.instrument = Instrument(name='tbl')
+        # no device_contract.yaml, yielding an empty contract, which suffices for
+        # jobs without device outputs.
+        self.instrument = instrument or Instrument(name='tbl')
 
     def make_preprocessor(self, key: StreamId) -> Accumulator | None:
         return self._accumulators.get(key.name)
@@ -293,7 +305,7 @@ class TestEmptyBatchContextReplay:
     ``chopper_cascade`` is a job's *primary* source, yet it is backed by an
     ``is_context`` ``ToNXlog`` accumulator. The tick fires once, before any job
     is scheduled. A job scheduled afterwards must still fire exactly once, from
-    the cached tick replayed on an empty batch. That assembly —
+    the cached tick replayed on a liveness push. That assembly —
     ``peek_pending_streams`` + ``get_context`` enriching the empty batch — lives
     only in ``OrchestratingProcessor.process`` (its parts are unit-tested
     above and in ``job_manager_test.py``, but their integration is not).
@@ -317,7 +329,7 @@ class TestEmptyBatchContextReplay:
 
     @staticmethod
     def _processor(
-        instrument: Instrument, batches: list[list[Message]]
+        instrument: Instrument, batches: list[list[Message]], clock: FakeClock
     ) -> tuple[OrchestratingProcessor, FakeMessageSink]:
         sink = FakeMessageSink()
         processor = OrchestratingProcessor(
@@ -326,6 +338,8 @@ class TestEmptyBatchContextReplay:
             preprocessor_factory=LogdataPreprocessorFactory(instrument=instrument),
             service_name='timeseries',
             message_batcher=NaiveMessageBatcher(),
+            unclocked_kinds=frozenset(),
+            clock=clock,
         )
         return processor, sink
 
@@ -355,8 +369,9 @@ class TestEmptyBatchContextReplay:
 
     def test_tick_cached_before_schedule_fires_job_once(self) -> None:
         instrument, workflow_id = self._make_instrument()
+        clock = FakeClock()
         processor, sink = self._processor(
-            instrument, [[self._tick()], [self._schedule(workflow_id)]]
+            instrument, [[self._tick()], [self._schedule(workflow_id)], [], []], clock
         )
 
         # First poll: the tick arrives and is cached in the ToNXlog context
@@ -364,20 +379,243 @@ class TestEmptyBatchContextReplay:
         processor.process()
         assert self._data_messages(sink) == []
 
-        # Second poll: the operator schedules the job. The data batch is empty,
-        # so activation can only come from the cached tick being replayed.
+        # Second poll: the operator schedules the job. No batch closes and no
+        # liveness push is due yet.
+        processor.process()
+        assert self._data_messages(sink) == []
+
+        # One batch length later, the liveness push replays the cached tick.
+        clock.advance(1.0)
+        processor.process()
+        clock.advance(1.0)
         processor.process()
         assert len(self._data_messages(sink)) == 1
 
     def test_no_replay_without_a_scheduled_job(self) -> None:
         instrument, _ = self._make_instrument()
+        clock = FakeClock()
         # Tick arrives, then an empty poll: with no job scheduled there is
         # nothing to activate and nothing to publish.
-        processor, sink = self._processor(instrument, [[self._tick()], []])
+        processor, sink = self._processor(instrument, [[self._tick()], []], clock)
 
         processor.process()
+        clock.advance(1.0)
         processor.process()
         assert self._data_messages(sink) == []
+
+
+class _RecordingWorkflow(FakeProcessor):
+    """Records data time and stream names of every push into the job."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.pushes: list[tuple[Timestamp, Timestamp, set[str]]] = []
+
+    def accumulate(
+        self, data: dict[str, Any], *, start_time: Timestamp, end_time: Timestamp
+    ) -> None:
+        self.pushes.append((start_time, end_time, set(data)))
+        super().accumulate(data, start_time=start_time, end_time=end_time)
+
+
+class _QueueSource:
+    """Message source handing over whatever was queued since the last poll."""
+
+    def __init__(self) -> None:
+        self.pending: list[Message] = []
+
+    def get_messages(self) -> list[Message]:
+        messages, self.pending = self.pending, []
+        return messages
+
+
+EVENTS = StreamId(kind=StreamKind.DETECTOR_EVENTS, name='events')
+MOTION = StreamId(kind=StreamKind.LOG, name='motion')
+ROI = StreamId(kind=StreamKind.LIVEDATA_ROI, name='roi')
+
+
+def _event(t: float) -> Message:
+    return Message(timestamp=ts(t), stream=EVENTS, value=sc.scalar(1.0))
+
+
+def _value(t: float, value: float, stream: StreamId = MOTION) -> Message:
+    return Message(timestamp=ts(t), stream=stream, value=sc.scalar(value))
+
+
+def _production_batcher(clock: FakeClock) -> MessageBatcher:
+    return AdaptiveMessageBatcher(
+        inner_factory=lambda length: RateAwareMessageBatcher(length, clock=clock),
+        clock=clock,
+    )
+
+
+def _make_job_processor(
+    clock: FakeClock,
+    batcher: MessageBatcher,
+    unclocked_kinds: frozenset[StreamKind] = DEFAULT_UNCLOCKED_KINDS,
+) -> tuple[OrchestratingProcessor, _QueueSource, _RecordingWorkflow]:
+    """Processor with one job on ``events``, reading ``motion`` and ``roi`` as aux.
+
+    The command scheduling the job is queued for the first poll.
+    """
+    instrument = Instrument(name='tbl')
+    handle = instrument.register_spec(
+        service='detector_data',
+        name='probe',
+        version=1,
+        title='Probe',
+        source_names=[EVENTS.name],
+        aux_sources=AuxSources({'motion': MOTION.name, 'roi': ROI.name}),
+        outputs=_ReplayOutputs,
+    )
+    workflow = _RecordingWorkflow()
+    handle.attach_factory()(lambda: workflow)
+    factory = FakeFactory(
+        {
+            EVENTS.name: FakeNonContextAccumulator(),
+            MOTION.name: FakeContextAccumulator(),
+            ROI.name: FakeContextAccumulator(),
+        },
+        instrument=instrument,
+    )
+    source = _QueueSource()
+    config = WorkflowConfig.from_params(
+        workflow_id=handle.workflow_id,
+        job_id=JobId(source_name=EVENTS.name, job_number=uuid.uuid4()),
+    )
+    source.pending.append(
+        Message(timestamp=Timestamp.from_ns(0), stream=COMMANDS_STREAM_ID, value=config)
+    )
+    processor = OrchestratingProcessor(
+        source=source,
+        sink=FakeMessageSink(),
+        preprocessor_factory=factory,
+        service_name='detector_data',
+        message_batcher=batcher,
+        unclocked_kinds=unclocked_kinds,
+        clock=clock,
+    )
+    return processor, source, workflow
+
+
+class TestUnclockedStreams:
+    """Streams whose timestamps are not data time bypass the batcher."""
+
+    @pytest.mark.parametrize('kind', [StreamKind.LOG, StreamKind.LIVEDATA_CONTEXT])
+    def test_values_stamped_ahead_of_sparse_events_do_not_rewind_data_time(
+        self, kind: StreamKind
+    ) -> None:
+        """ESTIA (#1133): f144 logs carry Kafka time, ~36 s ahead of the
+        detector's pulse times, next to a sparse event stream (~0.4 messages/s).
+        Taken as data time, the log stamps drag the batch window ahead of the
+        events, and stall recoveries move it backwards again: data time
+        rewinds, and the dashboard drops its timeseries history."""
+        clock = FakeClock(start=1000.0)
+        processor, source, workflow = _make_job_processor(
+            clock, _production_batcher(clock)
+        )
+        stream = StreamId(kind=kind, name=MOTION.name)
+        stamps = [round((1000.0 + 2.5 * k) * 14) / 14 for k in range(400)]
+        arrivals = [(s, _event(s)) for s in stamps]
+        arrivals += [
+            (s, _value(s + 36.0, value=i, stream=stream))
+            for i, s in enumerate(stamps[::40])
+        ]
+        arrivals.sort(key=lambda arrival: arrival[0])
+        # One poll per liveness interval: every poll pushes, so the idle
+        # branch, which sleeps in real time, never runs.
+        for poll in range(515):
+            clock.now = 1000.0 + LIVENESS_BATCHES * poll
+            while arrivals and arrivals[0][0] <= clock.now:
+                source.pending.append(arrivals.pop(0)[1])
+            processor.process()
+
+        starts = [start for start, _, _ in workflow.pushes]
+        ends = [end for _, end, _ in workflow.pushes]
+        assert starts == sorted(starts)
+        assert ends == sorted(ends)
+        assert sum(MOTION.name in names for _, _, names in workflow.pushes) == 10
+
+    def test_roi_request_in_a_pause_reaches_the_job_at_the_last_batch_end(
+        self,
+    ) -> None:
+        """An ROI request is stamped at epoch 0. Arriving while the events
+        pause (beam off), it must still reach its job, without dragging data
+        time back to 1970."""
+        clock = FakeClock(start=1000.0)
+        processor, source, workflow = _make_job_processor(
+            clock, _production_batcher(clock)
+        )
+        source.pending.append(_event(1000.0))
+        processor.process()
+        clock.advance(5.0)
+        source.pending.append(
+            Message(timestamp=Timestamp.from_ns(0), stream=ROI, value=sc.scalar(1.0))
+        )
+        processor.process()
+
+        (_, first_end, _), roi_push = workflow.pushes
+        assert roi_push == (first_end, first_end, {ROI.name})
+
+    def test_liveness_push_at_most_once_per_liveness_interval(self) -> None:
+        """Each push with a changed log reruns the job's context stages, so
+        unclocked values changing on every poll must not push on every poll."""
+        clock = FakeClock(start=1000.0)
+        processor, source, workflow = _make_job_processor(
+            clock, _production_batcher(clock)
+        )
+        source.pending.append(_event(1000.0))
+        processor.process()
+        for k in range(12):
+            clock.advance(0.5)
+            source.pending.append(_value(2000.0 + k, value=k))
+            processor.process()
+
+        (_, first_end, _), *liveness = workflow.pushes
+        assert liveness == [(first_end, first_end, {MOTION.name})] * 3
+        pushed = [call[MOTION.name].value for call in workflow.accumulate_calls[1:]]
+        assert pushed == [3.0, 7.0, 11.0]
+
+    def test_nothing_is_pushed_before_the_first_batch(self) -> None:
+        """Before the first batch there is no data time to push at. Values
+        wait in their accumulators and the newest reaches the job with the
+        first batch."""
+        clock = FakeClock(start=1000.0)
+        processor, source, workflow = _make_job_processor(
+            clock, _production_batcher(clock)
+        )
+        for k in range(3):
+            source.pending.append(_value(2000.0 + k, value=k))
+            processor.process()
+            clock.advance(1.0)
+        assert workflow.pushes == []
+
+        source.pending.append(_event(1003.0))
+        processor.process()
+        ((start, end, names),) = workflow.pushes
+        assert names == {EVENTS.name, MOTION.name}
+        assert start == end == ts(1003.0)
+        assert workflow.data[MOTION.name] == sc.scalar(2.0)
+
+    def test_without_unclocked_kinds_logs_define_data_time(self) -> None:
+        """The timeseries service, whose primary data are logs, batches them."""
+        clock = FakeClock(start=1000.0)
+        processor, source, workflow = _make_job_processor(
+            clock, NaiveMessageBatcher(), unclocked_kinds=frozenset()
+        )
+        source.pending.extend([_event(1000.0), _value(1036.0, value=1.0)])
+        processor.process()
+
+        ((_, end, names),) = workflow.pushes
+        assert names == {EVENTS.name, MOTION.name}
+        assert end >= ts(1036.0)
+
+    def test_unclocked_stream_needs_a_context_accumulator(self) -> None:
+        factory = FakeFactory({MOTION.name: FakeNonContextAccumulator()})
+        processor, _ = _make_processor(factory, [[_value(1000.0, value=1.0)]])
+
+        with pytest.raises(TypeError, match='context accumulator'):
+            processor.process()
 
 
 class TestJobResultToMessage:
