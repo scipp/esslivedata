@@ -188,8 +188,10 @@ coord, used by the cumulative accumulator to reset on a detector move.
 Holds the detector's resolved ``NeXusTransformation`` (the live, carriage-driven
 placement). A rigid move changes it; the coord is projection- and mode-independent,
 so it works identically for geometric and logical views and for TOA and wavelength
-modes. ``None`` for file-less sources (no geometry, e.g. logical TOA views built from
-a bare ``detector_number``): no coord is stamped and the reset is a no-op.
+modes. Wavelength views also depend on the sample position, see
+:data:`SampleGeometry`. ``None`` for file-less sources (no geometry, e.g. logical
+TOA views built from a bare ``detector_number``): no coord is stamped and the reset
+is a no-op.
 
 Why the transformation and not ``position``? The accumulator compares a single
 coord via ``sc.identical``, so the signal must be a 0-dim (scalar) coord that
@@ -204,6 +206,24 @@ is both a propagating scalar and sensitive to every rigid move."""
 
 DETECTOR_TRANSFORM = 'detector_transform'
 """Coord name carrying :data:`DetectorGeometry` on the accumulated histogram."""
+
+SampleGeometry = NewType('SampleGeometry', sc.Variable | None)
+"""Sample position stamped onto the histogram as the ``SAMPLE_POSITION`` coord, used
+by the cumulative accumulator to reset on a sample move.
+
+Only wavelength views depend on it: ``Ltotal`` runs source -> sample -> pixel, so a
+sample move shifts the wavelength of every pixel by ``lambda * dLtotal / Ltotal``.
+At large scattering angles this is not negligible: moving the LOKI sample 20 cm
+along the beam shifts the front banks by up to 0.3 %, a third of a default
+wavelength bin at 13 angstrom. The position is a 0-dim vector, so unlike the
+detector it needs no reduction to a transform; a sample rotation does not change
+``Ltotal``.
+
+``None`` in TOA mode: those views never read the sample position, so they must
+neither wait for the sample motors nor reset when they move."""
+
+SAMPLE_POSITION = 'sample_position'
+"""Coord name carrying :data:`SampleGeometry` on the accumulated histogram."""
 
 
 # Spectrum view types: derived from AccumulatedHistogram[Cumulative] via a

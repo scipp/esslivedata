@@ -3,20 +3,9 @@
 """LOKI instrument factory implementations."""
 
 from ess.livedata.config import Instrument
-from ess.livedata.config.value_log import ValueLog
 
 from . import specs
 from .specs import SansWorkflowParams, TransmissionMode
-
-
-class DetectorCarriageLog(ValueLog):
-    """Per-binding Sciline key for the LOKI rear-bank carriage f144 NXlog.
-
-    Drives the ``detector_carriage`` transformation in ``loki_detector_0``'s
-    ``depends_on`` chain. Distinct subclass so multiple dynamic transforms
-    on a workflow remain distinguishable in Sciline.
-    """
-
 
 #: I(Q) aux fields naming the monitors a job selects. Each needs a block in the
 #: streamed monitor table, which is what the factory checks before creating a job.
@@ -67,18 +56,6 @@ def setup_factories(instrument: Instrument) -> None:
     from ess.livedata.workflows.stream_processor_workflow import (
         StreamProcessorWorkflow,
     )
-
-    # The rear bank's NeXus ``depends_on`` chain has a dynamic ``detector_carriage``
-    # transformation driven by the live f144 carriage readback. Declared at
-    # instrument scope so every spec consuming ``loki_detector_0`` picks it up by
-    # default. ``tube_view`` sums over straw/pixel and does not consume bank
-    # position, so it opts out — co-located here with the binding it negates.
-    instrument.add_context_binding(
-        stream_name='detector_carriage',
-        dependent_sources={'loki_detector_0'},
-        workflow_key=DetectorCarriageLog,
-    )
-    specs.tube_view_handle.skip_instrument_contexts()
 
     _nexus_geometry_filename = get_nexus_geometry_filename('loki')
 

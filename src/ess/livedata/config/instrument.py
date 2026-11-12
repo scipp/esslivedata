@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections import UserDict
-from collections.abc import Callable, Iterable, Sequence
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
@@ -27,13 +27,12 @@ from .detector_downsampling import (
 from .stream import (
     NO_DEFAULT,
     AxisRange,
-    ChainPatchBinding,
     ContextBinding,
     Device,
     F144Stream,
     Stream,
+    match_transform_streams,
 )
-from .value_log import ValueLog
 from .workflow_spec import (
     DETECTORS,
     REDUCTION,
@@ -43,13 +42,6 @@ from .workflow_spec import (
     WorkflowId,
     WorkflowSpec,
 )
-
-
-def _is_chain_patch(binding: ContextBinding) -> bool:
-    """Whether ``binding.workflow_key`` is a chain-patching ``ValueLog`` subclass."""
-    key = binding.workflow_key
-    return isinstance(key, type) and issubclass(key, ValueLog)
-
 
 DEFAULT_DIM_TITLES: dict[str, str] = {
     'wavelength': 'λ',
@@ -157,6 +149,10 @@ class Instrument:
     #: its factory is attached. Empty until then, and for chopperless
     #: instruments.
     _lut_components: frozenset[str] = field(default_factory=frozenset, init=False)
+    #: NeXus path -> stream, for each transform the geometry artifact has driven by
+    #: a stream. Filled in by :meth:`load_factories`. Empty until then, and without
+    #: an artifact.
+    _transform_streams: dict[str, str] = field(default_factory=dict, init=False)
     #: Context streams a workflow can request by asking for the key, filled in
     #: by :meth:`offer_context_stream`.
     _offered_context_streams: dict[Any, str] = field(default_factory=dict, init=False)
@@ -170,7 +166,6 @@ class Instrument:
     chopper_delay_atol_ns: float = 1000.0
     workflow_factory: WorkflowFactory = field(default_factory=WorkflowFactory)
     streams: dict[str, Stream] = field(default_factory=dict)
-    context_bindings: list[ContextBinding] = field(default_factory=list)
     source_metadata: dict[str, SourceMetadata] = field(default_factory=dict)
     dim_titles: dict[str, str] = field(default_factory=dict)
     _detector_numbers: dict[str, sc.Variable] = field(default_factory=dict)
@@ -203,8 +198,6 @@ class Instrument:
         # before the f144 snapshot below so they register as timeseries sources.
         declare_chopper_setpoint_streams(self.streams, self.choppers)
 
-        for binding in self.context_bindings:
-            self._validate_binding_stream_name(binding)
         self._timeseries_workflow_handle = register_timeseries_workflow_specs(
             instrument=self, source_names=self._timeseries_source_names()
         )
@@ -246,95 +239,14 @@ class Instrument:
             if isinstance(stream, Device)
         }
 
-    def _validate_binding_stream_name(self, binding: ContextBinding) -> None:
-        if binding.stream_name not in self.streams:
-            raise ValueError(
-                f"ContextBinding references unknown stream "
-                f"{binding.stream_name!r}; declared streams: "
-                f"{sorted(self.streams)}"
-            )
-        owner = next(
-            (
-                name
-                for name, device in self.devices.items()
-                if binding.stream_name in device.substream_names
-            ),
-            None,
-        )
-        if owner is not None:
-            raise ValueError(
-                f"ContextBinding references device substream "
-                f"{binding.stream_name!r}; bind the device {owner!r} instead. "
-                "DeviceSynthesizer merges the substreams into the device stream "
-                "and suppresses them, so a substream binding never becomes "
-                "available and its jobs stay gated forever."
-            )
-        if _is_chain_patch(binding):
-            self.chain_patch_path(binding)
-
-    def chain_patch_path(self, binding: ContextBinding) -> str:
-        """Resolve the NeXus chain entry path patched by a chain-patch binding.
-
-        The patch target is the ``nexus_path`` of the f144 RBV substream the
-        binding sources from: for a :class:`Device` stream, the RBV is
-        ``streams[stream.value]``; for a plain :class:`F144Stream` it is the
-        stream itself. The chain entry and the f144 source-of-truth must
-        live at the same NeXus path — the geometry artifact writes the
-        placeholder NXlog at the same path the live stream targets — so
-        this single field is the source of truth for both.
-        """
-        stream = self.streams[binding.stream_name]
-        rbv = self.streams[stream.value] if isinstance(stream, Device) else stream
-        if not isinstance(rbv, F144Stream):
-            raise ValueError(
-                f"Chain-patch binding {binding.stream_name!r} resolves to "
-                f"{type(rbv).__name__}, not F144Stream; chain-patch sources "
-                "must carry f144 NXlog payloads"
-            )
-        if rbv.nexus_path is None:
-            raise ValueError(
-                f"Chain-patch binding {binding.stream_name!r} resolves to an "
-                f"F144Stream with no nexus_path; set nexus_path on the parsed "
-                "stream entry so the chain entry path can be derived"
-            )
-        return rbv.nexus_path
-
-    def add_context_binding(
-        self,
-        *,
-        stream_name: str,
-        dependent_sources: Iterable[str],
-        workflow_key: Any,
-    ) -> None:
-        """Register a stream as a context binding for one or more specs.
-
-        Use from ``setup_factories`` to keep heavy Sciline-key imports out
-        of ``specs.py``. The stream value is bound to ``workflow_key`` on
-        the target pipeline via ``set_context``. Inputs declared at
-        construction time go through the same validation in
-        ``__post_init__``.
-
-        Chain-patching bindings (live geometry from motion logs) pass a
-        :class:`~ess.livedata.config.value_log.ValueLog` subclass as
-        ``workflow_key``: :attr:`chain_patch_bindings` collects them by
-        ``issubclass`` and resolves the NeXus ``depends_on`` chain path from
-        ``stream_name`` (see :meth:`chain_patch_path`) so the wiring step can
-        route the value via a fused per-component patched-chain provider.
-        """
-        binding = ContextBinding(
-            stream_name=stream_name,
-            dependent_sources=frozenset(dependent_sources),
-            workflow_key=workflow_key,
-        )
-        self._validate_binding_stream_name(binding)
-        self.context_bindings.append(binding)
-
     def offer_context_stream(self, *, workflow_key: Any, stream_name: str) -> None:
         """Offer a stream to every workflow, keyed by the Sciline key it fills.
 
-        The counterpart to :meth:`add_context_binding`. Both end up as
-        ``{stream name: workflow key}`` entries in a job's ``context_keys`` and
-        in its gate; they differ in what decides *which jobs* get the entry.
+        The counterpart to
+        :meth:`~ess.livedata.workflows.workflow_factory.SpecHandle.add_context_binding`.
+        Both end up as ``{stream name: workflow key}`` entries in a job's
+        ``context_keys`` and in its gate; they differ in what decides *which jobs*
+        get the entry.
 
         An offer names no spec, source or params. A graph asks for the stream
         simply by containing ``workflow_key``, and the workflow build
@@ -344,12 +256,9 @@ class Instrument:
         time-of-arrival depending on its params, and only the built graph knows
         which.
 
-        A binding is needed where that reading cannot work: when the key reaches
-        the graph only because the binding puts it there (a chain patch is
-        injected into a graph that never mentions it, so there is no request to
-        read back), or when the stream filling a key varies per source. Offers
-        are bijective -- one stream per key and one key per stream,
-        instrument-wide -- and so cannot express the latter.
+        A binding is needed where that reading cannot work: when the stream
+        filling a key varies per source. Offers are bijective -- one stream per key
+        and one key per stream, instrument-wide -- and so cannot express the latter.
 
         A binding also routes more precisely, which is what keeps a stream
         private to one spec off the offer side. Route derivation runs at startup
@@ -390,6 +299,17 @@ class Instrument:
         return dict(self._offered_context_streams)
 
     @property
+    def transform_streams(self) -> dict[str, str]:
+        """NeXus path -> name of the stream driving the transform at that path.
+
+        Lists the motor-driven transforms of the geometry artifact. A job looks up
+        the placeholders on the chains it reads here (see
+        ``StreamProcessorWorkflow.build``). Only a job's graph says which it reads,
+        so a service hosting specs subscribes to all of them.
+        """
+        return dict(self._transform_streams)
+
+    @property
     def lut_components(self) -> frozenset[str]:
         """Components covered by a block of a wavelength lookup table.
 
@@ -400,40 +320,12 @@ class Instrument:
         """
         return self._lut_components
 
-    @property
-    def chain_patch_bindings(self) -> list[ChainPatchBinding]:
-        """Instrument-scope chain-patch bindings resolved for transform wiring.
-
-        Selects every instrument-scope chain-patch :class:`ContextBinding` (one
-        whose ``workflow_key`` is a :class:`ValueLog` subclass) and resolves its
-        NeXus transform path via :meth:`chain_patch_path`. Spec-scope bindings
-        are not consulted: chain-patch contexts are required to live at
-        instrument scope.
-
-        The result is self-contained data the routing layer hands to
-        :func:`~ess.livedata.workflows.dynamic_transforms.wire_dynamic_transforms`,
-        so the wiring step needs no access to the instrument's stream topology.
-        """
-        return [
-            ChainPatchBinding(
-                stream_name=binding.stream_name,
-                transform_path=self.chain_patch_path(binding),
-                workflow_key=binding.workflow_key,
-                dependent_sources=binding.dependent_sources,
-            )
-            for binding in self.context_bindings
-            if _is_chain_patch(binding)
-        ]
-
     def _matching_bindings(
         self, workflow_id: WorkflowId, source_name: str
     ) -> list[ContextBinding]:
-        """Instrument- and spec-scope bindings applying to a ``(spec, source)``.
+        """Spec-scope bindings applying to a ``(spec, source)``.
 
-        A binding applies when its ``dependent_sources`` include
-        ``source_name``. ``skip_instrument_contexts`` filters out
-        instrument-scope entries — a spec that explicitly declares a binding
-        cannot opt out of it via the flag.
+        A binding applies when its ``dependent_sources`` include ``source_name``.
 
         Raises :class:`KeyError` for an unregistered ``workflow_id``: an empty
         result means "this workflow binds nothing" and must not be conflated
@@ -445,12 +337,9 @@ class Instrument:
                 f"Cannot resolve context keys: workflow {workflow_id} is not "
                 "registered with this instrument's workflow factory"
             )
-        instrument_bindings = (
-            [] if registration.skip_instrument_contexts else self.context_bindings
-        )
         return [
             binding
-            for binding in (*instrument_bindings, *registration.context_bindings)
+            for binding in registration.context_bindings
             if source_name in binding.dependent_sources
         ]
 
@@ -1134,6 +1023,7 @@ class Instrument:
         bind_roi_requests(self.workflow_factory)
 
         self.validate()
+        self._transform_streams = self._find_transform_streams()
 
         for name in (*self.detector_names, *self._pixellated_monitors):
             if name not in self._detector_numbers:
@@ -1150,6 +1040,15 @@ class Instrument:
         # any earlier would freeze the file-less fallback for the process.
         for name in self._downsampled_detectors:
             self.get_downsampling(name)
+
+    def _find_transform_streams(self) -> dict[str, str]:
+        from ess.livedata.nexus_helpers import live_transform_paths
+
+        try:
+            filename = self.nexus_file
+        except ValueError:
+            return {}
+        return match_transform_streams(self.streams, live_transform_paths(filename))
 
     def _attach_default_monitor_factories(self) -> None:
         """Attach the shared monitor workflow factory where none was provided.
@@ -1180,13 +1079,9 @@ class Instrument:
         Run at the end of :meth:`load_factories`; exposed separately so a
         synthetic instrument assembled in a test can be checked without the
         package-import and NeXus-loading machinery. Raises :class:`ValueError`
-        on the first violation. The order matches ``load_factories``: unknown
-        dependent sources are reported before the finer binding and
-        chain-patch checks, since those assume the sources are real.
+        on the first violation.
         """
-        self._validate_binding_dependent_sources()
         self._validate_context_binding_declarations()
-        self._validate_chain_patch_value_log_uniqueness()
         self._validate_offered_context_streams()
 
     def _validate_offered_context_streams(self) -> None:
@@ -1196,9 +1091,8 @@ class Instrument:
         job in ``pending_context`` forever. Two publishers are legitimate: a
         declared instrument stream, and a workflow output republished as a
         context stream (:attr:`WorkflowSpec.context_outputs`). Device substreams
-        are excluded for the reason spelled out in
-        :meth:`_validate_binding_stream_name` — ``DeviceSynthesizer`` suppresses
-        them in favour of the merged device stream.
+        are excluded: ``DeviceSynthesizer`` suppresses them in favour of the merged
+        device stream.
         """
         published = set(self.streams) - {
             name for device in self.devices.values() for name in device.substream_names
@@ -1213,69 +1107,10 @@ class Instrument:
                     "context_outputs; jobs asking for the key would gate forever"
                 )
 
-    def _validate_binding_dependent_sources(self) -> None:
-        """Raise if any binding lists a source name no registered spec advertises."""
-        if not self.context_bindings:
-            return
-        known_sources: set[str] = set()
-        for spec in self.workflow_factory.values():
-            known_sources.update(spec.source_names)
-        for binding in self.context_bindings:
-            unknown = binding.dependent_sources - known_sources
-            if unknown:
-                raise ValueError(
-                    f"ContextBinding for stream {binding.stream_name!r} lists "
-                    f"unknown dependent_sources {sorted(unknown)}; no registered "
-                    f"spec advertises these source_names"
-                )
-
-    def _validate_chain_patch_value_log_uniqueness(self) -> None:
-        """Raise if chain-patch ``(stream_name, workflow_key)`` is not bijective.
-
-        Sciline keys identify parameters by class, and
-        :func:`~ess.livedata.workflows.dynamic_transforms.wire_dynamic_transforms`
-        dedups bindings by ``stream_name`` with last-write-wins semantics. Both
-        directions must therefore be unique:
-
-        - Two streams sharing one :class:`ValueLog` subclass would silently
-          collapse into a single Sciline node, merging unrelated streams.
-        - Two :class:`ValueLog` subclasses for one stream would silently
-          drop one binding in the chain-patch provider.
-
-        Repeat entries with identical ``(stream_name, workflow_key)`` (which
-        can occur if ``load_factories`` is called multiple times in a
-        long-lived process) are allowed: they describe the same binding.
-        """
-        by_key: dict[type, str] = {}
-        by_stream: dict[str, type] = {}
-        all_bindings = list(self.context_bindings)
-        for reg in self.workflow_factory.registrations():
-            all_bindings.extend(reg.context_bindings)
-        for binding in all_bindings:
-            if not _is_chain_patch(binding):
-                continue
-            previous_stream = by_key.get(binding.workflow_key)
-            if previous_stream is not None and previous_stream != binding.stream_name:
-                raise ValueError(
-                    f"ValueLog subclass {binding.workflow_key.__name__!r} is shared "
-                    f"by streams {previous_stream!r} and {binding.stream_name!r}; "
-                    "each chain-patch context must declare its own ValueLog "
-                    "subclass to avoid Sciline node collisions"
-                )
-            previous_key = by_stream.get(binding.stream_name)
-            if previous_key is not None and previous_key is not binding.workflow_key:
-                raise ValueError(
-                    f"Stream {binding.stream_name!r} has conflicting chain-patch "
-                    f"declarations: ValueLog subclasses "
-                    f"{previous_key.__name__!r} and {binding.workflow_key.__name__!r}"
-                )
-            by_key[binding.workflow_key] = binding.stream_name
-            by_stream[binding.stream_name] = binding.workflow_key
-
     def _validate_context_binding_declarations(self) -> None:
         """Raise if context bindings that apply together disagree.
 
-        Three collisions are detected, all of them properties of the
+        Two collisions are detected, both of them properties of the
         declarations alone: a stream name is fixed at declaration time and a
         binding applies to every job on a dependent source, so no job can create
         or avoid one.
@@ -1283,11 +1118,6 @@ class Instrument:
         - **Conflicting keys.** Two bindings naming one stream for different
           Sciline keys. The gate maps each name to one key, so one of the two
           would silently win.
-        - **Instrument-vs-spec.** For every (spec, source) pair where both
-          instrument-level and spec-level :class:`ContextBinding` entries
-          apply, the ``stream_name`` (which equals the wire name) must be
-          unique across the two scopes. Rejected even where the keys agree:
-          the redundancy means one scope is unaware of the other.
         - **Context-vs-aux.** A context wire name must not match any
           ``aux_sources`` field name on the spec: at ``JobFactory.create``
           time the context and aux mappings are merged into a single
@@ -1298,9 +1128,6 @@ class Instrument:
             spec = reg.spec
             aux_field_names: set[str] = (
                 set(spec.aux_sources.inputs) if spec.aux_sources is not None else set()
-            )
-            instrument_bindings = (
-                [] if reg.skip_instrument_contexts else self.context_bindings
             )
             for source in spec.source_names:
                 keys: dict[str, Any] = {}
@@ -1315,25 +1142,7 @@ class Instrument:
                             f"conflicting workflow keys {previous} and "
                             f"{binding.workflow_key}"
                         )
-                instrument_names: set[str] = {
-                    binding.stream_name
-                    for binding in instrument_bindings
-                    if source in binding.dependent_sources
-                }
-                spec_names: set[str] = {
-                    binding.stream_name
-                    for binding in reg.context_bindings
-                    if source in binding.dependent_sources
-                }
-                scope_collisions = instrument_names & spec_names
-                if scope_collisions:
-                    raise ValueError(
-                        f"ContextBinding stream-name collision for spec "
-                        f"{spec.name!r} on source {source!r}: "
-                        f"{sorted(scope_collisions)} declared at both "
-                        f"instrument and spec scope"
-                    )
-                aux_collisions = (instrument_names | spec_names) & aux_field_names
+                aux_collisions = set(keys) & aux_field_names
                 if aux_collisions:
                     raise ValueError(
                         f"ContextBinding stream-name collision with aux field "

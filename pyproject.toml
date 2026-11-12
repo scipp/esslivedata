@@ -36,7 +36,7 @@ dependencies = [
   "cyclebane>=26.9.0",
   "dask>=2026.3.0",
   "ess-streaming-data-types",
-  "essreduce==26.10.1",  # Chopper out of phase with the source is closed, not an error; pulse stride guessed from synced choppers
+  "essreduce==26.11.0",  # TransformationOverrides for NeXus transformation chains; Chopper out of phase with the source is closed, not an error; pulse stride guessed from synced choppers
   "jinja2",
   "numba",  # Compiled wavelength-LUT interpolation, see core/numba_threading.py
   "pydantic>=2",
@@ -64,7 +64,7 @@ test = [
 ]
 beer = []
 bifrost = [
-    "essspectroscopy==26.10.0",
+    "essspectroscopy==26.11.1",
 ]
 dream = [
     "essdiffraction==26.10.0",

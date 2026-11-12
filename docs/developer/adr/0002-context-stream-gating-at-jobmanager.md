@@ -44,6 +44,8 @@ The gating axis is therefore *"does this input tolerate absence?"*, not
 *"`set_context` vs `accumulate`"* — ROI flows through `set_context` yet is not
 gated. The set of gated streams for a job is derived from `ContextBinding`
 declarations at job-creation time; the declaration model is settled in ADR 0003.
+Offered streams (ADR 0010) and motor streams (ADR 0003, amendment 2026-11-06) also gate
+a job, where its built graph asks for them.
 
 ## Decision
 
@@ -53,7 +55,8 @@ Gate at `JobManager`, not at the workflow execution unit.
 workflow needs before it can run. `Job.missing_context(available)` returns the
 gating streams not present in `available`. The set is populated at
 `JobFactory.create` from the `ContextBinding` declarations that resolve for the
-specific `(spec, source)` (ADR 0003).
+specific `(spec, source)` (ADR 0003), and from the offered and motor streams its built
+graph asks for.
 
 A gated job occupies a dedicated stage **between** *scheduled* and *active*, held in
 its own `_pending_context_jobs` bucket. When `should_start` fires, `_start_job`

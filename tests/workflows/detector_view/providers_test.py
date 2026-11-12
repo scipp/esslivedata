@@ -22,6 +22,7 @@ from ess.livedata.workflows.detector_view.providers import (
 )
 from ess.livedata.workflows.detector_view.types import (
     DETECTOR_TRANSFORM,
+    SAMPLE_POSITION,
     AccumulatedHistogram,
     Cumulative,
     Current,
@@ -84,6 +85,7 @@ class TestComputeDetectorHistogram:
             bins=bins,
             event_coord='event_time_offset',
             geometry=None,
+            sample=None,
         )
 
         assert 'event_time_offset' in result.dims
@@ -105,6 +107,7 @@ class TestComputeDetectorHistogram:
             bins=bins,
             event_coord='event_time_offset',
             geometry=None,
+            sample=None,
         )
 
         # Should have x and event_time_offset dims, y was reduced
@@ -127,6 +130,7 @@ class TestComputeDetectorHistogram:
             bins=bins,
             event_coord='event_time_offset',
             geometry=None,
+            sample=None,
         )
 
         # Output should have user's dimension name and unit
@@ -149,13 +153,14 @@ class TestComputeDetectorHistogram:
             bins=bins,
             event_coord='event_time_offset',
             geometry=geometry,
+            sample=None,
         )
 
         assert DETECTOR_TRANSFORM in result.coords
         assert sc.identical(result.coords[DETECTOR_TRANSFORM], geometry)
 
     def test_geometry_none_stamps_no_coord(self):
-        """File-less sources (geometry=None) leave no reset coord on the output."""
+        """File-less TOA sources leave no reset coord on the output."""
         data = make_fake_nexus_detector_data(y_size=4, x_size=4)
         bins = sc.linspace('event_time_offset', 0, 71_000_000, 11, unit='ns')
         transform = make_logical_transform(4, 4)
@@ -167,9 +172,30 @@ class TestComputeDetectorHistogram:
             bins=bins,
             event_coord='event_time_offset',
             geometry=None,
+            sample=None,
         )
 
         assert DETECTOR_TRANSFORM not in result.coords
+        assert SAMPLE_POSITION not in result.coords
+
+    def test_sample_position_stamped_as_reset_coord_when_provided(self):
+        """Wavelength views reset on a sample move, since it shifts Ltotal."""
+        data = make_fake_nexus_detector_data(y_size=4, x_size=4)
+        bins = sc.linspace('event_time_offset', 0, 71_000_000, 11, unit='ns')
+        transform = make_logical_transform(4, 4)
+        projector = make_logical_projector(transform=transform, reduction_dim=None)
+        screen_binned = projector.project_events(sc.values(data))
+        sample = sc.vector([0.0, 0.0, 0.2], unit='m')
+
+        result = compute_detector_histogram(
+            screen_binned_events=screen_binned,
+            bins=bins,
+            event_coord='event_time_offset',
+            geometry=None,
+            sample=sample,
+        )
+
+        assert sc.identical(result.coords[SAMPLE_POSITION], sample)
 
     def test_histogram_is_int32(self):
         """The accumulated histogram is the dominant memory cost, so it is int32."""
@@ -184,6 +210,7 @@ class TestComputeDetectorHistogram:
             bins=bins,
             event_coord='event_time_offset',
             geometry=None,
+            sample=None,
         )
 
         assert result.dtype == 'int32'

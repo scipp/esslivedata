@@ -88,7 +88,7 @@ def main() -> None:
                 params=factory.validate_params(config),
                 aux_source_names=aux_source_names,
                 context_keys=context_keys,
-                chain_patch_bindings=instrument.chain_patch_bindings,
+                transform_streams=instrument.transform_streams,
                 offered_context_streams=instrument.offered_context_streams,
             )
         except Exception as e:

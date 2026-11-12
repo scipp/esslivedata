@@ -43,6 +43,7 @@ from .providers import (
     get_screen_metadata,
     project_raw_detector,
     project_wavelength_detector,
+    sample_geometry,
 )
 from .roi import (
     precompute_roi_polygon_masks,
@@ -62,6 +63,7 @@ from .types import (
     LogicalTransform,
     ProjectionType,
     ReductionDim,
+    SampleGeometry,
 )
 
 
@@ -103,11 +105,15 @@ def create_base_workflow(
     # projection provider to use.
     workflow = GenericUnwrapWorkflow(run_types=[SampleRun], monitor_types=[])
 
-    # Select projection provider based on coordinate mode
+    # The coordinate mode selects the projection provider, and whether the sample
+    # position is a move-detection signal (see SampleGeometry): wavelength views
+    # read it through Ltotal, TOA views must not.
     if coordinate_mode == 'toa':
         workflow.insert(project_raw_detector)
+        workflow[SampleGeometry] = SampleGeometry(None)
     elif coordinate_mode == 'wavelength':
         workflow.insert(project_wavelength_detector)
+        workflow.insert(sample_geometry)
     else:
         raise ValueError(f"Unsupported coordinate mode: {coordinate_mode!r}")
 
