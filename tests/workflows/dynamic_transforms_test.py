@@ -287,6 +287,21 @@ class TestStreamedKeyAboveAChain:
 
         assert workflow.requested_context_streams == set()
 
+    def test_fixed_key_cuts_off_the_chain(self) -> None:
+        """A key set in the pipeline replaces its provider like a streamed one."""
+        pipeline = self._pipeline_with_angle_from_chain()
+        pipeline.insert(self._target)
+        angle = _Angle(sc.DataArray(sc.scalar(1.0, unit='m')))
+        pipeline[_Angle] = angle
+
+        workflow = _build(pipeline, target=_Both)
+        workflow.accumulate(
+            {}, start_time=Timestamp.from_ns(0), end_time=Timestamp.from_ns(1)
+        )
+
+        assert workflow.requested_context_streams == set()
+        assert sc.identical(workflow.finalize()['out']['angle'], angle)
+
     def test_chain_read_past_the_key_as_well_is_rejected(self) -> None:
         """The key's value would disagree with the chain it is computed from."""
         pipeline = self._pipeline_with_angle_from_chain()
