@@ -696,6 +696,85 @@ class TestLokiMotionAndRoles:
         assert defaults <= loki.lut_components
 
 
+_LOKI_SAMPLE_MOTORS = {
+    'linear_sample_changer',
+    'sample_stack_x',
+    'sample_stack_y',
+    'sample_stack_z',
+}
+#: Front-left bank, out to 42 degrees scattering angle.
+_LOKI_FRONT_BANK = 'loki_detector_6'
+
+
+def _loki_xy_projection(loki: Instrument, mode: str):
+    params_model = _params_model(loki, 'detector_xy_projection')
+    return _create_job(
+        loki,
+        'detector_xy_projection',
+        _LOKI_FRONT_BANK,
+        params_model(coordinate_mode=CoordinateModeSettings(mode=mode)),
+    )
+
+
+class TestLokiSampleMove:
+    """``Ltotal`` runs source -> sample -> pixel, so a wavelength view depends on
+    the sample position and a time-of-arrival view does not."""
+
+    @pytest.mark.parametrize('mode', ['toa', 'wavelength'])
+    def test_detector_view_waits_for_the_sample_only_in_wavelength_mode(
+        self, loki: Instrument, mode: str
+    ) -> None:
+        job = _loki_xy_projection(loki, mode)
+
+        expected = _LOKI_SAMPLE_MOTORS if mode == 'wavelength' else set()
+        assert job.gating_streams & _LOKI_SAMPLE_MOTORS == expected
+
+    def test_wavelength_view_resets_when_the_sample_moves(
+        self, loki: Instrument
+    ) -> None:
+        """Summing across a sample move would mix two wavelength calibrations.
+
+        At this bank's angles a 20 cm move along the beam shifts the wavelength by
+        up to 0.2 %, which moves some events across the edge of the wavelength
+        range: the counts per update change, which shows the move took effect.
+        """
+        tables = _ingest(loki, _run_lut_job(loki, delays={}))
+        job = _loki_xy_projection(loki, 'wavelength')
+        events = _detector_events(loki.get_detector_number(_LOKI_FRONT_BANK))
+
+        def update(*, z: float, cold_start: bool = False) -> sc.DataGroup:
+            context = {
+                **loki.bound_context_defaults(
+                    _spec_id(loki, 'detector_xy_projection'), _LOKI_FRONT_BANK
+                ),
+                DETECTOR_STREAM: tables[DETECTOR_STREAM],
+            }
+            motors = {
+                name: _nxlog(z if name == 'sample_stack_z' else 0.0, 'mm')
+                for name in _LOKI_SAMPLE_MOTORS
+            }
+            data = JobData(
+                start_time=Timestamp.from_ns(0),
+                end_time=Timestamp.from_ns(1),
+                primary_data={_LOKI_FRONT_BANK: events},
+                aux_data={**(context if cold_start else {}), **motors},
+            )
+            reply, result = job.process(data, finalize=True)
+            assert not reply.has_error, reply.error_message
+            assert result.error_message is None, result.error_message
+            return result.data
+
+        first = update(z=0.0, cold_start=True)
+        unmoved = update(z=0.0)
+        moved = update(z=200.0)
+
+        per_update = first['counts_total'].value
+        assert per_update > 0
+        assert unmoved['counts_total_cumulative'].value == 2 * per_update
+        assert moved['counts_total'].value != per_update
+        assert moved['counts_total_cumulative'].value == moved['counts_total'].value
+
+
 @pytest.fixture(scope='module')
 def estia() -> Instrument:
     get_config('estia')

@@ -13,17 +13,19 @@ import scipp as sc
 from ess.reduce.nexus.types import (
     EmptyDetector,
     NeXusTransformation,
+    Position,
     RawDetector,
     SampleRun,
 )
 from ess.reduce.unwrap.types import WavelengthDetector
-from scippnexus import NXdetector
+from scippnexus import NXdetector, NXsample
 
 from ..geometry_signal import geometry_signal
 from ..spectral_range import select_spectral_range
 from .projectors import GeometricProjector, LogicalProjector, Projector
 from .types import (
     DETECTOR_TRANSFORM,
+    SAMPLE_POSITION,
     AccumulatedHistogram,
     AccumulationMode,
     CountsInRange,
@@ -36,6 +38,7 @@ from .types import (
     HistogramBins,
     HistogramSlice,
     PixelWeights,
+    SampleGeometry,
     ScreenBinnedEvents,
     ScreenMetadata,
     SpectrumView,
@@ -167,11 +170,23 @@ def detector_geometry(
     return DetectorGeometry(geometry_signal(transform))
 
 
+def sample_geometry(position: Position[NXsample, SampleRun]) -> SampleGeometry:
+    """
+    Expose the sample position as the geometry-change signal of wavelength views.
+
+    Stamped onto the accumulated histogram by :func:`compute_detector_histogram`.
+    Inserted only in wavelength mode; TOA views set :data:`SampleGeometry` to
+    ``None``.
+    """
+    return SampleGeometry(position)
+
+
 def compute_detector_histogram(
     screen_binned_events: ScreenBinnedEvents,
     bins: HistogramBins,
     event_coord: EventCoordName,
     geometry: DetectorGeometry,
+    sample: SampleGeometry,
 ) -> DetectorHistogram:
     """
     Histogram events by the specified event coordinate.
@@ -191,6 +206,10 @@ def compute_detector_histogram(
         Scalar geometry signal stamped as the ``DETECTOR_TRANSFORM`` coord so the
         cumulative accumulator can reset on a detector move. ``None`` (file-less
         sources) stamps nothing.
+    sample:
+        Sample position stamped as the ``SAMPLE_POSITION`` coord so the
+        cumulative accumulator can reset on a sample move. ``None`` (TOA views)
+        stamps nothing.
 
     Returns
     -------
@@ -222,6 +241,8 @@ def compute_detector_histogram(
 
     if geometry is not None:
         result.coords[DETECTOR_TRANSFORM] = geometry
+    if sample is not None:
+        result.coords[SAMPLE_POSITION] = sample
     return DetectorHistogram(result)
 
 
