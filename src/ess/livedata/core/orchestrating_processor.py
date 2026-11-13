@@ -222,8 +222,15 @@ class OrchestratingProcessor[Tin, Tout]:
 
     A push happens when the batcher closes a batch.  If nothing is pushed for
     ``LIVENESS_BATCHES`` batch lengths of wall time, a liveness push spanning no
-    time at the end of the last batch follows, so job activation, context gates
-    and run-transition resets keep moving while the clocked streams pause.
+    time at the end of the last batch follows.  While the clocked streams pause,
+    it activates jobs started in the meantime, opens context gates whose context
+    has arrived, and runs a job scheduled after its primary stream was cached
+    (e.g. the chopperless ``wavelength_lut`` tick in ``timeseries``, which fires
+    only once).  It also fires a run-transition reset whose time the last batch
+    already covered, i.e. when the run message arrives after the events.  It
+    cannot fire a reset for a run starting during the pause, since that time
+    lies beyond the last batch.  Context changes alone do not make a job
+    publish: without new primary data the job does not finalize.
     Wall time decides only when to push, never the data time pushed.  Before
     the first batch there is no data time and nothing is pushed: scheduled jobs
     wait for the first clocked data, while unclocked values wait in their
