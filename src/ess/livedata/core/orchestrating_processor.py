@@ -5,6 +5,7 @@ from __future__ import annotations
 import time
 import uuid
 from collections import defaultdict
+from collections.abc import Callable
 from dataclasses import replace
 from typing import Any
 
@@ -60,6 +61,7 @@ class MessagePreprocessor[Tin, Tout]:
     ) -> None:
         self._factory = factory
         self._accumulators: dict[StreamId, Accumulator[Tin, Tout]] = {}
+        self._changed_unclocked: set[StreamId] = set()
 
     def _get_accumulator(self, key: StreamId) -> Accumulator[Tin, Tout] | None:
         """Get an accumulator for the given stream ID."""
@@ -70,21 +72,18 @@ class MessagePreprocessor[Tin, Tout]:
             return accumulator
         return None
 
-    def _preprocess_stream(
-        self, messages: list[Message[Tin]], accumulator: Accumulator[Tin, Tout]
-    ) -> Tout | None:
-        """Preprocess messages for a single stream using the given accumulator.
+    @staticmethod
+    def _add(messages: list[Message[Tin]], accumulator: Accumulator[Tin, Tout]) -> bool:
+        """Add messages to the accumulator.
 
-        Returns None if no messages were accepted by the accumulator (e.g., all
-        duplicates), signalling that the stream should be excluded from workflow data.
+        Returns False if no message was accepted (e.g., all duplicates),
+        signalling that the stream should be excluded from workflow data.
         """
         any_accepted = False
         for message in messages:
             if accumulator.add(message.timestamp, message.value) is not False:
                 any_accepted = True
-        if not any_accepted:
-            return None
-        return accumulator.get()
+        return any_accepted
 
     def release_buffers(self) -> None:
         """Signal that preprocessed data from the last cycle is no longer in use.
@@ -124,28 +123,120 @@ class MessagePreprocessor[Tin, Tout]:
         """
         Preprocess messages before they are sent to the accumulators.
         """
-        messages_by_key = defaultdict[StreamId, list[Message]](list)
-        for msg in batch.messages:
-            messages_by_key[msg.stream].append(msg)
-
         data: dict[StreamId, Any] = {}
-        for key, messages in messages_by_key.items():
+        for key, messages in _group_by_stream(batch.messages).items():
             accumulator = self._get_accumulator(key)
             if accumulator is None:
                 logger.debug('no_preprocessor', stream_id=str(key))
                 continue
             try:
-                result = self._preprocess_stream(messages, accumulator)
-                if result is not None:
-                    data[key] = result
+                if self._add(messages, accumulator):
+                    data[key] = accumulator.get()
             except Exception:
                 logger.exception('preprocessing_error', stream_id=str(key))
         return WorkflowData(
             start_time=batch.start_time, end_time=batch.end_time, data=data
         )
 
+    def add_unclocked(self, messages: list[Message[Tin]]) -> None:
+        """Add messages of unclocked streams to their accumulators on arrival.
+
+        The accumulator buffers the stream until the next push collects it via
+        :meth:`take_unclocked`, which is only valid for a context accumulator:
+        its ``get()`` is idempotent and does not consume the data.
+
+        Raises
+        ------
+        TypeError
+            If a stream's accumulator is not a context accumulator.
+        """
+        for key, stream_messages in _group_by_stream(messages).items():
+            accumulator = self._get_accumulator(key)
+            if accumulator is None:
+                logger.debug('no_preprocessor', stream_id=str(key))
+                continue
+            if not accumulator.is_context:
+                raise TypeError(
+                    f"Unclocked stream {key} needs a context accumulator, got "
+                    f"{type(accumulator).__name__}"
+                )
+            try:
+                if self._add(stream_messages, accumulator):
+                    self._changed_unclocked.add(key)
+            except Exception:
+                logger.exception('preprocessing_error', stream_id=str(key))
+
+    def take_unclocked(self) -> dict[StreamId, Any]:
+        """Current values of the unclocked streams changed since the last call."""
+        data: dict[StreamId, Any] = {}
+        for key in self._changed_unclocked:
+            try:
+                data[key] = self._accumulators[key].get()
+            except Exception:
+                logger.exception('preprocessing_error', stream_id=str(key))
+        self._changed_unclocked.clear()
+        return data
+
+
+def _group_by_stream[T](messages: list[Message[T]]) -> dict[StreamId, list[Message[T]]]:
+    messages_by_key = defaultdict[StreamId, list[Message[T]]](list)
+    for msg in messages:
+        messages_by_key[msg.stream].append(msg)
+    return messages_by_key
+
+
+#: Stream kinds whose message timestamps are not data time.  The f144 envelope
+#: is Kafka time, or for a static PV an arbitrarily old EPICS time (see
+#: ``KafkaToF144Adapter``), and devices are synthesized from f144 logs.  ROI
+#: requests are stamped at epoch 0, context values with their producer's time.
+#: Taken as data time, any of these misplaces the batch window: Kafka time and
+#: the detector's pulse times come from different clocks, which need not agree.
+DEFAULT_UNCLOCKED_KINDS = frozenset(
+    {
+        StreamKind.LOG,
+        StreamKind.DEVICE,
+        StreamKind.LIVEDATA_ROI,
+        StreamKind.LIVEDATA_CONTEXT,
+    }
+)
+
+
+#: Wall time without a push, in batch lengths, before a liveness push.  While
+#: data flows, batches close roughly once per batch length of wall time, but
+#: delivery jitter makes some gaps longer.  A threshold of one would then fire
+#: liveness pushes between ordinary batches.  A push carries the unclocked
+#: values changed since the previous push, and each push carrying a change
+#: reruns the job's context stages, so these extra pushes double the reruns
+#: for a continuously updating log.
+LIVENESS_BATCHES = 2
+
 
 class OrchestratingProcessor[Tin, Tout]:
+    """Processor driving the jobs of a backend service.
+
+    Data messages are either *clocked* or *unclocked*.  Clocked messages go
+    through the message batcher, whose batches define data time.  Unclocked
+    messages (``unclocked_kinds``) carry no data time: they bypass the batcher
+    and go into their (context) accumulators on arrival.  Each push to the jobs
+    includes the unclocked streams that changed since the previous push.
+
+    A push happens when the batcher closes a batch.  If nothing is pushed for
+    ``LIVENESS_BATCHES`` batch lengths of wall time, a liveness push spanning no
+    time at the end of the last batch follows.  While the clocked streams pause,
+    it activates jobs started in the meantime, opens context gates whose context
+    has arrived, and runs a job scheduled after its primary stream was cached
+    (e.g. the chopperless ``wavelength_lut`` tick in ``timeseries``, which fires
+    only once).  It also fires a run-transition reset whose time the last batch
+    already covered, i.e. when the run message arrives after the events.  It
+    cannot fire a reset for a run starting during the pause, since that time
+    lies beyond the last batch.  Context changes alone do not make a job
+    publish: without new primary data the job does not finalize.
+    Wall time decides only when to push, never the data time pushed.  Before
+    the first batch there is no data time and nothing is pushed: scheduled jobs
+    wait for the first clocked data, while unclocked values wait in their
+    accumulators.
+    """
+
     def __init__(
         self,
         *,
@@ -156,7 +247,18 @@ class OrchestratingProcessor[Tin, Tout]:
         message_batcher: MessageBatcher | None = None,
         job_threads: int = 1,
         stream_stats_provider: StreamStatsProvider | None = None,
+        unclocked_kinds: frozenset[StreamKind] = DEFAULT_UNCLOCKED_KINDS,
+        clock: Callable[[], float] = time.monotonic,
     ) -> None:
+        """
+        Parameters
+        ----------
+        unclocked_kinds:
+            Stream kinds that bypass the batcher.  A service whose primary data
+            are logs (``timeseries``) passes an empty set.
+        clock:
+            Monotonic seconds, deciding when a liveness push is due.
+        """
         self._source = source
         self._sink = sink
         self._message_preprocessor = MessagePreprocessor(factory=preprocessor_factory)
@@ -174,6 +276,10 @@ class OrchestratingProcessor[Tin, Tout]:
             registry=instrument.workflow_factory,
         )
         self._message_batcher = message_batcher or AdaptiveMessageBatcher()
+        self._unclocked_kinds = unclocked_kinds
+        self._clock = clock
+        self._last_push = clock()
+        self._last_batch_end: Timestamp | None = None
         self._config_processor = CommandDispatcher(
             job_manager_adapter=self._job_manager_adapter
         )
@@ -210,12 +316,15 @@ class OrchestratingProcessor[Tin, Tout]:
         config_messages: list[Message[Tin]] = []
         run_control_messages: list[Message[RunStart | RunStop]] = []
         data_messages: list[Message[Tin]] = []
+        unclocked_messages: list[Message[Tin]] = []
 
         for msg in messages:
             if msg.stream == COMMANDS_STREAM_ID:
                 config_messages.append(msg)
             elif msg.stream == RUN_CONTROL_STREAM_ID:
                 run_control_messages.append(msg)
+            elif msg.stream.kind in self._unclocked_kinds:
+                unclocked_messages.append(msg)
             else:
                 data_messages.append(msg)
 
@@ -232,40 +341,12 @@ class OrchestratingProcessor[Tin, Tout]:
 
         self._report_status()
 
+        self._message_preprocessor.add_unclocked(unclocked_messages)
         message_batch = self._message_batcher.batch(data_messages)
         batch_start = time.monotonic()
+        workflow_data = self._next_workflow_data(message_batch)
 
-        if message_batch is not None:
-            workflow_data = self._message_preprocessor.preprocess_messages(
-                message_batch
-            )
-        else:
-            now = Timestamp.now()
-            workflow_data = WorkflowData(start_time=now, end_time=now, data={})
-
-        # Enrich workflow_data with cached context for streams that scheduled
-        # jobs will need on activation. peek_pending_streams uses start_time
-        # to predict which jobs will activate in the upcoming process_jobs
-        # call (same start_time), covering both auxiliary streams (e.g., log
-        # data for detector workflows) and primary streams (e.g., log data
-        # for a timeseries job that activates after its data already passed
-        # through, or the chopperless wavelength_lut tick that fires only
-        # once). Lets the empty-batch branch run jobs from cached context
-        # alone.
-        # Jobs already gated on context are not handled here: the JobManager
-        # refills their gating streams itself inside process_jobs (see
-        # JobManager._open_context_gates), so gate correctness does not depend
-        # on this enrichment. Keeping gated streams out of workflow_data also
-        # keeps truly idle ticks idle (the check below) instead of spinning
-        # while a job waits on context that never comes.
-        needed = self._job_manager.peek_pending_streams(workflow_data.start_time)
-        missing = needed - {s.name for s in workflow_data.data}
-        if missing:
-            workflow_data.data.update(self._message_preprocessor.get_context(missing))
-
-        # Truly idle cycle: no batch waiting, and no cached context to
-        # activate any scheduled job.
-        if message_batch is None and not workflow_data.data:
+        if workflow_data is None:  # Idle cycle: no push due.
             self._message_batcher.report_batch(None, processing_time_s=0.0)
             self._empty_batches += 1
             self._maybe_log_metrics()
@@ -276,6 +357,25 @@ class OrchestratingProcessor[Tin, Tout]:
                 # may trigger costly workflow creation.
                 time.sleep(0.1)
             return
+
+        # Enrich workflow_data with cached context for streams that scheduled
+        # jobs will need on activation. peek_pending_streams uses start_time
+        # to predict which jobs will activate in the upcoming process_jobs
+        # call (same start_time), covering both auxiliary streams (e.g., log
+        # data for detector workflows) and primary streams (e.g., log data
+        # for a timeseries job that activates after its data already passed
+        # through, or the chopperless wavelength_lut tick that fires only
+        # once). Lets a liveness push run jobs from cached context alone.
+        # Jobs already gated on context are not handled here: the JobManager
+        # refills their gating streams itself inside process_jobs (see
+        # JobManager._open_context_gates), so gate correctness does not depend
+        # on this enrichment. Keeping gated streams out of workflow_data also
+        # keeps liveness pushes from re-presenting cached context every batch
+        # length while a job waits on context that never comes.
+        needed = self._job_manager.peek_pending_streams(workflow_data.start_time)
+        missing = needed - {s.name for s in workflow_data.data}
+        if missing:
+            workflow_data.data.update(self._message_preprocessor.get_context(missing))
 
         # Push data into jobs and compute results in a single pass.
         # We used to compute results only after 1-N accumulation calls, reasoning that
@@ -312,6 +412,29 @@ class OrchestratingProcessor[Tin, Tout]:
         result_messages.extend(self._device_extractor.extract(valid_results))
         result_messages.extend(self._context_output_extractor.extract(valid_results))
         self._sink.publish_messages(result_messages)
+
+    def _next_workflow_data(self, batch: MessageBatch | None) -> WorkflowData | None:
+        """Data to push to the jobs in this cycle, or None if no push is due.
+
+        See the class docstring for when a push is due.
+        """
+        now = self._clock()
+        if batch is not None:
+            workflow_data = self._message_preprocessor.preprocess_messages(batch)
+            self._last_batch_end = batch.end_time
+        elif (
+            self._last_batch_end is None
+            or now - self._last_push
+            < LIVENESS_BATCHES * self._message_batcher.batch_length_s
+        ):
+            return None
+        else:
+            workflow_data = WorkflowData(
+                start_time=self._last_batch_end, end_time=self._last_batch_end, data={}
+            )
+        self._last_push = now
+        workflow_data.data.update(self._message_preprocessor.take_unclocked())
+        return workflow_data
 
     def _report_status(self) -> None:
         timestamp = Timestamp.now()
