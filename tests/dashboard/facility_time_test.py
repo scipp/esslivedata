@@ -195,9 +195,9 @@ class TestFacilityTimeJavaScript:
     @pytest.mark.parametrize(
         ('step_ms', 'expected'),
         [
-            (100, ['13:00:05.250', '13:00:05.350']),
-            (1_000, ['13:00:05', '13:00:06']),
-            (60_000, ['13:00', '13:01']),
+            (100, ['13:00:05.250\n2026-01-15', '13:00:05.350']),
+            (1_000, ['13:00:05\n2026-01-15', '13:00:06']),
+            (60_000, ['13:00\n2026-01-15', '13:01']),
             (86_400_000, ['2026-01-15', '2026-01-16']),
         ],
     )
@@ -214,7 +214,7 @@ class TestFacilityTimeJavaScript:
         tick, _ = shipped_formatters
         start = _ms(2026, 3, 29, 0, 30, 0)
         ticks = [start + i * 1_800_000 for i in range(3)]
-        assert _ticks(js_page, tick, ticks) == ['01:30', '03:00', '03:30']
+        assert _ticks(js_page, tick, ticks) == ['01:30\n2026-03-29', '03:00', '03:30']
 
     def test_ticks_across_autumn_daylight_saving_change(
         self, js_page, shipped_formatters
@@ -222,4 +222,22 @@ class TestFacilityTimeJavaScript:
         tick, _ = shipped_formatters
         start = _ms(2026, 10, 25, 0, 30, 0)
         ticks = [start + i * 1_800_000 for i in range(3)]
-        assert _ticks(js_page, tick, ticks) == ['02:30', '02:00', '02:30']
+        assert _ticks(js_page, tick, ticks) == ['02:30\n2026-10-25', '02:00', '02:30']
+
+    def test_tick_where_facility_date_changes_shows_the_date(
+        self, js_page, shipped_formatters
+    ):
+        tick, _ = shipped_formatters
+        # 22:00 UTC is midnight CEST.
+        start = _ms(2026, 7, 15, 20, 0, 0)
+        ticks = [start + i * 3_600_000 for i in range(4)]
+        assert _ticks(js_page, tick, ticks) == [
+            '22:00\n2026-07-15',
+            '23:00',
+            '00:00\n2026-07-16',
+            '01:00',
+        ]
+
+    def test_hover_on_nan_does_not_throw(self, js_page, shipped_formatters):
+        _, hover = shipped_formatters
+        assert _hover(js_page, hover, float('nan')) == 'NaN'

@@ -12,6 +12,7 @@ import scipp as sc
 from bokeh.document import Document
 from bokeh.models import (
     ColorMapper,
+    CustomJSHover,
     CustomJSTickFormatter,
     DatetimeAxis,
     FactorRange,
@@ -3044,6 +3045,14 @@ class TestOverlay1DPlotterHistory:
     def test_datetime_axis_is_labelled_in_facility_time(self, plotter, data_key):
         fig, _ = _render(plotter, {data_key: _roi_history()})
         assert isinstance(fig.xaxis[0].formatter, CustomJSTickFormatter)
+
+    def test_datetime_hover_is_in_facility_time(self, plotter, data_key):
+        fig, pipe = _render(plotter, {data_key: _roi_history()})
+        plotter.compute({PRIMARY: {data_key: _roi_history(start=100)}})
+        pipe.send(plotter.get_cached_state())
+
+        (hover,) = fig.select(type=HoverTool)
+        assert isinstance(hover.formatters['@{time}'], CustomJSHover)
 
     def test_axis_stays_datetime_when_first_frame_has_no_roi(self, plotter, data_key):
         fig, pipe = _render(plotter, {data_key: _roi_history(rois=())})

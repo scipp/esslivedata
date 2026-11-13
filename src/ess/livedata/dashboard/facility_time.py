@@ -17,7 +17,6 @@ viewed from.
 from __future__ import annotations
 
 from typing import Any
-from weakref import WeakKeyDictionary
 from zoneinfo import ZoneInfo
 
 from ess.livedata.core.timestamp import Timestamp
@@ -62,46 +61,54 @@ _INTL_FORMAT_JS = """new Intl.DateTimeFormat('en-GB', {
     fractionalSecondDigits: 3,
 })"""
 
-# ``p``: the fields of epoch milliseconds in the facility timezone, keyed by Intl
-# part type (year, month, day, hour, minute, second, fractionalSecond,
+# ``parts(ms)``: the fields of epoch milliseconds in the facility timezone, keyed
+# by Intl part type (year, month, day, hour, minute, second, fractionalSecond,
 # timeZoneName). ``formatToParts`` instead of a formatted string, so the result
 # does not depend on the locale's field order.
 _PARTS_JS = """
-const p = Object.fromEntries(
+const parts = (ms) => Object.fromEntries(
     fmt.formatToParts(new Date(ms)).map((part) => [part.type, part.value])
 );
+const dateOf = (p) => `${p.year}-${p.month}-${p.day}`;
 """
 
-# Precision follows the tick spacing, as for Bokeh's DatetimeTickFormatter.
+# Precision follows the tick spacing, as for Bokeh's DatetimeTickFormatter. Below
+# a day's spacing, the date goes on a second line of the first tick and of every
+# tick where the facility date changes, so an operator can tell the day apart.
 _TICK_JS = f"""
 const fmt = (this.fmt ??= {_INTL_FORMAT_JS});
-const ms = tick;
 {_PARTS_JS}
+const p = parts(tick);
 const step = ticks.length > 1 ? Math.abs(ticks[1] - ticks[0]) : 0;
-if (step >= 86400000) {{ return `${{p.year}}-${{p.month}}-${{p.day}}`; }}
-if (step >= 60000) {{ return `${{p.hour}}:${{p.minute}}`; }}
+if (step >= 86400000) {{ return dateOf(p); }}
 const hms = `${{p.hour}}:${{p.minute}}:${{p.second}}`;
-return step >= 1000 || step === 0 ? hms : `${{hms}}.${{p.fractionalSecond}}`;
+const time = step >= 60000 ? `${{p.hour}}:${{p.minute}}`
+    : step >= 1000 || step === 0 ? hms
+    : `${{hms}}.${{p.fractionalSecond}}`;
+const newDay = index === 0 || dateOf(parts(ticks[index - 1])) !== dateOf(p);
+return newDay ? `${{time}}\n${{dateOf(p)}}` : time;
 """
 
 # The zone abbreviation tells apart the hour that repeats when daylight saving
 # ends (02:30 CEST, then 02:30 CET). Bokeh calls hover formatters unbound, so
 # there is no cache to keep ``fmt`` on.
 _HOVER_JS = f"""
+if (!Number.isFinite(value)) {{ return 'NaN'; }}
 const fmt = {_INTL_FORMAT_JS};
-const ms = value;
 {_PARTS_JS}
-const date = `${{p.year}}-${{p.month}}-${{p.day}}`;
-return `${{date}} ${{p.hour}}:${{p.minute}}:${{p.second}} ${{p.timeZoneName}}`;
+const p = parts(value);
+return `${{dateOf(p)}} ${{p.hour}}:${{p.minute}}:${{p.second}} ${{p.timeZoneName}}`;
 """
 
 _FORMATTER_ARGS = {'tz': FACILITY_TIMEZONE_NAME}
 
-# One hover formatter per hover tool. HoloViews resets the formatters of datetime
-# fields to ``'datetime'`` on every update, so the hook re-installs one on every
-# update; a new model each time would pile up in the browser, where BokehJS never
-# frees replaced models.
-_hover_formatters: WeakKeyDictionary[Any, Any] = WeakKeyDictionary()
+# Attribute holding a hover tool's formatter. HoloViews resets the formatters of
+# datetime fields to ``'datetime'`` on every update, so the hook re-installs one
+# on every update; a new model each time would pile up in the browser, where
+# BokehJS never frees replaced models. Bokeh does not serialize ``_``-prefixed
+# attributes. Kept on the tool rather than in a module-level cache, which would
+# keep a session's Document alive after the session is dropped.
+_HOVER_FORMATTER_ATTR = '_facility_time_formatter'
 
 
 def facility_time_hook(plot: Any, element: Any) -> None:
@@ -140,9 +147,9 @@ def facility_time_hook(plot: Any, element: Any) -> None:
             hover.formatters.values()
         ):
             continue
-        if (formatter := _hover_formatters.get(hover)) is None:
+        if (formatter := getattr(hover, _HOVER_FORMATTER_ATTR, None)) is None:
             formatter = CustomJSHover(args=_FORMATTER_ARGS, code=_HOVER_JS)
-            _hover_formatters[hover] = formatter
+            setattr(hover, _HOVER_FORMATTER_ATTR, formatter)
         hover.formatters = {
             field: formatter if value == 'datetime' else value
             for field, value in hover.formatters.items()
