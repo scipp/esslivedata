@@ -164,6 +164,7 @@ class FakePlottingController:
         params,
         on_update,
         temporality,
+        select_by_role=None,
     ):
         """Set up data pipeline using real StreamManager (unified interface)."""
         from ess.livedata.dashboard.data_roles import PRIMARY
@@ -195,6 +196,7 @@ class FakePlottingController:
             keys_by_role,
             on_update=on_update,
             extractors=extractors,
+            select_by_role=select_by_role,
         )
 
     def create_plotter(

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Mapping
+from typing import Any
 
 import pydantic
 
@@ -179,6 +180,7 @@ class PlottingController:
         params: dict | pydantic.BaseModel,
         on_update: Callable[[], None],
         temporality: Mapping[DataKey, Temporality | None],
+        select_by_role: Mapping[str, Callable[[Any], Any | None]] | None = None,
     ) -> DataSubscriber:
         """
         Set up data pipeline for any plot type.
@@ -203,6 +205,9 @@ class PlottingController:
             Declared :class:`Temporality` of the field each key resolved to,
             ``None`` where the workflow is not in the registry. Aggregation is
             rejected for the keys it must not be applied to.
+        select_by_role
+            Per-role selection applied to the extracted data; see
+            :py:class:`DataSubscriber`.
 
         Returns
         -------
@@ -227,6 +232,7 @@ class PlottingController:
             keys_by_role=keys_by_role,
             on_update=on_update,
             extractors=extractors,
+            select_by_role=select_by_role,
         )
 
     def create_plotter(

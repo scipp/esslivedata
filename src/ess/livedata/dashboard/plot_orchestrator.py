@@ -173,29 +173,6 @@ def _serialize_data_source(ds: DataSourceConfig) -> dict[str, Any]:
     return result
 
 
-def _select_rois(
-    data: dict[str, dict[DataKey, Any]],
-    data_sources: Mapping[str, DataSourceConfig],
-) -> dict[str, dict[DataKey, Any]] | None:
-    """Reduce the data of each role with a selected ROI to that ROI.
-
-    Sources on which the ROI is not drawn are left out. Returns None if that
-    leaves a role without data, as the data is then not ready to plot.
-    """
-    for role, ds in data_sources.items():
-        if ds.roi is None or role not in data:
-            continue
-        selected = {
-            key: roi_data
-            for key, da in data[role].items()
-            if (roi_data := select_roi(da, ds.roi)) is not None
-        }
-        if not selected:
-            return None
-        data[role] = selected
-    return data
-
-
 @dataclass
 class _LayerJobTracker:
     """Last-observed run-state of the workflows feeding a layer.
@@ -1105,29 +1082,25 @@ class PlotOrchestrator:
             if layer_id not in self._layer_to_cell:
                 return False
             subscriber = self._data_subscriptions.get(layer_id)
-            data_sources = self.get_layer_config(layer_id).data_sources
         if subscriber is None:
             return False
         snapshot = self._plot_data_service.get(layer_id)
         if snapshot is None or snapshot.plotter is None:
             return False
-        roi_missing = False
         try:
             assembled = subscriber.assemble(self._data_service.snapshot(subscriber))
-            if assembled is not None:
-                assembled = _select_rois(assembled, data_sources)
-                roi_missing = assembled is None
         except Exception:
             error_msg = traceback.format_exc()
             self._logger.exception('Failed to extract data for layer_id=%s', layer_id)
             if self._plot_data_service.get(layer_id) is snapshot:
                 self._plot_data_service.error_occurred(layer_id, error_msg)
             return True
-        if roi_missing and snapshot.state is LayerState.READY:
-            # The ROI was removed while the layer showed it. No compute runs
-            # without the ROI, so the layer would keep showing its last frame.
-            self._reset_layer_presentation(layer_id)
         if assembled is None:
+            if snapshot.state is LayerState.READY:
+                # The data the layer showed is gone, e.g. its ROI was removed.
+                # No compute runs without data, so the layer would keep
+                # showing its last frame.
+                self._reset_layer_presentation(layer_id)
             return False
         self._compute_layer(layer_id, snapshot, assembled)
         return True
@@ -1230,6 +1203,11 @@ class PlotOrchestrator:
                     params=config.params,
                     on_update=lambda: self._mark_layer_dirty(layer_id),
                     temporality=temporality,
+                    select_by_role={
+                        role: partial(select_roi, roi=ds.roi)
+                        for role, ds in config.data_sources.items()
+                        if ds.roi is not None
+                    },
                 )
                 self._data_subscriptions[layer_id] = subscriber
                 self._mark_layer_dirty(layer_id)
@@ -1286,14 +1264,14 @@ class PlotOrchestrator:
     def _reset_layer_presentation(self, layer_id: LayerId) -> None:
         """Give a layer a fresh plotter when its data starts over.
 
-        This is the case on a generation change and when the ROI selected by
-        the layer is removed. The commit that started the new generation
-        cleared the workflow's buffers; without a reset the layer would keep
-        showing the previous generation's last frame. Replacing the plotter
-        drives the layer to WAITING_FOR_DATA (blank until new data arrives)
-        and deliberately resets plotter-internal accumulation such as
-        autoscale ranges. The data pipeline is untouched: extractors and keys
-        are generation-independent.
+        This is the case on a generation change and when the data a layer
+        showed is gone, e.g. because its ROI was removed. The commit that
+        started the new generation cleared the workflow's buffers; without a
+        reset the layer would keep showing the previous generation's last
+        frame. Replacing the plotter drives the layer to WAITING_FOR_DATA
+        (blank until new data arrives) and deliberately resets
+        plotter-internal accumulation such as autoscale ranges. The data
+        pipeline is untouched: extractors and keys are generation-independent.
         """
         if layer_id not in self._data_subscriptions:
             # Setup failed for this layer: without a data subscription no data

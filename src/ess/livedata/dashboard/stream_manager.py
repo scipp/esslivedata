@@ -4,7 +4,7 @@
 Utilities for connecting subscribers to :py:class:`DataService`
 """
 
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from typing import Any
 
 from ess.livedata.config.workflow_spec import DataKey
@@ -24,6 +24,7 @@ class StreamManager:
         keys_by_role: dict[str, list[DataKey]],
         on_update: Callable[[], None],
         extractors: dict[DataKey, Any] | None = None,
+        select_by_role: Mapping[str, Callable[[Any], Any | None]] | None = None,
     ) -> DataSubscriber:
         """
         Create a data stream for the given result keys organized by role.
@@ -44,6 +45,9 @@ class StreamManager:
         extractors
             Optional dict mapping keys to UpdateExtractor instances. If not
             provided, uses LatestValueExtractor for all keys.
+        select_by_role
+            Per-role selection applied to the extracted data; see
+            :py:class:`DataSubscriber`.
 
         Returns
         -------
@@ -65,6 +69,7 @@ class StreamManager:
             keys_by_role=keys_by_role,
             extractors=extractors,
             on_update=on_update,
+            select_by_role=select_by_role,
         )
         self.data_service.register_subscriber(subscriber)
         return subscriber
