@@ -17,6 +17,7 @@ bokeh>=3.9,<3.10
 holoviews>=1.23.0
 panel>=1.9.3
 param
+tzdata
 pytest
 pytest-benchmark
 pytest-xdist

@@ -10,7 +10,6 @@ import numpy as np
 import scipp as sc
 
 from .plot_params import WindowAggregation
-from .time_utils import get_local_timezone_offset_ns
 
 
 def _extract_time_bounds_as_scalars(data: sc.DataArray) -> dict[str, sc.Variable]:
@@ -26,9 +25,9 @@ def _extract_time_bounds_as_scalars(data: sc.DataArray) -> dict[str, sc.Variable
 
     Every extractor applies this, so the pair reaches the plotters with the same
     meaning whichever buffer and extractor the data came through. Callers must
-    apply it to *pristine* data: ``FullHistoryExtractor`` shifts ``time`` into
-    the local timezone for Bokeh's benefit, and bounds taken after that shift
-    would misreport wall-clock provenance by the UTC offset.
+    apply it to *pristine* data: ``FullHistoryExtractor`` converts ``time`` to
+    ``datetime64`` for Bokeh's benefit, while the plotters read the bounds as
+    integer epoch nanoseconds.
 
     The pair is minted whole or not at all, and ``start_time`` is what tells a
     bounded output from a series one. A series output has no bounds to capture:
@@ -140,7 +139,6 @@ class FullHistoryExtractor(UpdateExtractor):
             The time dimension name.
         """
         self._concat_dim = concat_dim
-        self._time_origin: sc.Variable | None = None
 
     def get_required_timespan(self) -> float:
         """Return infinite timespan to indicate wanting all history."""
@@ -148,32 +146,26 @@ class FullHistoryExtractor(UpdateExtractor):
 
     def extract(self, data: sc.DataArray) -> Any:
         """Extract all data from the buffer, converting time to datetime64."""
-        # Capture bounds before the timezone shift, which rewrites `time`.
+        # Capture bounds before the datetime conversion, which rewrites `time`.
         bounds = _extract_time_bounds_as_scalars(data)
-        return self._to_local_datetime(data).assign_coords(**bounds)
+        return self._to_datetime(data).assign_coords(**bounds)
 
-    def _to_local_datetime(self, data: sc.DataArray) -> sc.DataArray:
-        """Convert int64 time coordinate to datetime64 in local time.
+    def _to_datetime(self, data: sc.DataArray) -> sc.DataArray:
+        """Convert the int64 time coordinate to datetime64 (UTC).
 
         Bokeh requires datetime64 dtype to render human-readable datetime axes.
-        Int64 nanoseconds are displayed as raw numbers (e.g., 1.733e18).
-
-        The datetime values are shifted by the local timezone offset so that
-        Bokeh displays them as local time rather than UTC.
+        Int64 nanoseconds are displayed as raw numbers (e.g., 1.733e18). The
+        conversion to the facility timezone happens in the browser, see
+        :mod:`ess.livedata.dashboard.facility_time`.
         """
-        dim = self._concat_dim
-        if dim not in data.coords:
+        coord = data.coords.get(self._concat_dim)
+        if (
+            coord is None
+            or coord.dtype != sc.DType.int64
+            or coord.unit not in ('ns', 'us', 'ms', 's')
+        ):
             return data
-        if self._time_origin is not None:
-            return data.assign_coords({dim: self._time_origin + data.coords[dim]})
-        coord = data.coords[dim]
-        if coord.dtype != sc.DType.int64 or coord.unit not in ('ns', 'us', 'ms', 's'):
-            return data
-        tz_offset = (
-            get_local_timezone_offset_ns().to_scipp().to(unit=coord.unit, dtype='int64')
-        )
-        self._time_origin = sc.epoch(unit=coord.unit) + tz_offset
-        return data.assign_coords({dim: self._time_origin + coord})
+        return data.assign_coords({self._concat_dim: sc.epoch(unit=coord.unit) + coord})
 
 
 class WindowAggregatingExtractor(UpdateExtractor):

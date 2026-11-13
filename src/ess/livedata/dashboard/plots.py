@@ -34,6 +34,7 @@ from ess.livedata.config.workflow_spec import DataKey
 from ess.livedata.core.timestamp import Timestamp
 
 from .data_roles import PRIMARY
+from .facility_time import facility_time_hook, format_facility_time
 from .frame_aspect import make_frame_aspect_opts
 from .image_hover import index_axis_hover_spec, make_hover_hook
 from .plot_params import (
@@ -57,7 +58,6 @@ from .plot_params import (
 )
 from .range_hook import Axis, RangeTargets
 from .scipp_to_holoviews import HvConverter1d, to_holoviews
-from .time_utils import format_time_ns_local
 from .timeseries_downsample import downsample_timeseries
 
 
@@ -701,10 +701,10 @@ def format_time_info(bounds: TimeBounds) -> str:
     """
     lag_s = bounds.lag_seconds()
     if bounds.min_start is not None and bounds.max_end is not None:
-        start_str = format_time_ns_local(bounds.min_start)
-        end_str = format_time_ns_local(bounds.max_end)
+        start_str = format_facility_time(bounds.min_start)
+        end_str = format_facility_time(bounds.max_end)
         return f'{start_str} - {end_str} (Lag: {lag_s:.1f}s)'
-    return f'{format_time_ns_local(bounds.min_end)} (Lag: {lag_s:.1f}s)'
+    return f'{format_facility_time(bounds.min_end)} (Lag: {lag_s:.1f}s)'
 
 
 def _is_element_opt(opt: hv.Options) -> bool:
@@ -1454,12 +1454,16 @@ def _line1d_style_opts(
     entry, whose ``hooks`` would otherwise replace it. ``Spread`` (a subclass of
     ``ErrorBars``) is styled under its own name and draws a band without
     endcaps, so the endcap hook does not reach it.
+
+    The timeseries plotters draw these elements on a datetime x-axis, which
+    :func:`facility_time_hook` labels in the facility timezone.
     """
+    hooks = [*sizing_opts.get('hooks', ()), facility_time_hook]
     return [
-        *_typed_opts(_LINE1D_LEAF_ELEMENTS, **base_opts, **sizing_opts),
-        hv.opts.ErrorBars(
-            hooks=[*sizing_opts.get('hooks', ()), _color_endcaps_like_whisker]
+        *_typed_opts(
+            _LINE1D_LEAF_ELEMENTS, **base_opts, **{**sizing_opts, 'hooks': hooks}
         ),
+        hv.opts.ErrorBars(hooks=[*hooks, _color_endcaps_like_whisker]),
         *_typed_opts(_HOVER_ELEMENTS_1D, tools=['hover']),
     ]
 

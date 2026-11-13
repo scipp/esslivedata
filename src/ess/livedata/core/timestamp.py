@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import datetime
 import time
-from datetime import timezone
+from datetime import tzinfo
 from functools import total_ordering
 from typing import Any
 
@@ -202,7 +202,7 @@ class Timestamp:
         """Convert to seconds since the epoch."""
         return self._ns / _NS_PER_S
 
-    def to_datetime(self, tz: timezone | None = None) -> datetime.datetime:
+    def to_datetime(self, tz: tzinfo | None = None) -> datetime.datetime:
         """Convert to a timezone-aware datetime.
 
         Parameters
