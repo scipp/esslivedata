@@ -201,10 +201,13 @@ DEFAULT_UNCLOCKED_KINDS = frozenset(
 )
 
 
-#: Batch lengths of wall time without a push before a liveness push.  Batches
-#: close about one batch length apart with jitter, so a threshold of one would
-#: fire liveness pushes between ordinary batches; each push carrying a changed
-#: log reruns the job's context stages.
+#: Wall time without a push, in batch lengths, before a liveness push.  While
+#: data flows, batches close roughly once per batch length of wall time, but
+#: delivery jitter makes some gaps longer.  A threshold of one would then fire
+#: liveness pushes between ordinary batches.  A push carries the unclocked
+#: values changed since the previous push, and each push carrying a change
+#: reruns the job's context stages, so these extra pushes double the reruns
+#: for a continuously updating log.
 LIVENESS_BATCHES = 2
 
 
