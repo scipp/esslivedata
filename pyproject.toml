@@ -104,6 +104,9 @@ dashboard = [
   "holoviews>=1.23.0",
   "panel>=1.9.3",
   "param",
+  # zoneinfo data for the facility timezone (dashboard/facility_time.py), which
+  # slim container images may lack.
+  "tzdata",
 ]
 
 [project.scripts]

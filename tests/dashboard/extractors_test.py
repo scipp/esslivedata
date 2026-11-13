@@ -157,10 +157,8 @@ class TestFullHistoryExtractor:
         # Data values should be unchanged
         assert sc.identical(result.data, data.data)
 
-    def test_extract_applies_local_timezone_offset(self):
-        """Datetime conversion applies local timezone offset for display."""
-        from ess.livedata.dashboard.time_utils import get_local_timezone_offset_ns
-
+    def test_extract_keeps_utc(self):
+        """Datetime conversion does not shift; display converts to facility time."""
         extractor = FullHistoryExtractor()
 
         # Create data with int64 ns timestamps
@@ -179,10 +177,8 @@ class TestFullHistoryExtractor:
 
         result = extractor.extract(data)
 
-        # The datetime should be shifted by the local timezone offset
-        tz_offset_ns = get_local_timezone_offset_ns()
         expected_first = sc.epoch(unit='ns') + sc.scalar(
-            ns_epoch + tz_offset_ns.to_ns(), unit='ns', dtype='int64'
+            ns_epoch, unit='ns', dtype='int64'
         )
         assert result.coords['time'][0] == expected_first
 
