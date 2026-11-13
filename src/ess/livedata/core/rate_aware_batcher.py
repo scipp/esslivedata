@@ -463,9 +463,9 @@ class _GatedStream:
         Without an integer rate estimate any prior grid is dropped: a grid must not
         outlive the evidence it was built from.  A sparse stream on a 14 Hz pulse
         clock (a well-shielded detector whose EFU emits only when neutrons arrive,
-        e.g. ESTIA's at ~0.3 messages/s) has random multiples of
-        1/14 s between messages, and every so often the last ``DIFF_BUFFER_SIZE`` of
-        them snap to 1 Hz for a few dozen messages.  Kept, such a grid rounds
+        e.g. at ~0.3 messages/s) has random multiples of 1/14 s between messages,
+        and every so often the last ``DIFF_BUFFER_SIZE`` of them snap to 1 Hz for a
+        few dozen messages.  Kept, such a grid rounds
         off-grid messages up to half a second ahead, so gated closes run the window
         ahead of the data and later messages land behind it.  Streams whose rate is
         below one pulse per batch (``int_rate * batch_length_s < 1``) cannot reliably
