@@ -189,8 +189,8 @@ def _group_by_stream[T](messages: list[Message[T]]) -> dict[StreamId, list[Messa
 #: is Kafka time, or for a static PV an arbitrarily old EPICS time (see
 #: ``KafkaToF144Adapter``), and devices are synthesized from f144 logs.  ROI
 #: requests are stamped at epoch 0, context values with their producer's time.
-#: Taken as data time, any of these misplaces the batch window: on ESTIA, Kafka
-#: time runs ~36 s ahead of the detector's pulse times (#1133).
+#: Taken as data time, any of these misplaces the batch window: Kafka time and
+#: the detector's pulse times come from different clocks, which need not agree.
 DEFAULT_UNCLOCKED_KINDS = frozenset(
     {
         StreamKind.LOG,

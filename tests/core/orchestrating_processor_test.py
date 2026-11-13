@@ -505,8 +505,8 @@ class TestUnclockedStreams:
     def test_values_stamped_ahead_of_sparse_events_do_not_rewind_data_time(
         self, kind: StreamKind
     ) -> None:
-        """ESTIA (#1133): f144 logs carry Kafka time, ~36 s ahead of the
-        detector's pulse times, next to a sparse event stream (~0.4 messages/s).
+        """f144 logs carry Kafka time, here 36 s ahead of the detector's
+        pulse times, next to a sparse event stream (~0.4 messages/s).
         Taken as data time, the log stamps drag the batch window ahead of the
         events, and stall recoveries move it backwards again: data time
         rewinds, and the dashboard drops its timeseries history."""

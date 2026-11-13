@@ -276,7 +276,7 @@ class KafkaToF144Adapter(KafkaAdapter[logdata_f144.ExtractedLogData]):
     which needs the emission time: a stale envelope drags the batch window
     weeks into the past (#1313).  Other services keep logs out of the batcher
     (``OrchestratingProcessor``'s unclocked kinds), since Kafka time is not the
-    data time of their event streams (#1133).  The payload keeps the EPICS
+    data time of their event streams.  The payload keeps the EPICS
     timestamp, which is what science consumers (``ToNXlog``) use.
 
     The Kafka time is the producer's create time or the broker's append time,
