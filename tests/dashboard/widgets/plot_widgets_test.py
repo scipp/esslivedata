@@ -238,7 +238,7 @@ class TestPlotterTitleInDisplayInfo:
             title='Image',
         )
 
-    def _config(self, plot_name: str) -> PlotConfig:
+    def _config(self, plot_name: str, roi: int | None = None) -> PlotConfig:
         wf_id = WorkflowId(instrument='test', name='wf', version=1)
         spec = WorkflowSpec(
             instrument='test',
@@ -254,12 +254,22 @@ class TestPlotterTitleInDisplayInfo:
         return PlotConfig(
             data_sources={
                 PRIMARY: DataSourceConfig(
-                    workflow_id=wf_id, source_names=['src1'], view_name='image'
+                    workflow_id=wf_id,
+                    source_names=['src1'],
+                    view_name='image',
+                    roi=roi,
                 )
             },
             plot_name=plot_name,
             params=PlotParams1d(),
         )
+
+    def test_title_and_description_name_a_selected_roi(self) -> None:
+        title, description = get_plot_cell_display_info(
+            self._config('lines', roi=4), self._registry
+        )
+        assert 'Image, roi=4' in title
+        assert 'Output: Image, roi=4' in description
 
     def test_title_includes_plotter_title(self) -> None:
         config = self._config('rectangles_readback')

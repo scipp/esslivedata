@@ -11,7 +11,9 @@ from typing import TYPE_CHECKING
 import panel as pn
 
 from ...config.workflow_spec import WorkflowId, WorkflowSpec
+from ..data_roles import PRIMARY
 from ..plot_params import WindowModeMixin
+from ..roi_selection import roi_label
 from .buttons import ButtonStyles, create_tool_button, create_tool_button_stylesheet
 from .icons import get_icon
 from .styles import Colors, HoverColors, StatusColors
@@ -631,6 +633,10 @@ def get_plot_cell_display_info(
     # information when it differs (correlation over a timeseries).
     if show_output and plotter_title == output_title:
         plotter_title = None
+    # Layers of different ROIs of one output are otherwise indistinguishable.
+    roi = config.data_sources[PRIMARY].roi
+    if roi is not None:
+        output_title = f'{output_title}, {roi_label(roi)}'
 
     # Build title: "Workflow → Output → Plotter (source, window)"
     # Using HTML entity for arrow since title is rendered in HTML pane

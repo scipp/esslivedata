@@ -23,6 +23,7 @@ from ess.livedata.config.workflow_spec import (
     WorkflowOutputsBase,
     WorkflowSpec,
 )
+from ess.livedata.dashboard.correlation_plotter import CorrelationHistogram1dParams
 from ess.livedata.dashboard.data_roles import PRIMARY, X_AXIS, Y_AXIS
 from ess.livedata.dashboard.data_service import DataService
 from ess.livedata.dashboard.plot_orchestrator import (
@@ -46,6 +47,7 @@ from ess.livedata.dashboard.widgets.plot_config_modal import (
     _resolve_output_display_hints,
 )
 from ess.livedata.dashboard.widgets.plot_grid import PlotGrid
+from ess.livedata.workflows.detector_view_specs import DetectorViewOutputs
 
 
 class FakeInstrumentConfig:
@@ -462,6 +464,25 @@ class TestResolveOutputDisplayHints:
 
         assert ('normalization.per_spectral_unit' in hidden) is not declared
 
+    @pytest.mark.parametrize(
+        ('view_name', 'roi', 'shown'),
+        [('roi_total_in_range', 4, True), ('total_counts', None, False)],
+        ids=['one-roi', 'scalar-without-pixels'],
+    )
+    def test_correlation_detector_pixel_option_follows_the_selected_template(
+        self, view_name: str, roi: int | None, shown: bool
+    ):
+        spec = _make_workflow_spec("Detector view", DetectorViewOutputs)
+        hidden = _resolve_output_display_hints(
+            is_static=False,
+            workflow_spec=spec,
+            params_class=CorrelationHistogram1dParams,
+            view_name=view_name,
+            roi=roi,
+        ).hidden_fields
+
+        assert ('normalization.per_detector_pixel' not in hidden) is shown
+
     def test_unknown_output_preselects_all(self):
         class Outputs(WorkflowOutputsBase):
             data: sc.DataArray = pydantic.Field(
@@ -516,6 +537,7 @@ class ImageOutputs(WorkflowOutputsBase):
 HISTOGRAM_ID = WorkflowId(instrument='dummy', name='monitor_histogram', version=1)
 CURRENT_ID = WorkflowId(instrument='dummy', name='monitor_current', version=1)
 IMAGE_ID = WorkflowId(instrument='dummy', name='detector_view', version=1)
+ROI_ID = WorkflowId(instrument='dummy', name='roi_detector_view', version=1)
 
 
 @contextmanager
@@ -628,6 +650,13 @@ def workflow_registry() -> dict[WorkflowId, WorkflowSpec]:
             source_names=['panel_0', 'panel_1'],
             group=DETECTORS,
         ),
+        ROI_ID: _make_workflow_spec(
+            'ROI Detector View',
+            DetectorViewOutputs,
+            workflow_id=ROI_ID,
+            source_names=['panel_0'],
+            group=DETECTORS,
+        ),
     }
 
 
@@ -699,6 +728,72 @@ class TestWorkflowAndOutputSelection:
         assert wizard.button('Next').disabled
         wizard.widget(pn.widgets.TextInput, 'Overlay Name').value = 'Beam centre'
         assert not wizard.button('Next').disabled
+
+
+class TestRoiSelection:
+    def _select_output(self, wizard: WizardDriver, view_name: str) -> None:
+        wizard.radio('Group').value = DETECTORS.name
+        wizard.radio('Workflow').value = ROI_ID
+        wizard.radio('Output').value = view_name
+
+    def _plot_roi(self, wizard: WizardDriver, roi: int) -> None:
+        """Configure a timeseries of one ROI of the Σ ROI output."""
+        self._select_output(wizard, 'roi_total_in_range')
+        wizard.widget(pn.widgets.Select, 'ROI').value = roi
+        wizard.click('Next')
+        wizard.radio('Plotter Type').value = 'timeseries'
+        wizard.click('Next')
+
+    @pytest.mark.parametrize('view_name', ['roi_total_in_range', 'roi_spectra'])
+    def test_roi_choice_shown_for_per_roi_output(self, open_wizard, view_name) -> None:
+        wizard = open_wizard()
+        self._select_output(wizard, view_name)
+
+        assert wizard.widget(pn.widgets.Select, 'ROI').visible
+
+    @pytest.mark.parametrize('view_name', ['image', 'total_counts'])
+    def test_roi_choice_hidden_for_other_outputs(self, open_wizard, view_name) -> None:
+        wizard = open_wizard()
+        self._select_output(wizard, view_name)
+
+        assert not wizard.widget(pn.widgets.Select, 'ROI').visible
+
+    def test_selected_roi_reaches_the_plot_config(self, open_wizard) -> None:
+        wizard = open_wizard()
+        self._plot_roi(wizard, roi=4)
+
+        wizard.click('Add Plot')
+
+        [config] = wizard.configs
+        assert config.data_sources[PRIMARY] == DataSourceConfig(
+            workflow_id=ROI_ID,
+            source_names=['panel_0'],
+            view_name='roi_total_in_range',
+            roi=4,
+        )
+
+    def test_edit_mode_keeps_the_roi(self, open_wizard) -> None:
+        wizard = open_wizard()
+        self._plot_roi(wizard, roi=4)
+        wizard.click('Add Plot')
+        [config] = wizard.configs
+
+        editor = open_wizard(config)
+        editor.click('Update Plot')
+
+        assert editor.configs[0].data_sources[PRIMARY].roi == 4
+
+    def test_edit_mode_shows_the_roi_in_the_output_step(self, open_wizard) -> None:
+        wizard = open_wizard()
+        self._plot_roi(wizard, roi=4)
+        wizard.click('Add Plot')
+        [config] = wizard.configs
+
+        editor = open_wizard(config)
+        editor.click('Back')
+        editor.click('Back')
+
+        assert editor.widget(pn.widgets.Select, 'ROI').value == 4
 
 
 class TestPlotterSelection:

@@ -9,6 +9,7 @@ import pytest
 import scipp as sc
 
 from ess.livedata.config.workflow_spec import (
+    DETECTORS,
     REDUCTION,
     CumulativeOutput,
     DataKey,
@@ -32,6 +33,7 @@ from ess.livedata.dashboard.plotting_controller import (
     since_start_available,
 )
 from ess.livedata.dashboard.stream_manager import StreamManager
+from ess.livedata.workflows.detector_view_specs import DetectorViewOutputs
 
 hv.extension('bokeh')
 
@@ -144,6 +146,48 @@ class TestGetAvailablePlottersFromSpec:
         assert len(plotters) > 0
         assert 'lines' in plotters
         assert 'image' in plotters
+
+
+class TestAvailablePlottersForSelectedRoi:
+    """Plotters for a per-ROI output follow the template of the selected ROI."""
+
+    @pytest.fixture
+    def spec(self) -> WorkflowSpec:
+        return WorkflowSpec(
+            instrument='test',
+            name='detector_view',
+            version=1,
+            title='Detector View',
+            description='Test',
+            outputs=DetectorViewOutputs,
+            group=DETECTORS,
+        )
+
+    @pytest.mark.parametrize(
+        'plot_name',
+        ['correlation_histogram_1d', 'correlation_histogram_2d', 'timeseries'],
+    )
+    def test_scalar_plotters_offered_for_one_roi(
+        self, plotting_controller, spec, plot_name
+    ):
+        plotters, _ = plotting_controller.get_available_plotters_from_spec(
+            workflow_spec=spec, view_name='roi_total_in_range', roi=4
+        )
+
+        assert plot_name in plotters
+
+    @pytest.mark.parametrize(
+        'plot_name',
+        ['correlation_histogram_1d', 'correlation_histogram_2d', 'timeseries'],
+    )
+    def test_scalar_plotters_not_offered_for_all_rois(
+        self, plotting_controller, spec, plot_name
+    ):
+        plotters, _ = plotting_controller.get_available_plotters_from_spec(
+            workflow_spec=spec, view_name='roi_total_in_range', roi=None
+        )
+
+        assert plot_name not in plotters
 
 
 class TestGetAvailableOverlays:

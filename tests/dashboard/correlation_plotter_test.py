@@ -434,6 +434,66 @@ class TestHistogramValues:
         ]
 
 
+class TestPerDetectorPixelNormalization:
+    """Data of one ROI carries its detector pixel count as a scalar coord."""
+
+    times = (100, 200, 300, 400)
+
+    def _compute(self, plotter: CorrelationHistogramPlotter) -> None:
+        source_data = make_source_data(
+            times=[t + 50 for t in self.times], values=[4.0, 8.0, 12.0, 16.0]
+        )
+        source_data.coords['detector_pixels'] = sc.scalar(4.0)
+        plotter.compute(
+            {
+                PRIMARY: {_make_result_key('detector'): source_data},
+                X_AXIS: {
+                    _make_result_key('motor'): make_axis_data(
+                        times=list(self.times), values=[1.0, 2.0, 1.0, 2.0]
+                    )
+                },
+                Y_AXIS: {
+                    _make_result_key('sample'): make_axis_data(
+                        times=list(self.times),
+                        values=[10.0, 10.0, 20.0, 20.0],
+                        value_unit='K',
+                    )
+                },
+            }
+        )
+
+    def test_1d_divides_by_detector_pixels(self):
+        plotter = CorrelationHistogram1dPlotter(
+            CorrelationHistogram1dParams(
+                bins=Bin1dParams(x_axis_source='position', x_bins=2),
+                normalization={'per_detector_pixel': True},
+            )
+        )
+        self._compute(plotter)
+
+        # Bins hold 4 + 12 and 8 + 16 counts over 4 pixels.
+        np.testing.assert_array_equal(histogram_of(plotter)['values'], [4.0, 6.0])
+
+    def test_2d_divides_by_detector_pixels(self):
+        plotter = CorrelationHistogram2dPlotter(
+            CorrelationHistogram2dParams(
+                bins=Bin2dParams(
+                    x_axis_source='position',
+                    x_bins=2,
+                    y_axis_source='temperature',
+                    y_bins=2,
+                ),
+                normalization={'per_detector_pixel': True},
+            )
+        )
+        self._compute(plotter)
+
+        (image,) = plotter.get_cached_state()
+        np.testing.assert_array_equal(
+            image.dimension_values(2, flat=False), [[1.0, 2.0], [3.0, 4.0]]
+        )
+
+
 class TestDataPrecedingAxisHistory:
     """Points without a known axis value are excluded, consistently over time."""
 

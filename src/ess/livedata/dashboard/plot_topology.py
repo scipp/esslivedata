@@ -77,11 +77,16 @@ class DataSourceConfig:
     view. The backend pydantic field name (used in ``DataKey``) is
     resolved at subscription time from the view name plus the current
     window mode.
+
+    ``roi`` selects one ROI of a per-ROI output, whose values the layer then
+    plots as those of an output for that ROI alone (see
+    :mod:`~ess.livedata.dashboard.roi_selection`). None plots the output as is.
     """
 
     workflow_id: WorkflowId
     source_names: list[str]
     view_name: str = 'result'
+    roi: int | None = None
 
 
 @dataclass
