@@ -48,9 +48,11 @@ def _make_tbl_detectors() -> StreamLUT:
         InputStreamKey(
             topic='tbl_detector_3he', source_name='bank1'
         ): 'he3_detector_bank1',
+        # Source renamed tbl-ngem -> ngem; keep both until the old name is retired.
         InputStreamKey(
             topic='tbl_detector_ngem', source_name='tbl-ngem'
         ): 'ngem_detector',
+        InputStreamKey(topic='tbl_detector_ngem', source_name='ngem'): 'ngem_detector',
     }
 
 

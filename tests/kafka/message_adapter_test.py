@@ -663,6 +663,27 @@ class TestKafkaToEv44Adapter:
         assert result.value.time_of_flight == [123456]
         assert result.timestamp == Timestamp.from_ns(1234)
 
+    @pytest.mark.parametrize("source_name", ["old_name", "new_name"])
+    def test_several_input_keys_can_map_to_one_stream(self, source_name: str) -> None:
+        payload = eventdata_ev44.serialise_ev44(
+            source_name=source_name,
+            message_id=0,
+            reference_time=[1234],
+            reference_time_index=0,
+            time_of_flight=[1],
+            pixel_id=[1],
+        )
+        adapter = KafkaToEv44Adapter(
+            stream_kind=StreamKind.DETECTOR_EVENTS,
+            stream_lut={
+                InputStreamKey(topic="events", source_name="old_name"): "detector",
+                InputStreamKey(topic="events", source_name="new_name"): "detector",
+            },
+        )
+        result = adapter.adapt(FakeKafkaMessage(value=payload, topic="events"))
+
+        assert result.stream.name == "detector"
+
     def test_no_reference_time_uses_message_timestamp(self) -> None:
         """Test that when reference_time is empty, the message timestamp is used."""
         empty_ref_time_ev44 = eventdata_ev44.serialise_ev44(
