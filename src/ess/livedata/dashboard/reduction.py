@@ -1,6 +1,7 @@
 # SPDX-License-Identifier: BSD-3-Clause
 # Copyright (c) 2025 Scipp contributors (https://github.com/scipp)
 import argparse
+import os
 import threading
 import urllib.request
 from urllib.error import URLError
@@ -133,6 +134,8 @@ class ReductionApp(DashboardBase):
         auto_start: bool = False,
         collapsed_sidebar: bool = True,
         fetch_announcements: bool = True,
+        basic_auth_password: str | None = None,
+        basic_auth_cookie_secret: str | None = None,
         theme: str = DEFAULT_THEME.name,
         session_stale_timeout_seconds: float = DEFAULT_SESSION_STALE_TIMEOUT,
         unused_session_lifetime_seconds: float = DEFAULT_UNUSED_SESSION_LIFETIME,
@@ -147,6 +150,8 @@ class ReductionApp(DashboardBase):
             config_dir=config_dir,
             auto_start=auto_start,
             collapsed_sidebar=collapsed_sidebar,
+            basic_auth_password=basic_auth_password,
+            basic_auth_cookie_secret=basic_auth_cookie_secret,
             theme=theme,
             session_stale_timeout_seconds=session_stale_timeout_seconds,
             unused_session_lifetime_seconds=unused_session_lifetime_seconds,
@@ -308,6 +313,19 @@ def get_arg_parser() -> argparse.ArgumentParser:
         action='store_false',
         dest='fetch_announcements',
         help='Disable fetching announcements from external URL',
+    )
+    parser.add_argument(
+        '--basic-auth-password',
+        default=os.environ.get('LIVEDATA_BASIC_AUTH_PASSWORD'),
+        help='Password for basic authentication. '
+        'Any username will be accepted. '
+        'Can also be set via LIVEDATA_BASIC_AUTH_PASSWORD env var.',
+    )
+    parser.add_argument(
+        '--basic-auth-cookie-secret',
+        default=os.environ.get('LIVEDATA_BASIC_AUTH_COOKIE_SECRET'),
+        help='Cookie secret for basic authentication sessions. '
+        'Can also be set via LIVEDATA_BASIC_AUTH_COOKIE_SECRET env var.',
     )
     parser.add_argument(
         '--session-stale-timeout-seconds',
