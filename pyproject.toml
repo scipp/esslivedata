@@ -54,6 +54,7 @@ test = [
     "esslivedata[all-instruments]",
     # Same cap as in the dashboard extra (#1417).
     "bokeh>=3.9,<3.10",
+    "cryptography",
     "holoviews>=1.23.0",
     "panel>=1.9.3",
     "param",
@@ -101,6 +102,7 @@ dashboard = [
   # ``dashboard/bokeh_serialization.py`` also patches Bokeh 3.9 internals and
   # refuses to start on anything else.
   "bokeh>=3.9,<3.10",
+  "cryptography",
   "holoviews>=1.23.0",
   "panel>=1.9.3",
   "param",

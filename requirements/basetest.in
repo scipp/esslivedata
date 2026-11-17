@@ -14,6 +14,7 @@ esssans==26.6.0
 essnmx==26.6.0
 essimaging==26.10.0
 bokeh>=3.9,<3.10
+cryptography
 holoviews>=1.23.0
 panel>=1.9.3
 param
