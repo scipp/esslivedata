@@ -14,14 +14,17 @@ import structlog
 from .config import config_names
 from .config.config_loader import load_config
 from .core import MessageSink, Processor
-from .core.message import Message, MessageSource
+from .core.message import Message, MessageSource, StreamKind
 from .core.message_batcher import (
     AdaptiveMessageBatcher,
     MessageBatcher,
     SimpleMessageBatcher,
 )
 from .core.numba_threading import verify_numba_threading_layer
-from .core.orchestrating_processor import OrchestratingProcessor
+from .core.orchestrating_processor import (
+    DEFAULT_UNCLOCKED_KINDS,
+    OrchestratingProcessor,
+)
 from .core.preprocessor import PreprocessorFactory
 from .core.rate_aware_batcher import RateAwareMessageBatcher
 from .core.sciline_scheduler import (
@@ -66,6 +69,7 @@ class DataServiceBuilder[Traw, Tin, Tout]:
         job_threads: int = 5,
         stream_counter: StreamCounter | None = None,
         message_batcher: MessageBatcher | None = None,
+        unclocked_kinds: frozenset[StreamKind] = DEFAULT_UNCLOCKED_KINDS,
         outer_source_wrapper: Callable[
             [MessageSource[Message[Tin]]], MessageSource[Message[Tin]]
         ]
@@ -97,6 +101,9 @@ class DataServiceBuilder[Traw, Tin, Tout]:
             default is used.  Services that require a specific batcher should
             set this explicitly; otherwise ``DataServiceRunner`` will assign
             one based on its CLI argument.
+        unclocked_kinds:
+            Stream kinds that bypass the message batcher; see
+            :class:`OrchestratingProcessor`.
         outer_source_wrapper:
             Optional callable that wraps the (already-adapted) message source
             before it is handed to the processor. Used by services that need
@@ -115,6 +122,7 @@ class DataServiceBuilder[Traw, Tin, Tout]:
         self._job_threads = job_threads
         self._stream_counter = stream_counter
         self._message_batcher = message_batcher
+        self._unclocked_kinds = unclocked_kinds
         self._outer_source_wrapper = outer_source_wrapper
 
     @property
@@ -230,6 +238,7 @@ class DataServiceBuilder[Traw, Tin, Tout]:
             job_threads=self._job_threads,
             stream_stats_provider=self._stream_counter,
             message_batcher=self._message_batcher,
+            unclocked_kinds=self._unclocked_kinds,
         )
         sink.publish_messages(self._startup_messages)
         return Service(

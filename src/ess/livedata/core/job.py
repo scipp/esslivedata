@@ -148,6 +148,13 @@ class StreamLag:
     Lag is ``kafka_create_time - payload_timestamp`` in seconds: how stale a
     payload already was when the broker recorded it, isolating upstream producer
     staleness from this service's own consumption delay.
+
+    ``max_out_of_order_s`` is the largest distance by which a consumed payload
+    time lay behind the newest payload time consumed before it for the same
+    stream, and ``out_of_order_partition`` the Kafka partition of that message
+    (None if every message was in order).  A narrow lag range together with a
+    large out-of-order distance means the producer published in order and the
+    reordering happened during consumption, e.g. across partitions.
     """
 
     topic: str
@@ -156,6 +163,8 @@ class StreamLag:
     min_s: float
     max_s: float
     count: int
+    max_out_of_order_s: float
+    out_of_order_partition: int | None
 
 
 @dataclass(frozen=True, slots=True)

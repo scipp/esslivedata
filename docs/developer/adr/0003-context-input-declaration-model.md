@@ -1,6 +1,6 @@
 # ADR 0003: Unified declaration model for workflow context bindings
 
-- Status: accepted (amended 2026-08-31, 2026-09-02, 2026-09-10)
+- Status: accepted (amended 2026-08-31, 2026-09-02, 2026-09-10, 2026-11-06)
 - Deciders: Simon
 - Date: 2026-05-21
 
@@ -31,8 +31,8 @@ A standing constraint shapes the solution: the dashboard imports workflow `specs
 to generate UI, so `specs.py` must stay free of workflow-key imports — the dashboard
 must not depend on instrument-specific Sciline pipelines. The hard requirement is the
 absence of heavy science-package imports, but the rule is applied as written: even a
-dashboard-safe `workflow_key` (a `ValueLog` chain-patch marker, which subclasses a
-`config`-layer type) is declared in `factories.py`, co-located with the
+dashboard-safe `workflow_key` (at the time, a `ValueLog` chain-patch marker, which
+subclasses a `config`-layer type) is declared in `factories.py`, co-located with the
 `add_context_binding` that consumes it, rather than in `specs.py`.
 
 ### Param-dependent context — explicit non-goal
@@ -75,7 +75,8 @@ flavours share the record, discriminated by the *type* of `workflow_key`:
 - **Direct parameter.** `workflow_key` is an arbitrary Sciline key (e.g.
   `InstrumentAngle[SampleRun]`). The stream value is fed straight into
   `set_context`.
-- **NXtransformations chain patch.** `workflow_key` is a `ValueLog` subclass. The
+- **NXtransformations chain patch** (superseded 2026-11-06, see "Amendment 2026-11-06"
+  below). `workflow_key` is a `ValueLog` subclass. The
   value is patched into the NeXus `depends_on` chain rather than bound directly.
   `wire_dynamic_transforms` discovers these by
   `issubclass(workflow_key, ValueLog)`. The chain entry to patch is *derived* from
@@ -84,6 +85,9 @@ flavours share the record, discriminated by the *type* of `workflow_key`:
   the parsed stream definitions.
 
 ### Two declaration sites
+
+> **Amended 2026-11-06 (#1431).** Instrument scope no longer exists, see
+> "Amendment 2026-11-06" below.
 
 1. **`Instrument.add_context_binding(*, stream_name, dependent_sources, workflow_key)`**
    — source-scoped. Stored on `Instrument.context_bindings`. Used for instrument-property
@@ -124,6 +128,9 @@ user-selectable aux only — no context-flavoured entries, no `initial_context_m
 
 ### `skip_instrument_contexts` opt-out
 
+> **Superseded 2026-11-06 (#1431).** See "Amendment 2026-11-06" below. The section is
+> kept for the reasoning it records.
+
 Motion is a property of the *source*, but not every spec on that source consumes the
 geometry value (LOKI `tube_view`, bifrost `detector_ratemeter`, the bifrost detector
 view). Such a spec declares `SpecHandle.skip_instrument_contexts()`, which drops
@@ -142,6 +149,9 @@ forgotten `skip_instrument_contexts()` gates a workflow on a stream it never rea
 the workflow visibly never runs rather than producing wrong output.
 
 ### Chain patching
+
+> **Superseded 2026-11-06 (#1431).** See "Amendment 2026-11-06" below. The section is
+> kept for the reasoning it records.
 
 `ValueLog` lives in `config/value_log.py`, next to `ContextBinding`, so `config` does
 not import `preprocessors`. Each chain-patch binding declares its own `ValueLog` subclass,
@@ -164,6 +174,9 @@ free of any reference to the instrument's stream topology. The same seam works f
 detector-view factory and for a pre-built `LokiWorkflow()`.
 
 ### Routing pickup
+
+> **Superseded 2026-11-06 (#1431).** See "Amendment 2026-11-06" below. The section is
+> kept for the reasoning it records.
 
 Routing (the Kafka subscription set) is decided per *namespace* at service startup,
 ahead of any specific job, and may over-subscribe; the bandwidth cost of an unused
@@ -189,6 +202,9 @@ context handling is a `StreamProcessorWorkflow`-internal concern, opaque to `Job
 and `JobManager`.
 
 ## Alternatives considered
+
+> **Amended 2026-11-06 (#1431).** The motion rows below argue against options for
+> declaring motors. Motors are no longer declared, see "Amendment 2026-11-06" below.
 
 | Option | Notes |
 |---|---|
@@ -219,11 +235,19 @@ into `SpecHandle.add_context_binding` with no further machinery.
 
 ### Chain path derived, not declared
 
+> **Superseded 2026-11-06 (#1431).** See "Amendment 2026-11-06" below. The stream is now found from the
+> chain entry rather than the chain entry from a declared stream.
+
 The NeXus transformation-chain entry a chain-patch binding writes is derived from its
 `stream_name` via `Instrument.chain_patch_path`, so the f144 substream definition is the
 single source of truth and a binding cannot disagree with the stream it patches.
 
 ## Consequences
+
+> **Amended 2026-11-06 (#1431).** `ChainPatchBinding`, `ValueLog`,
+> `wire_dynamic_transforms`, `skip_instrument_contexts`, instrument-scope bindings and
+> `tests/config/motion_binding_test.py` no longer exist, see "Amendment 2026-11-06" below.
+> The bullets mentioning them are the original record.
 
 - `ContextBinding` lives in `config/stream.py` as a single concrete dataclass
   (`stream_name`, `workflow_key`, `dependent_sources`). Its resolved chain-patch
@@ -296,3 +320,52 @@ The `gating` field added in the 2026-08-31 amendment is replaced by `default`, w
 `NO_DEFAULT` unless set. `JobFactory.create` puts every matched binding in
 `Job.gating_streams` and passes the declared defaults as `Job.context_defaults`. The
 rationale is in the 2026-09-10 amendment of ADR 0002.
+
+## Amendment 2026-11-06: motors are read off the graph and the artifact
+
+Status: accepted (#1431, supersedes the proposal in #1445).
+
+Every instrument-scope binding in use was a chain patch, and declaring them had three
+costs: a hand-written copy of what the artifact's `depends_on` chains already say, one
+`ValueLog` subclass and a synthesised provider per motor to satisfy Sciline, and no way
+to name a component that is not a job input. The sample needed a reserved name, and
+BIFROST's analyzers would have needed another.
+
+essreduce now has `TransformationOverrides[Component, RunType]` (scipp/ess#858), a
+mapping from NeXus path to value that its chain providers apply. Nothing is declared
+any more:
+
+```python
+# StreamProcessorWorkflow.build, per job
+for TransformationOverrides[T, R] in the keys the targets require:
+    paths = empty NXlogs on the chains of NeXusComponent[T, R]
+    # job gates on the stream of each path, and fills the override from it
+```
+
+- **Graph and artifact decide.** Whether a job reads a chain can depend on its params
+  (LOKI I(Q) reads the transmission monitor's position only in `current_run` mode), and
+  which motors are on that chain is in the artifact. `dependent_sources` now means only
+  what a spec-scope binding means. `skip_instrument_contexts` lost its purpose.
+- **The overrides key is the context key.** `set_context` receives the merged dict of
+  one component type, so a readback recomputes only what depends on that type. One
+  dict per run would make every motor an ancestor of every chain.
+- **Instrument scope is gone.** `Instrument.add_context_binding` and
+  `Instrument.context_bindings` had no other users. A stream can fill a chain entry and
+  an offered or bound key in the same job, since the two no longer share a mapping.
+- **A key filled from a stream hides what only its provider reads.** The walk over the
+  graph ends at dynamic, context and offered keys, as `StreamProcessor` does, so a chain
+  read only by such a provider needs no motor. A job that also reads the chain past that
+  key is rejected at creation: the key's value could disagree with the chain.
+- **Routing.** Services subscribe to `Instrument.transform_streams`, read from the
+  artifact in `load_factories`. ADR 0009 keeps the stream table free of file access
+  because the dashboard has no file path at startup. That does not apply here: only
+  backend services derive routes, and they already read the artifact in
+  `load_factories`. Reading it also means the table and the artifact cannot disagree
+  about which streams are motors.
+- **No opt-out.** A motor on a chain a job reads always gates that job, so a motor that
+  never publishes holds the job in `pending_context`. This is deliberate: the job
+  cannot compute positions without it.
+
+A placeholder with no stream raises when the job is created. Providers reading a stored
+value directly rather than through the chain types ignore the overrides, see
+`TransformationOverrides`.

@@ -12,7 +12,7 @@ from ess.livedata.config.instrument import (
     InstrumentRegistry,
     SourceMetadata,
 )
-from ess.livedata.config.stream import NO_DEFAULT, ContextBinding, Device, F144Stream
+from ess.livedata.config.stream import NO_DEFAULT, F144Stream
 from ess.livedata.config.workflow_spec import (
     MONITORS,
     REDUCTION,
@@ -332,192 +332,6 @@ def _f144(name: str) -> F144Stream:
 
 
 class TestContextBindings:
-    def test_add_binding_records_entry(self):
-        instrument = Instrument(name='test', streams={'rot': _f144('rot')})
-
-        instrument.add_context_binding(
-            stream_name='rot',
-            workflow_key=_Key,
-            dependent_sources=['det1'],
-        )
-
-        binding = instrument.context_bindings[0]
-        assert binding.stream_name == 'rot'
-        assert binding.workflow_key is _Key
-        assert binding.dependent_sources == frozenset({'det1'})
-
-    def test_add_binding_rejects_unknown_stream(self):
-        instrument = Instrument(name='test', streams={'rot': _f144('rot')})
-
-        with pytest.raises(ValueError, match='unknown stream'):
-            instrument.add_context_binding(
-                stream_name='missing',
-                workflow_key=_Key,
-                dependent_sources=['det1'],
-            )
-
-    def test_constructor_validates_binding_stream_names(self):
-        bad = ContextBinding(
-            stream_name='missing',
-            workflow_key=_Key,
-            dependent_sources=frozenset({'det1'}),
-        )
-        with pytest.raises(ValueError, match='unknown stream'):
-            Instrument(name='test', context_bindings=[bad])
-
-    def test_add_binding_accepts_device_stream_target(self):
-        """A :class:`Device` entry in ``streams`` is a valid binding target.
-
-        Synthesised Device streams sit in ``streams`` alongside f144 entries
-        and are eligible binding targets via the same dict-membership check.
-        Bifrost relies on this to route ``InstrumentAngle``/``SampleAngle``
-        from merged device streams.
-        """
-        instrument = Instrument(
-            name='test',
-            streams={
-                'rot_rbv': _f144('rot_rbv'),
-                'rot_target': _f144('rot_target'),
-                'rot': Device(value='rot_rbv', target='rot_target', units='mm'),
-            },
-        )
-
-        instrument.add_context_binding(
-            stream_name='rot',
-            workflow_key=_Key,
-            dependent_sources=['det1'],
-        )
-
-        binding = instrument.context_bindings[0]
-        assert binding.stream_name == 'rot'
-        assert binding.workflow_key is _Key
-        assert binding.dependent_sources == frozenset({'det1'})
-
-    def test_validate_rejects_binding_with_unknown_dependent_source(self):
-        instrument = Instrument(
-            name='test', detector_names=['det1'], streams={'rot': _f144('rot')}
-        )
-        instrument.register_spec(
-            name='w',
-            version=1,
-            title='W',
-            source_names=['det1'],
-            outputs=SimpleTestOutputs,
-        )
-        instrument.add_context_binding(
-            stream_name='rot', workflow_key=_Key, dependent_sources=['det1', 'ghost']
-        )
-
-        with pytest.raises(ValueError, match='ghost'):
-            instrument.validate()
-
-    def test_validates_duplicate_value_log_subclass_across_bindings(self):
-        """Two chain-patch entries with different streams must not share a
-        :class:`ValueLog` subclass -- Sciline keys identify parameters by
-        class, so a shared key would silently merge two streams into one
-        Sciline node."""
-        from ess.livedata.config.value_log import ValueLog
-
-        class _SharedLog(ValueLog):
-            pass
-
-        instrument = Instrument(
-            name='test',
-            detector_names=['det1', 'det2'],
-            streams={'a': _f144('a'), 'b': _f144('b')},
-        )
-        instrument.register_spec(
-            name='w',
-            version=1,
-            title='W',
-            source_names=['det1', 'det2'],
-            outputs=SimpleTestOutputs,
-        )
-        instrument.add_context_binding(
-            stream_name='a',
-            dependent_sources=['det1'],
-            workflow_key=_SharedLog,
-        )
-        instrument.add_context_binding(
-            stream_name='b',
-            dependent_sources=['det2'],
-            workflow_key=_SharedLog,
-        )
-
-        with pytest.raises(ValueError, match=r'ValueLog subclass.*shared'):
-            instrument.validate()
-
-    def test_validates_chain_patch_stream_uniqueness(self):
-        """Two chain-patch entries for one stream must declare the same
-        :class:`ValueLog` subclass.
-
-        ``wire_dynamic_transforms`` indexes bindings by ``stream_name``
-        per component type; conflicting subclasses would silently collapse
-        with last-write-wins semantics.
-        """
-        from ess.livedata.config.value_log import ValueLog
-
-        class _LogA(ValueLog):
-            pass
-
-        class _LogB(ValueLog):
-            pass
-
-        instrument = Instrument(
-            name='test',
-            detector_names=['det1', 'det2'],
-            streams={'shared': _f144('shared')},
-        )
-        instrument.register_spec(
-            name='w',
-            version=1,
-            title='W',
-            source_names=['det1', 'det2'],
-            outputs=SimpleTestOutputs,
-        )
-        instrument.add_context_binding(
-            stream_name='shared',
-            dependent_sources=['det1'],
-            workflow_key=_LogA,
-        )
-        instrument.add_context_binding(
-            stream_name='shared',
-            dependent_sources=['det2'],
-            workflow_key=_LogB,
-        )
-        with pytest.raises(ValueError, match='conflicting chain-patch'):
-            instrument.validate()
-
-    def test_chain_patch_stream_allows_exact_duplicates(self):
-        """Repeated identical chain-patch declarations are not a conflict.
-
-        ``load_factories`` may be called multiple times in a long-lived
-        process or across tests; redundant ``add_context_binding`` calls with
-        matching ``workflow_key`` describe the same binding and must pass.
-        """
-        from ess.livedata.config.value_log import ValueLog
-
-        class _Log(ValueLog):
-            pass
-
-        instrument = Instrument(
-            name='test', detector_names=['det1'], streams={'s': _f144('s')}
-        )
-        instrument.register_spec(
-            name='w',
-            version=1,
-            title='W',
-            source_names=['det1'],
-            outputs=SimpleTestOutputs,
-        )
-        for _ in range(2):
-            instrument.add_context_binding(
-                stream_name='s',
-                dependent_sources=['det1'],
-                workflow_key=_Log,
-            )
-        instrument.validate()
-
     def test_validates_context_vs_aux_field_collision(self):
         """A context stream_name must not match any aux_sources field name.
 
@@ -531,7 +345,7 @@ class TestContextBindings:
         instrument = Instrument(
             name='test', detector_names=['det1'], streams={'rot': _f144('rot')}
         )
-        instrument.register_spec(
+        handle = instrument.register_spec(
             name='w',
             version=1,
             title='W',
@@ -541,67 +355,12 @@ class TestContextBindings:
                 {'rot': AuxInput(choices=('other',), default='other')}
             ),
         )
-        instrument.add_context_binding(
-            stream_name='rot', workflow_key=_Key, dependent_sources=['det1']
-        )
+        handle.add_context_binding(stream_name='rot', workflow_key=_Key)
 
         with pytest.raises(ValueError, match='aux_sources field'):
             instrument.validate()
 
-    def test_skip_instrument_contexts_suppresses_context_vs_aux_collision(self):
-        """``skip_instrument_contexts`` removes instrument-scope context for the
-        spec, so a matching aux field name does not collide for that spec."""
-        from ess.livedata.config.workflow_spec import AuxInput, AuxSources
-
-        instrument = Instrument(
-            name='test', detector_names=['det1'], streams={'rot': _f144('rot')}
-        )
-        handle = instrument.register_spec(
-            name='w',
-            version=1,
-            title='W',
-            source_names=['det1'],
-            outputs=SimpleTestOutputs,
-            aux_sources=AuxSources(
-                {'rot': AuxInput(choices=('other',), default='other')}
-            ),
-        )
-        instrument.add_context_binding(
-            stream_name='rot', workflow_key=_Key, dependent_sources=['det1']
-        )
-        handle.skip_instrument_contexts()
-
-        instrument.validate()
-
-    def test_validates_wire_name_collision_between_instrument_and_spec(self):
-        """Instrument- and spec-level ContextBinding entries must not name-collide.
-
-        Per ADR 0003 § "Validation": when both scopes apply to the same
-        (spec, source) pair and resolve to the same wire-stream name, the
-        ambiguity is a registration error.
-        """
-        instrument = Instrument(
-            name='test', detector_names=['det1'], streams={'rot': _f144('rot')}
-        )
-        handle = instrument.register_spec(
-            name='w',
-            version=1,
-            title='W',
-            source_names=['det1'],
-            outputs=SimpleTestOutputs,
-        )
-        instrument.add_context_binding(
-            stream_name='rot', workflow_key=_Key, dependent_sources=['det1']
-        )
-        handle.add_context_binding(stream_name='rot', workflow_key=_Key)
-
-        with pytest.raises(ValueError, match='collision'):
-            instrument.validate()
-
-    def test_no_collision_when_dependent_sources_disjoint(self):
-        """Same stream name on instrument and spec scope is fine when the sources
-        do not overlap -- the (spec, source) pair never sees both bindings.
-        """
+    def test_same_stream_on_disjoint_sources_is_not_a_conflict(self):
         instrument = Instrument(
             name='test', detector_names=['det1', 'det2'], streams={'rot': _f144('rot')}
         )
@@ -612,17 +371,16 @@ class TestContextBindings:
             source_names=['det1', 'det2'],
             outputs=SimpleTestOutputs,
         )
-        instrument.add_context_binding(
+        handle.add_context_binding(
             stream_name='rot', workflow_key=_Key, dependent_sources=['det1']
         )
         handle.add_context_binding(
             stream_name='rot', workflow_key=_Key, dependent_sources=['det2']
         )
 
-        # No exception.
         instrument.validate()
 
-    def test_declared_context_keys_matches_instrument_binding_by_source(self):
+    def test_declared_context_keys_matches_binding_by_source(self):
         instrument = Instrument(
             name='test', detector_names=['det1', 'det2'], streams={'rot': _f144('rot')}
         )
@@ -633,7 +391,7 @@ class TestContextBindings:
             source_names=['det1', 'det2'],
             outputs=SimpleTestOutputs,
         )
-        instrument.add_context_binding(
+        handle.add_context_binding(
             stream_name='rot', workflow_key=_Key, dependent_sources=['det1']
         )
 
@@ -642,7 +400,7 @@ class TestContextBindings:
         }
         assert instrument.bound_context_keys(handle.workflow_id, 'det2') == {}
 
-    def test_declared_context_keys_honours_skip_instrument_contexts(self):
+    def test_declared_context_keys_includes_spec_binding(self):
         instrument = Instrument(
             name='test', detector_names=['det1'], streams={'rot': _f144('rot')}
         )
@@ -653,25 +411,6 @@ class TestContextBindings:
             source_names=['det1'],
             outputs=SimpleTestOutputs,
         )
-        instrument.add_context_binding(
-            stream_name='rot', workflow_key=_Key, dependent_sources=['det1']
-        )
-        handle.skip_instrument_contexts()
-
-        assert instrument.bound_context_keys(handle.workflow_id, 'det1') == {}
-
-    def test_declared_context_keys_includes_spec_scope_binding(self):
-        instrument = Instrument(
-            name='test', detector_names=['det1'], streams={'rot': _f144('rot')}
-        )
-        handle = instrument.register_spec(
-            name='w',
-            version=1,
-            title='W',
-            source_names=['det1'],
-            outputs=SimpleTestOutputs,
-        )
-        handle.skip_instrument_contexts()
         handle.add_context_binding(stream_name='rot', workflow_key=_Key)
 
         assert instrument.bound_context_keys(handle.workflow_id, 'det1') == {
@@ -821,15 +560,16 @@ class TestOfferedContextStreams:
             'roi': None
         }
 
-    def test_instrument_binding_gates_and_declares_no_default(
+    def test_binding_without_default_gates_and_declares_none(
         self, spec_on_det1: tuple[Instrument, SpecHandle]
     ):
         instrument, handle = spec_on_det1
-        instrument.add_context_binding(
-            stream_name='rot', workflow_key=_Key, dependent_sources=['det1']
-        )
+        handle.add_context_binding(stream_name='rot', workflow_key=_Key)
 
-        assert instrument.context_bindings[0].default is NO_DEFAULT
+        (binding,) = instrument.workflow_factory.registration(
+            handle.workflow_id
+        ).context_bindings
+        assert binding.default is NO_DEFAULT
         assert instrument.bound_gating_streams(handle.workflow_id, 'det1') == {'rot'}
         assert instrument.bound_context_defaults(handle.workflow_id, 'det1') == {}
 

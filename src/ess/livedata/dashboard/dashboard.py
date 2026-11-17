@@ -5,14 +5,12 @@
 import logging
 from abc import ABC, abstractmethod
 from contextlib import ExitStack
-from html import escape
 from pathlib import Path
 
 import panel as pn
 
 from ess.livedata import ServiceBase, __version__, format_version
 
-from .auth import configure_auth, get_login_endpoint
 from .config_store import ConfigStoreManager
 from .dashboard_services import (
     DEFAULT_SESSION_STALE_TIMEOUT,
@@ -22,10 +20,12 @@ from .design import LivedataDesign
 from .fake_backend import FakeBackendTransport
 from .kafka_transport import DashboardKafkaTransport
 from .loop_monitor import start_loop_monitor
+from .session_paused import SESSION_PAUSED_PATH, SessionPausedHandler
 from .session_registry import SessionId
 from .session_updater import SessionUpdater
 from .theme import DEFAULT_THEME, THEMES, Theme
 from .transport import NullTransport, Transport
+from .widgets.heartbeat_widget import DEFAULT_HIDDEN_TAB_GRACE
 from .widgets.styles import PhoneLayout
 
 # Bokeh's own reaper, distinct from the registry's: seconds an unused Bokeh
@@ -36,6 +36,7 @@ DEFAULT_UNUSED_SESSION_LIFETIME = 15.0
 pn.config.throttled = True
 
 _TEMPLATES_DIR = Path(__file__).parent / 'templates'
+_LOGIN_TEMPLATE = str(_TEMPLATES_DIR / 'login.html')
 _LOGOUT_TEMPLATE = str(_TEMPLATES_DIR / 'logout.html')
 
 
@@ -103,9 +104,12 @@ class DashboardBase(ServiceBase, ABC):
         config_dir: str | None = None,
         auto_start: bool = False,
         collapsed_sidebar: bool = True,
+        basic_auth_password: str | None = None,
+        basic_auth_cookie_secret: str | None = None,
         theme: str = DEFAULT_THEME.name,
         session_stale_timeout_seconds: float = DEFAULT_SESSION_STALE_TIMEOUT,
         unused_session_lifetime_seconds: float = DEFAULT_UNUSED_SESSION_LIFETIME,
+        hidden_tab_grace_seconds: float = DEFAULT_HIDDEN_TAB_GRACE,
     ):
         if auto_start and transport != 'fake':
             raise ValueError(
@@ -119,8 +123,10 @@ class DashboardBase(ServiceBase, ABC):
         self._dev = dev
         self._auto_start = auto_start
         self._collapsed_sidebar = collapsed_sidebar
-        self._oauth_provider = configure_auth()
+        self._basic_auth_password = basic_auth_password
+        self._basic_auth_cookie_secret = basic_auth_cookie_secret
         self._unused_session_lifetime_seconds = unused_session_lifetime_seconds
+        self._hidden_tab_grace_seconds = hidden_tab_grace_seconds
         if theme not in THEMES:
             raise ValueError(f"Unknown theme {theme!r}; expected one of {[*THEMES]}")
         self._theme = THEMES[theme]
@@ -219,6 +225,7 @@ class DashboardBase(ServiceBase, ABC):
             username=pn.state.user,
             document=pn.state.curdoc,
             wakeup_hub=self._services.wakeup_hub,
+            hidden_tab_grace_seconds=self._hidden_tab_grace_seconds,
         )
 
     def _start_periodic_callback(
@@ -272,12 +279,9 @@ class DashboardBase(ServiceBase, ABC):
         self._logger.info("Periodic updates started for session %s", session_id)
 
     def _create_logout_header(self) -> list[pn.viewable.Viewable]:
-        """Create the current user and a logout button for the header."""
-        username = escape(pn.state.user or '')
+        """Create a logout button for the header when auth is enabled."""
         logout_link = pn.pane.HTML(
-            f"""<div style="text-align: right; padding-right: 8px;">
-            <span style="color: white; font-size: 13px; margin-right: 12px;"
-            >{username}</span>
+            """<div style="text-align: right; padding-right: 8px;">
             <a href="/logout" style="
                 color: white;
                 text-decoration: none;
@@ -355,7 +359,7 @@ class DashboardBase(ServiceBase, ABC):
             session_updater.heartbeat_widget,
         )
 
-        header = self._create_logout_header() if self._oauth_provider else []
+        header = self._create_logout_header() if self._basic_auth_password else []
 
         template = pn.template.MaterialTemplate(
             title=self.get_dashboard_title(),
@@ -459,8 +463,9 @@ class DashboardBase(ServiceBase, ABC):
                 show=False,
                 autoreload=self._dev,
                 dev=self._dev,
-                oauth_provider=self._oauth_provider,
-                login_endpoint=get_login_endpoint(),
+                basic_auth=self._basic_auth_password,
+                cookie_secret=self._basic_auth_cookie_secret,
+                login_template=_LOGIN_TEMPLATE,
                 logout_template=_LOGOUT_TEMPLATE,
                 # Bokeh discards a session once its last connection has been
                 # gone this long, which is what releases the document. It polls
@@ -471,6 +476,7 @@ class DashboardBase(ServiceBase, ABC):
                 check_unused_sessions_milliseconds=int(
                     self._unused_session_lifetime_seconds * 1000
                 ),
+                extra_patterns=[(f'/{SESSION_PAUSED_PATH}', SessionPausedHandler)],
             )
         except KeyboardInterrupt:
             self._logger.info("Keyboard interrupt received, shutting down...")

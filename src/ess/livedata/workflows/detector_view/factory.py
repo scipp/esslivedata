@@ -32,6 +32,7 @@ from .data_source import DetectorDataSource, DetectorNumberSource
 from .providers import spectrum_view
 from .types import (
     DETECTOR_TRANSFORM,
+    SAMPLE_POSITION,
     AccumulatedHistogram,
     CountsInRange,
     CountsTotal,
@@ -237,14 +238,15 @@ class DetectorViewFactory:
         # move mixes incompatible geometries (geometric views shift screen bins;
         # wavelength views shift the per-pixel wavelength calibration). The coord is
         # stamped only for file-based sources, so this is a no-op for file-less
-        # logical TOA views, which stay valid across a move.
+        # logical TOA views, which stay valid across a move. Wavelength views reset
+        # on a sample move too, since it shifts Ltotal of every pixel.
         #
         # Reset it likewise when a downsampled detector's source resolution changes:
         # the target grid is unchanged, but counts remapped with a different stride
         # land in different pixels. Stamped only by DownsamplePixelIds, so this is a
         # no-op for detectors ingested at full resolution.
         cumulative, window = make_no_copy_accumulator_pair(
-            reset_coords=(DETECTOR_TRANSFORM, SOURCE_RESOLUTION)
+            reset_coords=(DETECTOR_TRANSFORM, SAMPLE_POSITION, SOURCE_RESOLUTION)
         )
         return StreamProcessorWorkflow(
             workflow,

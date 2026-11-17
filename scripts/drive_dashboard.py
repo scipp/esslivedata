@@ -456,7 +456,9 @@ class FakeDashboard:
 
 
 def _timeout_args(
-    stale_timeout_seconds: float | None, unused_lifetime_seconds: float | None
+    stale_timeout_seconds: float | None,
+    unused_lifetime_seconds: float | None,
+    hidden_tab_grace_seconds: float | None,
 ) -> list[str]:
     """Server flags for the session reapers, omitting whichever is left default."""
     args = []
@@ -464,6 +466,8 @@ def _timeout_args(
         args += ["--session-stale-timeout-seconds", str(stale_timeout_seconds)]
     if unused_lifetime_seconds is not None:
         args += ["--unused-session-lifetime-seconds", str(unused_lifetime_seconds)]
+    if hidden_tab_grace_seconds is not None:
+        args += ["--hidden-tab-grace-seconds", str(hidden_tab_grace_seconds)]
     return args
 
 
@@ -474,6 +478,7 @@ def _fake_dashboard(
     *,
     session_stale_timeout_seconds: float | None = None,
     unused_session_lifetime_seconds: float | None = None,
+    hidden_tab_grace_seconds: float | None = None,
 ):
     """Launch a Kafka-free fake-backend dashboard seeded from the fixture.
 
@@ -501,6 +506,9 @@ def _fake_dashboard(
         a fresh session takes to get its websocket up: Bokeh starts the clock at
         session creation, so a value under that reaps sessions before the browser
         ever connects.
+    hidden_tab_grace_seconds:
+        How long a hidden tab keeps sending heartbeats. Only for tests that
+        assert on a hidden tab being reaped.
     """
     fixture = REPO_ROOT / "tests/dashboard/ui_config_fixtures" / instrument
     if not fixture.is_dir():
@@ -541,6 +549,7 @@ def _fake_dashboard(
                     *_timeout_args(
                         session_stale_timeout_seconds,
                         unused_session_lifetime_seconds,
+                        hidden_tab_grace_seconds,
                     ),
                 ],
                 cwd=REPO_ROOT,

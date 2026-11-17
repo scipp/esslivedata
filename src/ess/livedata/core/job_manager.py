@@ -144,9 +144,9 @@ class JobFactory:
         """Build a Job from its workflow config.
 
         Validates the config's params, then collects the job's context streams
-        from both sides: the instrument- and spec-scope ``ContextBinding``
-        declarations matching this ``(spec, source)``, and the offered context
-        streams the built workflow turns out to request (ADR 0010). Together
+        from both sides: the spec-scope ``ContextBinding`` declarations matching
+        this ``(spec, source)``, and the offered context and motor streams the
+        built workflow turns out to request (ADRs 0003, 0010). Together
         they populate the job's ``context_keys`` (wired into ``set_context``)
         and ``gating_streams`` (the JobManager gates the job until each is
         available; see ADR 0002).
@@ -180,17 +180,13 @@ class JobFactory:
         aux_streams = {**rendered_aux_names, **{name: name for name in context_keys}}
 
         # Note that this initializes the job immediately, i.e., we pay startup cost now.
-        # ``chain_patch_bindings`` carries the instrument-scope dynamic
-        # (f144-driven) transforms; ``create`` wires them into the workflow's
-        # pipeline before it is built, deriving the component mapping from the
-        # workflow's own dynamic_keys (see dynamic_transforms.wire_dynamic_transforms).
         stream_processor = factory.create(
             source_name=job_id.source_name,
             config=config,
             params=params,
             aux_source_names=aux_streams,
             context_keys=context_keys,
-            chain_patch_bindings=self._instrument.chain_patch_bindings,
+            transform_streams=self._instrument.transform_streams,
             offered_context_streams=self._instrument.offered_context_streams,
         )
         # Offered context streams reach every job; only the built graph knows

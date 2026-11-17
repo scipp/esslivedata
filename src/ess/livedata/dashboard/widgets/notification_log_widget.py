@@ -4,7 +4,7 @@
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from datetime import datetime
 from typing import ClassVar
 
 import panel as pn
@@ -14,6 +14,7 @@ from ess.livedata.dashboard.notification_queue import (
     NotificationType,
 )
 
+from ..facility_time import FACILITY_TIMEZONE
 from .styles import Colors, StatusColors
 
 _BADGE_COLORS: dict[NotificationType, str] = {
@@ -69,7 +70,7 @@ class NotificationLogWidget:
         for event in display_events:
             color = _BADGE_COLORS.get(event.notification_type, StatusColors.INFO)
             label = event.notification_type.value.upper()
-            ts = datetime.fromtimestamp(event.timestamp, tz=UTC)
+            ts = datetime.fromtimestamp(event.timestamp, tz=FACILITY_TIMEZONE)
             time_str = ts.strftime("%H:%M:%S")
 
             badge = (
