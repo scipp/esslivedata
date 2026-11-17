@@ -240,7 +240,7 @@ Each browser session creates a `SessionUpdater` (see `dashboard/session_updater.
 - Runs custom handlers (plot updates, status widgets) in the correct session/document context
 - Batches all UI operations using `pn.io.hold()` + `doc.models.freeze()`
 
-`SessionRegistry` (see `dashboard/session_registry.py`) tracks active sessions with heartbeat-based stale detection. Sessions are cleaned up when `pn.state.on_session_destroyed()` fires, or after a heartbeat timeout (defense-in-depth for browser crashes).
+`SessionRegistry` (see `dashboard/session_registry.py`) tracks active sessions with heartbeat-based stale detection. Sessions are cleaned up when `pn.state.on_session_destroyed()` fires, or after a heartbeat timeout. The timeout covers two cases: a browser that vanished without `on_session_destroyed` firing, and a tab hidden for longer than `--hidden-tab-grace-seconds`, which stops its heartbeat on purpose so that a hidden tab costs the server nothing. In the second case the websocket is still open, so the reaper tells the browser to leave for the static `/session-paused` page (see `dashboard/session_paused.py`). That page reloads the dashboard URL into a new session once the tab is shown. The active tab is kept in the `?tab=` query parameter, so the new session opens on it.
 
 ## Configuration Adapters
 

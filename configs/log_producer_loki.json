@@ -12,6 +12,105 @@
             "ramp_seconds": 3.0
         },
         {
+            "label": "Monitor m2 position (mm)",
+            "min": -500.0,
+            "max": 500.0,
+            "step": 1.0,
+            "initial": 0.0,
+            "value_stream": "beam_monitor_m2_positioner/value",
+            "target_stream": "beam_monitor_m2_positioner/target_value",
+            "idle_stream": "beam_monitor_m2_positioner/idle_flag",
+            "ramp_seconds": 3.0
+        },
+        {
+            "label": "Monitor m3 position (mm)",
+            "min": -500.0,
+            "max": 500.0,
+            "step": 1.0,
+            "initial": 0.0,
+            "value_stream": "beam_monitor_m3_positioner/value",
+            "target_stream": "beam_monitor_m3_positioner/target_value",
+            "idle_stream": "beam_monitor_m3_positioner/idle_flag",
+            "ramp_seconds": 3.0
+        },
+        {
+            "label": "Beam stop 1 y (mm)",
+            "min": -500.0,
+            "max": 500.0,
+            "step": 1.0,
+            "initial": 0.0,
+            "value_stream": "beamstop_y1/value",
+            "target_stream": "beamstop_y1/target_value",
+            "idle_stream": "beamstop_y1/idle_flag",
+            "ramp_seconds": 3.0
+        },
+        {
+            "label": "Beam stop x (mm)",
+            "min": -500.0,
+            "max": 500.0,
+            "step": 1.0,
+            "initial": 0.0,
+            "value_stream": "beamstop_x/value",
+            "target_stream": "beamstop_x/target_value",
+            "idle_stream": "beamstop_x/idle_flag",
+            "ramp_seconds": 3.0
+        },
+        {
+            "label": "Beam stop z (mm)",
+            "min": -500.0,
+            "max": 500.0,
+            "step": 1.0,
+            "initial": 0.0,
+            "value_stream": "beamstop_z/value",
+            "target_stream": "beamstop_z/target_value",
+            "idle_stream": "beamstop_z/idle_flag",
+            "ramp_seconds": 3.0
+        },
+        {
+            "label": "Linear sample changer (mm)",
+            "min": -500.0,
+            "max": 500.0,
+            "step": 1.0,
+            "initial": 0.0,
+            "value_stream": "linear_sample_changer/value",
+            "target_stream": "linear_sample_changer/target_value",
+            "idle_stream": "linear_sample_changer/idle_flag",
+            "ramp_seconds": 3.0
+        },
+        {
+            "label": "Sample stack x (mm)",
+            "min": -500.0,
+            "max": 500.0,
+            "step": 1.0,
+            "initial": 0.0,
+            "value_stream": "sample_stack_x/value",
+            "target_stream": "sample_stack_x/target_value",
+            "idle_stream": "sample_stack_x/idle_flag",
+            "ramp_seconds": 3.0
+        },
+        {
+            "label": "Sample stack y (mm)",
+            "min": -500.0,
+            "max": 500.0,
+            "step": 1.0,
+            "initial": 0.0,
+            "value_stream": "sample_stack_y/value",
+            "target_stream": "sample_stack_y/target_value",
+            "idle_stream": "sample_stack_y/idle_flag",
+            "ramp_seconds": 3.0
+        },
+        {
+            "label": "Sample stack z (mm)",
+            "min": -500.0,
+            "max": 500.0,
+            "step": 1.0,
+            "initial": 0.0,
+            "value_stream": "sample_stack_z/value",
+            "target_stream": "sample_stack_z/target_value",
+            "idle_stream": "sample_stack_z/idle_flag",
+            "ramp_seconds": 3.0
+        },
+        {
             "stream_name": "bw_chopper1/rotation_speed_setpoint",
             "label": "BW chopper 1 speed setpoint (Hz)",
             "min": 7.0,

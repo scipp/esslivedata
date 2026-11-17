@@ -327,7 +327,8 @@ def make_monitor_workflow_factory(instrument: Instrument) -> Callable[..., Any]:
     serves any spec whose params subclass :class:`MonitorDataParamsBase`,
     including the TOA-only restricted variant. In wavelength mode it passes the
     instrument's geometry file, which the monitor needs for ``Ltotal``; TOA mode
-    loads no file.
+    loads no file. Wavelength mode is refused for a monitor the lookup table does
+    not cover.
 
     The returned function is defined here so its params type hint can be
     resolved by the workflow factory registration system.
@@ -337,6 +338,15 @@ def make_monitor_workflow_factory(instrument: Instrument) -> Callable[..., Any]:
         from .monitor_workflow import create_monitor_workflow
 
         mode = params.get_coordinate_mode()
+        if mode == 'wavelength' and source_name not in instrument.lut_components:
+            # The monitor table has no block for it, so the job would open its gate
+            # and then fail at every recompute; fail here instead.
+            raise ValueError(
+                f"Monitor {source_name!r} has no streamed lookup table, so it cannot "
+                "be used in wavelength mode. Either the instrument publishes no "
+                "table, or the monitor's flight-path range cannot be derived from "
+                "the geometry artifact (undeclared motion axis)."
+            )
         return create_monitor_workflow(
             source_name=source_name,
             edges=params.get_active_edges(),

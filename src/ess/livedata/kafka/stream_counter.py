@@ -16,6 +16,7 @@ from ess.livedata.core.job import (
     StreamStat,
     StreamStats,
 )
+from ess.livedata.core.timestamp import Timestamp
 from ess.livedata.kafka.stream_mapping import InputStreamKey
 
 # EPICS PV field suffixes that are noise for reporting.
@@ -35,6 +36,8 @@ class _LagEntry:
     min_s: float
     max_s: float
     count: int
+    max_out_of_order_s: float = 0.0
+    out_of_order_partition: int | None = None
 
 
 class StreamCounter:
@@ -58,6 +61,10 @@ class StreamCounter:
         )
         self._out_of_scope = {(k.topic, k.source_name) for k in out_of_scope}
         self._lag: dict[tuple[str, str, str], _LagEntry] = {}
+        # Newest payload time consumed per stream. Kept across drains, so a
+        # message consumed just after a window rollover still compares against
+        # its predecessors.
+        self._newest: dict[tuple[str, str, str], Timestamp] = {}
         self._lag_warn_threshold_s = lag_warn_threshold_s
         self._lag_future_tolerance_s = lag_future_tolerance_s
 
@@ -80,23 +87,46 @@ class StreamCounter:
         entry.stream = stream
 
     def record_lag(
-        self, topic: str, source_name: str, schema: str, lag_s: float
+        self,
+        topic: str,
+        source_name: str,
+        schema: str,
+        lag_s: float,
+        *,
+        timestamp: Timestamp,
+        partition: int,
     ) -> None:
-        """Fold one message's lag into the current window.
+        """Fold one message's lag and consumption order into the current window.
 
-        Lag is ``kafka_create_time - payload_timestamp`` in seconds. Sources with
-        known EPICS noise suffixes are dropped, mirroring :meth:`record`.
+        Lag is ``kafka_create_time - payload_timestamp`` in seconds. The
+        consumption order is measured by how far ``timestamp`` lies behind the
+        newest payload time already consumed for the same stream; the window
+        keeps the largest such distance and the partition of that message.
+        A payload time ahead of the Kafka create time by more than the future
+        tolerance does not become the newest: it would make every later message
+        of the stream read as out of order.
+        Sources with known EPICS noise suffixes are dropped, mirroring
+        :meth:`record`.
         """
         if source_name.endswith(_IGNORED_SOURCE_SUFFIXES):
             return
         key = (topic, source_name, schema)
+        newest = self._newest.get(key)
+        out_of_order_s = 0.0
+        if newest is not None and timestamp <= newest:
+            out_of_order_s = (newest - timestamp).to_seconds()
+        elif lag_s >= -self._lag_future_tolerance_s:
+            self._newest[key] = timestamp
         entry = self._lag.get(key)
         if entry is None:
-            self._lag[key] = _LagEntry(min_s=lag_s, max_s=lag_s, count=1)
+            entry = self._lag[key] = _LagEntry(min_s=lag_s, max_s=lag_s, count=1)
         else:
             entry.min_s = min(entry.min_s, lag_s)
             entry.max_s = max(entry.max_s, lag_s)
             entry.count += 1
+        if out_of_order_s > entry.max_out_of_order_s:
+            entry.max_out_of_order_s = out_of_order_s
+            entry.out_of_order_partition = partition
 
     def drain(self, window_seconds: float) -> StreamStats:
         """Return accumulated counts and reset."""
@@ -131,6 +161,8 @@ class StreamCounter:
                 min_s=entry.min_s,
                 max_s=entry.max_s,
                 count=entry.count,
+                max_out_of_order_s=entry.max_out_of_order_s,
+                out_of_order_partition=entry.out_of_order_partition,
             )
             for (topic, source, schema), entry in sorted(self._lag.items())
         )

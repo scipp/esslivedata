@@ -27,8 +27,9 @@ from .dashboard import (
 from .dashboard_services import DEFAULT_SESSION_STALE_TIMEOUT
 from .session_updater import SessionUpdater
 from .theme import DEFAULT_THEME, THEMES
+from .widgets.heartbeat_widget import DEFAULT_HIDDEN_TAB_GRACE
 from .widgets.log_producer_widget import LogProducerWidget
-from .widgets.plot_grid_tabs import PlotGridTabs
+from .widgets.plot_grid_tabs import TAB_QUERY_PARAM, PlotGridTabs
 from .widgets.system_status_widget import SystemStatusWidget
 from .widgets.workflow_status_widget import WorkflowStatusListWidget
 
@@ -139,6 +140,7 @@ class ReductionApp(DashboardBase):
         theme: str = DEFAULT_THEME.name,
         session_stale_timeout_seconds: float = DEFAULT_SESSION_STALE_TIMEOUT,
         unused_session_lifetime_seconds: float = DEFAULT_UNUSED_SESSION_LIFETIME,
+        hidden_tab_grace_seconds: float = DEFAULT_HIDDEN_TAB_GRACE,
     ):
         super().__init__(
             instrument=instrument,
@@ -155,6 +157,7 @@ class ReductionApp(DashboardBase):
             theme=theme,
             session_stale_timeout_seconds=session_stale_timeout_seconds,
             unused_session_lifetime_seconds=unused_session_lifetime_seconds,
+            hidden_tab_grace_seconds=hidden_tab_grace_seconds,
         )
         self._fetch_announcements = fetch_announcements
         # Load (and validate) the NICOS derived-device contract once. Fails loud
@@ -223,6 +226,11 @@ class ReductionApp(DashboardBase):
             phone=phone,
             # ``?toolbars=hidden`` lets a screen be bookmarked with toolbars off.
             figure_toolbars=pn.state.session_args.get('toolbars') != [b'hidden'],
+            initial_tab=(
+                tab[0].decode(errors='replace')
+                if (tab := pn.state.session_args.get(TAB_QUERY_PARAM))
+                else None
+            ),
         )
 
         # PlotGridTabs registers its own two-tier teardown on the session
@@ -342,6 +350,16 @@ def get_arg_parser() -> argparse.ArgumentParser:
         help='Seconds Bokeh keeps a session with no connections left before '
         'dropping its document. Also the poll interval, so a closed session is '
         'released somewhere between one and two times this.',
+    )
+    parser.add_argument(
+        '--hidden-tab-grace-seconds',
+        type=float,
+        default=DEFAULT_HIDDEN_TAB_GRACE,
+        help='Seconds a browser tab may stay hidden before it stops sending '
+        'heartbeats. The session is then dropped after the stale timeout and '
+        'the tab reloads into a new session when shown again. Values above the '
+        'default are not honoured in Chrome, which throttles the heartbeat timer '
+        'of a tab hidden for five minutes.',
     )
     parser.add_argument(
         '--check',

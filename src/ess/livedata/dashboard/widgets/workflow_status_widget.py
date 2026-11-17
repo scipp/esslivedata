@@ -18,6 +18,7 @@ import html
 import json
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from typing import TYPE_CHECKING, ClassVar
 
 import panel as pn
@@ -31,6 +32,7 @@ from ..derived_devices import (
     all_devices,
     view_device_names,
 )
+from ..facility_time import FACILITY_TIMEZONE
 from ..format_utils import extract_error_summary
 from ..job_orchestrator import StoppedReason
 from ..notifications import show_error
@@ -884,11 +886,6 @@ class WorkflowStatusWidget:
             per_source_statuses). ``message_box`` carries the first backend error
             or, absent any error, the first backend warning message.
         """
-        # Deferred import: datetime is only needed for active workflows with
-        # a start_time, and importing at module level would add unnecessary
-        # startup cost for a rarely-used module.
-        from datetime import UTC, datetime
-
         active_job_number = self._orchestrator.get_active_job_number(self._workflow_id)
 
         if active_job_number is None:
@@ -996,7 +993,7 @@ class WorkflowStatusWidget:
         if earliest_start is None:
             timing_text = 'Starting...'
         else:
-            start_dt = earliest_start.to_datetime(tz=UTC)
+            start_dt = earliest_start.to_datetime(tz=FACILITY_TIMEZONE)
             now = datetime.now(tz=UTC)
             duration_secs = int((now - start_dt).total_seconds())
 

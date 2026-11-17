@@ -23,6 +23,28 @@
             "ramp_seconds": 2.0
         },
         {
+            "label": "Goniometer Upper (deg)",
+            "min": -10.0,
+            "max": 10.0,
+            "step": 0.1,
+            "initial": 0.0,
+            "value_stream": "goniometer_upper/value",
+            "target_stream": "goniometer_upper/target_value",
+            "idle_stream": "goniometer_upper/idle_flag",
+            "ramp_seconds": 2.0
+        },
+        {
+            "label": "Goniometer Lower (deg)",
+            "min": -10.0,
+            "max": 10.0,
+            "step": 0.1,
+            "initial": 0.0,
+            "value_stream": "goniometer_lower/value",
+            "target_stream": "goniometer_lower/target_value",
+            "idle_stream": "goniometer_lower/idle_flag",
+            "ramp_seconds": 2.0
+        },
+        {
             "stream_name": "pulse_shaping_chopper_1/rotation_speed_setpoint",
             "label": "PSC 1 speed setpoint (Hz)",
             "min": 14.0,

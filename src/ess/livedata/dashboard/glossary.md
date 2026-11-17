@@ -21,6 +21,10 @@ the disambiguation of overloaded words live in `src/ess/livedata/glossary.md`.
   (`dashboard/message_pump.py`): pulls from the transport's MessageSource,
   filters by active generation, writes into DataService, routes status and
   acknowledgements. Distinct from JobOrchestrator and PlotOrchestrator.
+- **Facility time** — wall-clock time in the facility's timezone
+  (`FACILITY_TIMEZONE_NAME`, `dashboard/facility_time.py`), the zone every
+  displayed time is shown in. Timestamps stay UTC everywhere else; the
+  conversion happens only when a time is formatted for display.
 
 ### Job and workflow lifecycle
 
@@ -158,8 +162,11 @@ From coarse to fine: **grid → cell → layer → plotter → presenter → fig
 - **Frame** (dashboard) / **FrameClock** — the frame-gated flush cycle batching
   plot updates per session (`dashboard/frame_clock.py`, ADR 0005). Unrelated to
   the neutron pulse-frame sense.
-- **Reaper** — background teardown of dead browser sessions off their own IOLoop
-  (`dashboard/session_updater.py`, ADR 0007).
+- **Reaper** — background teardown of browser sessions without a recent
+  heartbeat, off their own IOLoop (`dashboard/session_updater.py`, ADR 0007).
+  Such a session's browser has vanished, or its tab has been hidden for longer
+  than the grace and stopped its heartbeat; the latter is sent to the paused
+  page (`dashboard/session_paused.py`).
 
 ### Configuration and transport
 

@@ -142,6 +142,28 @@ def extract_stream_info(file_path: str | Path | h5py.File) -> list[StreamInfo]:
     return stream_infos
 
 
+def live_transform_paths(file_path: str | Path) -> set[str]:
+    """Return the paths of the motor-driven transforms in a geometry artifact.
+
+    The artifact holds such a transform as an empty NXlog carrying the
+    transformation attributes, written at the path of the f144 stream driving it.
+    """
+    paths = set()
+
+    def collect(name: str, node: h5py.Group | h5py.Dataset) -> None:
+        if (
+            'transformation_type' in node.attrs
+            and isinstance(node, h5py.Group)
+            and 'value' in node
+            and node['value'].size == 0
+        ):
+            paths.add(f'/{name}')
+
+    with h5py.File(file_path, 'r') as f:
+        f.visititems(collect)
+    return paths
+
+
 def filter_f144_streams(
     infos: list[StreamInfo],
     *,

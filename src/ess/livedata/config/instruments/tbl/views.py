@@ -7,6 +7,9 @@ These transforms are registered with the instrument via instrument.add_logical_v
 in specs.py.
 """
 
+import math
+
+import numpy as np
 import scipp as sc
 
 
@@ -42,6 +45,18 @@ def name_image_dims(da: sc.DataArray, source_name: str) -> sc.DataArray:
     return da.rename_dims({'dim_0': 'x', 'dim_1': 'y'})
 
 
+_MULTIBLADE_SIZES = {'blade': 14, 'wire': 32, 'strip': 64}
+#: Positional indices (0-based) along the ``detector_number`` dim that reverse blade
+#: and wire. These are array positions, not detector_number values, which start at 1;
+#: see get_multiblade_view.
+_MULTIBLADE_ORDER = (
+    np.arange(math.prod(_MULTIBLADE_SIZES.values()))
+    .reshape(tuple(_MULTIBLADE_SIZES.values()))[::-1, ::-1, :]
+    .ravel()
+    .tolist()
+)
+
+
 def get_multiblade_view(da: sc.DataArray, source_name: str) -> sc.DataArray:
     """Fold detector_number into blade, wire, and strip dimensions.
 
@@ -51,14 +66,42 @@ def get_multiblade_view(da: sc.DataArray, source_name: str) -> sc.DataArray:
     coordinates within a single plate.
 
     In the TBL vessel the plates are horizontal and stacked vertically: strips run
-    horizontally across the beam, wires roughly along it. ESTIA mounts the same
-    hardware rotated 90 degrees about the beam, and its geometry file enumerates
-    ``detector_number`` in a different order, so ``estia.views.get_multiblade_view``
-    folds with a different dimension order. Both orders were verified against their
-    geometry files (the fold that makes each pixel coordinate a function of exactly
-    one axis is unique); neither should be changed to match the other.
+    horizontally across the beam, wires roughly along it. The axes follow how the
+    instrument scientists describe the detector, looking along the beam: ``blade``
+    counts up from the bottom, ``wire`` runs downstream along the beam, and
+    ``strip`` runs from left to right. The geometry file numbers pixels with strip
+    fastest and blade slowest, but with blade 0 at the top and wire 0 at the
+    downstream end, so both are reversed here. NeXus x points left when looking
+    downstream, so strip 0, at +x, is already the leftmost strip. The geometry file
+    carries no rotation; this orientation is implicit in its pixel offsets.
+
+    Each cell of the view holds the pixel
+
+    .. code-block:: text
+
+        detector_number = 1 + 2048 * (13 - blade) + 64 * (31 - wire) + strip
+
+    and carries it as the ``detector_number`` coord.
+
+    The numbering is the geometry file's. It has not been checked against the
+    detector readout or against real neutron data, so a wiring that differs from
+    the file would show up here as a mirrored blade or wire axis.
+
+    ESTIA mounts the same hardware rotated 90 degrees about the beam, and its
+    geometry file enumerates ``detector_number`` in a different order, so
+    ``estia.views.get_multiblade_view`` folds with a different dimension order.
+    Both orders were verified against their geometry files (the fold that makes each
+    pixel coordinate a function of exactly one axis is unique); neither should be
+    changed to match the other.
     """
-    return da.fold(dim='detector_number', sizes={'blade': 14, 'wire': -1, 'strip': 64})
+    # Scipp has no negative slice step; one list index permutes all pixels at once.
+    # This runs on every batch and copies the events: about 2 ms per call, growing
+    # to about 10 ms at 10M events. Grouping the events in view order would avoid
+    # it, but the wavelength view takes pixel positions from the geometry file in
+    # file order, so the grouping order must stay the file's.
+    return da['detector_number', _MULTIBLADE_ORDER].fold(
+        dim='detector_number', sizes=_MULTIBLADE_SIZES
+    )
 
 
 def get_he3_detector_view(da: sc.DataArray, source_name: str) -> sc.DataArray:
@@ -90,5 +133,7 @@ def get_multiblade_spectrum(histogram: sc.DataArray) -> sc.DataArray:
     ~0.33 mm along that direction, more than ten times finer than the 4 mm strip
     pitch measured across a plate. Summing ``strip`` collapses the coarse axis and
     keeps that fine one, which is the resolution the Multi-Blade exists to provide.
+    In flattened ``(blade, wire)`` order the channels rise from bottom to top, except
+    at each blade boundary, where adjacent blades overlap by about 1.5 wires.
     """
     return histogram.sum('strip')

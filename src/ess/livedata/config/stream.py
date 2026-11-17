@@ -21,7 +21,7 @@ imported, not later.
 
 from __future__ import annotations
 
-from collections.abc import Iterable
+from collections.abc import Collection, Iterable, Mapping
 from dataclasses import dataclass
 from typing import Any
 
@@ -103,6 +103,48 @@ class Device(Stream):
         return tuple(s for s in (self.value, self.target, self.idle) if s is not None)
 
 
+def match_transform_streams(
+    streams: Mapping[str, Stream], paths: Collection[str]
+) -> dict[str, str]:
+    """Map each NeXus path to the name of the stream carrying its value.
+
+    A :class:`Device` carries the value of its RBV substream, whose ``nexus_path``
+    the geometry artifact uses for the chain entry. Its substreams are suppressed in
+    favour of the device stream and so cannot carry anything themselves.
+
+    Parameters
+    ----------
+    streams:
+        All streams of an instrument, by name.
+    paths:
+        The NeXus paths to match. A path no stream carries is left out.
+
+    Raises
+    ------
+    ValueError:
+        If two streams carry the same path.
+    """
+    devices = {n: s for n, s in streams.items() if isinstance(s, Device)}
+    suppressed = {name for d in devices.values() for name in d.substream_names}
+    candidates = [
+        *(
+            (name, stream.nexus_path)
+            for name, stream in streams.items()
+            if isinstance(stream, F144Stream) and name not in suppressed
+        ),
+        *((name, streams[d.value].nexus_path) for name, d in devices.items()),
+    ]
+    matched: dict[str, str] = {}
+    for name, path in candidates:
+        if path in paths:
+            if path in matched:
+                raise ValueError(
+                    f"Streams {matched[path]!r} and {name!r} both carry {path!r}."
+                )
+            matched[path] = name
+    return matched
+
+
 class _NoDefault:
     """Type of :data:`NO_DEFAULT`."""
 
@@ -130,27 +172,12 @@ class ContextBinding:
     ``InstrumentAngle[SampleRun]``) and Python's type system cannot
     describe "type of any Sciline key" precisely.
 
-    Two flavors share this record:
-
-    - **Direct parameter.** ``workflow_key`` is an arbitrary Sciline key
-      (e.g. ``InstrumentAngle[SampleRun]``). The stream value is fed
-      straight into ``set_context``.
-    - **NXtransformations chain patch.** ``workflow_key`` is a
-      :class:`~ess.livedata.config.value_log.ValueLog` subclass. The
-      chain entry to patch is derived from :attr:`stream_name` (the
-      RBV substream's ``nexus_path``) by
-      :meth:`Instrument.chain_patch_path`.
-      :attr:`Instrument.chain_patch_bindings` collects these bindings by
-      ``issubclass(workflow_key, ValueLog)`` and the wiring step synthesises
-      a fused per-component patched-chain provider.
-
-    The same record is declared at two scopes: instrument scope
-    (:meth:`Instrument.add_context_binding`, for source properties such as
-    motion) and spec scope
-    (:meth:`ess.livedata.workflows.workflow_factory.SpecHandle.add_context_binding`,
-    for context that is a property of one workflow). Both feed ``set_context``
-    and the gate; the wire name is always the declared :attr:`stream_name`,
-    and :attr:`default` is the only cold-start seed.
+    Declared per spec via
+    :meth:`ess.livedata.workflows.workflow_factory.SpecHandle.add_context_binding`.
+    The wire name is always the declared :attr:`stream_name`, and :attr:`default`
+    is the only cold-start seed. Motor readbacks need no binding: the job's graph
+    and the geometry artifact say which it reads (see
+    :meth:`ess.livedata.workflows.stream_processor_workflow.StreamProcessorWorkflow.build`).
 
     Bindings live in their own list rather than as a field on :class:`Stream`
     because :attr:`dependent_sources` and :attr:`workflow_key` are properties
@@ -213,26 +240,6 @@ class AxisRange:
     """Lowest value the axis takes."""
     upper: sc.Variable
     """Highest value the axis takes."""
-
-
-@dataclass(frozen=True, slots=True, kw_only=True)
-class ChainPatchBinding:
-    """A chain-patch :class:`ContextBinding` resolved for transform wiring.
-
-    Carries the binding's pre-resolved NeXus transform path (see
-    :meth:`ess.livedata.config.instrument.Instrument.chain_patch_path`)
-    alongside its :attr:`dependent_sources` and ``ValueLog`` ``workflow_key``.
-    Resolving the path up front lets the wiring step in
-    :mod:`ess.livedata.workflows.dynamic_transforms` run as a pure function of
-    this self-contained data, without re-consulting the instrument's stream
-    topology. The :attr:`stream_name` is retained as the dedup key when
-    grouping patches per component type.
-    """
-
-    stream_name: str
-    transform_path: str
-    workflow_key: Any
-    dependent_sources: frozenset[str]
 
 
 #: NeXus container groups that carry no entity-level meaning. Removed from the
