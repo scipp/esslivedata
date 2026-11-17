@@ -64,7 +64,7 @@ test = [
 ]
 beer = []
 bifrost = [
-    "essspectroscopy==26.11.1",
+    "essspectroscopy==26.11.2",
 ]
 dream = [
     "essdiffraction==26.10.0",
