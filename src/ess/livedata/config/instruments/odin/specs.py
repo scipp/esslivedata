@@ -28,17 +28,18 @@ TIMEPIX3_PANEL_RESOLUTION = 4096
 
 #: Choppers feeding the wavelength-LUT cascade, in beam order. The geometry
 #: artifact also holds a ``t0`` chopper, left out because that chopper does not
-#: exist yet; its NeXus entry is a placeholder on simulation PVs
-#: (``SIM_odin:instrument:t0:*``) that have never connected. The cascade fires
-#: only once every configured chopper has locked, so listing a device that
-#: cannot stream would hold the LUT permanently pending. Add it when the
-#: chopper is installed.
+#: exist yet; its NeXus entry is a placeholder on PVs that never connect
+#: (``ODIN:PLACEHOLDER:T0:*``). The cascade fires only once every configured
+#: chopper has locked, so listing a device that cannot stream would hold the LUT
+#: permanently pending. Add it when the chopper is installed.
 #:
 #: The artifact's ``wfm1``/``wfm2`` axle positions carry a hand repair: the run
-#: file chains their offsets onto an NXlog that streams 0 m, placing them
-#: downstream of the sample, so the artifact substitutes the static -60.5 m
-#: moderator position their offsets are measured from. Both are pending
-#: upstream fixes to the ODIN structure file.
+#: file chains their offsets (absolute: -53.725 / -53.275 m) onto an
+#: NXlog on the ``ODIN-ChpLin:MC-LinX-01:Mtr`` readback, which the generator
+#: trims to length 0, so the positions come out empty. The artifact ends both
+#: chains at the offset instead (``depends_on='.'``). The two positioners also
+#: read the same PV and ``make_f144_log_lut`` keys on (topic, source), so only
+#: one of the two streams would be fed were the chains live.
 ODIN_CHOPPERS = [
     'wfm1',
     'wfm2',
@@ -61,8 +62,8 @@ instrument = Instrument(
 
 instrument_registry.register(instrument)
 
-# TOA-only. Wavelength mode needs a flight path, which the geometry file does
-# not give for these monitors (#1346).
+# TOA-only. Wavelength mode needs a flight path. The geometry file places
+# beam_monitor_1..3, but no group is named monitor1 or monitor2 (#1346).
 register_monitor_workflow_specs(
     instrument, ['monitor1', 'monitor2'], params=TOAOnlyMonitorDataParams
 )
