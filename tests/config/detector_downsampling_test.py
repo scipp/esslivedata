@@ -43,7 +43,7 @@ class TestTargetGrid:
         assert grid.min().value == 0
         assert grid.max().value == 512 * 512 - 1
 
-    def test_does_not_depend_on_the_declared_grid(self) -> None:
+    def test_row_major_declared_grid_gives_the_no_file_default(self) -> None:
         assert sc.identical(resolve(square_grid(4096)).grid, resolve(None).grid)
 
     def test_follows_the_declared_enumeration_order(self) -> None:

@@ -57,7 +57,7 @@ class DetectorDownsampling:
     #: observed event ids, bounded by :attr:`max_resolution`.
     source_resolution: int | None
     #: Lowest event id the detector emits, taken from the declared grid.
-    #: Detectors differ: ODIN's Timepix3 counts from 0, TBL's from 1.
+    #: Detectors differ: TBL's Timepix3 and He3 banks count from 1.
     first_id: int
     #: The target grid itself, as a 2D ``detector_number``. Keeps the declared
     #: grid's dimension names and enumeration order, since it is the same
