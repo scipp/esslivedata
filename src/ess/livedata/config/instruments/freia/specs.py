@@ -4,10 +4,9 @@
 FREIA instrument spec registration.
 
 FREIA is a horizontal-sample reflectometer with a single Multi-Blade detector.
-Only geometry-free views are registered: the reference file places every
-component, the source included, at the origin, so neither a geometric projection
-nor a reduction workflow nor a wavelength lookup table has the positions it needs.
-See ``views`` for what the detector's pixel offsets do and do not tell us.
+Only logical views are registered; there is no geometry artifact, geometric
+projection, reduction workflow or wavelength lookup table yet. See ``views`` for
+how the detector's pixel offsets define the fold.
 """
 
 from ess.livedata.config import (
@@ -29,14 +28,11 @@ from .views import get_multiblade_view, get_spectrum_view
 detector_names = ['multiblade_detector']
 
 #: Inclusive ``detector_number`` range of the single bank, as in
-#: ``coda_freia_999999_00022031.hdf``. Stated here rather than derived from
+#: ``coda_freia_999999_00030110.hdf``. Stated here rather than derived from
 #: ``ess.freia``'s bank sizes, which specs may not import.
 detector_pixel_range = (1, 65536)
 
-#: Named after their NeXus groups, without the ``MISSING_ESSCONFIG_`` prefix the
-#: file writer puts on 4-6. Their Kafka source names upstream are
-#: ``monitor_<i>_events``, which no other instrument uses and which looks like a
-#: placeholder, so the PROD mapping assumes the conventional ``cbm<i>``.
+#: Named after their NeXus groups. Their Kafka source names are ``cbm1``..``cbm6``.
 monitor_names = [f'monitor_{i}' for i in range(1, 7)]
 
 streams = name_streams(filter_authorized_streams(PARSED_STREAMS))
@@ -59,7 +55,7 @@ register_monitor_workflow_specs(
 instrument.add_logical_view(
     name='freia_multiblade_detector_view',
     title='Multiblade Detector',
-    description='Counts folded into strip, blade, and wire dimensions',
+    description='Counts folded into blade, wire, and strip dimensions',
     source_names=detector_names,
     transform=get_multiblade_view,
     roi_support=False,

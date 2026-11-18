@@ -20,10 +20,10 @@ def _make_beer_detectors() -> StreamLUT:
     """BEER detector mapping for event detectors (ev44)."""
     return {
         InputStreamKey(
-            topic='beer_detector', source_name='detector_a'
+            topic='beer_detector_large1', source_name='detector_a'
         ): 'beer_detector_s2',
         InputStreamKey(
-            topic='beer_detector', source_name='detector_b'
+            topic='beer_detector_large2', source_name='detector_b'
         ): 'beer_detector_n2',
     }
 
