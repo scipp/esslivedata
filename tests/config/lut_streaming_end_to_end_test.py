@@ -893,15 +893,15 @@ def tbl_tables(tbl: Instrument) -> dict[str, sc.DataArray]:
 
 class TestTblWavelengthViews:
     """TBL's logical views take pixel positions from the geometry file in
-    wavelength mode; ``monitor_1`` is a histogram-mode (da00) monitor."""
+    wavelength mode; ``beam_monitor_1`` is a histogram-mode (da00) monitor."""
 
     @pytest.mark.parametrize(
         ('view', 'source_name'),
         [
-            ('he3_detector_view', 'he3_detector_bank0'),
-            ('he3_detector_view', 'he3_detector_bank1'),
-            ('multiblade_detector_view', 'multiblade_detector'),
-            ('ngem_detector_view', 'ngem_detector'),
+            ('he3_detector_view', 'he3_bank_0'),
+            ('he3_detector_view', 'he3_bank_1'),
+            ('multiblade_detector_view', 'multiblade'),
+            ('ngem_detector_view', 'ngem'),
         ],
     )
     def test_detector_view_reduces_to_wavelength(
@@ -940,6 +940,11 @@ class TestTblWavelengthViews:
         counts = result.data['counts_total_cumulative']
         assert counts.value > 0
 
+    @pytest.mark.xfail(
+        strict=True,
+        reason='#1474: beam_monitor_1 rides the live filter_changer_3 axis, whose '
+        'range is not known, so it has no lookup-table block.',
+    )
     def test_monitor_reduces_to_wavelength(
         self, tbl: Instrument, tbl_tables: dict[str, sc.DataArray]
     ) -> None:
@@ -947,7 +952,7 @@ class TestTblWavelengthViews:
         job = _create_job(
             tbl,
             'monitor_histogram',
-            'monitor_1',
+            'beam_monitor_1',
             params_model(coordinate_mode=CoordinateModeSettings(mode='wavelength')),
         )
         assert job.gating_streams == {MONITOR_STREAM}
@@ -960,7 +965,7 @@ class TestTblWavelengthViews:
         data = JobData(
             start_time=Timestamp.from_ns(0),
             end_time=Timestamp.from_ns(1),
-            primary_data={'monitor_1': histogram},
+            primary_data={'beam_monitor_1': histogram},
             aux_data={MONITOR_STREAM: tbl_tables[MONITOR_STREAM]},
         )
         reply, result = job.process(data, finalize=True)

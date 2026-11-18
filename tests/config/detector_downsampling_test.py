@@ -13,6 +13,16 @@ def square_grid(side: int, first_id: int = 0) -> sc.Variable:
     ).fold(dim='detector_number', sizes={'dim_0': side, 'dim_1': side})
 
 
+def transposed_square_grid(side: int, first_id: int = 0) -> sc.Variable:
+    """``d[i, j] = first_id + i + side * j``: the first dimension runs fastest."""
+    return (
+        sc.arange('detector_number', first_id, first_id + side * side, unit=None)
+        .fold(dim='detector_number', sizes={'dim_1': side, 'dim_0': side})
+        .transpose(['dim_0', 'dim_1'])
+        .copy()
+    )
+
+
 def resolve(
     declared: sc.Variable | None,
     *,
@@ -36,6 +46,15 @@ class TestTargetGrid:
     def test_does_not_depend_on_the_declared_grid(self) -> None:
         assert sc.identical(resolve(square_grid(4096)).grid, resolve(None).grid)
 
+    def test_follows_the_declared_enumeration_order(self) -> None:
+        # With the first dimension fastest, the coarse grid has to put the same
+        # dimension in the fast position for the remapped ids to land on the
+        # cell the file's own numbering assigns to the pixel.
+        grid = resolve(transposed_square_grid(4096, first_id=1)).grid
+        assert grid.dims == ('dim_0', 'dim_1')
+        assert grid['dim_0', 1]['dim_1', 0].value == 1
+        assert grid['dim_0', 0]['dim_1', 1].value == 512
+
     def test_keeps_the_declared_dimension_names(self) -> None:
         # The coarse grid is the same detector, so an instrument that names its
         # axes gets them back and needs no rename in its view transform.
@@ -51,6 +70,11 @@ class TestIdBase:
         # corrupts the inferred source resolution rather than merely shifting
         # the image, so the base is read rather than assumed.
         assert resolve(square_grid(4096, first_id=1)).first_id == 1
+
+    def test_is_taken_from_the_declared_grid_when_first_dimension_runs_fastest(
+        self,
+    ) -> None:
+        assert resolve(transposed_square_grid(4096, first_id=1)).first_id == 1
 
     def test_is_assumed_zero_with_a_warning_when_no_file_was_read(self) -> None:
         with capture_logs() as logs:
@@ -117,14 +141,25 @@ class TestDeclaredGridRejections:
         with pytest.raises(ValueError, match='at most'):
             resolve(square_grid(4096), source_resolution=2048)
 
-    def test_rejects_ids_that_are_not_row_major_contiguous(self) -> None:
-        # The remap inverts 'id = x * side + y'. A file enumerating the grid in
-        # any other order would scramble the image with nothing to notice it by.
-        with pytest.raises(ValueError, match='row-major'):
-            resolve(square_grid(1024).transpose().copy())
+    def test_rejects_ids_enumerated_per_tile(self) -> None:
+        # The remap inverts 'id = slow * side + fast'. A file enumerating the
+        # grid in any other order, here per 2x2 tile as a multi-chip panel
+        # might, would scramble the image with nothing to notice it by.
+        side = 1024
+        tiled = (
+            sc.arange('detector_number', side * side, unit=None)
+            .fold('detector_number', sizes={'i': side // 2, 'j': side // 2, 'k': 4})
+            .fold('k', sizes={'k0': 2, 'k1': 2})
+            .transpose(['i', 'k0', 'j', 'k1'])
+            .copy()
+            .flatten(['i', 'k0'], to='dim_0')
+            .flatten(['j', 'k1'], to='dim_1')
+        )
+        with pytest.raises(ValueError, match='contiguously'):
+            resolve(tiled)
 
     def test_rejects_ids_with_gaps(self) -> None:
         declared = square_grid(1024).copy()
         declared.values[3, 7] += 1_000_000
-        with pytest.raises(ValueError, match='row-major'):
+        with pytest.raises(ValueError, match='contiguously'):
             resolve(declared)

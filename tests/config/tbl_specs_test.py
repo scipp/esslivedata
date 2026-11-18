@@ -35,7 +35,7 @@ from ess.livedata.workflows.detector_view_specs import (
     make_detector_view_params,
 )
 
-# Shapes of the real TBL detectors, from geometry-tbl-2026-07-01.nxs.
+# Shapes of the real TBL detectors, from geometry-tbl-2026-11-18.nxs.
 MULTIBLADE_SIZES = {'blade': 14, 'wire': 32, 'strip': 64}
 HE3_SIZES = {'dim_0': 4, 'dim_1': 100}
 

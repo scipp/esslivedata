@@ -4,59 +4,59 @@
 # GENERATED -- do not edit. NICOS derived-device list for tbl.
 # Regenerate: python -m ess.livedata.config.device_contract
 devices:
-- device_name: monitor_1_counts_total
+- device_name: beam_monitor_1_counts_total
   workflow_id: tbl/monitor_histogram/1
-  source_name: monitor_1
+  source_name: beam_monitor_1
   output_name: counts_total_cumulative
-- device_name: monitor_1_histogram
+- device_name: beam_monitor_1_histogram
   workflow_id: tbl/monitor_histogram/1
-  source_name: monitor_1
+  source_name: beam_monitor_1
   output_name: cumulative
-- device_name: timepix3_detector_counts_total
+- device_name: timepix3_counts_total
   workflow_id: tbl/tbl_detector_timepix3/1
-  source_name: timepix3_detector
+  source_name: timepix3
   output_name: counts_total_cumulative
-- device_name: timepix3_detector_image
+- device_name: timepix3_image
   workflow_id: tbl/tbl_detector_timepix3/1
-  source_name: timepix3_detector
+  source_name: timepix3
   output_name: cumulative
-- device_name: multiblade_detector_counts_total
+- device_name: multiblade_counts_total
   workflow_id: tbl/multiblade_detector_view/1
-  source_name: multiblade_detector
+  source_name: multiblade
   output_name: counts_total_cumulative
-- device_name: multiblade_detector_image
+- device_name: multiblade_image
   workflow_id: tbl/multiblade_detector_view/1
-  source_name: multiblade_detector
+  source_name: multiblade
   output_name: cumulative
-- device_name: he3_detector_bank0_counts_total
+- device_name: he3_bank_0_counts_total
   workflow_id: tbl/he3_detector_view/1
-  source_name: he3_detector_bank0
+  source_name: he3_bank_0
   output_name: counts_total_cumulative
-- device_name: he3_detector_bank1_counts_total
+- device_name: he3_bank_1_counts_total
   workflow_id: tbl/he3_detector_view/1
-  source_name: he3_detector_bank1
+  source_name: he3_bank_1
   output_name: counts_total_cumulative
-- device_name: he3_detector_bank0_image
+- device_name: he3_bank_0_image
   workflow_id: tbl/he3_detector_view/1
-  source_name: he3_detector_bank0
+  source_name: he3_bank_0
   output_name: cumulative
-- device_name: he3_detector_bank1_image
+- device_name: he3_bank_1_image
   workflow_id: tbl/he3_detector_view/1
-  source_name: he3_detector_bank1
+  source_name: he3_bank_1
   output_name: cumulative
-- device_name: ngem_detector_counts_total
+- device_name: ngem_counts_total
   workflow_id: tbl/ngem_detector_view/1
-  source_name: ngem_detector
+  source_name: ngem
   output_name: counts_total_cumulative
-- device_name: ngem_detector_image
+- device_name: ngem_image
   workflow_id: tbl/ngem_detector_view/1
-  source_name: ngem_detector
+  source_name: ngem
   output_name: cumulative
-- device_name: orca_detector_counts_total
+- device_name: orca_counts_total
   workflow_id: tbl/tbl_area_detector_orca/1
-  source_name: orca_detector
+  source_name: orca
   output_name: counts_total_cumulative
-- device_name: orca_detector_image
+- device_name: orca_image
   workflow_id: tbl/tbl_area_detector_orca/1
-  source_name: orca_detector
+  source_name: orca
   output_name: cumulative

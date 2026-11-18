@@ -19,7 +19,7 @@ cells:
         workflow_id: tbl/multiblade_detector_view/1
         view_name: image
         source_names:
-        - multiblade_detector
+        - multiblade
     plot_name: flatten
     params:
       flatten:
@@ -42,7 +42,7 @@ cells:
         workflow_id: tbl/multiblade_detector_view/1
         view_name: spectrum_view
         source_names:
-        - multiblade_detector
+        - multiblade
     plot_name: flatten
     params:
       flatten:

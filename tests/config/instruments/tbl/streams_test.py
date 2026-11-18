@@ -12,7 +12,7 @@ from ess.livedata.kafka.message_adapter import FakeKafkaMessage, KafkaToEv44Adap
 
 
 @pytest.mark.parametrize('source_name', ['tbl-ngem', 'ngem'])
-def test_both_ngem_source_names_resolve_to_ngem_detector(source_name: str) -> None:
+def test_both_ngem_source_names_resolve_to_ngem(source_name: str) -> None:
     payload = eventdata_ev44.serialise_ev44(
         source_name=source_name,
         message_id=0,
@@ -26,4 +26,4 @@ def test_both_ngem_source_names_resolve_to_ngem_detector(source_name: str) -> No
         stream_lut=stream_mapping[StreamingEnv.PROD].detectors,
     )
     result = adapter.adapt(FakeKafkaMessage(value=payload, topic='tbl_detector_ngem'))
-    assert result.stream.name == 'ngem_detector'
+    assert result.stream.name == 'ngem'
