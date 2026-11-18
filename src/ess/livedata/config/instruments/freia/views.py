@@ -5,56 +5,51 @@ FREIA logical detector view transform functions.
 
 These transforms are registered with the instrument via instrument.add_logical_view()
 in specs.py.
-
-Detector geometry in the reference file
----------------------------------------
-
-What ``coda_freia_999999_00022031.hdf`` shows, and what it leaves open. Only the
-fold depends on this; nothing here consumes positions yet.
-
-- The multiblade detector has ``depends_on='.'`` and absolute pixel offsets:
-  x = 2.96..3.12 m, y = -0.126..0.126 m, z = 0.16..0.49 m. Every other
-  component (source, choppers, monitors) also sits at the origin, so the file
-  gives no beam axis or sample position to compare against.
-- Per step along each fold axis: ``strip`` moves 4 mm in y only; ``wire`` moves
-  -3.98 mm in x and -0.36 mm in z (along the inclined plate); ``blade`` moves
-  -1.1 mm in x and 10.2 mm in z. The fine transverse direction (0.36 mm per wire,
-  the one that resolves the scattering angle) is therefore z.
-- ESTIA's file, for the same hardware: ``strip`` along y, ``wire`` along z,
-  fine direction x, offsets centred on the origin and placed by a
-  ``detector_arm`` chain. FREIA's layout is ESTIA's rotated 90 degrees about y.
-- FREIA scatters vertically and ESTIA horizontally (``ess.freia`` computes
-  ``theta = asin(y)`` of the outgoing direction). In the NeXus frame (z along the
-  beam, y up) that difference would be a rotation about z, which would put
-  FREIA's fine direction along y. The file has it along z.
-
-It is not settled which frame the file uses. Read with x along the beam and z
-up, the detector would sit 3 m downstream and 3-9 degrees above the beam, which
-fits a vertical-scattering reflectometer, but nothing else in the file confirms
-that reading. Check this again when a file carries real component positions,
-before adding a geometric projection or a reduction workflow.
 """
 
 import scipp as sc
 
 
 def get_multiblade_view(da: sc.DataArray, source_name: str) -> sc.DataArray:
-    """Fold detector_number into strip, blade, and wire dimensions.
+    """Fold detector_number into blade, wire, and strip dimensions.
 
-    ``blade`` enumerates the inclined plates of the Multi-Blade cassette and runs
-    along the stacking direction; ``strip`` and ``wire`` are coordinates within a
-    single plate. See ``estia.views.get_multiblade_view`` for the same hardware
-    on ESTIA.
+    A Multi-Blade cassette is a stack of inclined plates, the blades. Each plate
+    carries 64 strips across it and 32 wires along it, so ``blade`` enumerates the
+    plates and runs along the stacking direction, while ``strip`` and ``wire`` are
+    coordinates within a single plate.
 
-    The sizes come from ``ess.freia``: 64 strips (slowest) x 32 blades x 32
-    wires (fastest), the same order as ESTIA. They agree with the pixel offsets
-    in ``coda_freia_999999_00022031.hdf``: ``y`` depends on ``strip`` alone, and
-    the in-plane coordinates are identical for every strip.
+    The geometry file numbers pixels with strip fastest (64), then wire (32), then
+    blade slowest (32). This was verified against the pixel offsets of
+    ``coda_freia_999999_00030110.hdf``: sorted by ``detector_number`` and reshaped
+    to (blade, wire, strip), each offset component depends on exactly the axes
+    listed, and on no others:
+
+    - x depends on ``strip`` only, -4 mm per step.
+    - y depends on ``blade`` (-10.9 mm per step) and ``wire`` (-0.57 mm per step).
+    - z depends on ``wire`` (-3.96 mm per step) and ``blade`` (about +0.5 mm per
+      step, from the blade inclination).
+
+    Strips therefore run horizontally across the plate, blades are stacked
+    vertically, and the wires run along the beam. The fine vertical direction that
+    resolves the scattering angle is carried by ``blade`` and ``wire`` together.
+    Blade 0 is at the top, wire 0 at the downstream end and strip 0 at +x. The view
+    keeps the file's order and orientation; unlike ``tbl.views.get_multiblade_view``
+    it does not reverse blade and wire, since no FREIA numbering convention has been
+    given.
+
+    The same hardware is folded the same way on TBL. ESTIA's geometry file numbers
+    pixels in the opposite order (strip slowest), see
+    ``estia.views.get_multiblade_view``. The order has to be checked against each
+    new geometry file: ``ess.freia`` 26.9.1 still folds with strip slowest, which
+    matches neither this file nor the previous one's pixel offsets.
+
+    The bank sizes come from ``ess.freia``; only their order is taken from the file.
     """
     from ess.freia.workflow import default_parameters
     from ess.reduce.nexus.types import DetectorBankSizes
 
-    sizes = default_parameters()[DetectorBankSizes][source_name]
+    bank_sizes = default_parameters()[DetectorBankSizes][source_name]
+    sizes = {dim: bank_sizes[dim] for dim in ('blade', 'wire', 'strip')}
     return da.fold(dim=da.dim, sizes=sizes)
 
 
@@ -63,8 +58,8 @@ def get_spectrum_view(histogram: sc.DataArray) -> sc.DataArray:
 
     A Multi-Blade detector on a reflectometer resolves the scattering angle
     along the fine blade/wire direction, and strips run across it, so each
-    (blade, wire) spectrum is at constant angle. This follows from the hardware,
-    not from the reference file, whose frame is unresolved (see the module
-    docstring).
+    (blade, wire) spectrum is at constant angle. In the pixel offsets of
+    ``coda_freia_999999_00030110.hdf`` the strip axis moves along x only, while
+    blade and wire move y and z.
     """
     return histogram.sum('strip')
