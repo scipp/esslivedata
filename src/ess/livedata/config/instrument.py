@@ -175,7 +175,6 @@ class Instrument:
     )
     _downsampling_cache: dict[str, DetectorDownsampling] = field(default_factory=dict)
     _nexus_file: str | None = None
-    _detector_group_names: dict[str, str] = field(default_factory=dict)
     _timeseries_workflow_handle: SpecHandle | None = field(default=None, init=False)
     _wavelength_lut_handle: SpecHandle | None = field(default=None, init=False)
     _logical_views: list[LogicalViewConfig] = field(default_factory=list, init=False)
@@ -417,15 +416,6 @@ class Instrument:
                 ) from e
         return self._nexus_file
 
-    def get_detector_group_name(self, name: str) -> str:
-        """
-        Get the group name for a detector, defaulting to the detector name.
-
-        If the NXdetector is inside an NXdetector_group, this returns the combination of
-        the group name and the detector name. Otherwise, just the detector name.
-        """
-        return self._detector_group_names.get(name, name)
-
     def configure_detector_downsampling(
         self,
         name: str,
@@ -527,8 +517,6 @@ class Instrument:
         self,
         name: str,
         detector_number: sc.Variable | None = None,
-        *,
-        detector_group_name: str | None = None,
     ) -> None:
         """
         Configure detector-specific metadata.
@@ -539,8 +527,6 @@ class Instrument:
             Name of the detector (must be in self.detector_names).
         detector_number
             Optional explicit detector_number array (e.g., computed arrays for NMX).
-        detector_group_name
-            Optional detector group name for nexus file loading.
         """
         if name not in self.detector_names:
             raise ValueError(
@@ -549,16 +535,12 @@ class Instrument:
             )
         if detector_number is not None:
             self._detector_numbers[name] = detector_number
-            return
-        if detector_group_name is not None:
-            group_name = f'{detector_group_name}/{name}'
-            self._detector_group_names[name] = group_name
 
     def _load_detector_from_nexus(self, name: str) -> None:
         """Load detector_number from nexus file."""
         candidate = snx.load(
             self.nexus_file,
-            root=f'entry/instrument/{self.get_detector_group_name(name)}/detector_number',
+            root=f'entry/instrument/{name}/detector_number',
         )
         if not isinstance(candidate, sc.Variable):
             raise ValueError(
