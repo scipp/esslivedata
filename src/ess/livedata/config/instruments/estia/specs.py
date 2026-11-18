@@ -193,12 +193,14 @@ streams = name_streams(filter_authorized_streams(PARSED_STREAMS))
 monitor_names = ['beam_monitor']
 
 #: The detector arm rotates about the sample, which leaves the flight path to
-#: every pixel unchanged, but the lookup-table range derivation refuses live
-#: rotations. The range is therefore declared; the table pads it by 1%, at least
-#: 0.1 m. The declared range is what the geometry artifact gives at any arm
-#: angle. The McStas geometry the reduction workflow uses puts the moderator
-#: 5 cm further upstream, so its flight paths are 51 mm longer, which the padding
-#: covers.
+#: every pixel unchanged. The sample and the detector also ride live axes (the
+#: hexapod, ``sample_rotation``, ``sample_lateral_adjustment``), and the
+#: lookup-table range derivation refuses live rotations. The range is therefore
+#: declared; the table pads it by 1%, at least 0.1 m. The declared range is what
+#: the geometry artifact gives at any arm angle, with the sample at the origin;
+#: sample motion of centimetres changes it by well under a millimetre. The McStas
+#: geometry the reduction workflow uses puts the moderator 5 cm further upstream,
+#: so its flight paths are 51 mm longer, which the padding covers.
 instrument = Instrument(
     name='estia',
     detector_names=detector_names,

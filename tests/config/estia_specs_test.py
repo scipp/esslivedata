@@ -3,6 +3,11 @@
 import pydantic
 import pytest
 import scipp as sc
+import scippnexus as snx
+from ess.reduce.nexus.types import Filename, NeXusName, SampleRun
+from ess.reduce.nexus.types import TransformationTimeFilter as TimeFilter
+from ess.reduce.unwrap import GenericUnwrapWorkflow
+from ess.reduce.unwrap.types import DetectorLtotal
 
 from ess.livedata import parameter_models
 from ess.livedata.config.instruments.estia.specs import (
@@ -10,7 +15,9 @@ from ess.livedata.config.instruments.estia.specs import (
     EstiaReflectometryReductionOutputs,
     EstiaReflectometryReductionParams,
     IndexLimits,
+    instrument,
 )
+from ess.livedata.preprocessors.detector_data import get_nexus_geometry_filename
 
 
 def test_estia_reflectometry_reduction_default_limits_match_previous_literals():
@@ -76,3 +83,28 @@ def test_estia_index_limits_reject_stop_less_than_start():
 def test_estia_beam_divergence_limits_reject_stop_less_than_start():
     with pytest.raises(pydantic.ValidationError, match='greater than start'):
         BeamDivergenceLimits(start=1.0, stop=0.0)
+
+
+@pytest.mark.parametrize('arm_angle', [-45.0, 0.0, 30.0, 90.0])
+def test_declared_detector_ltotal_covers_the_artifact_at_any_arm_angle(
+    arm_angle: float,
+) -> None:
+    """The detector arm rotates about the sample, so the declared flight path is
+    the artifact's own at every angle. The sample and the other live axes are
+    held at zero."""
+
+    def at_rest(transform: sc.DataArray) -> sc.Variable:
+        angle = sc.scalar(arm_angle, unit='deg')
+        zero = sc.scalar(0.0, unit=transform.unit)
+        return angle if transform.unit == 'deg' else zero
+
+    workflow = GenericUnwrapWorkflow(run_types=[SampleRun], monitor_types=[])
+    workflow[Filename[SampleRun]] = str(get_nexus_geometry_filename('estia'))
+    workflow[NeXusName[snx.NXdetector]] = 'multiblade_detector'
+    workflow[TimeFilter[snx.NXdetector, SampleRun]] = at_rest
+    workflow[TimeFilter[snx.NXsample, SampleRun]] = at_rest
+    ltotal = workflow.compute(DetectorLtotal[SampleRun]).to(unit='m')
+    low, high = instrument.declared_ltotal['multiblade_detector'].values
+
+    assert low == pytest.approx(ltotal.min().value, abs=1e-3)
+    assert high == pytest.approx(ltotal.max().value, abs=1e-3)

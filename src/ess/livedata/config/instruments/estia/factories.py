@@ -53,8 +53,9 @@ def setup_factories(instrument: Instrument) -> None:
         params: specs.EstiaReflectometryReductionParams,
     ) -> StreamProcessorWorkflow:
         wf = EstiaWorkflow()
-        # TODO: Replace this McStas file with the geometry artifact, which
-        # carries sample_rotation as a streamed log.
+        # TODO: Replace this McStas file with the geometry artifact. The
+        # artifact holds sample_rotation and the hexapod axes as empty
+        # streamed logs.
         wf[Filename[SampleRun]] = estia_data.estia_mcstas_nexus_sample_example(
             'Ni/Ti-multilayer'
         )[0]
