@@ -16,16 +16,16 @@ from .specs import instrument, monitor_names
 
 # Note: Panel size is fake and does not correspond to production setting
 detector_fakes = {
-    'timepix3_detector': (0, 4096**2 - 1),  # 0-based, unlike the banks below
-    'he3_detector_bank0': (1, 400),  # 4x100
-    'he3_detector_bank1': (401, 800),  # 4x100
-    'ngem_detector': (1, 2 * 128**2),
-    'multiblade_detector': (1, 14 * 64 * 32),
+    'timepix3': (1, 4096**2),
+    'he3_bank_0': (1, 400),  # 4x100
+    'he3_bank_1': (401, 800),  # 4x100
+    'ngem': (1, 2 * 128**2),
+    'multiblade': (1, 14 * 64 * 32),
 }
 
 # Area detector fakes: detector_name -> (height, width) shape
 # Actual size is 4096x4096 but that would require higher message size limits for dev
-area_detector_fakes = {'orca_detector': (512, 512)}
+area_detector_fakes = {'orca': (512, 512)}
 
 
 def _make_tbl_detectors() -> StreamLUT:
@@ -36,30 +36,20 @@ def _make_tbl_detectors() -> StreamLUT:
     https://confluence.ess.eu/display/ECDC/Kafka+Topics+Overview+for+Instruments
     """
     return {
-        InputStreamKey(
-            topic='tbl_detector_tpx3', source_name='timepix3'
-        ): 'timepix3_detector',
-        InputStreamKey(
-            topic='tbl_detector_mb', source_name='multiblade'
-        ): 'multiblade_detector',
-        InputStreamKey(
-            topic='tbl_detector_3he', source_name='bank0'
-        ): 'he3_detector_bank0',
-        InputStreamKey(
-            topic='tbl_detector_3he', source_name='bank1'
-        ): 'he3_detector_bank1',
-        InputStreamKey(
-            topic='tbl_detector_ngem', source_name='tbl-ngem'
-        ): 'ngem_detector',
+        InputStreamKey(topic='tbl_detector_tpx3', source_name='timepix3'): 'timepix3',
+        InputStreamKey(topic='tbl_detector_mb', source_name='multiblade'): 'multiblade',
+        InputStreamKey(topic='tbl_detector_3he', source_name='bank0'): 'he3_bank_0',
+        InputStreamKey(topic='tbl_detector_3he', source_name='bank1'): 'he3_bank_1',
+        # Source renamed tbl-ngem -> ngem; keep both until the old name is retired.
+        InputStreamKey(topic='tbl_detector_ngem', source_name='tbl-ngem'): 'ngem',
+        InputStreamKey(topic='tbl_detector_ngem', source_name='ngem'): 'ngem',
     }
 
 
 def _make_tbl_area_detectors() -> StreamLUT:
     """TBL area detector mapping for ad00 schema detectors."""
     return {
-        InputStreamKey(
-            topic='tbl_area_detector_orca', source_name='hama_kfk1'
-        ): 'orca_detector',
+        InputStreamKey(topic='tbl_area_detector_orca', source_name='hama_kfk1'): 'orca',
     }
 
 

@@ -5,7 +5,7 @@
 Do not edit by hand. Regenerate with
 ``python -m ess.livedata.nexus_helpers <geometry.nxs> --generate``.
 
-Source: coda_dream_999999_00003414.hdf
+Source: coda_dream_999999_00030108.hdf
 """
 
 from ess.livedata.config import F144Stream
@@ -23,6 +23,54 @@ PARSED_STREAMS: dict[str, F144Stream] = {
         topic='dream_choppers',
         units='ns',
     ),
+    '/entry/instrument/T0_chopper/in_phase': F144Stream(
+        nexus_path='/entry/instrument/T0_chopper/in_phase',
+        source='DREAM-ChpSy2:Chop-T0-101:InPhaseTS-R',
+        topic='dream_choppers',
+        units='dimensionless',
+    ),
+    '/entry/instrument/T0_chopper/mechanical_delay': F144Stream(
+        nexus_path='/entry/instrument/T0_chopper/mechanical_delay',
+        source='DREAM-ChpSy2:Chop-T0-101:MechDly-S',
+        topic='dream_choppers',
+        units='degrees',
+    ),
+    '/entry/instrument/T0_chopper/park_angle': F144Stream(
+        nexus_path='/entry/instrument/T0_chopper/park_angle',
+        source='DREAM-ChpSy2:Chop-T0-101:Pos_R',
+        topic='dream_choppers',
+        units='degrees',
+    ),
+    '/entry/instrument/T0_chopper/park_angle_setpoint': F144Stream(
+        nexus_path='/entry/instrument/T0_chopper/park_angle_setpoint',
+        source='DREAM-ChpSy2:Chop-T0-101:ParkS_RB',
+        topic='dream_choppers',
+        units='degrees',
+    ),
+    '/entry/instrument/T0_chopper/park_closed_angle': F144Stream(
+        nexus_path='/entry/instrument/T0_chopper/park_closed_angle',
+        source='DREAM:PLACEHOLDER:T0_chopper:park_closed_angle',
+        topic='dream_choppers',
+        units='degrees',
+    ),
+    '/entry/instrument/T0_chopper/park_open_angle': F144Stream(
+        nexus_path='/entry/instrument/T0_chopper/park_open_angle',
+        source='DREAM:PLACEHOLDER:T0_chopper:park_open_angle',
+        topic='dream_choppers',
+        units='degrees',
+    ),
+    '/entry/instrument/T0_chopper/park_position_setpoint': F144Stream(
+        nexus_path='/entry/instrument/T0_chopper/park_position_setpoint',
+        source='DREAM-ChpSy2:Chop-T0-101:ParkPos_S',
+        topic='dream_choppers',
+        units='dimensionless',
+    ),
+    '/entry/instrument/T0_chopper/park_status': F144Stream(
+        nexus_path='/entry/instrument/T0_chopper/park_status',
+        source='DREAM-ChpSy2:Chop-T0-101:ParkStatus_R',
+        topic='dream_choppers',
+        units='dimensionless',
+    ),
     '/entry/instrument/T0_chopper/pulse_delay': F144Stream(
         nexus_path='/entry/instrument/T0_chopper/pulse_delay',
         source='DREAM-ChpSy2:Chop-T0-101:BeamPosDly-S',
@@ -33,13 +81,19 @@ PARSED_STREAMS: dict[str, F144Stream] = {
         nexus_path='/entry/instrument/T0_chopper/rotation_speed',
         source='DREAM-ChpSy2:Chop-T0-101:Spd_R',
         topic='dream_choppers',
-        units='1/s',
+        units='Hz',
     ),
     '/entry/instrument/T0_chopper/rotation_speed_setpoint': F144Stream(
         nexus_path='/entry/instrument/T0_chopper/rotation_speed_setpoint',
         source='DREAM-ChpSy2:Chop-T0-101:Spd_S',
         topic='dream_choppers',
-        units='1/s',
+        units='Hz',
+    ),
+    '/entry/instrument/T0_chopper/status': F144Stream(
+        nexus_path='/entry/instrument/T0_chopper/status',
+        source='DREAM-ChpSy2:Chop-T0-101:ChopState_R',
+        topic='dream_choppers',
+        units='dimensionless',
     ),
     '/entry/instrument/band_chopper/delay': F144Stream(
         nexus_path='/entry/instrument/band_chopper/delay',
@@ -53,6 +107,48 @@ PARSED_STREAMS: dict[str, F144Stream] = {
         topic='dream_choppers',
         units='ns',
     ),
+    '/entry/instrument/band_chopper/in_phase': F144Stream(
+        nexus_path='/entry/instrument/band_chopper/in_phase',
+        source='DREAM-ChpSy1:Chop-BC-201:InPhaseTS-R',
+        topic='dream_choppers',
+        units='dimensionless',
+    ),
+    '/entry/instrument/band_chopper/mechanical_delay': F144Stream(
+        nexus_path='/entry/instrument/band_chopper/mechanical_delay',
+        source='DREAM-ChpSy1:Chop-BC-201:MechDly-S',
+        topic='dream_choppers',
+        units='degrees',
+    ),
+    '/entry/instrument/band_chopper/park_angle': F144Stream(
+        nexus_path='/entry/instrument/band_chopper/park_angle',
+        source='DREAM-ChpSy1:Chop-BC-201:Pos_R',
+        topic='dream_choppers',
+        units='degrees',
+    ),
+    '/entry/instrument/band_chopper/park_angle_setpoint': F144Stream(
+        nexus_path='/entry/instrument/band_chopper/park_angle_setpoint',
+        source='DREAM-ChpSy1:Chop-BC-201:ParkS_RB',
+        topic='dream_choppers',
+        units='degrees',
+    ),
+    '/entry/instrument/band_chopper/park_closed_angle': F144Stream(
+        nexus_path='/entry/instrument/band_chopper/park_closed_angle',
+        source='DREAM-ChpSy1:Chop-BC-201:ParkPosClose_R',
+        topic='dream_choppers',
+        units='degrees',
+    ),
+    '/entry/instrument/band_chopper/park_open_angle': F144Stream(
+        nexus_path='/entry/instrument/band_chopper/park_open_angle',
+        source='DREAM-ChpSy1:Chop-BC-201:ParkPosOpen_R',
+        topic='dream_choppers',
+        units='degrees',
+    ),
+    '/entry/instrument/band_chopper/park_status': F144Stream(
+        nexus_path='/entry/instrument/band_chopper/park_status',
+        source='DREAM-ChpSy1:Chop-BC-201:ParkStatus_R',
+        topic='dream_choppers',
+        units='dimensionless',
+    ),
     '/entry/instrument/band_chopper/pulse_delay': F144Stream(
         nexus_path='/entry/instrument/band_chopper/pulse_delay',
         source='DREAM-ChpSy1:Chop-BC-201:BeamPosDly-S',
@@ -63,13 +159,19 @@ PARSED_STREAMS: dict[str, F144Stream] = {
         nexus_path='/entry/instrument/band_chopper/rotation_speed',
         source='DREAM-ChpSy1:Chop-BC-201:Spd_R',
         topic='dream_choppers',
-        units='1/s',
+        units='Hz',
     ),
     '/entry/instrument/band_chopper/rotation_speed_setpoint': F144Stream(
         nexus_path='/entry/instrument/band_chopper/rotation_speed_setpoint',
         source='DREAM-ChpSy1:Chop-BC-201:Spd_S',
         topic='dream_choppers',
-        units='1/s',
+        units='Hz',
+    ),
+    '/entry/instrument/band_chopper/status': F144Stream(
+        nexus_path='/entry/instrument/band_chopper/status',
+        source='DREAM-ChpSy1:Chop-BC-201:ChopState_R',
+        topic='dream_choppers',
+        units='dimensionless',
     ),
     '/entry/instrument/overlap_chopper/delay': F144Stream(
         nexus_path='/entry/instrument/overlap_chopper/delay',
@@ -83,6 +185,48 @@ PARSED_STREAMS: dict[str, F144Stream] = {
         topic='dream_choppers',
         units='ns',
     ),
+    '/entry/instrument/overlap_chopper/in_phase': F144Stream(
+        nexus_path='/entry/instrument/overlap_chopper/in_phase',
+        source='DREAM-ChpSy1:Chop-OC-103:InPhaseTS-R',
+        topic='dream_choppers',
+        units='dimensionless',
+    ),
+    '/entry/instrument/overlap_chopper/mechanical_delay': F144Stream(
+        nexus_path='/entry/instrument/overlap_chopper/mechanical_delay',
+        source='DREAM-ChpSy1:Chop-OC-103:MechDly-S',
+        topic='dream_choppers',
+        units='degrees',
+    ),
+    '/entry/instrument/overlap_chopper/park_angle': F144Stream(
+        nexus_path='/entry/instrument/overlap_chopper/park_angle',
+        source='DREAM-ChpSy1:Chop-OC-103:Pos_R',
+        topic='dream_choppers',
+        units='degrees',
+    ),
+    '/entry/instrument/overlap_chopper/park_angle_setpoint': F144Stream(
+        nexus_path='/entry/instrument/overlap_chopper/park_angle_setpoint',
+        source='DREAM-ChpSy1:Chop-OC-103:ParkS_RB',
+        topic='dream_choppers',
+        units='degrees',
+    ),
+    '/entry/instrument/overlap_chopper/park_closed_angle': F144Stream(
+        nexus_path='/entry/instrument/overlap_chopper/park_closed_angle',
+        source='DREAM-ChpSy1:Chop-OC-103:ParkPosClose_R',
+        topic='dream_choppers',
+        units='degrees',
+    ),
+    '/entry/instrument/overlap_chopper/park_open_angle': F144Stream(
+        nexus_path='/entry/instrument/overlap_chopper/park_open_angle',
+        source='DREAM-ChpSy1:Chop-OC-103:ParkPosOpen_R',
+        topic='dream_choppers',
+        units='degrees',
+    ),
+    '/entry/instrument/overlap_chopper/park_status': F144Stream(
+        nexus_path='/entry/instrument/overlap_chopper/park_status',
+        source='DREAM-ChpSy1:Chop-OC-103:ParkStatus_R',
+        topic='dream_choppers',
+        units='dimensionless',
+    ),
     '/entry/instrument/overlap_chopper/pulse_delay': F144Stream(
         nexus_path='/entry/instrument/overlap_chopper/pulse_delay',
         source='DREAM-ChpSy1:Chop-OC-103:BeamPosDly-S',
@@ -93,18 +237,24 @@ PARSED_STREAMS: dict[str, F144Stream] = {
         nexus_path='/entry/instrument/overlap_chopper/rotation_speed',
         source='DREAM-ChpSy1:Chop-OC-103:Spd_R',
         topic='dream_choppers',
-        units='1/s',
+        units='Hz',
     ),
     '/entry/instrument/overlap_chopper/rotation_speed_setpoint': F144Stream(
         nexus_path='/entry/instrument/overlap_chopper/rotation_speed_setpoint',
         source='DREAM-ChpSy1:Chop-OC-103:Spd_S',
         topic='dream_choppers',
-        units='1/s',
+        units='Hz',
+    ),
+    '/entry/instrument/overlap_chopper/status': F144Stream(
+        nexus_path='/entry/instrument/overlap_chopper/status',
+        source='DREAM-ChpSy1:Chop-OC-103:ChopState_R',
+        topic='dream_choppers',
+        units='dimensionless',
     ),
     '/entry/instrument/polarizer/rate': F144Stream(
         nexus_path='/entry/instrument/polarizer/rate',
-        source='SIM_dream:instrument:polarizer:rate',
-        topic='dream_nicos_devices',
+        source='DREAM:PLACEHOLDER:polarizer:rate',
+        topic='dream_misc_devices',
         units='Hz',
     ),
     '/entry/instrument/pulse_shaping_chopper1/delay': F144Stream(
@@ -119,6 +269,48 @@ PARSED_STREAMS: dict[str, F144Stream] = {
         topic='dream_choppers',
         units='ns',
     ),
+    '/entry/instrument/pulse_shaping_chopper1/in_phase': F144Stream(
+        nexus_path='/entry/instrument/pulse_shaping_chopper1/in_phase',
+        source='DREAM-ChpSy1:Chop-PSC-101:InPhaseTS-R',
+        topic='dream_choppers',
+        units='dimensionless',
+    ),
+    '/entry/instrument/pulse_shaping_chopper1/mechanical_delay': F144Stream(
+        nexus_path='/entry/instrument/pulse_shaping_chopper1/mechanical_delay',
+        source='DREAM-ChpSy1:Chop-PSC-101:MechDly-S',
+        topic='dream_choppers',
+        units='degrees',
+    ),
+    '/entry/instrument/pulse_shaping_chopper1/park_angle': F144Stream(
+        nexus_path='/entry/instrument/pulse_shaping_chopper1/park_angle',
+        source='DREAM-ChpSy1:Chop-PSC-101:Pos_R',
+        topic='dream_choppers',
+        units='degrees',
+    ),
+    '/entry/instrument/pulse_shaping_chopper1/park_angle_setpoint': F144Stream(
+        nexus_path='/entry/instrument/pulse_shaping_chopper1/park_angle_setpoint',
+        source='DREAM-ChpSy1:Chop-PSC-101:ParkS_RB',
+        topic='dream_choppers',
+        units='degrees',
+    ),
+    '/entry/instrument/pulse_shaping_chopper1/park_closed_angle': F144Stream(
+        nexus_path='/entry/instrument/pulse_shaping_chopper1/park_closed_angle',
+        source='DREAM-ChpSy1:Chop-PSC-101:ParkPosClose_R',
+        topic='dream_choppers',
+        units='degrees',
+    ),
+    '/entry/instrument/pulse_shaping_chopper1/park_open_angle': F144Stream(
+        nexus_path='/entry/instrument/pulse_shaping_chopper1/park_open_angle',
+        source='DREAM-ChpSy1:Chop-PSC-101:ParkPosOpen_R',
+        topic='dream_choppers',
+        units='degrees',
+    ),
+    '/entry/instrument/pulse_shaping_chopper1/park_status': F144Stream(
+        nexus_path='/entry/instrument/pulse_shaping_chopper1/park_status',
+        source='DREAM-ChpSy1:Chop-PSC-101:ParkStatus_R',
+        topic='dream_choppers',
+        units='dimensionless',
+    ),
     '/entry/instrument/pulse_shaping_chopper1/pulse_delay': F144Stream(
         nexus_path='/entry/instrument/pulse_shaping_chopper1/pulse_delay',
         source='DREAM-ChpSy1:Chop-PSC-101:BeamPosDly-S',
@@ -129,13 +321,19 @@ PARSED_STREAMS: dict[str, F144Stream] = {
         nexus_path='/entry/instrument/pulse_shaping_chopper1/rotation_speed',
         source='DREAM-ChpSy1:Chop-PSC-101:Spd_R',
         topic='dream_choppers',
-        units='1/s',
+        units='Hz',
     ),
     '/entry/instrument/pulse_shaping_chopper1/rotation_speed_setpoint': F144Stream(
         nexus_path='/entry/instrument/pulse_shaping_chopper1/rotation_speed_setpoint',
         source='DREAM-ChpSy1:Chop-PSC-101:Spd_S',
         topic='dream_choppers',
-        units='1/s',
+        units='Hz',
+    ),
+    '/entry/instrument/pulse_shaping_chopper1/status': F144Stream(
+        nexus_path='/entry/instrument/pulse_shaping_chopper1/status',
+        source='DREAM-ChpSy1:Chop-PSC-101:ChopState_R',
+        topic='dream_choppers',
+        units='dimensionless',
     ),
     '/entry/instrument/pulse_shaping_chopper2/delay': F144Stream(
         nexus_path='/entry/instrument/pulse_shaping_chopper2/delay',
@@ -149,6 +347,48 @@ PARSED_STREAMS: dict[str, F144Stream] = {
         topic='dream_choppers',
         units='ns',
     ),
+    '/entry/instrument/pulse_shaping_chopper2/in_phase': F144Stream(
+        nexus_path='/entry/instrument/pulse_shaping_chopper2/in_phase',
+        source='DREAM-ChpSy1:Chop-PSC-102:InPhaseTS-R',
+        topic='dream_choppers',
+        units='dimensionless',
+    ),
+    '/entry/instrument/pulse_shaping_chopper2/mechanical_delay': F144Stream(
+        nexus_path='/entry/instrument/pulse_shaping_chopper2/mechanical_delay',
+        source='DREAM-ChpSy1:Chop-PSC-102:MechDly-S',
+        topic='dream_choppers',
+        units='degrees',
+    ),
+    '/entry/instrument/pulse_shaping_chopper2/park_angle': F144Stream(
+        nexus_path='/entry/instrument/pulse_shaping_chopper2/park_angle',
+        source='DREAM-ChpSy1:Chop-PSC-102:Pos_R',
+        topic='dream_choppers',
+        units='degrees',
+    ),
+    '/entry/instrument/pulse_shaping_chopper2/park_angle_setpoint': F144Stream(
+        nexus_path='/entry/instrument/pulse_shaping_chopper2/park_angle_setpoint',
+        source='DREAM-ChpSy1:Chop-PSC-102:ParkS_RB',
+        topic='dream_choppers',
+        units='degrees',
+    ),
+    '/entry/instrument/pulse_shaping_chopper2/park_closed_angle': F144Stream(
+        nexus_path='/entry/instrument/pulse_shaping_chopper2/park_closed_angle',
+        source='DREAM-ChpSy1:Chop-PSC-102:ParkPosClose_R',
+        topic='dream_choppers',
+        units='degrees',
+    ),
+    '/entry/instrument/pulse_shaping_chopper2/park_open_angle': F144Stream(
+        nexus_path='/entry/instrument/pulse_shaping_chopper2/park_open_angle',
+        source='DREAM-ChpSy1:Chop-PSC-102:ParkPosOpen_R',
+        topic='dream_choppers',
+        units='degrees',
+    ),
+    '/entry/instrument/pulse_shaping_chopper2/park_status': F144Stream(
+        nexus_path='/entry/instrument/pulse_shaping_chopper2/park_status',
+        source='DREAM-ChpSy1:Chop-PSC-102:ParkStatus_R',
+        topic='dream_choppers',
+        units='dimensionless',
+    ),
     '/entry/instrument/pulse_shaping_chopper2/pulse_delay': F144Stream(
         nexus_path='/entry/instrument/pulse_shaping_chopper2/pulse_delay',
         source='DREAM-ChpSy1:Chop-PSC-102:BeamPosDly-S',
@@ -159,288 +399,504 @@ PARSED_STREAMS: dict[str, F144Stream] = {
         nexus_path='/entry/instrument/pulse_shaping_chopper2/rotation_speed',
         source='DREAM-ChpSy1:Chop-PSC-102:Spd_R',
         topic='dream_choppers',
-        units='1/s',
+        units='Hz',
     ),
     '/entry/instrument/pulse_shaping_chopper2/rotation_speed_setpoint': F144Stream(
         nexus_path='/entry/instrument/pulse_shaping_chopper2/rotation_speed_setpoint',
         source='DREAM-ChpSy1:Chop-PSC-102:Spd_S',
         topic='dream_choppers',
-        units='1/s',
+        units='Hz',
     ),
-    '/entry/instrument/slit_set_1/blade_bottom/idle_flag': F144Stream(
-        nexus_path='/entry/instrument/slit_set_1/blade_bottom/idle_flag',
+    '/entry/instrument/pulse_shaping_chopper2/status': F144Stream(
+        nexus_path='/entry/instrument/pulse_shaping_chopper2/status',
+        source='DREAM-ChpSy1:Chop-PSC-102:ChopState_R',
+        topic='dream_choppers',
+        units='dimensionless',
+    ),
+    '/entry/instrument/slit_set_1/bottom/idle_flag': F144Stream(
+        nexus_path='/entry/instrument/slit_set_1/bottom/idle_flag',
         source='DREAM-ColSl1:MC-SlZm-01:PzMtr.DMOV',
         topic='dream_motion',
         units='dimensionless',
     ),
-    '/entry/instrument/slit_set_1/blade_bottom/target_value': F144Stream(
-        nexus_path='/entry/instrument/slit_set_1/blade_bottom/target_value',
+    '/entry/instrument/slit_set_1/bottom/target_value': F144Stream(
+        nexus_path='/entry/instrument/slit_set_1/bottom/target_value',
         source='DREAM-ColSl1:MC-SlZm-01:PzMtr.VAL',
         topic='dream_motion',
         units='mm',
     ),
-    '/entry/instrument/slit_set_1/blade_bottom/value': F144Stream(
-        nexus_path='/entry/instrument/slit_set_1/blade_bottom/value',
+    '/entry/instrument/slit_set_1/bottom/value': F144Stream(
+        nexus_path='/entry/instrument/slit_set_1/bottom/value',
         source='DREAM-ColSl1:MC-SlZm-01:PzMtr.RBV',
         topic='dream_motion',
         units='mm',
     ),
-    '/entry/instrument/slit_set_1/blade_left/idle_flag': F144Stream(
-        nexus_path='/entry/instrument/slit_set_1/blade_left/idle_flag',
+    '/entry/instrument/slit_set_1/left/idle_flag': F144Stream(
+        nexus_path='/entry/instrument/slit_set_1/left/idle_flag',
         source='DREAM-ColSl1:MC-SlYp-01:PzMtr.DMOV',
         topic='dream_motion',
         units='dimensionless',
     ),
-    '/entry/instrument/slit_set_1/blade_left/target_value': F144Stream(
-        nexus_path='/entry/instrument/slit_set_1/blade_left/target_value',
+    '/entry/instrument/slit_set_1/left/target_value': F144Stream(
+        nexus_path='/entry/instrument/slit_set_1/left/target_value',
         source='DREAM-ColSl1:MC-SlYp-01:PzMtr.VAL',
         topic='dream_motion',
         units='mm',
     ),
-    '/entry/instrument/slit_set_1/blade_left/value': F144Stream(
-        nexus_path='/entry/instrument/slit_set_1/blade_left/value',
+    '/entry/instrument/slit_set_1/left/value': F144Stream(
+        nexus_path='/entry/instrument/slit_set_1/left/value',
         source='DREAM-ColSl1:MC-SlYp-01:PzMtr.RBV',
         topic='dream_motion',
         units='mm',
     ),
-    '/entry/instrument/slit_set_1/blade_right/idle_flag': F144Stream(
-        nexus_path='/entry/instrument/slit_set_1/blade_right/idle_flag',
+    '/entry/instrument/slit_set_1/right/idle_flag': F144Stream(
+        nexus_path='/entry/instrument/slit_set_1/right/idle_flag',
         source='DREAM-ColSl1:MC-SlYm-01:PzMtr.DMOV',
         topic='dream_motion',
         units='dimensionless',
     ),
-    '/entry/instrument/slit_set_1/blade_right/target_value': F144Stream(
-        nexus_path='/entry/instrument/slit_set_1/blade_right/target_value',
+    '/entry/instrument/slit_set_1/right/target_value': F144Stream(
+        nexus_path='/entry/instrument/slit_set_1/right/target_value',
         source='DREAM-ColSl1:MC-SlYm-01:PzMtr.VAL',
         topic='dream_motion',
         units='mm',
     ),
-    '/entry/instrument/slit_set_1/blade_right/value': F144Stream(
-        nexus_path='/entry/instrument/slit_set_1/blade_right/value',
+    '/entry/instrument/slit_set_1/right/value': F144Stream(
+        nexus_path='/entry/instrument/slit_set_1/right/value',
         source='DREAM-ColSl1:MC-SlYm-01:PzMtr.RBV',
         topic='dream_motion',
         units='mm',
     ),
-    '/entry/instrument/slit_set_1/blade_top/idle_flag': F144Stream(
-        nexus_path='/entry/instrument/slit_set_1/blade_top/idle_flag',
+    '/entry/instrument/slit_set_1/top/idle_flag': F144Stream(
+        nexus_path='/entry/instrument/slit_set_1/top/idle_flag',
         source='DREAM-ColSl1:MC-SlZp-01:PzMtr.DMOV',
         topic='dream_motion',
         units='dimensionless',
     ),
-    '/entry/instrument/slit_set_1/blade_top/target_value': F144Stream(
-        nexus_path='/entry/instrument/slit_set_1/blade_top/target_value',
+    '/entry/instrument/slit_set_1/top/target_value': F144Stream(
+        nexus_path='/entry/instrument/slit_set_1/top/target_value',
         source='DREAM-ColSl1:MC-SlZp-01:PzMtr.VAL',
         topic='dream_motion',
         units='mm',
     ),
-    '/entry/instrument/slit_set_1/blade_top/value': F144Stream(
-        nexus_path='/entry/instrument/slit_set_1/blade_top/value',
+    '/entry/instrument/slit_set_1/top/value': F144Stream(
+        nexus_path='/entry/instrument/slit_set_1/top/value',
         source='DREAM-ColSl1:MC-SlZp-01:PzMtr.RBV',
         topic='dream_motion',
         units='mm',
     ),
-    '/entry/instrument/slit_set_2/blade_bottom/idle_flag': F144Stream(
-        nexus_path='/entry/instrument/slit_set_2/blade_bottom/idle_flag',
+    '/entry/instrument/slit_set_2/bottom/idle_flag': F144Stream(
+        nexus_path='/entry/instrument/slit_set_2/bottom/idle_flag',
         source='DREAM-ColSl2:MC-SlZm-01:PzMtr.DMOV',
         topic='dream_motion',
         units='dimensionless',
     ),
-    '/entry/instrument/slit_set_2/blade_bottom/target_value': F144Stream(
-        nexus_path='/entry/instrument/slit_set_2/blade_bottom/target_value',
+    '/entry/instrument/slit_set_2/bottom/target_value': F144Stream(
+        nexus_path='/entry/instrument/slit_set_2/bottom/target_value',
         source='DREAM-ColSl2:MC-SlZm-01:PzMtr.VAL',
         topic='dream_motion',
         units='mm',
     ),
-    '/entry/instrument/slit_set_2/blade_bottom/value': F144Stream(
-        nexus_path='/entry/instrument/slit_set_2/blade_bottom/value',
+    '/entry/instrument/slit_set_2/bottom/value': F144Stream(
+        nexus_path='/entry/instrument/slit_set_2/bottom/value',
         source='DREAM-ColSl2:MC-SlZm-01:PzMtr.RBV',
         topic='dream_motion',
         units='mm',
     ),
-    '/entry/instrument/slit_set_2/blade_left/idle_flag': F144Stream(
-        nexus_path='/entry/instrument/slit_set_2/blade_left/idle_flag',
+    '/entry/instrument/slit_set_2/left/idle_flag': F144Stream(
+        nexus_path='/entry/instrument/slit_set_2/left/idle_flag',
         source='DREAM-ColSl2:MC-SlYp-01:PzMtr.DMOV',
         topic='dream_motion',
         units='dimensionless',
     ),
-    '/entry/instrument/slit_set_2/blade_left/target_value': F144Stream(
-        nexus_path='/entry/instrument/slit_set_2/blade_left/target_value',
+    '/entry/instrument/slit_set_2/left/target_value': F144Stream(
+        nexus_path='/entry/instrument/slit_set_2/left/target_value',
         source='DREAM-ColSl2:MC-SlYp-01:PzMtr.VAL',
         topic='dream_motion',
         units='mm',
     ),
-    '/entry/instrument/slit_set_2/blade_left/value': F144Stream(
-        nexus_path='/entry/instrument/slit_set_2/blade_left/value',
+    '/entry/instrument/slit_set_2/left/value': F144Stream(
+        nexus_path='/entry/instrument/slit_set_2/left/value',
         source='DREAM-ColSl2:MC-SlYp-01:PzMtr.RBV',
         topic='dream_motion',
         units='mm',
     ),
-    '/entry/instrument/slit_set_2/blade_right/idle_flag': F144Stream(
-        nexus_path='/entry/instrument/slit_set_2/blade_right/idle_flag',
+    '/entry/instrument/slit_set_2/right/idle_flag': F144Stream(
+        nexus_path='/entry/instrument/slit_set_2/right/idle_flag',
         source='DREAM-ColSl2:MC-SlYm-01:PzMtr.DMOV',
         topic='dream_motion',
         units='dimensionless',
     ),
-    '/entry/instrument/slit_set_2/blade_right/target_value': F144Stream(
-        nexus_path='/entry/instrument/slit_set_2/blade_right/target_value',
+    '/entry/instrument/slit_set_2/right/target_value': F144Stream(
+        nexus_path='/entry/instrument/slit_set_2/right/target_value',
         source='DREAM-ColSl2:MC-SlYm-01:PzMtr.VAL',
         topic='dream_motion',
         units='mm',
     ),
-    '/entry/instrument/slit_set_2/blade_right/value': F144Stream(
-        nexus_path='/entry/instrument/slit_set_2/blade_right/value',
+    '/entry/instrument/slit_set_2/right/value': F144Stream(
+        nexus_path='/entry/instrument/slit_set_2/right/value',
         source='DREAM-ColSl2:MC-SlYm-01:PzMtr.RBV',
         topic='dream_motion',
         units='mm',
     ),
-    '/entry/instrument/slit_set_2/blade_top/idle_flag': F144Stream(
-        nexus_path='/entry/instrument/slit_set_2/blade_top/idle_flag',
+    '/entry/instrument/slit_set_2/top/idle_flag': F144Stream(
+        nexus_path='/entry/instrument/slit_set_2/top/idle_flag',
         source='DREAM-ColSl2:MC-SlZp-01:PzMtr.DMOV',
         topic='dream_motion',
         units='dimensionless',
     ),
-    '/entry/instrument/slit_set_2/blade_top/target_value': F144Stream(
-        nexus_path='/entry/instrument/slit_set_2/blade_top/target_value',
+    '/entry/instrument/slit_set_2/top/target_value': F144Stream(
+        nexus_path='/entry/instrument/slit_set_2/top/target_value',
         source='DREAM-ColSl2:MC-SlZp-01:PzMtr.VAL',
         topic='dream_motion',
         units='mm',
     ),
-    '/entry/instrument/slit_set_2/blade_top/value': F144Stream(
-        nexus_path='/entry/instrument/slit_set_2/blade_top/value',
+    '/entry/instrument/slit_set_2/top/value': F144Stream(
+        nexus_path='/entry/instrument/slit_set_2/top/value',
         source='DREAM-ColSl2:MC-SlZp-01:PzMtr.RBV',
         topic='dream_motion',
         units='mm',
     ),
-    '/entry/instrument/slit_set_3/blade_bottom/idle_flag': F144Stream(
-        nexus_path='/entry/instrument/slit_set_3/blade_bottom/idle_flag',
+    '/entry/instrument/slit_set_3/bottom/idle_flag': F144Stream(
+        nexus_path='/entry/instrument/slit_set_3/bottom/idle_flag',
         source='DREAM-ColSl3:MC-SlZm-01:PzMtr.DMOV',
         topic='dream_motion',
         units='dimensionless',
     ),
-    '/entry/instrument/slit_set_3/blade_bottom/target_value': F144Stream(
-        nexus_path='/entry/instrument/slit_set_3/blade_bottom/target_value',
+    '/entry/instrument/slit_set_3/bottom/target_value': F144Stream(
+        nexus_path='/entry/instrument/slit_set_3/bottom/target_value',
         source='DREAM-ColSl3:MC-SlZm-01:PzMtr.VAL',
         topic='dream_motion',
         units='mm',
     ),
-    '/entry/instrument/slit_set_3/blade_bottom/value': F144Stream(
-        nexus_path='/entry/instrument/slit_set_3/blade_bottom/value',
+    '/entry/instrument/slit_set_3/bottom/value': F144Stream(
+        nexus_path='/entry/instrument/slit_set_3/bottom/value',
         source='DREAM-ColSl3:MC-SlZm-01:PzMtr.RBV',
         topic='dream_motion',
         units='mm',
     ),
-    '/entry/instrument/slit_set_3/blade_left/idle_flag': F144Stream(
-        nexus_path='/entry/instrument/slit_set_3/blade_left/idle_flag',
+    '/entry/instrument/slit_set_3/left/idle_flag': F144Stream(
+        nexus_path='/entry/instrument/slit_set_3/left/idle_flag',
         source='DREAM-ColSl3:MC-SlYp-01:PzMtr.DMOV',
         topic='dream_motion',
         units='dimensionless',
     ),
-    '/entry/instrument/slit_set_3/blade_left/target_value': F144Stream(
-        nexus_path='/entry/instrument/slit_set_3/blade_left/target_value',
+    '/entry/instrument/slit_set_3/left/target_value': F144Stream(
+        nexus_path='/entry/instrument/slit_set_3/left/target_value',
         source='DREAM-ColSl3:MC-SlYp-01:PzMtr.VAL',
         topic='dream_motion',
         units='mm',
     ),
-    '/entry/instrument/slit_set_3/blade_left/value': F144Stream(
-        nexus_path='/entry/instrument/slit_set_3/blade_left/value',
+    '/entry/instrument/slit_set_3/left/value': F144Stream(
+        nexus_path='/entry/instrument/slit_set_3/left/value',
         source='DREAM-ColSl3:MC-SlYp-01:PzMtr.RBV',
         topic='dream_motion',
         units='mm',
     ),
-    '/entry/instrument/slit_set_3/blade_right/idle_flag': F144Stream(
-        nexus_path='/entry/instrument/slit_set_3/blade_right/idle_flag',
+    '/entry/instrument/slit_set_3/right/idle_flag': F144Stream(
+        nexus_path='/entry/instrument/slit_set_3/right/idle_flag',
         source='DREAM-ColSl3:MC-SlYm-01:PzMtr.DMOV',
         topic='dream_motion',
         units='dimensionless',
     ),
-    '/entry/instrument/slit_set_3/blade_right/target_value': F144Stream(
-        nexus_path='/entry/instrument/slit_set_3/blade_right/target_value',
+    '/entry/instrument/slit_set_3/right/target_value': F144Stream(
+        nexus_path='/entry/instrument/slit_set_3/right/target_value',
         source='DREAM-ColSl3:MC-SlYm-01:PzMtr.VAL',
         topic='dream_motion',
         units='mm',
     ),
-    '/entry/instrument/slit_set_3/blade_right/value': F144Stream(
-        nexus_path='/entry/instrument/slit_set_3/blade_right/value',
+    '/entry/instrument/slit_set_3/right/value': F144Stream(
+        nexus_path='/entry/instrument/slit_set_3/right/value',
         source='DREAM-ColSl3:MC-SlYm-01:PzMtr.RBV',
         topic='dream_motion',
         units='mm',
     ),
-    '/entry/instrument/slit_set_3/blade_top/idle_flag': F144Stream(
-        nexus_path='/entry/instrument/slit_set_3/blade_top/idle_flag',
+    '/entry/instrument/slit_set_3/top/idle_flag': F144Stream(
+        nexus_path='/entry/instrument/slit_set_3/top/idle_flag',
         source='DREAM-ColSl3:MC-SlZp-01:PzMtr.DMOV',
         topic='dream_motion',
         units='dimensionless',
     ),
-    '/entry/instrument/slit_set_3/blade_top/target_value': F144Stream(
-        nexus_path='/entry/instrument/slit_set_3/blade_top/target_value',
+    '/entry/instrument/slit_set_3/top/target_value': F144Stream(
+        nexus_path='/entry/instrument/slit_set_3/top/target_value',
         source='DREAM-ColSl3:MC-SlZp-01:PzMtr.VAL',
         topic='dream_motion',
         units='mm',
     ),
-    '/entry/instrument/slit_set_3/blade_top/value': F144Stream(
-        nexus_path='/entry/instrument/slit_set_3/blade_top/value',
+    '/entry/instrument/slit_set_3/top/value': F144Stream(
+        nexus_path='/entry/instrument/slit_set_3/top/value',
         source='DREAM-ColSl3:MC-SlZp-01:PzMtr.RBV',
         topic='dream_motion',
         units='mm',
     ),
-    '/entry/instrument/source/current': F144Stream(
-        nexus_path='/entry/instrument/source/current',
-        source='SIM_dream:instrument:source:current',
-        topic='dream_nicos_devices',
-        units='mA',
+    '/entry/instrument/source/beam_cycle_id': F144Stream(
+        nexus_path='/entry/instrument/source/beam_cycle_id',
+        source='TD-M:Ctrl-EVR-1:DbufCycleId-I',
+        topic='tn_data_general',
+        units='dimensionless',
     ),
-    '/entry/neutron_prod_info/cryo_tt_82025_temperature': F144Stream(
-        nexus_path='/entry/neutron_prod_info/cryo_tt_82025_temperature',
+    '/entry/instrument/source/beam_destination': F144Stream(
+        nexus_path='/entry/instrument/source/beam_destination',
+        source='TD-M:Ctrl-EVR-1:DbufBDest-I',
+        topic='tn_data_general',
+        units='dimensionless',
+    ),
+    '/entry/instrument/source/beam_destination_mode': F144Stream(
+        nexus_path='/entry/instrument/source/beam_destination_mode',
+        source='TD-M:Ctrl-EVR-1:DbufBDest-II',
+        topic='tn_data_general',
+        units='dimensionless',
+    ),
+    '/entry/instrument/source/beam_present': F144Stream(
+        nexus_path='/entry/instrument/source/beam_present',
+        source='TD-M:Ctrl-EVR-1:DbufBPresent-II',
+        topic='tn_data_general',
+        units='dimensionless',
+    ),
+    '/entry/instrument/source/beam_pulse_end_event_counter': F144Stream(
+        nexus_path='/entry/instrument/source/beam_pulse_end_event_counter',
+        source='TD-M:Ctrl-EVR-1:EvtBPulseEndCnt-I',
+        topic='tn_data_general',
+        units='dimensionless',
+    ),
+    '/entry/instrument/source/beam_pulse_end_event_id': F144Stream(
+        nexus_path='/entry/instrument/source/beam_pulse_end_event_id',
+        source='TD-M:Ctrl-EVR-1:EvtBPulseEndId-I',
+        topic='tn_data_general',
+        units='dimensionless',
+    ),
+    '/entry/instrument/source/beam_pulse_start_event_counter': F144Stream(
+        nexus_path='/entry/instrument/source/beam_pulse_start_event_counter',
+        source='TD-M:Ctrl-EVR-1:EvtBPulseStCnt-I',
+        topic='tn_data_general',
+        units='dimensionless',
+    ),
+    '/entry/instrument/source/beam_state': F144Stream(
+        nexus_path='/entry/instrument/source/beam_state',
+        source='TD-M:Ctrl-EVR-1:DbufBState-I',
+        topic='tn_data_general',
+        units='dimensionless',
+    ),
+    '/entry/instrument/source/beamdump_pulse_charge_010': F144Stream(
+        nexus_path='/entry/instrument/source/beamdump_pulse_charge_010',
+        source='DmpL-010Drf:PBI-BCM-001:PulseChargeR',
+        topic='tn_data_general',
+        units='uC',
+    ),
+    '/entry/instrument/source/beamdump_pulse_charge_040': F144Stream(
+        nexus_path='/entry/instrument/source/beamdump_pulse_charge_040',
+        source='DmpL-040Drf:PBI-BCM-001:PulseChargeR',
+        topic='tn_data_general',
+        units='uC',
+    ),
+    '/entry/instrument/source/bunch_length': F144Stream(
+        nexus_path='/entry/instrument/source/bunch_length',
+        source='TD-M:Ctrl-EVR-1:DbufBLen-I',
+        topic='tn_data_general',
+        units='us',
+    ),
+    '/entry/instrument/source/bunch_pattern': F144Stream(
+        nexus_path='/entry/instrument/source/bunch_pattern',
+        source='TD-M:Ctrl-EVR-1:DbufTgRast-I',
+        topic='tn_data_general',
+        units='dimensionless',
+    ),
+    '/entry/instrument/source/cryo_tt_82025_temperature': F144Stream(
+        nexus_path='/entry/instrument/source/cryo_tt_82025_temperature',
         source='CrS-CMS:Cryo-TT-82025:MeasValue',
         topic='tn_data_general',
         units='K',
     ),
-    '/entry/neutron_prod_info/cryo_tt_82027_temperature': F144Stream(
-        nexus_path='/entry/neutron_prod_info/cryo_tt_82027_temperature',
+    '/entry/instrument/source/cryo_tt_82027_temperature': F144Stream(
+        nexus_path='/entry/instrument/source/cryo_tt_82027_temperature',
         source='CrS-CMS:Cryo-TT-82027:MeasValue',
         topic='tn_data_general',
         units='K',
     ),
-    '/entry/neutron_prod_info/cryo_tt_82029_temperature': F144Stream(
-        nexus_path='/entry/neutron_prod_info/cryo_tt_82029_temperature',
+    '/entry/instrument/source/cryo_tt_82029_temperature': F144Stream(
+        nexus_path='/entry/instrument/source/cryo_tt_82029_temperature',
         source='CrS-CMS:Cryo-TT-82029:MeasValue',
         topic='tn_data_general',
         units='K',
     ),
-    '/entry/neutron_prod_info/cryo_tt_82031_temperature': F144Stream(
-        nexus_path='/entry/neutron_prod_info/cryo_tt_82031_temperature',
+    '/entry/instrument/source/cryo_tt_82031_temperature': F144Stream(
+        nexus_path='/entry/instrument/source/cryo_tt_82031_temperature',
         source='CrS-CMS:Cryo-TT-82031:MeasValue',
         topic='tn_data_general',
         units='K',
     ),
-    '/entry/neutron_prod_info/cryo_tt_82033_temperature': F144Stream(
-        nexus_path='/entry/neutron_prod_info/cryo_tt_82033_temperature',
+    '/entry/instrument/source/cryo_tt_82033_temperature': F144Stream(
+        nexus_path='/entry/instrument/source/cryo_tt_82033_temperature',
         source='CrS-CMS:Cryo-TT-82033:MeasValue',
         topic='tn_data_general',
         units='K',
     ),
-    '/entry/neutron_prod_info/flat_top_current': F144Stream(
-        nexus_path='/entry/neutron_prod_info/flat_top_current',
+    '/entry/instrument/source/current': F144Stream(
+        nexus_path='/entry/instrument/source/current',
+        source='TD-M:Ctrl-EVR-1:DbufBCurr-I',
+        topic='tn_data_general',
+        units='mA',
+    ),
+    '/entry/instrument/source/cycle_start_event_counter': F144Stream(
+        nexus_path='/entry/instrument/source/cycle_start_event_counter',
+        source='TD-M:Ctrl-EVR-1:EvtF14HzCnt-I',
+        topic='tn_data_general',
+        units='dimensionless',
+    ),
+    '/entry/instrument/source/data_buffer_sent_offset': F144Stream(
+        nexus_path='/entry/instrument/source/data_buffer_sent_offset',
+        source='TD-M:Ctrl-SCE-1:DbufSentOffset-SP',
+        topic='tn_data_general',
+        units='us',
+    ),
+    '/entry/instrument/source/energy': F144Stream(
+        nexus_path='/entry/instrument/source/energy',
+        source='TD-M:Ctrl-EVR-1:DbufBEn-I',
+        topic='tn_data_general',
+        units='keV',
+    ),
+    '/entry/instrument/source/flat_top_current': F144Stream(
+        nexus_path='/entry/instrument/source/flat_top_current',
         source='A2T-130LWU:PBI-BCM-001:FlatTopCurrentR',
         topic='tn_data_general',
         units='mA',
     ),
-    '/entry/neutron_prod_info/fsm_machine_active': F144Stream(
-        nexus_path='/entry/neutron_prod_info/fsm_machine_active',
+    '/entry/instrument/source/fsm_machine_active': F144Stream(
+        nexus_path='/entry/instrument/source/fsm_machine_active',
         source='CrS-CMS:SC-FSM-007x:STS_Active',
         topic='tn_data_general',
         units='dimensionless',
     ),
-    '/entry/neutron_prod_info/pulse_charge': F144Stream(
-        nexus_path='/entry/neutron_prod_info/pulse_charge',
+    '/entry/instrument/source/high_beta_flat_top_current': F144Stream(
+        nexus_path='/entry/instrument/source/high_beta_flat_top_current',
+        source='HEBT-160LWU:PBI-BCM-001:FlatTopCurrentR',
+        topic='tn_data_general',
+        units='mA',
+    ),
+    '/entry/instrument/source/high_beta_pulse_charge': F144Stream(
+        nexus_path='/entry/instrument/source/high_beta_pulse_charge',
+        source='HEBT-160LWU:PBI-BCM-001:PulseChargeR',
+        topic='tn_data_general',
+        units='uC',
+    ),
+    '/entry/instrument/source/high_beta_pulse_width': F144Stream(
+        nexus_path='/entry/instrument/source/high_beta_pulse_width',
+        source='HEBT-160LWU:PBI-BCM-001:PulseWidthR',
+        topic='tn_data_general',
+        units='us',
+    ),
+    '/entry/instrument/source/mode': F144Stream(
+        nexus_path='/entry/instrument/source/mode',
+        source='TD-M:Ctrl-EVR-1:DbufBMod-II',
+        topic='tn_data_general',
+        units='dimensionless',
+    ),
+    '/entry/instrument/source/ni_acq_start_event_counter': F144Stream(
+        nexus_path='/entry/instrument/source/ni_acq_start_event_counter',
+        source='TD-M:Ctrl-EVR-1:EvtNiAcqStCnt-I',
+        topic='tn_data_general',
+        units='dimensionless',
+    ),
+    '/entry/instrument/source/ni_sync_event_counter': F144Stream(
+        nexus_path='/entry/instrument/source/ni_sync_event_counter',
+        source='TD-M:Ctrl-EVR-1:EvtNiSyncCnt-I',
+        topic='tn_data_general',
+        units='dimensionless',
+    ),
+    '/entry/instrument/source/pulse_charge': F144Stream(
+        nexus_path='/entry/instrument/source/pulse_charge',
         source='A2T-130LWU:PBI-BCM-001:PulseChargeR',
         topic='tn_data_general',
         units='uC',
     ),
-    '/entry/neutron_prod_info/pulse_width': F144Stream(
-        nexus_path='/entry/neutron_prod_info/pulse_width',
+    '/entry/instrument/source/pulse_width': F144Stream(
+        nexus_path='/entry/instrument/source/pulse_width',
         source='A2T-130LWU:PBI-BCM-001:PulseWidthR',
         topic='tn_data_general',
-        units='ms',
+        units='us',
+    ),
+    '/entry/instrument/source/target_segment': F144Stream(
+        nexus_path='/entry/instrument/source/target_segment',
+        source='TD-M:Ctrl-EVR-1:DbufTgSeg-I',
+        topic='tn_data_general',
+        units='dimensionless',
+    ),
+    '/entry/sample/temperature': F144Stream(
+        nexus_path='/entry/sample/temperature',
+        source='simulated_sample_temperature',
+        topic='coda_nicos_devices',
+        units='K',
+    ),
+    '/entry/sample/temperature_env/heater/max_power': F144Stream(
+        nexus_path='/entry/sample/temperature_env/heater/max_power',
+        source='simulated_max_heater_power',
+        topic='coda_nicos_devices',
+        units='W',
+    ),
+    '/entry/sample/temperature_env/heater/output_level': F144Stream(
+        nexus_path='/entry/sample/temperature_env/heater/output_level',
+        source='simulated_heater_output',
+        topic='coda_nicos_devices',
+        units='percent',
+    ),
+    '/entry/sample/temperature_env/heater/output_power': F144Stream(
+        nexus_path='/entry/sample/temperature_env/heater/output_power',
+        source='simulated_heater_power',
+        topic='coda_nicos_devices',
+        units='W',
+    ),
+    '/entry/sample/temperature_env/heater/pid_controller/d_setting': F144Stream(
+        nexus_path='/entry/sample/temperature_env/heater/pid_controller/d_setting',
+        source='simulated_pid_d',
+        topic='coda_nicos_devices',
+        units='s',
+    ),
+    '/entry/sample/temperature_env/heater/pid_controller/i_setting': F144Stream(
+        nexus_path='/entry/sample/temperature_env/heater/pid_controller/i_setting',
+        source='simulated_pid_i',
+        topic='coda_nicos_devices',
+        units='1/s',
+    ),
+    '/entry/sample/temperature_env/heater/pid_controller/p_setting': F144Stream(
+        nexus_path='/entry/sample/temperature_env/heater/pid_controller/p_setting',
+        source='simulated_pid_p',
+        topic='coda_nicos_devices',
+        units='percent/K',
+    ),
+    '/entry/sample/temperature_env/heater/pid_controller/pv_sensor/value_log': F144Stream(  # noqa: E501
+        nexus_path='/entry/sample/temperature_env/heater/pid_controller/pv_sensor/value_log',
+        source='simulated_regulator_temperature',
+        topic='coda_nicos_devices',
+        units='K',
+    ),
+    '/entry/sample/temperature_env/heater/pid_controller/ramp': F144Stream(
+        nexus_path='/entry/sample/temperature_env/heater/pid_controller/ramp',
+        source='simulated_ramp',
+        topic='coda_nicos_devices',
+        units='K/min',
+    ),
+    '/entry/sample/temperature_env/heater/pid_controller/setpoint': F144Stream(
+        nexus_path='/entry/sample/temperature_env/heater/pid_controller/setpoint',
+        source='simulated_setpoint',
+        topic='coda_nicos_devices',
+        units='K',
+    ),
+    '/entry/sample/temperature_env/heater/pid_controller/target': F144Stream(
+        nexus_path='/entry/sample/temperature_env/heater/pid_controller/target',
+        source='simulated_target',
+        topic='coda_nicos_devices',
+        units='K',
+    ),
+    '/entry/scan_log/point': F144Stream(
+        nexus_path='/entry/scan_log/point',
+        source='scanlog/point',
+        topic='coda_nicos_devices',
+        units='dimensionless',
+    ),
+    '/entry/scan_log/scan': F144Stream(
+        nexus_path='/entry/scan_log/scan',
+        source='scanlog/scan',
+        topic='coda_nicos_devices',
+        units='dimensionless',
     ),
 }

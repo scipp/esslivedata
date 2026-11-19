@@ -4,7 +4,10 @@
 TBL workflow spec registration.
 """
 
+import scipp as sc
+
 from ess.livedata.config import (
+    AxisRange,
     Instrument,
     SourceMetadata,
     filter_authorized_streams,
@@ -32,15 +35,15 @@ from .views import (
 )
 
 detector_names = [
-    'timepix3_detector',
-    'multiblade_detector',
-    'he3_detector_bank0',
-    'he3_detector_bank1',
-    'ngem_detector',
+    'timepix3',
+    'multiblade',
+    'he3_bank_0',
+    'he3_bank_1',
+    'ngem',
     # not listing orca since it does not have (and does not need) detector numbers
 ]
 
-monitor_names = ['monitor_1']
+monitor_names = ['beam_monitor_1']
 
 #: Side length the Timepix3 panel is ingested at; see name_image_dims.
 TIMEPIX3_IMAGE_RESOLUTION = 512
@@ -54,17 +57,26 @@ instrument = Instrument(
     detector_names=detector_names,
     monitors=monitor_names,
     # Bandwidth choppers feeding the wavelength-LUT cascade, in beam order
-    # (source -> sample): bwc_2 sits at 14.5 m from the source, bwc_1 at 15.5 m.
-    choppers=['bwc_2', 'bwc_1'],
+    # (source -> sample): bwc_1 sits at 8.54 m from the source, bwc_2 at 8.56 m.
+    choppers=['bwc_1', 'bwc_2'],
+    # beam_monitor_1 rides filter_changer_3, whose travel is not known. The axis
+    # is perpendicular to the beam, 9.1 m from the source, so the monitor's
+    # flight path hardly depends on it: +-1 m of travel widens its lookup-table
+    # block by 4 cm. The range is therefore declared generously.
+    axis_ranges={
+        '/entry/instrument/filter_changer_3/value': AxisRange(
+            lower=sc.scalar(-1.0, unit='m'), upper=sc.scalar(1.0, unit='m')
+        )
+    },
     streams=name_streams(filter_authorized_streams(PARSED_STREAMS)),
     source_metadata={
-        'timepix3_detector': SourceMetadata(title='Timepix3'),
-        'multiblade_detector': SourceMetadata(title='Multiblade'),
-        'he3_detector_bank0': SourceMetadata(title='He3 Bank 0'),
-        'he3_detector_bank1': SourceMetadata(title='He3 Bank 1'),
-        'ngem_detector': SourceMetadata(title='nGEM'),
-        'orca_detector': SourceMetadata(title='ORCA'),
-        'monitor_1': SourceMetadata(title='Beam Monitor'),
+        'timepix3': SourceMetadata(title='Timepix3'),
+        'multiblade': SourceMetadata(title='Multiblade'),
+        'he3_bank_0': SourceMetadata(title='He3 Bank 0'),
+        'he3_bank_1': SourceMetadata(title='He3 Bank 1'),
+        'ngem': SourceMetadata(title='nGEM'),
+        'orca': SourceMetadata(title='ORCA'),
+        'beam_monitor_1': SourceMetadata(title='Beam Monitor'),
     },
 )
 
@@ -76,12 +88,14 @@ instrument_registry.register(instrument)
 #: them yet, see #1356). The view descriptions show them to the user; a test
 #: keeps this in sync with the geometry file.
 GEOMETRY_FILE_Z_POSITIONS = {
-    'source': -30.0,
-    'monitor_1': -14.8,
-    'he3_detector_bank0': 1.0,
-    'he3_detector_bank1': 2.0,
-    'multiblade_detector': 1.0,
-    'ngem_detector': -1.0,
+    'source': -15.0,
+    # Static part of the chain only: the monitor rides the live filter_changer_3
+    # axis, which moves it along x and so leaves z unchanged.
+    'beam_monitor_1': -5.89,
+    'he3_bank_0': 1.0,
+    'he3_bank_1': 2.0,
+    'multiblade': 1.0,
+    'ngem': -1.0,
 }
 
 
@@ -106,7 +120,7 @@ register_monitor_workflow_specs(
 )
 
 instrument.configure_detector_downsampling(
-    'timepix3_detector',
+    'timepix3',
     resolution=TIMEPIX3_IMAGE_RESOLUTION,
     source_resolution=TIMEPIX3_PANEL_RESOLUTION,
     reconfigurable=True,
@@ -122,7 +136,7 @@ instrument.add_logical_view(
         ' readout reconfiguration restarts the cumulative image, since counts'
         ' taken before and after it are not commensurable.'
     ),
-    source_names=['timepix3_detector'],
+    source_names=['timepix3'],
     transform=name_image_dims,
     # No wavelength mode: the geometry file holds positions for the full panel
     # resolution, not for the downsampled grid the events are ingested at.
@@ -135,9 +149,9 @@ instrument.add_logical_view(
     title='Multiblade Detector',
     description=(
         'Counts folded into blade, wire, and strip dimensions<br><br>'
-        + _unverified_positions_warning(['multiblade_detector'])
+        + _unverified_positions_warning(['multiblade'])
     ),
-    source_names=['multiblade_detector'],
+    source_names=['multiblade'],
     wavelength=True,
     transform=get_multiblade_view,
     # ROI geometries are rectangles and polygons on a 2D screen; this view is 3D.
@@ -156,9 +170,9 @@ instrument.add_logical_view(
     title='He3 Detector',
     description=(
         'Combined view of both detector banks with tube and pixel axes<br><br>'
-        + _unverified_positions_warning(['he3_detector_bank0', 'he3_detector_bank1'])
+        + _unverified_positions_warning(['he3_bank_0', 'he3_bank_1'])
     ),
-    source_names=['he3_detector_bank0', 'he3_detector_bank1'],
+    source_names=['he3_bank_0', 'he3_bank_1'],
     wavelength=True,
     transform=get_he3_detector_view,
     roi_support=True,
@@ -174,10 +188,9 @@ instrument.add_logical_view(
     name='ngem_detector_view',
     title='NGEM Detector',
     description=(
-        '2D detector counts view<br><br>'
-        + _unverified_positions_warning(['ngem_detector'])
+        '2D detector counts view<br><br>' + _unverified_positions_warning(['ngem'])
     ),
-    source_names=['ngem_detector'],
+    source_names=['ngem'],
     wavelength=True,
     transform=identity,
     reduction_dim='dim_0',
@@ -191,7 +204,7 @@ orca_view_handle = instrument.register_spec(
     version=1,
     title='Orca Detector',
     description='512x512 image downsampled from full resolution',
-    source_names=['orca_detector'],
+    source_names=['orca'],
     # AreaDetectorView renders images only; it neither reads ROI requests nor
     # publishes readbacks, so it must not declare the ROI outputs.
     outputs=AreaDetectorViewOutputs,

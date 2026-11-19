@@ -15,6 +15,8 @@ class InputStreamKey:
     source_name: str
 
 
+# Several input keys may map to the same internal name, e.g., to accept both the
+# old and new source name while an upstream rename is rolled out.
 StreamLUT = dict[InputStreamKey, str]
 
 

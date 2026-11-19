@@ -271,11 +271,6 @@ def build_disk_choppers_provider(
             merged = sc.DataGroup(dict(raw_choppers[name]))
             merged['rotation_speed_setpoint'] = latest[name, 'speed']
             merged['delay'] = latest[name, 'delay']
-            # ``DiskChopper.from_nexus`` prefers a ``phase`` field over the delay
-            # it would otherwise derive the phase from, so a file-loaded one
-            # would override the streamed setpoint. ESTIA's writer stores the
-            # in-phase status flag (``InPhs_R``) under that name.
-            merged.pop('phase', None)
             patched[name] = merged
         return to_disk_choppers(RawChoppers[AnyRun](sc.DataGroup(patched)))
 
