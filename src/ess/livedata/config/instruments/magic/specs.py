@@ -47,16 +47,14 @@ def _pixel_ranges() -> dict[str, tuple[int, int]]:
 
 #: Inclusive ``detector_number`` range per bank. Incoming ``event_id`` is assumed
 #: to fall inside the range of the bank it arrives on. The reference files
-#: ``coda_magic_999999_*.hdf`` violate this: their ``event_id``s are numbered
-#: against a superseded 245760-voxel bank A, so bank B's ids (245761-376604) fall
-#: entirely below its range and replaying such a file leaves the polarization bank
-#: empty. This is a producer-side bug to fix upstream, not worked around here.
+#: ``coda_magic_999999_*.hdf`` violate this for bank A: its ``event_id``s only
+#: cover ids 1-238336, so the upper half of the bank is empty. This is a
+#: producer-side bug to fix upstream, not worked around here (scipp/esslivedata#1475).
 detector_pixel_ranges = _pixel_ranges()
 detector_names = list(detector_pixel_ranges)
 
-#: The single beam monitor, named after its NeXus group. Its Kafka source name
-#: upstream is still the placeholder ``TODO1``, so the PROD mapping assumes the
-#: conventional ``cbm1`` and will need correcting once ESS assigns the real one.
+#: The single beam monitor, the cave monitor (Kafka source ``cbm1``), named
+#: ``beam_monitor_1`` here.
 monitor_names = ['beam_monitor_1']
 
 
