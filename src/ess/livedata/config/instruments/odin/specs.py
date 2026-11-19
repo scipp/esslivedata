@@ -34,12 +34,13 @@ TIMEPIX3_PANEL_RESOLUTION = 4096
 #: permanently pending. Add it when the chopper is installed.
 #:
 #: The artifact's ``wfm1``/``wfm2`` axle positions carry a hand repair: the run
-#: file chains their offsets (absolute: -53.725 / -53.275 m) onto an
-#: NXlog on the ``ODIN-ChpLin:MC-LinX-01:Mtr`` readback, which the generator
-#: trims to length 0, so the positions come out empty. The artifact ends both
-#: chains at the offset instead (``depends_on='.'``). The two positioners also
-#: read the same PV and ``make_f144_log_lut`` keys on (topic, source), so only
-#: one of the two streams would be fed were the chains live.
+#: file chains their offsets (absolute: -53.725 / -53.275 m) onto the stage
+#: readback ``ODIN-ChpLin:MC-LinX-01:Mtr``, and the artifact ends both chains at
+#: the offset instead (``depends_on='.'``), i.e., at readback 0. A live chain
+#: needs essreduce to apply ``TransformationOverrides`` to choppers
+#: (scipp/ess#890) and one PV per disc (scipp/ess#856): both positioners read
+#: the same PV, and ``make_f144_log_lut`` keys on (topic, source), so only one
+#: of the two streams would be fed (#1437). Follow-up: #1438.
 ODIN_CHOPPERS = [
     'wfm1',
     'wfm2',
