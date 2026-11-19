@@ -29,12 +29,18 @@ _LEADER_PENDING_ERRORS = frozenset(
 _LEADER_TIMEOUT = 30.0
 _LEADER_POLL_INTERVAL = 0.5
 
+#: Timeout for metadata requests. The first request of a new consumer also
+#: covers connecting to a bootstrap broker, the TLS handshake and SASL login.
+#: librdkafka tries one bootstrap broker at a time, so a single slow broker can
+#: take several seconds of this budget before the next one is tried.
+_METADATA_TIMEOUT = 30.0
+
 
 def validate_topics_exist(consumer: kafka.Consumer, topics: list[str]) -> None:
     """Check if all topics exist and are accessible."""
     logger.debug("validating_topics", topics=topics)
     try:
-        cluster_metadata = consumer.list_topics(timeout=5.0)
+        cluster_metadata = consumer.list_topics(timeout=_METADATA_TIMEOUT)
         available_topics = cluster_metadata.topics
         missing_topics = [topic for topic in topics if topic not in available_topics]
         if missing_topics:
@@ -102,7 +108,11 @@ def assign_all_partitions(consumer: kafka.Consumer, topics: list[str]) -> None:
     assignment: list[kafka.TopicPartition] = []
     for topic in topics:
         try:
-            partitions = consumer.list_topics(topic).topics[topic].partitions
+            partitions = (
+                consumer.list_topics(topic, timeout=_METADATA_TIMEOUT)
+                .topics[topic]
+                .partitions
+            )
         except KafkaException as e:
             logger.exception("partition_assignment_failed", topic=topic)
             raise ValueError(
