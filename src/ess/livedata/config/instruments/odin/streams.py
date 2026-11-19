@@ -38,10 +38,13 @@ stream_mapping = {
     StreamingEnv.DEV: make_dev_stream_mapping(
         'odin',
         detector_names=list(detector_fakes),
+        monitor_names=instrument.monitors,
         log_names=list(instrument.f144_streams),
     ),
     StreamingEnv.PROD: StreamMapping(
-        **make_common_stream_mapping_inputs(instrument='odin'),
+        **make_common_stream_mapping_inputs(
+            instrument='odin', monitor_names=instrument.monitors
+        ),
         detectors=_make_odin_detectors(),
         logs=make_f144_log_lut(instrument),
     ),

@@ -12,7 +12,6 @@ from ess.livedata.config import (
 )
 from ess.livedata.config.device_contract import DETECTOR_VIEW_DEVICES
 from ess.livedata.workflows.monitor_workflow_specs import (
-    TOAOnlyMonitorDataParams,
     register_monitor_workflow_specs,
 )
 
@@ -56,18 +55,15 @@ ODIN_CHOPPERS = [
 instrument = Instrument(
     name='odin',
     detector_names=['timepix3'],
-    monitors=['monitor1', 'monitor2'],
+    # NeXus beam monitor groups; beam_monitor_N streams as cbmN.
+    monitors=['beam_monitor_1', 'beam_monitor_2', 'beam_monitor_3'],
     choppers=ODIN_CHOPPERS,
     streams=name_streams(filter_authorized_streams(PARSED_STREAMS)),
 )
 
 instrument_registry.register(instrument)
 
-# TOA-only. Wavelength mode needs a flight path. The geometry file places
-# beam_monitor_1..3, but no group is named monitor1 or monitor2 (#1346).
-register_monitor_workflow_specs(
-    instrument, ['monitor1', 'monitor2'], params=TOAOnlyMonitorDataParams
-)
+register_monitor_workflow_specs(instrument, instrument.monitors)
 
 instrument.configure_detector_downsampling(
     'timepix3',
