@@ -45,12 +45,6 @@ _IQ_WITHOUT_MONITOR_TABLES = (
     'refuses them.'
 )
 _ROUNDTRIP_XFAILS = {('loki', 'i_of_q'): _IQ_WITHOUT_MONITOR_TABLES}
-_WAVELENGTH_MODE_XFAILS = {
-    ('tbl', 'monitor_histogram'): (
-        '#1474: beam_monitor_1 rides the live filter_changer_3 axis, whose range '
-        'is not known, so it has no lookup-table block.'
-    )
-}
 
 
 def _with_xfails(params: list, xfails: dict[tuple[str, str], str]) -> list:
@@ -208,7 +202,7 @@ def test_workflow_roundtrip(instrument_name: str, workflow_id: WorkflowId):
 
 @pytest.mark.parametrize(
     ("instrument_name", "workflow_id"),
-    _with_xfails(_collect_wavelength_capable_factories(), _WAVELENGTH_MODE_XFAILS),
+    _collect_wavelength_capable_factories(),
 )
 def test_wavelength_mode_workflow_can_be_instantiated(
     instrument_name: str, workflow_id: WorkflowId

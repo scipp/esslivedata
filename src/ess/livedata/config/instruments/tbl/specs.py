@@ -4,7 +4,10 @@
 TBL workflow spec registration.
 """
 
+import scipp as sc
+
 from ess.livedata.config import (
+    AxisRange,
     Instrument,
     SourceMetadata,
     filter_authorized_streams,
@@ -56,6 +59,15 @@ instrument = Instrument(
     # Bandwidth choppers feeding the wavelength-LUT cascade, in beam order
     # (source -> sample): bwc_1 sits at 8.54 m from the source, bwc_2 at 8.56 m.
     choppers=['bwc_1', 'bwc_2'],
+    # beam_monitor_1 rides filter_changer_3, whose travel is not known. The axis
+    # is perpendicular to the beam, 9.1 m from the source, so the monitor's
+    # flight path hardly depends on it: +-1 m of travel widens its lookup-table
+    # block by 4 cm. The range is therefore declared generously.
+    axis_ranges={
+        '/entry/instrument/filter_changer_3/value': AxisRange(
+            lower=sc.scalar(-1.0, unit='m'), upper=sc.scalar(1.0, unit='m')
+        )
+    },
     streams=name_streams(filter_authorized_streams(PARSED_STREAMS)),
     source_metadata={
         'timepix3': SourceMetadata(title='Timepix3'),

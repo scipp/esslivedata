@@ -38,6 +38,7 @@ from ess.livedata.kafka.sink_serializers import make_default_sink_serializer
 from ess.livedata.parameter_models import (
     DspacingEdges,
     DspacingUnit,
+    WavelengthEdges,
     WavelengthRange,
     WavelengthUnit,
 )
@@ -940,11 +941,6 @@ class TestTblWavelengthViews:
         counts = result.data['counts_total_cumulative']
         assert counts.value > 0
 
-    @pytest.mark.xfail(
-        strict=True,
-        reason='#1474: beam_monitor_1 rides the live filter_changer_3 axis, whose '
-        'range is not known, so it has no lookup-table block.',
-    )
     def test_monitor_reduces_to_wavelength(
         self, tbl: Instrument, tbl_tables: dict[str, sc.DataArray]
     ) -> None:
@@ -953,9 +949,15 @@ class TestTblWavelengthViews:
             tbl,
             'monitor_histogram',
             'beam_monitor_1',
-            params_model(coordinate_mode=CoordinateModeSettings(mode='wavelength')),
+            params_model(
+                coordinate_mode=CoordinateModeSettings(mode='wavelength'),
+                # With zero delay the bandwidth choppers pass ~10-15 Å at the
+                # monitor, above the default edges.
+                wavelength_edges=WavelengthEdges(start=1.0, stop=20.0, num_bins=100),
+            ),
         )
-        assert job.gating_streams == {MONITOR_STREAM}
+        # The monitor rides the filter changer, so its position is streamed too.
+        assert job.gating_streams == {MONITOR_STREAM, 'filter_changer_3'}
 
         frame_time = sc.linspace('frame_time', 0, 71_000_000, num=1001, unit='ns')
         histogram = sc.DataArray(
@@ -966,7 +968,10 @@ class TestTblWavelengthViews:
             start_time=Timestamp.from_ns(0),
             end_time=Timestamp.from_ns(1),
             primary_data={'beam_monitor_1': histogram},
-            aux_data={MONITOR_STREAM: tbl_tables[MONITOR_STREAM]},
+            aux_data={
+                MONITOR_STREAM: tbl_tables[MONITOR_STREAM],
+                'filter_changer_3': _nxlog(0.0, 'mm'),
+            },
         )
         reply, result = job.process(data, finalize=True)
 
