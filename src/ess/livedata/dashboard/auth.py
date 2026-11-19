@@ -6,6 +6,11 @@ See ``docs/user-guide/deployment.md``. The dashboard uses ``pn.serve``, which un
 ``panel serve`` installs no login unless passed the provider, never enables encryption
 of the tokens stored in cookies, and validates nothing. :py:func:`configure_auth` makes
 up for this, and fails at startup rather than serve an unprotected dashboard by mistake.
+
+Panel requests the token with Tornado's HTTP client. Its default implementation ignores
+``HTTPS_PROXY``, so on hosts that reach the provider only through a proxy the login
+times out. :py:func:`configure_auth` switches it to the libcurl-based client, which
+honours the proxy variables.
 """
 
 import json
@@ -16,6 +21,7 @@ from urllib.request import Request, urlopen
 import panel as pn
 import structlog
 from cryptography.fernet import Fernet
+from tornado.httpclient import AsyncHTTPClient
 
 logger = structlog.get_logger(__name__)
 
@@ -67,6 +73,7 @@ def configure_auth() -> str | None:
         raise ValueError("Set BOKEH_ALLOW_WS_ORIGIN to the dashboard's host, not '*'.")
 
     pn.state.encryption = Fernet(os.environ['PANEL_OAUTH_ENCRYPTION'])
+    AsyncHTTPClient.configure('tornado.curl_httpclient.CurlAsyncHTTPClient')
     logger.info("Dashboard login enabled.", provider=provider)
     return provider
 

@@ -45,6 +45,8 @@ Register a client with the provider using the authorization code flow and `clien
 
 Serve the dashboard through an HTTPS proxy that also forwards WebSocket connections.
 
+If the host reaches the provider only through an outbound proxy, set `HTTPS_PROXY` in the container. Both the startup discovery request and the token request on login use it.
+
 The dashboard refuses to start if this configuration is incomplete, or if the provider cannot be reached at startup.
 
 There are no access levels: any account the provider accepts for this client has full control of the dashboard. To limit who can log in, restrict the client at the provider.
