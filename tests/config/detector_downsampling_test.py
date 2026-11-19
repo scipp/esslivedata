@@ -1,5 +1,6 @@
 # SPDX-License-Identifier: BSD-3-Clause
 # Copyright (c) 2026 Scipp contributors (https://github.com/scipp)
+import numpy as np
 import pytest
 import scipp as sc
 from structlog.testing import capture_logs
@@ -43,6 +44,27 @@ class TestTargetGrid:
             dim='detector_number', sizes={'x': 1024, 'y': 1024}
         )
         assert resolve(declared).grid.sizes == {'x': 512, 'y': 512}
+
+
+def fast_first_grid(side: int, first_id: int = 0) -> sc.Variable:
+    """A grid enumerated as ``first_id + dim_0 + side * dim_1``."""
+    ids = np.arange(first_id, first_id + side * side).reshape(side, side).T
+    return sc.array(dims=['dim_0', 'dim_1'], values=np.ascontiguousarray(ids))
+
+
+class TestSlowAxis:
+    def test_target_grid_lists_the_slow_axis_first(self) -> None:
+        # The remap takes 'id // side' as the slow index, so the target grid
+        # has to name that axis first. ODIN's Timepix3 makes dim_1 the slow one.
+        downsampling = resolve(fast_first_grid(4096, first_id=1))
+
+        assert downsampling.first_id == 1
+        assert downsampling.grid.dims == ('dim_1', 'dim_0')
+
+    def test_target_grid_keeps_the_declared_order_when_the_first_axis_is_slow(
+        self,
+    ) -> None:
+        assert resolve(square_grid(4096)).grid.dims == ('dim_0', 'dim_1')
 
 
 class TestIdBase:
@@ -117,14 +139,23 @@ class TestDeclaredGridRejections:
         with pytest.raises(ValueError, match='at most'):
             resolve(square_grid(4096), source_resolution=2048)
 
-    def test_rejects_ids_that_are_not_row_major_contiguous(self) -> None:
-        # The remap inverts 'id = x * side + y'. A file enumerating the grid in
-        # any other order would scramble the image with nothing to notice it by.
-        with pytest.raises(ValueError, match='row-major'):
-            resolve(square_grid(1024).transpose().copy())
+    def test_rejects_ids_that_enumerate_by_tile(self) -> None:
+        # The remap inverts 'id = slow * side + fast'. A file enumerating the
+        # grid in 512x512 tiles would scramble the image with nothing to notice
+        # it by.
+        side, tile = 1024, 512
+        ids = np.arange(side * side, dtype='int64').reshape(
+            side // tile, side // tile, tile, tile
+        )
+        declared = sc.array(
+            dims=['dim_0', 'dim_1'],
+            values=ids.transpose(0, 2, 1, 3).reshape(side, side),
+        )
+        with pytest.raises(ValueError, match='contiguously'):
+            resolve(declared)
 
     def test_rejects_ids_with_gaps(self) -> None:
         declared = square_grid(1024).copy()
         declared.values[3, 7] += 1_000_000
-        with pytest.raises(ValueError, match='row-major'):
+        with pytest.raises(ValueError, match='contiguously'):
             resolve(declared)

@@ -14,8 +14,8 @@ from .._ess import (
 )
 from .specs import instrument
 
-# Timepix3 detector_number is 0-based, unlike the He3/multiblade banks.
-detector_fakes = {'timepix3': (0, 4096**2 - 1)}
+# Timepix3 detector_number is 1-based: 1..4096**2.
+detector_fakes = {'timepix3': (1, 4096**2)}
 
 
 def _make_odin_detectors() -> StreamLUT:
@@ -26,10 +26,10 @@ def _make_odin_detectors() -> StreamLUT:
     https://confluence.ess.eu/display/ECDC/Kafka+Topics+Overview+for+Instruments
     """
     return {InputStreamKey(topic='odin_detector', source_name='timepix3'): 'timepix3'}
-    # The following combination was used during ODIN detector tests,
-    # we may need them again.
+    # The EMPIR data path (a second Timepix3 readout, `timepix3_empir` in the
+    # NeXus file) publishes on its own topic. It can replace the line above:
     # return {
-    #     InputStreamKey(topic='odin_detector_tpx3_empir', source_name='test'):
+    #     InputStreamKey(topic='odin_detector_tpx3_empir', source_name='timepix3'):
     #     'timepix3'
     # }
 
@@ -38,10 +38,13 @@ stream_mapping = {
     StreamingEnv.DEV: make_dev_stream_mapping(
         'odin',
         detector_names=list(detector_fakes),
+        monitor_names=instrument.monitors,
         log_names=list(instrument.f144_streams),
     ),
     StreamingEnv.PROD: StreamMapping(
-        **make_common_stream_mapping_inputs(instrument='odin'),
+        **make_common_stream_mapping_inputs(
+            instrument='odin', monitor_names=instrument.monitors
+        ),
         detectors=_make_odin_detectors(),
         logs=make_f144_log_lut(instrument),
     ),

@@ -12,7 +12,6 @@ from ess.livedata.config import (
 )
 from ess.livedata.config.device_contract import DETECTOR_VIEW_DEVICES
 from ess.livedata.workflows.monitor_workflow_specs import (
-    TOAOnlyMonitorDataParams,
     register_monitor_workflow_specs,
 )
 
@@ -28,17 +27,19 @@ TIMEPIX3_PANEL_RESOLUTION = 4096
 
 #: Choppers feeding the wavelength-LUT cascade, in beam order. The geometry
 #: artifact also holds a ``t0`` chopper, left out because that chopper does not
-#: exist yet; its NeXus entry is a placeholder on simulation PVs
-#: (``SIM_odin:instrument:t0:*``) that have never connected. The cascade fires
-#: only once every configured chopper has locked, so listing a device that
-#: cannot stream would hold the LUT permanently pending. Add it when the
-#: chopper is installed.
+#: exist yet; its NeXus entry is a placeholder on PVs that never connect
+#: (``ODIN:PLACEHOLDER:T0:*``). The cascade fires only once every configured
+#: chopper has locked, so listing a device that cannot stream would hold the LUT
+#: permanently pending. Add it when the chopper is installed.
 #:
 #: The artifact's ``wfm1``/``wfm2`` axle positions carry a hand repair: the run
-#: file chains their offsets onto an NXlog that streams 0 m, placing them
-#: downstream of the sample, so the artifact substitutes the static -60.5 m
-#: moderator position their offsets are measured from. Both are pending
-#: upstream fixes to the ODIN structure file.
+#: file chains their offsets (absolute: -53.725 / -53.275 m) onto the stage
+#: readback ``ODIN-ChpLin:MC-LinX-01:Mtr``, and the artifact ends both chains at
+#: the offset instead (``depends_on='.'``), i.e., at readback 0. A live chain
+#: needs essreduce to apply ``TransformationOverrides`` to choppers
+#: (scipp/ess#890) and one PV per disc (scipp/ess#856): both positioners read
+#: the same PV, and ``make_f144_log_lut`` keys on (topic, source), so only one
+#: of the two streams would be fed (#1437). Follow-up: #1438.
 ODIN_CHOPPERS = [
     'wfm1',
     'wfm2',
@@ -54,18 +55,15 @@ ODIN_CHOPPERS = [
 instrument = Instrument(
     name='odin',
     detector_names=['timepix3'],
-    monitors=['monitor1', 'monitor2'],
+    # NeXus beam monitor groups; beam_monitor_N streams as cbmN.
+    monitors=['beam_monitor_1', 'beam_monitor_2', 'beam_monitor_3'],
     choppers=ODIN_CHOPPERS,
     streams=name_streams(filter_authorized_streams(PARSED_STREAMS)),
 )
 
 instrument_registry.register(instrument)
 
-# TOA-only. Wavelength mode needs a flight path, which the geometry file does
-# not give for these monitors (#1346).
-register_monitor_workflow_specs(
-    instrument, ['monitor1', 'monitor2'], params=TOAOnlyMonitorDataParams
-)
+register_monitor_workflow_specs(instrument, instrument.monitors)
 
 instrument.configure_detector_downsampling(
     'timepix3',

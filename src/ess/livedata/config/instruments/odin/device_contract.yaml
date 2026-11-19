@@ -4,21 +4,29 @@
 # GENERATED -- do not edit. NICOS derived-device list for odin.
 # Regenerate: python -m ess.livedata.config.device_contract
 devices:
-- device_name: monitor1_counts_total
+- device_name: beam_monitor_1_counts_total
   workflow_id: odin/monitor_histogram/1
-  source_name: monitor1
+  source_name: beam_monitor_1
   output_name: counts_total_cumulative
-- device_name: monitor2_counts_total
+- device_name: beam_monitor_2_counts_total
   workflow_id: odin/monitor_histogram/1
-  source_name: monitor2
+  source_name: beam_monitor_2
   output_name: counts_total_cumulative
-- device_name: monitor1_histogram
+- device_name: beam_monitor_3_counts_total
   workflow_id: odin/monitor_histogram/1
-  source_name: monitor1
+  source_name: beam_monitor_3
+  output_name: counts_total_cumulative
+- device_name: beam_monitor_1_histogram
+  workflow_id: odin/monitor_histogram/1
+  source_name: beam_monitor_1
   output_name: cumulative
-- device_name: monitor2_histogram
+- device_name: beam_monitor_2_histogram
   workflow_id: odin/monitor_histogram/1
-  source_name: monitor2
+  source_name: beam_monitor_2
+  output_name: cumulative
+- device_name: beam_monitor_3_histogram
+  workflow_id: odin/monitor_histogram/1
+  source_name: beam_monitor_3
   output_name: cumulative
 - device_name: timepix3_counts_total
   workflow_id: odin/odin_detector_xy/1
