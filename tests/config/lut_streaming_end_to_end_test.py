@@ -38,6 +38,7 @@ from ess.livedata.kafka.sink_serializers import make_default_sink_serializer
 from ess.livedata.parameter_models import (
     DspacingEdges,
     DspacingUnit,
+    WavelengthEdges,
     WavelengthRange,
     WavelengthUnit,
 )
@@ -893,15 +894,15 @@ def tbl_tables(tbl: Instrument) -> dict[str, sc.DataArray]:
 
 class TestTblWavelengthViews:
     """TBL's logical views take pixel positions from the geometry file in
-    wavelength mode; ``monitor_1`` is a histogram-mode (da00) monitor."""
+    wavelength mode; ``beam_monitor_1`` is a histogram-mode (da00) monitor."""
 
     @pytest.mark.parametrize(
         ('view', 'source_name'),
         [
-            ('he3_detector_view', 'he3_detector_bank0'),
-            ('he3_detector_view', 'he3_detector_bank1'),
-            ('multiblade_detector_view', 'multiblade_detector'),
-            ('ngem_detector_view', 'ngem_detector'),
+            ('he3_detector_view', 'he3_bank_0'),
+            ('he3_detector_view', 'he3_bank_1'),
+            ('multiblade_detector_view', 'multiblade'),
+            ('ngem_detector_view', 'ngem'),
         ],
     )
     def test_detector_view_reduces_to_wavelength(
@@ -947,10 +948,16 @@ class TestTblWavelengthViews:
         job = _create_job(
             tbl,
             'monitor_histogram',
-            'monitor_1',
-            params_model(coordinate_mode=CoordinateModeSettings(mode='wavelength')),
+            'beam_monitor_1',
+            params_model(
+                coordinate_mode=CoordinateModeSettings(mode='wavelength'),
+                # With zero delay the bandwidth choppers pass ~10-15 Å at the
+                # monitor, above the default edges.
+                wavelength_edges=WavelengthEdges(start=1.0, stop=20.0, num_bins=100),
+            ),
         )
-        assert job.gating_streams == {MONITOR_STREAM}
+        # The monitor rides the filter changer, so its position is streamed too.
+        assert job.gating_streams == {MONITOR_STREAM, 'filter_changer_3'}
 
         frame_time = sc.linspace('frame_time', 0, 71_000_000, num=1001, unit='ns')
         histogram = sc.DataArray(
@@ -960,8 +967,11 @@ class TestTblWavelengthViews:
         data = JobData(
             start_time=Timestamp.from_ns(0),
             end_time=Timestamp.from_ns(1),
-            primary_data={'monitor_1': histogram},
-            aux_data={MONITOR_STREAM: tbl_tables[MONITOR_STREAM]},
+            primary_data={'beam_monitor_1': histogram},
+            aux_data={
+                MONITOR_STREAM: tbl_tables[MONITOR_STREAM],
+                'filter_changer_3': _nxlog(0.0, 'mm'),
+            },
         )
         reply, result = job.process(data, finalize=True)
 

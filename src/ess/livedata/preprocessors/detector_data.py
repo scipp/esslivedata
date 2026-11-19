@@ -108,6 +108,7 @@ _registry = {
     'geometry-odin-2026-11-18.nxs': 'md5:d224ee9459aa5fa1a0d85ee75beffc58',
     'geometry-tbl-2025-12-03.nxs': 'md5:040a70659155eb386245755455ee3e62',
     'geometry-tbl-2026-07-01.nxs': 'md5:81535e5468a6907e47b97c4cb8e1fd3c',
+    'geometry-tbl-2026-11-18.nxs': 'md5:255211f4bb64df4c0ba8ee2d00e3c8e0',
     'geometry-estia-2025-12-16.nxs': 'md5:07d33010189a50ee46ee5f649f848ca5',
     'geometry-estia-2026-10-06.nxs': 'md5:8d4278b588fbc40bfa6425231a36af02',
     'geometry-estia-2026-11-18.nxs': 'md5:561c0ca070b6ed097bdbe7bf1878399d',
