@@ -1,5 +1,6 @@
 # SPDX-License-Identifier: BSD-3-Clause
 # Copyright (c) 2026 Scipp contributors (https://github.com/scipp)
+import asyncio
 import json
 import logging
 import os
@@ -9,6 +10,7 @@ from pathlib import Path
 import panel as pn
 import pytest
 from cryptography.fernet import Fernet
+from tornado.httpclient import AsyncHTTPClient, HTTPClientError
 
 from ess.livedata.dashboard.auth import configure_auth
 from ess.livedata.dashboard.reduction import ReductionApp
@@ -21,6 +23,7 @@ ENCRYPTION_KEY = Fernet.generate_key().decode()
 def clean_auth_state(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
     """Isolate from the host's environment and restore what configure_auth sets."""
     monkeypatch.setattr(pn.state, 'encryption', None)
+    http_client = AsyncHTTPClient.configured_class()
     # A snapshot rather than monkeypatch: discovery writes to the environment.
     saved = dict(os.environ)
     for var in list(os.environ):
@@ -29,6 +32,7 @@ def clean_auth_state(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
     yield
     os.environ.clear()
     os.environ.update(saved)
+    AsyncHTTPClient.configure(http_client)
 
 
 @pytest.fixture
@@ -125,3 +129,34 @@ def test_endpoints_come_from_the_discovery_document(
     assert os.environ['PANEL_OAUTH_TOKEN_URL'] == document['token_endpoint']
     # Set explicitly, so not overwritten.
     assert os.environ['PANEL_OAUTH_USER_URL'] == 'https://idp.example.org/userinfo'
+
+
+def test_token_request_goes_through_proxy_from_environment(oauth_env: None) -> None:
+    """Hosts at ESS reach the provider only through a proxy; without it login times
+    out on the redirect, long after startup succeeded."""
+    configure_auth()
+
+    async def fetch_through_proxy() -> bytes:
+        received: list[bytes] = []
+
+        async def proxy(
+            reader: asyncio.StreamReader, writer: asyncio.StreamWriter
+        ) -> None:
+            received.append(await reader.readline())
+            writer.close()
+
+        server = await asyncio.start_server(proxy, '127.0.0.1', 0)
+        port = server.sockets[0].getsockname()[1]
+        os.environ['https_proxy'] = os.environ['HTTPS_PROXY'] = (
+            f'http://127.0.0.1:{port}'
+        )
+        os.environ['no_proxy'] = os.environ['NO_PROXY'] = ''
+        async with server:
+            with pytest.raises(HTTPClientError):
+                await AsyncHTTPClient(force_instance=True).fetch(
+                    os.environ['PANEL_OAUTH_TOKEN_URL'], request_timeout=5
+                )
+        return received[0]
+
+    request_line = asyncio.run(fetch_through_proxy())
+    assert request_line.startswith(b'CONNECT idp.example.org:443')
