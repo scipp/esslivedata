@@ -153,9 +153,7 @@ class DownsamplePixelIds(Accumulator[DetectorEvents, sc.DataArray]):
 
     Ids are laid out as ``slow * source + fast``, which
     :func:`~ess.livedata.config.detector_downsampling.resolve_downsampling`
-    verifies against the geometry file. Which of the two grid dimensions is the
-    slow one is the geometry file's choice; the target grid it returns follows
-    the same order, so the remap is the same either way. They are taken relative to
+    verifies against the geometry file. They are taken relative to
     ``downsampling.first_id`` because detectors disagree on where they start
     counting, and guessing wrong does not merely shift the image: for a 1-based
     4096x4096 panel treated as 0-based, ``max_id`` becomes ``4096**2`` rather
@@ -240,8 +238,8 @@ class DownsamplePixelIds(Accumulator[DetectorEvents, sc.DataArray]):
         # forwards it and grouping drops it, as it would with any other stride.
         source = self._source_resolution or self._resolution
         block = source // self._resolution
-        # id = slow * source + fast. Ids at or beyond source**2 give
-        # slow // block >= resolution, so the remapped id falls outside the
+        # id = slow * source + fast. Ids at or beyond source**2
+        # give slow // block >= resolution, so the remapped id falls outside the
         # target grid and grouping drops it, as it already does for ids outside
         # the configured detector_number. Ids below first_id stay negative.
         slow, fast = np.divmod(pixel_id, source)

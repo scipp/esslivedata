@@ -105,6 +105,7 @@ def test_timepix3_ingest_puts_each_pixel_in_the_cell_covering_it(
         accumulator.get()
         .bins.size()
         .fold('detector_number', sizes=downsampling.grid.sizes)
+        .transpose(declared.dims)
     )
 
     expected = np.zeros((resolution, resolution), dtype='int64')

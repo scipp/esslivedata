@@ -57,12 +57,12 @@ class DetectorDownsampling:
     #: observed event ids, bounded by :attr:`max_resolution`.
     source_resolution: int | None
     #: Lowest event id the detector emits, taken from the declared grid.
-    #: Detectors differ: TBL's Timepix3 and He3 banks count from 1.
+    #: Detectors differ: TBL's Timepix3 counts from 0, its He3 banks from 1.
     first_id: int
     #: The target grid itself, as a 2D ``detector_number``. Keeps the declared
-    #: grid's dimension names and enumeration order, since it is the same
-    #: detector at a coarser resolution; instruments that name their axes
-    #: therefore need no rename or transpose downstream.
+    #: grid's dimension names, since it is the same detector at a coarser
+    #: resolution; instruments that name their axes therefore need no rename
+    #: downstream.
     grid: sc.Variable
 
 
@@ -90,12 +90,13 @@ def resolve_downsampling(
 
     ``declared`` is consulted only for what a reconfiguration cannot change:
 
-    - that the ids are a contiguous enumeration of a square grid, with either
-      the first or the last dimension running fastest. That is the layout the
-      remap assumes and the one property whose failure would scramble the
-      image rather than announce itself. The check can only be made at the
-      resolution the file happens to record, but a readout that enumerates a
-      grid in one order at one resolution does so at all of them;
+    - that the ids are a contiguous enumeration of a square grid along one
+      axis, which is the layout the remap assumes and the one property whose
+      failure would scramble the image rather than announce itself. The check
+      can only be made at the resolution the file happens to record, but a
+      readout that enumerates this way at one resolution does so at all of
+      them. Which axis is slow is read from the file, and the target grid
+      lists its axes slow first;
     - which id the detector counts from, since detectors disagree and a wrong
       base does not merely shift the image by a pixel, it makes the inferred
       source resolution wrong;
@@ -137,7 +138,7 @@ def resolve_downsampling(
             max_resolution=source_resolution,
             source_resolution=None if reconfigurable else source_resolution,
             first_id=0,
-            grid=_target_grid(resolution, ('dim_0', 'dim_1'), first_dim_fastest=False),
+            grid=_target_grid(resolution, ('dim_0', 'dim_1')),
         )
     if declared.ndim != 2 or declared.shape[0] != declared.shape[1]:
         raise ValueError(
@@ -166,63 +167,45 @@ def resolve_downsampling(
             f"{side}. Nothing corrects a fixed stride at runtime, so a "
             "disagreement here would scramble the image."
         )
-    first_id, first_dim_fastest = _check_contiguous_enumeration(name, declared)
+    row_major = _as_row_major(name, declared)
     return DetectorDownsampling(
         resolution=resolution,
         max_resolution=source_resolution,
         source_resolution=None if reconfigurable else source_resolution,
-        first_id=first_id,
-        grid=_target_grid(
-            resolution, declared.dims, first_dim_fastest=first_dim_fastest
-        ),
+        first_id=int(row_major.values.reshape(-1)[0]),
+        grid=_target_grid(resolution, row_major.dims),
     )
 
 
-def _target_grid(
-    resolution: int, dims: tuple[str, ...], *, first_dim_fastest: bool
-) -> sc.Variable:
-    """A 0-based ``detector_number`` for the coarse grid.
-
-    Enumerated in the same order as the declared grid: the preprocessor's remap
-    produces ``slow * resolution + fast`` whichever dimension is which, so the
-    coarse grid has to put the same dimension in the fast position.
-    """
-    ids = sc.arange('detector_number', resolution * resolution, unit=None)
-    if first_dim_fastest:
-        return (
-            ids.fold(
-                dim='detector_number', sizes=dict.fromkeys(reversed(dims), resolution)
-            )
-            .transpose(dims)
-            .copy()
-        )
-    return ids.fold(dim='detector_number', sizes=dict.fromkeys(dims, resolution))
+def _target_grid(resolution: int, dims: tuple[str, ...]) -> sc.Variable:
+    """A 0-based row-major ``detector_number`` for the coarse grid."""
+    return sc.arange('detector_number', resolution * resolution, unit=None).fold(
+        dim='detector_number', sizes=dict.fromkeys(dims, resolution)
+    )
 
 
-def _check_contiguous_enumeration(name: str, declared: sc.Variable) -> tuple[int, bool]:
-    """Return the first id and the enumeration order, having checked the layout.
+def _as_row_major(name: str, declared: sc.Variable) -> sc.Variable:
+    """Return ``declared`` with its slow axis first, having checked its layout.
 
     The remap decomposes an id as ``slow * side + fast``. That is only the
     inverse of the file's own enumeration if ``detector_number`` runs
-    contiguously with one dimension fastest, and a file that enumerated per
-    readout chip instead -- plausible for a multi-chip panel -- would produce a
-    scrambled image with nothing to notice it by. The file is already in
-    memory, so check it.
+    contiguously along one axis, and a file that enumerated per readout chip
+    instead -- plausible for a multi-chip panel -- would produce a scrambled
+    image with nothing to notice it by. The file is already in memory, so check
+    it.
 
-    The second value is whether the first dimension is the fast one, as in
-    ``id = first + i + side * j`` for ``detector_number[i, j]``.
+    Files differ in which axis is slow. Where the first dimension is the fast
+    one, the transposed grid is the row-major one, so the axes are swapped and
+    keep their names.
     """
-    values = declared.values
-    flat = values.reshape(-1)
-    first_id = int(flat[0])
-    expected = np.arange(first_id, first_id + flat.size, dtype=flat.dtype)
-    if np.array_equal(flat, expected):
-        return first_id, False
-    if np.array_equal(values.T.reshape(-1), expected):
-        return first_id, True
+    flat = declared.values.reshape(-1)
+    expected = np.arange(flat[0], flat[0] + flat.size, dtype=flat.dtype)
+    for candidate in (declared, declared.transpose()):
+        if np.array_equal(candidate.values.reshape(-1), expected):
+            return candidate
     raise ValueError(
         f"Detector {name} is configured for downsampling, which maps event "
         f"id to pixel as 'id = slow * {declared.shape[0]} + fast'. That requires "
-        "detector_number to enumerate the grid contiguously, with either "
-        "dimension running fastest, which this one does not."
+        "detector_number to enumerate the grid contiguously along one of its "
+        "axes, which this one does not."
     )

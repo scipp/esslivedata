@@ -1,5 +1,6 @@
 # SPDX-License-Identifier: BSD-3-Clause
 # Copyright (c) 2026 Scipp contributors (https://github.com/scipp)
+import numpy as np
 import pytest
 import scipp as sc
 from structlog.testing import capture_logs
@@ -11,16 +12,6 @@ def square_grid(side: int, first_id: int = 0) -> sc.Variable:
     return sc.arange(
         'detector_number', first_id, first_id + side * side, unit=None
     ).fold(dim='detector_number', sizes={'dim_0': side, 'dim_1': side})
-
-
-def transposed_square_grid(side: int, first_id: int = 0) -> sc.Variable:
-    """``d[i, j] = first_id + i + side * j``: the first dimension runs fastest."""
-    return (
-        sc.arange('detector_number', first_id, first_id + side * side, unit=None)
-        .fold(dim='detector_number', sizes={'dim_1': side, 'dim_0': side})
-        .transpose(['dim_0', 'dim_1'])
-        .copy()
-    )
 
 
 def resolve(
@@ -43,17 +34,8 @@ class TestTargetGrid:
         assert grid.min().value == 0
         assert grid.max().value == 512 * 512 - 1
 
-    def test_row_major_declared_grid_gives_the_no_file_default(self) -> None:
+    def test_does_not_depend_on_the_declared_grid(self) -> None:
         assert sc.identical(resolve(square_grid(4096)).grid, resolve(None).grid)
-
-    def test_follows_the_declared_enumeration_order(self) -> None:
-        # With the first dimension fastest, the coarse grid has to put the same
-        # dimension in the fast position for the remapped ids to land on the
-        # cell the file's own numbering assigns to the pixel.
-        grid = resolve(transposed_square_grid(4096, first_id=1)).grid
-        assert grid.dims == ('dim_0', 'dim_1')
-        assert grid['dim_0', 1]['dim_1', 0].value == 1
-        assert grid['dim_0', 0]['dim_1', 1].value == 512
 
     def test_keeps_the_declared_dimension_names(self) -> None:
         # The coarse grid is the same detector, so an instrument that names its
@@ -64,17 +46,33 @@ class TestTargetGrid:
         assert resolve(declared).grid.sizes == {'x': 512, 'y': 512}
 
 
+def fast_first_grid(side: int, first_id: int = 0) -> sc.Variable:
+    """A grid enumerated as ``first_id + dim_0 + side * dim_1``."""
+    ids = np.arange(first_id, first_id + side * side).reshape(side, side).T
+    return sc.array(dims=['dim_0', 'dim_1'], values=np.ascontiguousarray(ids))
+
+
+class TestSlowAxis:
+    def test_target_grid_lists_the_slow_axis_first(self) -> None:
+        # The remap takes 'id // side' as the slow index, so the target grid
+        # has to name that axis first. ODIN's Timepix3 makes dim_1 the slow one.
+        downsampling = resolve(fast_first_grid(4096, first_id=1))
+
+        assert downsampling.first_id == 1
+        assert downsampling.grid.dims == ('dim_1', 'dim_0')
+
+    def test_target_grid_keeps_the_declared_order_when_the_first_axis_is_slow(
+        self,
+    ) -> None:
+        assert resolve(square_grid(4096)).grid.dims == ('dim_0', 'dim_1')
+
+
 class TestIdBase:
     def test_is_taken_from_the_declared_grid(self) -> None:
         # Detectors disagree on where they start counting, and assuming wrong
         # corrupts the inferred source resolution rather than merely shifting
         # the image, so the base is read rather than assumed.
         assert resolve(square_grid(4096, first_id=1)).first_id == 1
-
-    def test_is_taken_from_the_declared_grid_when_first_dimension_runs_fastest(
-        self,
-    ) -> None:
-        assert resolve(transposed_square_grid(4096, first_id=1)).first_id == 1
 
     def test_is_assumed_zero_with_a_warning_when_no_file_was_read(self) -> None:
         with capture_logs() as logs:
@@ -141,22 +139,20 @@ class TestDeclaredGridRejections:
         with pytest.raises(ValueError, match='at most'):
             resolve(square_grid(4096), source_resolution=2048)
 
-    def test_rejects_ids_enumerated_per_tile(self) -> None:
+    def test_rejects_ids_that_enumerate_by_tile(self) -> None:
         # The remap inverts 'id = slow * side + fast'. A file enumerating the
-        # grid in any other order, here per 2x2 tile as a multi-chip panel
-        # might, would scramble the image with nothing to notice it by.
-        side = 1024
-        tiled = (
-            sc.arange('detector_number', side * side, unit=None)
-            .fold('detector_number', sizes={'i': side // 2, 'j': side // 2, 'k': 4})
-            .fold('k', sizes={'k0': 2, 'k1': 2})
-            .transpose(['i', 'k0', 'j', 'k1'])
-            .copy()
-            .flatten(['i', 'k0'], to='dim_0')
-            .flatten(['j', 'k1'], to='dim_1')
+        # grid in 512x512 tiles would scramble the image with nothing to notice
+        # it by.
+        side, tile = 1024, 512
+        ids = np.arange(side * side, dtype='int64').reshape(
+            side // tile, side // tile, tile, tile
+        )
+        declared = sc.array(
+            dims=['dim_0', 'dim_1'],
+            values=ids.transpose(0, 2, 1, 3).reshape(side, side),
         )
         with pytest.raises(ValueError, match='contiguously'):
-            resolve(tiled)
+            resolve(declared)
 
     def test_rejects_ids_with_gaps(self) -> None:
         declared = square_grid(1024).copy()
