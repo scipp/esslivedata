@@ -1,3 +1,5 @@
+@AGENTS.md
+
 ## Project Overview
 
 ESSlivedata is a live data reduction visualization framework for the European Spallation Source (ESS). It processes real-time neutron detector data via Kafka streams and provides interactive dashboards for monitoring and data reduction workflows.
