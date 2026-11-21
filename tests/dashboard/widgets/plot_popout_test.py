@@ -35,6 +35,7 @@ from ess.livedata.dashboard.theme import DEFAULT_THEME
 hv.extension('bokeh')
 
 _WORKFLOW = WorkflowId(instrument='test', name='wf', version=1)
+_LINE_KEY = DataKey(workflow_id=_WORKFLOW, source_name='s1', output_name='out')
 _GEOMETRY = CellGeometry(row=0, col=0, row_span=1, col_span=1)
 # Tooltip of the controller's one-shot Fit tool, its handle in a Bokeh toolbar.
 _FIT = 'Fit ranges to current data'
@@ -105,8 +106,7 @@ def _make_line_plotter() -> LinePlotter:
     autoscales and actually updates.
     """
     plotter = LinePlotter.from_params(PlotParams1d())
-    key = DataKey(workflow_id=_WORKFLOW, source_name='s1', output_name='out')
-    plotter.compute({PRIMARY: {key: _curve([1.0, 2.0, 3.0])}})
+    plotter.compute({PRIMARY: {_LINE_KEY: _curve([1.0, 2.0, 3.0])}})
     return plotter
 
 
@@ -116,9 +116,20 @@ def line_plotter():
 
 
 def _add_line_cell(
-    plot_orchestrator, plot_grid_tabs, plot_data_service, plotter, *, title
+    plot_orchestrator,
+    plot_grid_tabs,
+    plot_data_service,
+    data_service,
+    plotter,
+    *,
+    title,
 ):
-    """Add a 1x1 grid holding one built cell showing a live 1-D line plot."""
+    """Add a 1x1 grid holding one built cell showing a live 1-D line plot.
+
+    The data service gets the curve the plotter shows: a layer that shows a
+    plot but finds no data behind it is reset to wait for data.
+    """
+    data_service[_LINE_KEY] = _curve([1.0, 2.0, 3.0])
     grid_id = plot_orchestrator.add_grid(title=title, nrows=1, ncols=1)
     cell_id = plot_orchestrator.add_cell(grid_id, _GEOMETRY)
     layer_id = plot_orchestrator.add_layer(cell_id, _line_config())
@@ -151,10 +162,17 @@ def _show_grid(plot_grid_tabs, grid_id) -> None:
 
 
 @pytest.fixture
-def line_cell(plot_orchestrator, plot_grid_tabs, plot_data_service, line_plotter):
+def line_cell(
+    plot_orchestrator, plot_grid_tabs, plot_data_service, data_service, line_plotter
+):
     """A built cell showing a live 1-D line plot."""
     return _add_line_cell(
-        plot_orchestrator, plot_grid_tabs, plot_data_service, line_plotter, title='G'
+        plot_orchestrator,
+        plot_grid_tabs,
+        plot_data_service,
+        data_service,
+        line_plotter,
+        title='G',
     )
 
 
@@ -391,7 +409,12 @@ class TestPopoutLifecycle:
         assert line_cell in plot_grid_tabs._cells
 
     def test_reopening_after_a_close_does_not_cover_an_open_window(
-        self, plot_grid_tabs, plot_orchestrator, plot_data_service, line_cell
+        self,
+        plot_grid_tabs,
+        plot_orchestrator,
+        plot_data_service,
+        data_service,
+        line_cell,
     ):
         """Cascade slots are never reused: counting open windows instead
         would land the third window exactly on the second after the first
@@ -400,6 +423,7 @@ class TestPopoutLifecycle:
             plot_orchestrator,
             plot_grid_tabs,
             plot_data_service,
+            data_service,
             _make_line_plotter(),
             title='H',
         )
@@ -407,6 +431,7 @@ class TestPopoutLifecycle:
             plot_orchestrator,
             plot_grid_tabs,
             plot_data_service,
+            data_service,
             _make_line_plotter(),
             title='I',
         )
@@ -642,12 +667,15 @@ class TestPerGridFrameFlush:
     """
 
     @pytest.fixture
-    def popped_out_cell(self, plot_orchestrator, plot_grid_tabs, plot_data_service):
+    def popped_out_cell(
+        self, plot_orchestrator, plot_grid_tabs, plot_data_service, data_service
+    ):
         """A second grid's cell, popped out into a floating window."""
         cell_id = _add_line_cell(
             plot_orchestrator,
             plot_grid_tabs,
             plot_data_service,
+            data_service,
             _make_line_plotter(),
             title='H',
         )

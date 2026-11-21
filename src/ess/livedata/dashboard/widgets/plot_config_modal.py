@@ -26,8 +26,13 @@ from ess.livedata.config.workflow_spec import (
     WorkflowSpec,
     find_timeseries_outputs,
 )
-from ess.livedata.dashboard.correlation_plotter import CORRELATION_HISTOGRAM_PLOTTERS
+from ess.livedata.dashboard.correlation_plotter import CORRELATION_AXIS_ROLES
 from ess.livedata.dashboard.data_roles import PRIMARY, X_AXIS, Y_AXIS
+from ess.livedata.dashboard.roi_selection import (
+    has_roi_dim,
+    roi_choices,
+    selected_output_template,
+)
 
 if TYPE_CHECKING:
     from ess.livedata.config import Instrument
@@ -121,6 +126,7 @@ def _resolve_output_display_hints(
     workflow_spec: WorkflowSpec | None,
     view_name: str,
     params_class: type[pydantic.BaseModel],
+    roi: int | None = None,
 ) -> OutputDisplayHints:
     """Derive UI hints from the workflow output view.
 
@@ -141,6 +147,8 @@ def _resolve_output_display_hints(
         Params model of the selected plotter. Which window-mode control and
         normalization options it carries decides what the view must back for
         those controls to apply.
+    roi:
+        ROI selected from a per-ROI output, None for the output as is.
 
     Returns
     -------
@@ -151,7 +159,7 @@ def _resolve_output_display_hints(
         return OutputDisplayHints(hidden_fields=frozenset(), preselect_all_sources=True)
     from ess.livedata.dashboard.plotting_controller import hidden_window_fields
 
-    template = workflow_spec.get_output_template(view_name)
+    template = selected_output_template(workflow_spec, view_name, roi)
     hidden = hidden_window_fields(params_class, workflow_spec, view_name)
     if issubclass(params_class, DetectorPixelMixin):
         hidden |= params_class.hidden_pixel_fields(template)
@@ -257,6 +265,7 @@ class OutputSelection:
 
     workflow_id: WorkflowId
     view_name: str
+    roi: int | None = None
 
 
 @dataclass
@@ -267,6 +276,7 @@ class PlotterSelection:
     view_name: str
     plot_name: str
     axis_sources: dict[str, DataSourceConfig] | None = None
+    roi: int | None = None
 
 
 class WorkflowAndOutputSelectionStep(WizardStep[None, OutputSelection]):
@@ -316,12 +326,21 @@ class WorkflowAndOutputSelectionStep(WizardStep[None, OutputSelection]):
             visible=False,
         )
         self._name_input = self._create_name_input()
+        self._roi_select = pn.widgets.Select(
+            label='ROI',
+            options={'All ROIs': None, **roi_choices()},
+            value=None,
+            description='Plot one ROI as a value of its own, or all ROIs together.',
+            sizing_mode='stretch_width',
+            visible=False,
+        )
 
         # Add buttons to containers
         self._workflow_container.append(self._workflow_buttons)
         self._workflow_container.append(self._workflow_description)
         self._output_container.append(self._output_buttons)
         self._output_container.append(self._output_description)
+        self._output_container.append(self._roi_select)
 
         # Build layout
         self._update_content()
@@ -365,6 +384,8 @@ class WorkflowAndOutputSelectionStep(WizardStep[None, OutputSelection]):
                     self._name_input.value = initial_config.view_name
                 else:
                     self._output_buttons.value = initial_config.view_name
+                self._update_roi_select()
+                self._roi_select.value = initial_config.data_sources[PRIMARY].roi
             elif self._group_buttons.options:
                 # New mode: select first available option
                 group_value = next(iter(self._group_buttons.options.values()))
@@ -384,6 +405,7 @@ class WorkflowAndOutputSelectionStep(WizardStep[None, OutputSelection]):
                             )
                             self._selected_view = output_value
                             self._output_buttons.value = output_value
+                            self._update_roi_select()
 
         # Bind handlers after initial values are set
         self._group_buttons.param.watch(self._on_group_change, 'value')
@@ -477,6 +499,7 @@ class WorkflowAndOutputSelectionStep(WizardStep[None, OutputSelection]):
                 self._selected_workflow_id = None
                 self._selected_view = None
         self._update_workflow_description()
+        self._update_roi_select()
         self._validate()
 
     def _on_workflow_change(self, event) -> None:
@@ -499,6 +522,7 @@ class WorkflowAndOutputSelectionStep(WizardStep[None, OutputSelection]):
                 self._selected_workflow_id = None
                 self._selected_view = None
         self._update_workflow_description()
+        self._update_roi_select()
         self._validate()
 
     def _on_output_change(self, event) -> None:
@@ -508,6 +532,7 @@ class WorkflowAndOutputSelectionStep(WizardStep[None, OutputSelection]):
         else:
             self._selected_view = None
         self._update_output_description()
+        self._update_roi_select()
         self._validate()
 
     def _update_workflow_description(self) -> None:
@@ -523,6 +548,20 @@ class WorkflowAndOutputSelectionStep(WizardStep[None, OutputSelection]):
         else:
             self._workflow_description.object = ''
             self._workflow_description.visible = False
+
+    def _update_roi_select(self) -> None:
+        """Offer the ROI choice for per-ROI outputs only, starting at all ROIs."""
+        spec = (
+            self._workflow_registry.get(self._selected_workflow_id)
+            if self._selected_workflow_id is not None
+            else None
+        )
+        self._roi_select.visible = (
+            spec is not None
+            and self._selected_view is not None
+            and has_roi_dim(spec, self._selected_view)
+        )
+        self._roi_select.value = None
 
     def _update_output_description(self) -> None:
         """Update the output description pane for the selected output.
@@ -674,6 +713,7 @@ class WorkflowAndOutputSelectionStep(WizardStep[None, OutputSelection]):
         return OutputSelection(
             workflow_id=self._selected_workflow_id,
             view_name=self._selected_view,
+            roi=self._roi_select.value if self._roi_select.visible else None,
         )
 
     def render_content(self) -> pn.Column:
@@ -744,18 +784,14 @@ class PlotterSelectionStep(WizardStep[OutputSelection | None, PlotterSelection])
         if self._selected_plot_name is None:
             return False
         # For correlation histograms, require axis selection
-        if self._selected_plot_name in CORRELATION_HISTOGRAM_PLOTTERS:
+        if self._selected_plot_name in CORRELATION_AXIS_ROLES:
             required_roles = self._get_required_axis_roles()
             return all(role in self._selected_axis_sources for role in required_roles)
         return True
 
     def _get_required_axis_roles(self) -> list[str]:
         """Get the required axis roles for the selected plotter."""
-        if self._selected_plot_name == 'correlation_histogram_1d':
-            return [X_AXIS]
-        elif self._selected_plot_name == 'correlation_histogram_2d':
-            return [X_AXIS, Y_AXIS]
-        return []
+        return list(CORRELATION_AXIS_ROLES.get(self._selected_plot_name, ()))
 
     def commit(self) -> PlotterSelection | None:
         """Commit the workflow, view, and selected plotter."""
@@ -764,7 +800,7 @@ class PlotterSelectionStep(WizardStep[OutputSelection | None, PlotterSelection])
         # Include axis sources for correlation histogram plotters
         axis_sources = (
             self._selected_axis_sources.copy()
-            if self._selected_plot_name in CORRELATION_HISTOGRAM_PLOTTERS
+            if self._selected_plot_name in CORRELATION_AXIS_ROLES
             else None
         )
         return PlotterSelection(
@@ -772,6 +808,7 @@ class PlotterSelectionStep(WizardStep[OutputSelection | None, PlotterSelection])
             view_name=self._output_selection.view_name,
             plot_name=self._selected_plot_name,
             axis_sources=axis_sources,
+            roi=self._output_selection.roi,
         )
 
     def render_content(self) -> pn.Column:
@@ -787,6 +824,7 @@ class PlotterSelectionStep(WizardStep[OutputSelection | None, PlotterSelection])
             self._output_selection = OutputSelection(
                 workflow_id=self._initial_config.workflow_id,
                 view_name=self._initial_config.view_name,
+                roi=self._initial_config.data_sources[PRIMARY].roi,
             )
         # Rebuilding discards the user's plotter and axis choices, so rebuild only
         # when the output they were derived from changed. Same guard as the
@@ -835,6 +873,7 @@ class PlotterSelectionStep(WizardStep[OutputSelection | None, PlotterSelection])
             self._plotting_controller.get_available_plotters_from_spec(
                 workflow_spec=workflow_spec,
                 view_name=self._output_selection.view_name,
+                roi=self._output_selection.roi,
             )
         )
 
@@ -890,7 +929,7 @@ class PlotterSelectionStep(WizardStep[OutputSelection | None, PlotterSelection])
         if initial_value is not None:
             self._selected_plot_name = initial_value
             # Show axis selection for correlation histogram plotters
-            if initial_value in CORRELATION_HISTOGRAM_PLOTTERS:
+            if initial_value in CORRELATION_AXIS_ROLES:
                 self._update_axis_selection()
             self._notify_ready_changed(self.is_valid())
 
@@ -920,7 +959,7 @@ class PlotterSelectionStep(WizardStep[OutputSelection | None, PlotterSelection])
         if event.new is not None:
             self._selected_plot_name = event.new
             # Show axis selection for correlation histogram plotters
-            if self._selected_plot_name in CORRELATION_HISTOGRAM_PLOTTERS:
+            if self._selected_plot_name in CORRELATION_AXIS_ROLES:
                 self._update_axis_selection()
             else:
                 self._hide_axis_selection()
@@ -1056,11 +1095,8 @@ class SpecBasedConfigurationStep(WizardStep[PlotterSelection | None, PlotConfig]
         self._config_panel: ConfigurationPanel | None = None
         self._panel_container = pn.Column(sizing_mode='stretch_width')
         self._plotter_selection: PlotterSelection | None = None
-        # Track last configuration to detect when panel needs recreation
-        self._last_workflow_id: WorkflowId | None = None
-        self._last_view: str | None = None
-        self._last_plot_name: str | None = None
-        self._last_axis_sources: dict[str, DataSourceConfig] | None = None
+        # The selection the panel was built for, to recreate it on a change
+        self._rendered_selection: PlotterSelection | None = None
         # Store result from callback
         self._last_config_result: PlotConfig | None = None
 
@@ -1124,25 +1160,16 @@ class SpecBasedConfigurationStep(WizardStep[PlotterSelection | None, PlotConfig]
                 view_name=self._initial_config.view_name,
                 plot_name=self._initial_config.plot_name,
                 axis_sources=axis_sources if axis_sources else None,
+                roi=self._initial_config.data_sources[PRIMARY].roi,
             )
 
         if self._plotter_selection is None:
             return
 
         # Check if the configuration has changed
-        if (
-            self._plotter_selection.workflow_id != self._last_workflow_id
-            or self._plotter_selection.view_name != self._last_view
-            or self._plotter_selection.plot_name != self._last_plot_name
-            or self._plotter_selection.axis_sources != self._last_axis_sources
-        ):
-            # Recreate panel with new configuration
+        if self._plotter_selection != self._rendered_selection:
             self._create_config_panel()
-            # Track new values
-            self._last_workflow_id = self._plotter_selection.workflow_id
-            self._last_view = self._plotter_selection.view_name
-            self._last_plot_name = self._plotter_selection.plot_name
-            self._last_axis_sources = self._plotter_selection.axis_sources
+            self._rendered_selection = self._plotter_selection
 
     def _create_config_panel(self) -> None:
         """Create the configuration panel for the selected plotter."""
@@ -1197,8 +1224,7 @@ class SpecBasedConfigurationStep(WizardStep[PlotterSelection | None, PlotConfig]
             config_state = ConfigurationState(params=params_dict)
             initial_source_names = self._initial_config.source_names
         elif (
-            self._plotter_selection.plot_name in CORRELATION_HISTOGRAM_PLOTTERS
-            and axis_sources
+            self._plotter_selection.plot_name in CORRELATION_AXIS_ROLES and axis_sources
         ):
             # For new correlation histograms, pre-populate axis source titles
             from ess.livedata.dashboard.configuration_adapter import ConfigurationState
@@ -1213,6 +1239,7 @@ class SpecBasedConfigurationStep(WizardStep[PlotterSelection | None, PlotConfig]
             is_static=is_static,
             workflow_spec=workflow_spec if not is_static else None,
             view_name=self._plotter_selection.view_name,
+            roi=self._plotter_selection.roi,
             params_class=plot_spec.params,
         )
 
@@ -1223,8 +1250,10 @@ class SpecBasedConfigurationStep(WizardStep[PlotterSelection | None, PlotConfig]
 
         output_template_dims: tuple[str, ...] | None = None
         if not is_static:
-            template = workflow_spec.get_output_template(
-                self._plotter_selection.view_name
+            template = selected_output_template(
+                workflow_spec,
+                self._plotter_selection.view_name,
+                self._plotter_selection.roi,
             )
             if template is not None:
                 output_template_dims = tuple(template.dims)
@@ -1263,6 +1292,7 @@ class SpecBasedConfigurationStep(WizardStep[PlotterSelection | None, PlotConfig]
             workflow_id=self._plotter_selection.workflow_id,
             source_names=selected_sources,
             view_name=self._plotter_selection.view_name,
+            roi=self._plotter_selection.roi,
         )
 
         # Build data_sources dict with primary and optional axis sources
@@ -1272,10 +1302,7 @@ class SpecBasedConfigurationStep(WizardStep[PlotterSelection | None, PlotConfig]
         axis_sources = self._plotter_selection.axis_sources or {}
 
         # For correlation histograms, add axis sources and inject names into params
-        if (
-            self._plotter_selection.plot_name in CORRELATION_HISTOGRAM_PLOTTERS
-            and axis_sources
-        ):
+        if self._plotter_selection.plot_name in CORRELATION_AXIS_ROLES and axis_sources:
             data_sources.update(axis_sources)
             if isinstance(params, pydantic.BaseModel):
                 params = _inject_axis_source_titles(

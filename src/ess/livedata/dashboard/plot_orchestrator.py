@@ -41,7 +41,7 @@ from .config_store import ConfigStore
 from .data_roles import PRIMARY
 from .data_service import DataService
 from .frame_clock import FrameClock
-from .plot_data_service import LayerId, LayerSnapshot, PlotDataService
+from .plot_data_service import LayerId, LayerSnapshot, LayerState, PlotDataService
 from .plot_params import WindowModeMixin
 from .plot_topology import (
     CellGeometry,
@@ -55,6 +55,7 @@ from .plot_topology import (
     reject_overlapping_cells,
 )
 from .plotting_controller import PlottingController
+from .roi_selection import roi_label, select_roi
 
 if TYPE_CHECKING:
     from ess.livedata.config import Instrument
@@ -158,6 +159,18 @@ def _build_subscription_keys(
         keys_by_role[role] = keys
         temporality.update(dict.fromkeys(keys, ds.temporality))
     return keys_by_role, temporality
+
+
+def _serialize_data_source(ds: DataSourceConfig) -> dict[str, Any]:
+    """Serialize a data source, writing ``roi`` only for a layer of one ROI."""
+    result: dict[str, Any] = {
+        'workflow_id': str(ds.workflow_id),
+        'source_names': ds.source_names,
+        'view_name': ds.view_name,
+    }
+    if ds.roi is not None:
+        result['roi'] = ds.roi
+    return result
 
 
 @dataclass
@@ -928,11 +941,12 @@ class PlotOrchestrator:
     def _build_title_resolver(self, layer_id: LayerId) -> Any:
         """Build a TitleResolver for a layer, checking cell-level view uniqueness.
 
-        When all non-static layers in the same cell share the same primary view,
-        the view title is already shown on the Y-axis and is stripped from the
-        legend label to reduce redundancy. The resolver maps backend pydantic
-        field names (which appear in ``DataKey.output_name``) back to their
-        owning view's title so legends and axes show user-facing titles.
+        When all non-static layers in the same cell share the same primary view
+        and ROI, the view title is already shown on the Y-axis and is stripped
+        from the legend label to reduce redundancy. The resolver maps backend
+        pydantic field names (which appear in ``DataKey.output_name``) back to
+        their owning view's title so legends and axes show user-facing titles,
+        followed by the ROI for a layer of one ROI.
         """
         from .plots import TitleResolver, _identity
 
@@ -942,11 +956,12 @@ class PlotOrchestrator:
 
         cell_id = self._layer_to_cell[layer_id]
         cell = self.get_cell(cell_id)
-        view_names = {
-            layer.config.view_name
+        primary_views = {
+            (layer.config.view_name, layer.config.data_sources[PRIMARY].roi)
             for layer in cell.layers
             if not layer.config.is_static()
         }
+        roi = config.data_sources[PRIMARY].roi
 
         def field_to_view_title(field_name: str) -> str:
             if spec is None:
@@ -956,11 +971,14 @@ class PlotOrchestrator:
                     return view.title
             return field_name
 
+        output = field_to_view_title if spec is not None else _identity
         return TitleResolver(
             source=self.get_source_title,
-            output=field_to_view_title if spec is not None else _identity,
+            output=output
+            if roi is None
+            else lambda name: f'{output(name)}, {roi_label(roi)}',
             dim=self.get_dim_title,
-            include_output_in_label=len(view_names) != 1,
+            include_output_in_label=len(primary_views) != 1,
         )
 
     def _refresh_resolvers_for_cell(self, cell_id: CellId) -> None:
@@ -1078,6 +1096,11 @@ class PlotOrchestrator:
                 self._plot_data_service.error_occurred(layer_id, error_msg)
             return True
         if assembled is None:
+            if snapshot.state is LayerState.READY:
+                # The data the layer showed is gone, e.g. its ROI was removed.
+                # No compute runs without data, so the layer would keep
+                # showing its last frame.
+                self._reset_layer_presentation(layer_id)
             return False
         self._compute_layer(layer_id, snapshot, assembled)
         return True
@@ -1180,6 +1203,11 @@ class PlotOrchestrator:
                     params=config.params,
                     on_update=lambda: self._mark_layer_dirty(layer_id),
                     temporality=temporality,
+                    select_by_role={
+                        role: partial(select_roi, roi=ds.roi)
+                        for role, ds in config.data_sources.items()
+                        if ds.roi is not None
+                    },
                 )
                 self._data_subscriptions[layer_id] = subscriber
                 self._mark_layer_dirty(layer_id)
@@ -1234,15 +1262,16 @@ class PlotOrchestrator:
                 self._plot_data_service.job_stopped(layer_id)
 
     def _reset_layer_presentation(self, layer_id: LayerId) -> None:
-        """Give a layer a fresh plotter on generation change.
+        """Give a layer a fresh plotter when its data starts over.
 
-        The commit that started the new generation cleared the workflow's
-        buffers; without a reset the layer would keep showing the previous
-        generation's last frame. Replacing the plotter drives the layer to
-        WAITING_FOR_DATA (blank until new data arrives) and deliberately
-        resets plotter-internal accumulation such as autoscale ranges. The
-        data pipeline is untouched: extractors and keys are
-        generation-independent.
+        This is the case on a generation change and when the data a layer
+        showed is gone, e.g. because its ROI was removed. The commit that
+        started the new generation cleared the workflow's buffers; without a
+        reset the layer would keep showing the previous generation's last
+        frame. Replacing the plotter drives the layer to WAITING_FOR_DATA
+        (blank until new data arrives) and deliberately resets
+        plotter-internal accumulation such as autoscale ranges. The data
+        pipeline is untouched: extractors and keys are generation-independent.
         """
         if layer_id not in self._data_subscriptions:
             # Setup failed for this layer: without a data subscription no data
@@ -1359,6 +1388,7 @@ class PlotOrchestrator:
                 workflow_id=WorkflowId.from_string(ds['workflow_id']),
                 source_names=ds['source_names'],
                 view_name=ds['view_name'],
+                roi=ds.get('roi'),
             )
             for role, ds in layer_data['data_sources'].items()
         }
@@ -1521,11 +1551,7 @@ class PlotOrchestrator:
         config = layer.config
         return {
             'data_sources': {
-                role: {
-                    'workflow_id': str(ds.workflow_id),
-                    'source_names': ds.source_names,
-                    'view_name': ds.view_name,
-                }
+                role: _serialize_data_source(ds)
                 for role, ds in config.data_sources.items()
             },
             'plot_name': config.plot_name,
