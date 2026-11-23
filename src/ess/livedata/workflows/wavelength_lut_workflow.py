@@ -582,7 +582,7 @@ def attach_wavelength_lut_factory(
     detectors: Sequence[str],
     monitors: Sequence[str],
     axis_ranges: Mapping[str, AxisRange],
-    declared_ltotal: Mapping[str, sc.Variable | Callable[[str], sc.Variable]],
+    declared_ltotal: Mapping[str, sc.Variable],
 ) -> frozenset[str]:
     """Bind per-chopper setpoint context and attach the LUT factory.
 
@@ -653,7 +653,7 @@ def _derive_ltotal_ranges(
     *,
     is_monitor: bool,
     axis_ranges: Mapping[str, AxisRange],
-    declared_ltotal: Mapping[str, sc.Variable | Callable[[str], sc.Variable]],
+    declared_ltotal: Mapping[str, sc.Variable],
 ) -> dict[str, Range]:
     """Derive a group's ranges, skipping components the artifact cannot place."""
     ranges: dict[str, Range] = {}

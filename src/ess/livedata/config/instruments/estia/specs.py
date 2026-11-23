@@ -185,22 +185,21 @@ streams = name_streams(filter_authorized_streams(PARSED_STREAMS))
 monitor_names = ['beam_monitor']
 
 
-def _reference_detector_ltotal(filename: str) -> sc.Variable:
-    from .live_geometry import reference_detector_ltotal
-
-    return reference_detector_ltotal(filename)
-
-
-#: The detector flight path is taken at the zero pose of the live axes (arm,
-#: hexapod, sample rotation), which the lookup-table range derivation would
-#: refuse; the table pads it. The reduction rejects live positions outside that
-#: coverage; see ADR 0011.
+#: The detector arm rotates about the sample, which leaves the flight path to
+#: every pixel unchanged, but the lookup-table range derivation refuses live
+#: rotations. The range is therefore declared, at the zero pose of the live axes
+#: as the geometry artifact gives it; the table pads it by 1%, at least 0.1 m,
+#: which covers sample travel. A test checks it against the artifact.
 instrument = Instrument(
     name='estia',
     detector_names=detector_names,
     monitors=monitor_names,
     choppers=['bwc'],
-    declared_ltotal={'multiblade_detector': _reference_detector_ltotal},
+    declared_ltotal={
+        'multiblade_detector': sc.array(
+            dims=['ltotal'], values=[39.002, 39.133], unit='m'
+        )
+    },
     streams=streams,
     source_metadata={
         'detector_arm_rotation': SourceMetadata(

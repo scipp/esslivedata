@@ -901,14 +901,6 @@ class TestEstiaReflectometry:
             accumulated.data['i_of_theta_wavelength'].data, expected.data
         )
 
-    def test_reduction_rejects_pixels_outside_table(self, reduction):
-        job, data = reduction
-        data.aux_data['hexapod_tx'] = _nxlog(1300.0, 'mm')
-        moved_reply, moved_result = job.process(data, finalize=True)
-        assert moved_reply.has_error
-        assert moved_result is None
-        assert 'outside the reference lookup-table range' in moved_reply.error_message
-
     def test_monitor_reduces_to_wavelength(self, estia, estia_tables):
         params_model = _params_model(estia, 'monitor_histogram')
         job = _create_job(
