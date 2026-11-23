@@ -98,7 +98,9 @@ def setup_factories(instrument: Instrument) -> None:
                 dim=events.dims,
             ).transpose(['theta', 'wavelength'])
             da = da.assign_coords(theta=da.coords['theta'].to(unit='deg'))
-            # Per-chunk geometry cannot describe an accumulated histogram.
+            # Scalar coordinates such as the rotations differ between chunks
+            # after a motor move, which would make the accumulator's += fail.
+            # They cannot describe an accumulated histogram anyway.
             da = da.drop_coords(
                 [name for name in da.coords if name not in ('theta', 'wavelength')]
             )
