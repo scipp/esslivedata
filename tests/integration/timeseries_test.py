@@ -10,7 +10,7 @@ from the instrument's stream record, and published back as a result the
 dashboard admits under the job it created.
 
 The f144 payloads are produced by the test rather than by ``fake_logdata``:
-that service hardcodes the source name ``detector_tank_angle_r0``, which is
+that service hardcodes the source name ``detector_tank_angle``, which is
 not among the dummy instrument's configured log sources (``motion1``,
 ``motion2``), so its messages are dropped as unmapped and no timeseries job
 would ever see them.

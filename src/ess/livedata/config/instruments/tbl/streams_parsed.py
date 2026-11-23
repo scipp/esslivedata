@@ -5,23 +5,71 @@
 Do not edit by hand. Regenerate with
 ``python -m ess.livedata.nexus_helpers <geometry.nxs> --generate``.
 
-Source: coda_tbl_999999_00024013.hdf
+Source: coda_tbl_999999_00030105.hdf
 """
 
 from ess.livedata.config import F144Stream
 
 PARSED_STREAMS: dict[str, F144Stream] = {
-    '/entry/instrument/attentuator/position_readback': F144Stream(
-        nexus_path='/entry/instrument/attentuator/position_readback',
+    '/entry/instrument/adjustable_collimator_horizontal/idle_flag': F144Stream(
+        nexus_path='/entry/instrument/adjustable_collimator_horizontal/idle_flag',
+        source='TBL-PinLin:MC-LinY-01:Mtr.DMOV',
+        topic='tbl_motion',
+        units='dimensionless',
+    ),
+    '/entry/instrument/adjustable_collimator_horizontal/target_value': F144Stream(
+        nexus_path='/entry/instrument/adjustable_collimator_horizontal/target_value',
+        source='TBL-PinLin:MC-LinY-01:Mtr.VAL',
+        topic='tbl_motion',
+        units='mm',
+    ),
+    '/entry/instrument/adjustable_collimator_horizontal/value': F144Stream(
+        nexus_path='/entry/instrument/adjustable_collimator_horizontal/value',
+        source='TBL-PinLin:MC-LinY-01:Mtr.RBV',
+        topic='tbl_motion',
+        units='mm',
+    ),
+    '/entry/instrument/adjustable_collimator_vertical/idle_flag': F144Stream(
+        nexus_path='/entry/instrument/adjustable_collimator_vertical/idle_flag',
+        source='TBL-PinLif:MC-LinZ-01:Mtr.DMOV',
+        topic='tbl_motion',
+        units='dimensionless',
+    ),
+    '/entry/instrument/adjustable_collimator_vertical/target_value': F144Stream(
+        nexus_path='/entry/instrument/adjustable_collimator_vertical/target_value',
+        source='TBL-PinLif:MC-LinZ-01:Mtr.VAL',
+        topic='tbl_motion',
+        units='mm',
+    ),
+    '/entry/instrument/adjustable_collimator_vertical/value': F144Stream(
+        nexus_path='/entry/instrument/adjustable_collimator_vertical/value',
+        source='TBL-PinLif:MC-LinZ-01:Mtr.RBV',
+        topic='tbl_motion',
+        units='mm',
+    ),
+    '/entry/instrument/attenuator_changer/idle_flag': F144Stream(
+        nexus_path='/entry/instrument/attenuator_changer/idle_flag',
+        source='TBL-AttChg:MC-LinY-01:Mtr.DMOV',
+        topic='tbl_motion',
+        units='dimensionless',
+    ),
+    '/entry/instrument/attenuator_changer/target_value': F144Stream(
+        nexus_path='/entry/instrument/attenuator_changer/target_value',
+        source='TBL-AttChg:MC-LinY-01:Mtr.VAL',
+        topic='tbl_motion',
+        units='mm',
+    ),
+    '/entry/instrument/attenuator_changer/value': F144Stream(
+        nexus_path='/entry/instrument/attenuator_changer/value',
         source='TBL-AttChg:MC-LinY-01:Mtr.RBV',
         topic='tbl_motion',
         units='mm',
     ),
-    '/entry/instrument/attentuator/position_setpoint': F144Stream(
-        nexus_path='/entry/instrument/attentuator/position_setpoint',
-        source='TBL-AttChg:MC-LinY-01:Mtr.VAL',
-        topic='tbl_motion',
-        units='mm',
+    '/entry/instrument/beam_monitor_1/hvps_voltage': F144Stream(
+        nexus_path='/entry/instrument/beam_monitor_1/hvps_voltage',
+        source='TBL-BM:NDet-FEN-002:HighVoltage-R',
+        topic='tbl_misc_devices',
+        units='V',
     ),
     '/entry/instrument/bwc_1/delay': F144Stream(
         nexus_path='/entry/instrument/bwc_1/delay',
@@ -35,6 +83,12 @@ PARSED_STREAMS: dict[str, F144Stream] = {
         topic='tbl_choppers',
         units='ns',
     ),
+    '/entry/instrument/bwc_1/in_phase': F144Stream(
+        nexus_path='/entry/instrument/bwc_1/in_phase',
+        source='TBL-ChpSy1:Chop-BWC-101:InPhaseTS-R',
+        topic='tbl_choppers',
+        units='dimensionless',
+    ),
     '/entry/instrument/bwc_1/mechanical_delay': F144Stream(
         nexus_path='/entry/instrument/bwc_1/mechanical_delay',
         source='TBL-ChpSy1:Chop-BWC-101:MechDly-S',
@@ -46,6 +100,30 @@ PARSED_STREAMS: dict[str, F144Stream] = {
         source='TBL-ChpSy1:Chop-BWC-101:Pos_R',
         topic='tbl_choppers',
         units='degrees',
+    ),
+    '/entry/instrument/bwc_1/park_angle_setpoint': F144Stream(
+        nexus_path='/entry/instrument/bwc_1/park_angle_setpoint',
+        source='TBL-ChpSy1:Chop-BWC-101:ParkS_RB',
+        topic='tbl_choppers',
+        units='degrees',
+    ),
+    '/entry/instrument/bwc_1/park_closed_angle': F144Stream(
+        nexus_path='/entry/instrument/bwc_1/park_closed_angle',
+        source='TBL-ChpSy1:Chop-BWC-101:ParkPosClose_R',
+        topic='tbl_choppers',
+        units='degrees',
+    ),
+    '/entry/instrument/bwc_1/park_open_angle': F144Stream(
+        nexus_path='/entry/instrument/bwc_1/park_open_angle',
+        source='TBL-ChpSy1:Chop-BWC-101:ParkPosOpen_R',
+        topic='tbl_choppers',
+        units='degrees',
+    ),
+    '/entry/instrument/bwc_1/park_status': F144Stream(
+        nexus_path='/entry/instrument/bwc_1/park_status',
+        source='TBL-ChpSy1:Chop-BWC-101:ParkStatus_R',
+        topic='tbl_choppers',
+        units='dimensionless',
     ),
     '/entry/instrument/bwc_1/pulse_delay': F144Stream(
         nexus_path='/entry/instrument/bwc_1/pulse_delay',
@@ -65,6 +143,12 @@ PARSED_STREAMS: dict[str, F144Stream] = {
         topic='tbl_choppers',
         units='Hz',
     ),
+    '/entry/instrument/bwc_1/status': F144Stream(
+        nexus_path='/entry/instrument/bwc_1/status',
+        source='TBL-ChpSy1:Chop-BWC-101:ChopState_R',
+        topic='tbl_choppers',
+        units='dimensionless',
+    ),
     '/entry/instrument/bwc_2/delay': F144Stream(
         nexus_path='/entry/instrument/bwc_2/delay',
         source='TBL-ChpSy1:Chop-BWC-102:TotDly',
@@ -77,6 +161,12 @@ PARSED_STREAMS: dict[str, F144Stream] = {
         topic='tbl_choppers',
         units='ns',
     ),
+    '/entry/instrument/bwc_2/in_phase': F144Stream(
+        nexus_path='/entry/instrument/bwc_2/in_phase',
+        source='TBL-ChpSy1:Chop-BWC-102:InPhaseTS-R',
+        topic='tbl_choppers',
+        units='dimensionless',
+    ),
     '/entry/instrument/bwc_2/mechanical_delay': F144Stream(
         nexus_path='/entry/instrument/bwc_2/mechanical_delay',
         source='TBL-ChpSy1:Chop-BWC-102:MechDly-S',
@@ -88,6 +178,30 @@ PARSED_STREAMS: dict[str, F144Stream] = {
         source='TBL-ChpSy1:Chop-BWC-102:Pos_R',
         topic='tbl_choppers',
         units='degrees',
+    ),
+    '/entry/instrument/bwc_2/park_angle_setpoint': F144Stream(
+        nexus_path='/entry/instrument/bwc_2/park_angle_setpoint',
+        source='TBL-ChpSy1:Chop-BWC-102:ParkS_RB',
+        topic='tbl_choppers',
+        units='degrees',
+    ),
+    '/entry/instrument/bwc_2/park_closed_angle': F144Stream(
+        nexus_path='/entry/instrument/bwc_2/park_closed_angle',
+        source='TBL-ChpSy1:Chop-BWC-102:ParkPosClose_R',
+        topic='tbl_choppers',
+        units='degrees',
+    ),
+    '/entry/instrument/bwc_2/park_open_angle': F144Stream(
+        nexus_path='/entry/instrument/bwc_2/park_open_angle',
+        source='TBL-ChpSy1:Chop-BWC-102:ParkPosOpen_R',
+        topic='tbl_choppers',
+        units='degrees',
+    ),
+    '/entry/instrument/bwc_2/park_status': F144Stream(
+        nexus_path='/entry/instrument/bwc_2/park_status',
+        source='TBL-ChpSy1:Chop-BWC-102:ParkStatus_R',
+        topic='tbl_choppers',
+        units='dimensionless',
     ),
     '/entry/instrument/bwc_2/pulse_delay': F144Stream(
         nexus_path='/entry/instrument/bwc_2/pulse_delay',
@@ -107,6 +221,12 @@ PARSED_STREAMS: dict[str, F144Stream] = {
         topic='tbl_choppers',
         units='Hz',
     ),
+    '/entry/instrument/bwc_2/status': F144Stream(
+        nexus_path='/entry/instrument/bwc_2/status',
+        source='TBL-ChpSy1:Chop-BWC-102:ChopState_R',
+        topic='tbl_choppers',
+        units='dimensionless',
+    ),
     '/entry/instrument/camera_stage/idle_flag': F144Stream(
         nexus_path='/entry/instrument/camera_stage/idle_flag',
         source='TBL-TBL:MC-Pos-303:Mtr.DMOV',
@@ -125,302 +245,296 @@ PARSED_STREAMS: dict[str, F144Stream] = {
         topic='tbl_motion',
         units='mm',
     ),
-    '/entry/instrument/collimator_horizontal/position_readback': F144Stream(
-        nexus_path='/entry/instrument/collimator_horizontal/position_readback',
-        source='TBL-PinLin:MC-LinY-01:Mtr.RBV',
+    '/entry/instrument/filter_changer_1/idle_flag': F144Stream(
+        nexus_path='/entry/instrument/filter_changer_1/idle_flag',
+        source='TBL-FilChg:MC-LinY-01:Mtr.DMOV',
         topic='tbl_motion',
-        units='mm',
+        units='dimensionless',
     ),
-    '/entry/instrument/collimator_horizontal/position_setpoint': F144Stream(
-        nexus_path='/entry/instrument/collimator_horizontal/position_setpoint',
-        source='TBL-PinLin:MC-LinY-01:Mtr.VAL',
-        topic='tbl_motion',
-        units='mm',
-    ),
-    '/entry/instrument/collimator_vertical/position_readback': F144Stream(
-        nexus_path='/entry/instrument/collimator_vertical/position_readback',
-        source='TBL-PinLif:MC-LinZ-01:Mtr.RBV',
-        topic='tbl_motion',
-        units='mm',
-    ),
-    '/entry/instrument/collimator_vertical/position_setpoint': F144Stream(
-        nexus_path='/entry/instrument/collimator_vertical/position_setpoint',
-        source='TBL-PinLif:MC-LinZ-01:Mtr.VAL',
-        topic='tbl_motion',
-        units='mm',
-    ),
-    '/entry/instrument/filter_1/position_readback': F144Stream(
-        nexus_path='/entry/instrument/filter_1/position_readback',
-        source='TBL-FilChg:MC-LinY-01:Mtr.RBV',
-        topic='tbl_motion',
-        units='mm',
-    ),
-    '/entry/instrument/filter_1/position_setpoint': F144Stream(
-        nexus_path='/entry/instrument/filter_1/position_setpoint',
+    '/entry/instrument/filter_changer_1/target_value': F144Stream(
+        nexus_path='/entry/instrument/filter_changer_1/target_value',
         source='TBL-FilChg:MC-LinY-01:Mtr.VAL',
         topic='tbl_motion',
         units='mm',
     ),
-    '/entry/instrument/filter_2/position_readback': F144Stream(
-        nexus_path='/entry/instrument/filter_2/position_readback',
-        source='TBL-FilChg:MC-LinY-02:Mtr.RBV',
+    '/entry/instrument/filter_changer_1/value': F144Stream(
+        nexus_path='/entry/instrument/filter_changer_1/value',
+        source='TBL-FilChg:MC-LinY-01:Mtr.RBV',
         topic='tbl_motion',
         units='mm',
     ),
-    '/entry/instrument/filter_2/position_setpoint': F144Stream(
-        nexus_path='/entry/instrument/filter_2/position_setpoint',
+    '/entry/instrument/filter_changer_2/idle_flag': F144Stream(
+        nexus_path='/entry/instrument/filter_changer_2/idle_flag',
+        source='TBL-FilChg:MC-LinY-02:Mtr.DMOV',
+        topic='tbl_motion',
+        units='dimensionless',
+    ),
+    '/entry/instrument/filter_changer_2/target_value': F144Stream(
+        nexus_path='/entry/instrument/filter_changer_2/target_value',
         source='TBL-FilChg:MC-LinY-02:Mtr.VAL',
         topic='tbl_motion',
         units='mm',
     ),
-    '/entry/instrument/filter_3/position_readback': F144Stream(
-        nexus_path='/entry/instrument/filter_3/position_readback',
-        source='TBL-FilChg:MC-LinY-03:Mtr.RBV',
+    '/entry/instrument/filter_changer_2/value': F144Stream(
+        nexus_path='/entry/instrument/filter_changer_2/value',
+        source='TBL-FilChg:MC-LinY-02:Mtr.RBV',
         topic='tbl_motion',
         units='mm',
     ),
-    '/entry/instrument/filter_3/position_setpoint': F144Stream(
-        nexus_path='/entry/instrument/filter_3/position_setpoint',
+    '/entry/instrument/filter_changer_3/idle_flag': F144Stream(
+        nexus_path='/entry/instrument/filter_changer_3/idle_flag',
+        source='TBL-FilChg:MC-LinY-03:Mtr.DMOV',
+        topic='tbl_motion',
+        units='dimensionless',
+    ),
+    '/entry/instrument/filter_changer_3/target_value': F144Stream(
+        nexus_path='/entry/instrument/filter_changer_3/target_value',
         source='TBL-FilChg:MC-LinY-03:Mtr.VAL',
         topic='tbl_motion',
         units='mm',
     ),
-    '/entry/instrument/he3_detector_bank0/he3_bank0_hvps_board101_ch00_current': F144Stream(  # noqa: E501
-        nexus_path='/entry/instrument/he3_detector_bank0/he3_bank0_hvps_board101_ch00_current',
+    '/entry/instrument/filter_changer_3/value': F144Stream(
+        nexus_path='/entry/instrument/filter_changer_3/value',
+        source='TBL-FilChg:MC-LinY-03:Mtr.RBV',
+        topic='tbl_motion',
+        units='mm',
+    ),
+    '/entry/instrument/he3_bank_0/hvps_board101_ch00_current': F144Stream(
+        nexus_path='/entry/instrument/he3_bank_0/hvps_board101_ch00_current',
         source='TBL-DtCmn:PwrC-HVM-101:Ch00-IMon',
         topic='tbl_misc_devices',
-        units='V',
+        units='uA',
     ),
-    '/entry/instrument/he3_detector_bank0/he3_bank0_hvps_board101_ch00_voltage': F144Stream(  # noqa: E501
-        nexus_path='/entry/instrument/he3_detector_bank0/he3_bank0_hvps_board101_ch00_voltage',
+    '/entry/instrument/he3_bank_0/hvps_board101_ch00_voltage': F144Stream(
+        nexus_path='/entry/instrument/he3_bank_0/hvps_board101_ch00_voltage',
         source='TBL-DtCmn:PwrC-HVM-101:Ch00-VMon',
         topic='tbl_misc_devices',
         units='V',
     ),
-    '/entry/instrument/he3_detector_bank0/he3_bank0_hvps_board101_ch01_current': F144Stream(  # noqa: E501
-        nexus_path='/entry/instrument/he3_detector_bank0/he3_bank0_hvps_board101_ch01_current',
+    '/entry/instrument/he3_bank_0/hvps_board101_ch01_current': F144Stream(
+        nexus_path='/entry/instrument/he3_bank_0/hvps_board101_ch01_current',
         source='TBL-DtCmn:PwrC-HVM-101:Ch01-IMon',
         topic='tbl_misc_devices',
-        units='V',
+        units='uA',
     ),
-    '/entry/instrument/he3_detector_bank0/he3_bank0_hvps_board101_ch01_voltage': F144Stream(  # noqa: E501
-        nexus_path='/entry/instrument/he3_detector_bank0/he3_bank0_hvps_board101_ch01_voltage',
+    '/entry/instrument/he3_bank_0/hvps_board101_ch01_voltage': F144Stream(
+        nexus_path='/entry/instrument/he3_bank_0/hvps_board101_ch01_voltage',
         source='TBL-DtCmn:PwrC-HVM-101:Ch01-VMon',
         topic='tbl_misc_devices',
         units='V',
     ),
-    '/entry/instrument/he3_detector_bank0/he3_bank0_hvps_board101_ch02_current': F144Stream(  # noqa: E501
-        nexus_path='/entry/instrument/he3_detector_bank0/he3_bank0_hvps_board101_ch02_current',
+    '/entry/instrument/he3_bank_0/hvps_board101_ch02_current': F144Stream(
+        nexus_path='/entry/instrument/he3_bank_0/hvps_board101_ch02_current',
         source='TBL-DtCmn:PwrC-HVM-101:Ch02-IMon',
         topic='tbl_misc_devices',
-        units='V',
+        units='uA',
     ),
-    '/entry/instrument/he3_detector_bank0/he3_bank0_hvps_board101_ch02_voltage': F144Stream(  # noqa: E501
-        nexus_path='/entry/instrument/he3_detector_bank0/he3_bank0_hvps_board101_ch02_voltage',
+    '/entry/instrument/he3_bank_0/hvps_board101_ch02_voltage': F144Stream(
+        nexus_path='/entry/instrument/he3_bank_0/hvps_board101_ch02_voltage',
         source='TBL-DtCmn:PwrC-HVM-101:Ch02-VMon',
         topic='tbl_misc_devices',
         units='V',
     ),
-    '/entry/instrument/he3_detector_bank0/he3_bank0_hvps_board101_ch03_current': F144Stream(  # noqa: E501
-        nexus_path='/entry/instrument/he3_detector_bank0/he3_bank0_hvps_board101_ch03_current',
+    '/entry/instrument/he3_bank_0/hvps_board101_ch03_current': F144Stream(
+        nexus_path='/entry/instrument/he3_bank_0/hvps_board101_ch03_current',
         source='TBL-DtCmn:PwrC-HVM-101:Ch03-IMon',
         topic='tbl_misc_devices',
-        units='V',
+        units='uA',
     ),
-    '/entry/instrument/he3_detector_bank0/he3_bank0_hvps_board101_ch03_voltage': F144Stream(  # noqa: E501
-        nexus_path='/entry/instrument/he3_detector_bank0/he3_bank0_hvps_board101_ch03_voltage',
+    '/entry/instrument/he3_bank_0/hvps_board101_ch03_voltage': F144Stream(
+        nexus_path='/entry/instrument/he3_bank_0/hvps_board101_ch03_voltage',
         source='TBL-DtCmn:PwrC-HVM-101:Ch03-VMon',
         topic='tbl_misc_devices',
         units='V',
     ),
-    '/entry/instrument/he3_detector_bank1/he3_bank1_hvps_board102_ch00_current': F144Stream(  # noqa: E501
-        nexus_path='/entry/instrument/he3_detector_bank1/he3_bank1_hvps_board102_ch00_current',
+    '/entry/instrument/he3_bank_1/hvps_board102_ch00_current': F144Stream(
+        nexus_path='/entry/instrument/he3_bank_1/hvps_board102_ch00_current',
         source='TBL-DtCmn:PwrC-HVM-102:Ch00-IMon',
         topic='tbl_misc_devices',
-        units='V',
+        units='uA',
     ),
-    '/entry/instrument/he3_detector_bank1/he3_bank1_hvps_board102_ch00_voltage': F144Stream(  # noqa: E501
-        nexus_path='/entry/instrument/he3_detector_bank1/he3_bank1_hvps_board102_ch00_voltage',
+    '/entry/instrument/he3_bank_1/hvps_board102_ch00_voltage': F144Stream(
+        nexus_path='/entry/instrument/he3_bank_1/hvps_board102_ch00_voltage',
         source='TBL-DtCmn:PwrC-HVM-102:Ch00-VMon',
         topic='tbl_misc_devices',
         units='V',
     ),
-    '/entry/instrument/he3_detector_bank1/he3_bank1_hvps_board102_ch01_current': F144Stream(  # noqa: E501
-        nexus_path='/entry/instrument/he3_detector_bank1/he3_bank1_hvps_board102_ch01_current',
+    '/entry/instrument/he3_bank_1/hvps_board102_ch01_current': F144Stream(
+        nexus_path='/entry/instrument/he3_bank_1/hvps_board102_ch01_current',
         source='TBL-DtCmn:PwrC-HVM-102:Ch01-IMon',
         topic='tbl_misc_devices',
-        units='V',
+        units='uA',
     ),
-    '/entry/instrument/he3_detector_bank1/he3_bank1_hvps_board102_ch01_voltage': F144Stream(  # noqa: E501
-        nexus_path='/entry/instrument/he3_detector_bank1/he3_bank1_hvps_board102_ch01_voltage',
+    '/entry/instrument/he3_bank_1/hvps_board102_ch01_voltage': F144Stream(
+        nexus_path='/entry/instrument/he3_bank_1/hvps_board102_ch01_voltage',
         source='TBL-DtCmn:PwrC-HVM-102:Ch01-VMon',
         topic='tbl_misc_devices',
         units='V',
     ),
-    '/entry/instrument/he3_detector_bank1/he3_bank1_hvps_board102_ch02_current': F144Stream(  # noqa: E501
-        nexus_path='/entry/instrument/he3_detector_bank1/he3_bank1_hvps_board102_ch02_current',
+    '/entry/instrument/he3_bank_1/hvps_board102_ch02_current': F144Stream(
+        nexus_path='/entry/instrument/he3_bank_1/hvps_board102_ch02_current',
         source='TBL-DtCmn:PwrC-HVM-102:Ch02-IMon',
         topic='tbl_misc_devices',
-        units='V',
+        units='uA',
     ),
-    '/entry/instrument/he3_detector_bank1/he3_bank1_hvps_board102_ch02_voltage': F144Stream(  # noqa: E501
-        nexus_path='/entry/instrument/he3_detector_bank1/he3_bank1_hvps_board102_ch02_voltage',
+    '/entry/instrument/he3_bank_1/hvps_board102_ch02_voltage': F144Stream(
+        nexus_path='/entry/instrument/he3_bank_1/hvps_board102_ch02_voltage',
         source='TBL-DtCmn:PwrC-HVM-102:Ch02-VMon',
         topic='tbl_misc_devices',
         units='V',
     ),
-    '/entry/instrument/he3_detector_bank1/he3_bank1_hvps_board102_ch03_current': F144Stream(  # noqa: E501
-        nexus_path='/entry/instrument/he3_detector_bank1/he3_bank1_hvps_board102_ch03_current',
+    '/entry/instrument/he3_bank_1/hvps_board102_ch03_current': F144Stream(
+        nexus_path='/entry/instrument/he3_bank_1/hvps_board102_ch03_current',
         source='TBL-DtCmn:PwrC-HVM-102:Ch03-IMon',
         topic='tbl_misc_devices',
-        units='V',
+        units='uA',
     ),
-    '/entry/instrument/he3_detector_bank1/he3_bank1_hvps_board102_ch03_voltage': F144Stream(  # noqa: E501
-        nexus_path='/entry/instrument/he3_detector_bank1/he3_bank1_hvps_board102_ch03_voltage',
+    '/entry/instrument/he3_bank_1/hvps_board102_ch03_voltage': F144Stream(
+        nexus_path='/entry/instrument/he3_bank_1/hvps_board102_ch03_voltage',
         source='TBL-DtCmn:PwrC-HVM-102:Ch03-VMon',
         topic='tbl_misc_devices',
         units='V',
     ),
-    '/entry/instrument/large_slit_horizontal_center/idle_flag': F144Stream(
-        nexus_path='/entry/instrument/large_slit_horizontal_center/idle_flag',
-        source='TBL-SlL:MC-Yc-01:Mtr.DMOV',
-        topic='tbl_motion',
-        units='dimensionless',
-    ),
-    '/entry/instrument/large_slit_horizontal_center/target_value': F144Stream(
-        nexus_path='/entry/instrument/large_slit_horizontal_center/target_value',
-        source='TBL-SlL:MC-Yc-01:Mtr.VAL',
-        topic='tbl_motion',
-        units='mm',
-    ),
-    '/entry/instrument/large_slit_horizontal_center/value': F144Stream(
-        nexus_path='/entry/instrument/large_slit_horizontal_center/value',
-        source='TBL-SlL:MC-Yc-01:Mtr.RBV',
-        topic='tbl_motion',
-        units='mm',
-    ),
-    '/entry/instrument/large_slit_horizontal_gap/idle_flag': F144Stream(
-        nexus_path='/entry/instrument/large_slit_horizontal_gap/idle_flag',
-        source='TBL-SlL:MC-Yg-01:Mtr.DMOV',
-        topic='tbl_motion',
-        units='dimensionless',
-    ),
-    '/entry/instrument/large_slit_horizontal_gap/target_value': F144Stream(
-        nexus_path='/entry/instrument/large_slit_horizontal_gap/target_value',
-        source='TBL-SlL:MC-Yg-01:Mtr.VAL',
-        topic='tbl_motion',
-        units='mm',
-    ),
-    '/entry/instrument/large_slit_horizontal_gap/value': F144Stream(
-        nexus_path='/entry/instrument/large_slit_horizontal_gap/value',
-        source='TBL-SlL:MC-Yg-01:Mtr.RBV',
-        topic='tbl_motion',
-        units='mm',
-    ),
-    '/entry/instrument/large_slit_left/idle_flag': F144Stream(
-        nexus_path='/entry/instrument/large_slit_left/idle_flag',
-        source='TBL-TBL:MC-Pos-408:Mtr.DMOV',
-        topic='tbl_motion',
-        units='dimensionless',
-    ),
-    '/entry/instrument/large_slit_left/target_value': F144Stream(
-        nexus_path='/entry/instrument/large_slit_left/target_value',
-        source='TBL-TBL:MC-Pos-408:Mtr.VAL',
-        topic='tbl_motion',
-        units='mm',
-    ),
-    '/entry/instrument/large_slit_left/value': F144Stream(
-        nexus_path='/entry/instrument/large_slit_left/value',
-        source='TBL-TBL:MC-Pos-408:Mtr.RBV',
-        topic='tbl_motion',
-        units='mm',
-    ),
-    '/entry/instrument/large_slit_lower/idle_flag': F144Stream(
-        nexus_path='/entry/instrument/large_slit_lower/idle_flag',
+    '/entry/instrument/large_slit/bottom/idle_flag': F144Stream(
+        nexus_path='/entry/instrument/large_slit/bottom/idle_flag',
         source='TBL-TBL:MC-Pos-410:Mtr.DMOV',
         topic='tbl_motion',
         units='dimensionless',
     ),
-    '/entry/instrument/large_slit_lower/target_value': F144Stream(
-        nexus_path='/entry/instrument/large_slit_lower/target_value',
+    '/entry/instrument/large_slit/bottom/target_value': F144Stream(
+        nexus_path='/entry/instrument/large_slit/bottom/target_value',
         source='TBL-TBL:MC-Pos-410:Mtr.VAL',
         topic='tbl_motion',
         units='mm',
     ),
-    '/entry/instrument/large_slit_lower/value': F144Stream(
-        nexus_path='/entry/instrument/large_slit_lower/value',
+    '/entry/instrument/large_slit/bottom/value': F144Stream(
+        nexus_path='/entry/instrument/large_slit/bottom/value',
         source='TBL-TBL:MC-Pos-410:Mtr.RBV',
         topic='tbl_motion',
         units='mm',
     ),
-    '/entry/instrument/large_slit_right/idle_flag': F144Stream(
-        nexus_path='/entry/instrument/large_slit_right/idle_flag',
+    '/entry/instrument/large_slit/horizontal_centre/idle_flag': F144Stream(
+        nexus_path='/entry/instrument/large_slit/horizontal_centre/idle_flag',
+        source='TBL-SlL:MC-Yc-01:Mtr.DMOV',
+        topic='tbl_motion',
+        units='dimensionless',
+    ),
+    '/entry/instrument/large_slit/horizontal_centre/target_value': F144Stream(
+        nexus_path='/entry/instrument/large_slit/horizontal_centre/target_value',
+        source='TBL-SlL:MC-Yc-01:Mtr.VAL',
+        topic='tbl_motion',
+        units='mm',
+    ),
+    '/entry/instrument/large_slit/horizontal_centre/value': F144Stream(
+        nexus_path='/entry/instrument/large_slit/horizontal_centre/value',
+        source='TBL-SlL:MC-Yc-01:Mtr.RBV',
+        topic='tbl_motion',
+        units='mm',
+    ),
+    '/entry/instrument/large_slit/horizontal_gap/idle_flag': F144Stream(
+        nexus_path='/entry/instrument/large_slit/horizontal_gap/idle_flag',
+        source='TBL-SlL:MC-Yg-01:Mtr.DMOV',
+        topic='tbl_motion',
+        units='dimensionless',
+    ),
+    '/entry/instrument/large_slit/horizontal_gap/target_value': F144Stream(
+        nexus_path='/entry/instrument/large_slit/horizontal_gap/target_value',
+        source='TBL-SlL:MC-Yg-01:Mtr.VAL',
+        topic='tbl_motion',
+        units='mm',
+    ),
+    '/entry/instrument/large_slit/horizontal_gap/value': F144Stream(
+        nexus_path='/entry/instrument/large_slit/horizontal_gap/value',
+        source='TBL-SlL:MC-Yg-01:Mtr.RBV',
+        topic='tbl_motion',
+        units='mm',
+    ),
+    '/entry/instrument/large_slit/left/idle_flag': F144Stream(
+        nexus_path='/entry/instrument/large_slit/left/idle_flag',
+        source='TBL-TBL:MC-Pos-408:Mtr.DMOV',
+        topic='tbl_motion',
+        units='dimensionless',
+    ),
+    '/entry/instrument/large_slit/left/target_value': F144Stream(
+        nexus_path='/entry/instrument/large_slit/left/target_value',
+        source='TBL-TBL:MC-Pos-408:Mtr.VAL',
+        topic='tbl_motion',
+        units='mm',
+    ),
+    '/entry/instrument/large_slit/left/value': F144Stream(
+        nexus_path='/entry/instrument/large_slit/left/value',
+        source='TBL-TBL:MC-Pos-408:Mtr.RBV',
+        topic='tbl_motion',
+        units='mm',
+    ),
+    '/entry/instrument/large_slit/right/idle_flag': F144Stream(
+        nexus_path='/entry/instrument/large_slit/right/idle_flag',
         source='TBL-TBL:MC-Pos-407:Mtr.DMOV',
         topic='tbl_motion',
         units='dimensionless',
     ),
-    '/entry/instrument/large_slit_right/target_value': F144Stream(
-        nexus_path='/entry/instrument/large_slit_right/target_value',
+    '/entry/instrument/large_slit/right/target_value': F144Stream(
+        nexus_path='/entry/instrument/large_slit/right/target_value',
         source='TBL-TBL:MC-Pos-407:Mtr.VAL',
         topic='tbl_motion',
         units='mm',
     ),
-    '/entry/instrument/large_slit_right/value': F144Stream(
-        nexus_path='/entry/instrument/large_slit_right/value',
+    '/entry/instrument/large_slit/right/value': F144Stream(
+        nexus_path='/entry/instrument/large_slit/right/value',
         source='TBL-TBL:MC-Pos-407:Mtr.RBV',
         topic='tbl_motion',
         units='mm',
     ),
-    '/entry/instrument/large_slit_upper/idle_flag': F144Stream(
-        nexus_path='/entry/instrument/large_slit_upper/idle_flag',
+    '/entry/instrument/large_slit/top/idle_flag': F144Stream(
+        nexus_path='/entry/instrument/large_slit/top/idle_flag',
         source='TBL-TBL:MC-Pos-409:Mtr.DMOV',
         topic='tbl_motion',
         units='dimensionless',
     ),
-    '/entry/instrument/large_slit_upper/target_value': F144Stream(
-        nexus_path='/entry/instrument/large_slit_upper/target_value',
+    '/entry/instrument/large_slit/top/target_value': F144Stream(
+        nexus_path='/entry/instrument/large_slit/top/target_value',
         source='TBL-TBL:MC-Pos-409:Mtr.VAL',
         topic='tbl_motion',
         units='mm',
     ),
-    '/entry/instrument/large_slit_upper/value': F144Stream(
-        nexus_path='/entry/instrument/large_slit_upper/value',
+    '/entry/instrument/large_slit/top/value': F144Stream(
+        nexus_path='/entry/instrument/large_slit/top/value',
         source='TBL-TBL:MC-Pos-409:Mtr.RBV',
         topic='tbl_motion',
         units='mm',
     ),
-    '/entry/instrument/large_slit_vertical_center/idle_flag': F144Stream(
-        nexus_path='/entry/instrument/large_slit_vertical_center/idle_flag',
+    '/entry/instrument/large_slit/vertical_centre/idle_flag': F144Stream(
+        nexus_path='/entry/instrument/large_slit/vertical_centre/idle_flag',
         source='TBL-SlL:MC-Zc-01:Mtr.DMOV',
         topic='tbl_motion',
         units='dimensionless',
     ),
-    '/entry/instrument/large_slit_vertical_center/target_value': F144Stream(
-        nexus_path='/entry/instrument/large_slit_vertical_center/target_value',
+    '/entry/instrument/large_slit/vertical_centre/target_value': F144Stream(
+        nexus_path='/entry/instrument/large_slit/vertical_centre/target_value',
         source='TBL-SlL:MC-Zc-01:Mtr.VAL',
         topic='tbl_motion',
         units='mm',
     ),
-    '/entry/instrument/large_slit_vertical_center/value': F144Stream(
-        nexus_path='/entry/instrument/large_slit_vertical_center/value',
+    '/entry/instrument/large_slit/vertical_centre/value': F144Stream(
+        nexus_path='/entry/instrument/large_slit/vertical_centre/value',
         source='TBL-SlL:MC-Zc-01:Mtr.RBV',
         topic='tbl_motion',
         units='mm',
     ),
-    '/entry/instrument/large_slit_vertical_gap/idle_flag': F144Stream(
-        nexus_path='/entry/instrument/large_slit_vertical_gap/idle_flag',
+    '/entry/instrument/large_slit/vertical_gap/idle_flag': F144Stream(
+        nexus_path='/entry/instrument/large_slit/vertical_gap/idle_flag',
         source='TBL-SlL:MC-Zg-01:Mtr.DMOV',
         topic='tbl_motion',
         units='dimensionless',
     ),
-    '/entry/instrument/large_slit_vertical_gap/target_value': F144Stream(
-        nexus_path='/entry/instrument/large_slit_vertical_gap/target_value',
+    '/entry/instrument/large_slit/vertical_gap/target_value': F144Stream(
+        nexus_path='/entry/instrument/large_slit/vertical_gap/target_value',
         source='TBL-SlL:MC-Zg-01:Mtr.VAL',
         topic='tbl_motion',
         units='mm',
     ),
-    '/entry/instrument/large_slit_vertical_gap/value': F144Stream(
-        nexus_path='/entry/instrument/large_slit_vertical_gap/value',
+    '/entry/instrument/large_slit/vertical_gap/value': F144Stream(
+        nexus_path='/entry/instrument/large_slit/vertical_gap/value',
         source='TBL-SlL:MC-Zg-01:Mtr.RBV',
         topic='tbl_motion',
         units='mm',
@@ -515,117 +629,117 @@ PARSED_STREAMS: dict[str, F144Stream] = {
         topic='tbl_motion',
         units='degrees',
     ),
-    '/entry/instrument/monitor_1/hvps_voltage': F144Stream(
-        nexus_path='/entry/instrument/monitor_1/hvps_voltage',
-        source='TBL-BM:NDet-CDTIBM-001:HighVoltage-R',
-        topic='tbl_misc_devices',
-        units='V',
-    ),
-    '/entry/instrument/multiblade_detector/mb_hvps_board100_ch00_current': F144Stream(
-        nexus_path='/entry/instrument/multiblade_detector/mb_hvps_board100_ch00_current',
+    '/entry/instrument/multiblade/hvps_board100_ch00_current': F144Stream(
+        nexus_path='/entry/instrument/multiblade/hvps_board100_ch00_current',
         source='TBL-DtCmn:PwrC-HVM-100:Ch00-IMon',
         topic='tbl_misc_devices',
-        units='V',
+        units='uA',
     ),
-    '/entry/instrument/multiblade_detector/mb_hvps_board100_ch00_voltage': F144Stream(
-        nexus_path='/entry/instrument/multiblade_detector/mb_hvps_board100_ch00_voltage',
+    '/entry/instrument/multiblade/hvps_board100_ch00_voltage': F144Stream(
+        nexus_path='/entry/instrument/multiblade/hvps_board100_ch00_voltage',
         source='TBL-DtCmn:PwrC-HVM-100:Ch00-VMon',
         topic='tbl_misc_devices',
         units='V',
     ),
-    '/entry/instrument/multiblade_detector/mb_hvps_board100_ch01_current': F144Stream(
-        nexus_path='/entry/instrument/multiblade_detector/mb_hvps_board100_ch01_current',
+    '/entry/instrument/multiblade/hvps_board100_ch01_current': F144Stream(
+        nexus_path='/entry/instrument/multiblade/hvps_board100_ch01_current',
         source='TBL-DtCmn:PwrC-HVM-100:Ch01-IMon',
         topic='tbl_misc_devices',
-        units='V',
+        units='uA',
     ),
-    '/entry/instrument/multiblade_detector/mb_hvps_board100_ch01_voltage': F144Stream(
-        nexus_path='/entry/instrument/multiblade_detector/mb_hvps_board100_ch01_voltage',
+    '/entry/instrument/multiblade/hvps_board100_ch01_voltage': F144Stream(
+        nexus_path='/entry/instrument/multiblade/hvps_board100_ch01_voltage',
         source='TBL-DtCmn:PwrC-HVM-100:Ch01-VMon',
         topic='tbl_misc_devices',
         units='V',
     ),
-    '/entry/instrument/multiblade_detector/mb_hvps_board100_ch02_current': F144Stream(
-        nexus_path='/entry/instrument/multiblade_detector/mb_hvps_board100_ch02_current',
+    '/entry/instrument/multiblade/hvps_board100_ch02_current': F144Stream(
+        nexus_path='/entry/instrument/multiblade/hvps_board100_ch02_current',
         source='TBL-DtCmn:PwrC-HVM-100:Ch02-IMon',
         topic='tbl_misc_devices',
-        units='V',
+        units='uA',
     ),
-    '/entry/instrument/multiblade_detector/mb_hvps_board100_ch02_voltage': F144Stream(
-        nexus_path='/entry/instrument/multiblade_detector/mb_hvps_board100_ch02_voltage',
+    '/entry/instrument/multiblade/hvps_board100_ch02_voltage': F144Stream(
+        nexus_path='/entry/instrument/multiblade/hvps_board100_ch02_voltage',
         source='TBL-DtCmn:PwrC-HVM-100:Ch02-VMon',
         topic='tbl_misc_devices',
         units='V',
     ),
-    '/entry/instrument/multiblade_detector/mb_hvps_board100_ch03_current': F144Stream(
-        nexus_path='/entry/instrument/multiblade_detector/mb_hvps_board100_ch03_current',
+    '/entry/instrument/multiblade/hvps_board100_ch03_current': F144Stream(
+        nexus_path='/entry/instrument/multiblade/hvps_board100_ch03_current',
         source='TBL-DtCmn:PwrC-HVM-100:Ch03-IMon',
         topic='tbl_misc_devices',
-        units='V',
+        units='uA',
     ),
-    '/entry/instrument/multiblade_detector/mb_hvps_board100_ch03_voltage': F144Stream(
-        nexus_path='/entry/instrument/multiblade_detector/mb_hvps_board100_ch03_voltage',
+    '/entry/instrument/multiblade/hvps_board100_ch03_voltage': F144Stream(
+        nexus_path='/entry/instrument/multiblade/hvps_board100_ch03_voltage',
         source='TBL-DtCmn:PwrC-HVM-100:Ch03-VMon',
         topic='tbl_misc_devices',
         units='V',
     ),
-    '/entry/instrument/ngem_detector/ngem_hvps_board103_ch00_current': F144Stream(
-        nexus_path='/entry/instrument/ngem_detector/ngem_hvps_board103_ch00_current',
+    '/entry/instrument/ngem/hvps_board103_ch00_current': F144Stream(
+        nexus_path='/entry/instrument/ngem/hvps_board103_ch00_current',
         source='TBL-DtCmn:PwrC-HVM-103:Ch00-IMon',
         topic='tbl_misc_devices',
-        units='V',
+        units='uA',
     ),
-    '/entry/instrument/ngem_detector/ngem_hvps_board103_ch00_voltage': F144Stream(
-        nexus_path='/entry/instrument/ngem_detector/ngem_hvps_board103_ch00_voltage',
+    '/entry/instrument/ngem/hvps_board103_ch00_voltage': F144Stream(
+        nexus_path='/entry/instrument/ngem/hvps_board103_ch00_voltage',
         source='TBL-DtCmn:PwrC-HVM-103:Ch00-VMon',
         topic='tbl_misc_devices',
         units='V',
     ),
-    '/entry/instrument/ngem_detector/ngem_lvps_board105_ch00_current': F144Stream(
-        nexus_path='/entry/instrument/ngem_detector/ngem_lvps_board105_ch00_current',
+    '/entry/instrument/ngem/lvps_board105_ch00_current': F144Stream(
+        nexus_path='/entry/instrument/ngem/lvps_board105_ch00_current',
         source='TBL-DtCmn:PwrC-LVM-105:Ch00-IMon',
         topic='tbl_misc_devices',
-        units='V',
+        units='A',
     ),
-    '/entry/instrument/ngem_detector/ngem_lvps_board105_ch00_voltage': F144Stream(
-        nexus_path='/entry/instrument/ngem_detector/ngem_lvps_board105_ch00_voltage',
+    '/entry/instrument/ngem/lvps_board105_ch00_voltage': F144Stream(
+        nexus_path='/entry/instrument/ngem/lvps_board105_ch00_voltage',
         source='TBL-DtCmn:PwrC-LVM-105:Ch00-VMon',
         topic='tbl_misc_devices',
         units='V',
     ),
-    '/entry/instrument/orca_detector/image_key': F144Stream(
-        nexus_path='/entry/instrument/orca_detector/image_key',
+    '/entry/instrument/orca/image_key': F144Stream(
+        nexus_path='/entry/instrument/orca/image_key',
         source='orca_image_type',
         topic='tbl_nicos_devices',
         units='dimensionless',
     ),
-    '/entry/instrument/orca_detector/intensifier': F144Stream(
-        nexus_path='/entry/instrument/orca_detector/intensifier',
+    '/entry/instrument/orca/intensifier_gain': F144Stream(
+        nexus_path='/entry/instrument/orca/intensifier_gain',
         source='TBL-DtCMOS:NDet-ImgInt-001:IntensifierGain-R',
         topic='tbl_misc_devices',
         units='dimensionless',
     ),
-    '/entry/instrument/orca_detector/intensifier_gate_delay': F144Stream(
-        nexus_path='/entry/instrument/orca_detector/intensifier_gate_delay',
+    '/entry/instrument/orca/intensifier_gate_delay': F144Stream(
+        nexus_path='/entry/instrument/orca/intensifier_gate_delay',
         source='TBL-DtCmn:Ctrl-EVR-001:DlyGen1Delay-RB',
         topic='tbl_misc_devices',
         units='us',
     ),
-    '/entry/instrument/orca_detector/intensifier_gate_width': F144Stream(
-        nexus_path='/entry/instrument/orca_detector/intensifier_gate_width',
+    '/entry/instrument/orca/intensifier_gate_width': F144Stream(
+        nexus_path='/entry/instrument/orca/intensifier_gate_width',
         source='TBL-DtCmn:Ctrl-EVR-001:DlyGen1Width-RB',
         topic='tbl_misc_devices',
         units='us',
     ),
-    '/entry/instrument/pinhole/position_readback': F144Stream(
-        nexus_path='/entry/instrument/pinhole/position_readback',
-        source='TBL-PinChg:MC-LinY-01:Mtr.RBV',
+    '/entry/instrument/pinhole_changer/idle_flag': F144Stream(
+        nexus_path='/entry/instrument/pinhole_changer/idle_flag',
+        source='TBL-PinChg:MC-LinY-01:Mtr.DMOV',
+        topic='tbl_motion',
+        units='dimensionless',
+    ),
+    '/entry/instrument/pinhole_changer/target_value': F144Stream(
+        nexus_path='/entry/instrument/pinhole_changer/target_value',
+        source='TBL-PinChg:MC-LinY-01:Mtr.VAL',
         topic='tbl_motion',
         units='mm',
     ),
-    '/entry/instrument/pinhole/position_setpoint': F144Stream(
-        nexus_path='/entry/instrument/pinhole/position_setpoint',
-        source='TBL-PinChg:MC-LinY-01:Mtr.VAL',
+    '/entry/instrument/pinhole_changer/value': F144Stream(
+        nexus_path='/entry/instrument/pinhole_changer/value',
+        source='TBL-PinChg:MC-LinY-01:Mtr.RBV',
         topic='tbl_motion',
         units='mm',
     ),
@@ -647,290 +761,290 @@ PARSED_STREAMS: dict[str, F144Stream] = {
         topic='tbl_motion',
         units='degrees',
     ),
-    '/entry/instrument/small_slit_1_horizontal_center/idle_flag': F144Stream(
-        nexus_path='/entry/instrument/small_slit_1_horizontal_center/idle_flag',
-        source='TBL-Sl1:MC-Yc-01:Mtr.DMOV',
-        topic='tbl_motion',
-        units='dimensionless',
-    ),
-    '/entry/instrument/small_slit_1_horizontal_center/target_value': F144Stream(
-        nexus_path='/entry/instrument/small_slit_1_horizontal_center/target_value',
-        source='TBL-Sl1:MC-Yc-01:Mtr.VAL',
-        topic='tbl_motion',
-        units='mm',
-    ),
-    '/entry/instrument/small_slit_1_horizontal_center/value': F144Stream(
-        nexus_path='/entry/instrument/small_slit_1_horizontal_center/value',
-        source='TBL-Sl1:MC-Yc-01:Mtr.RBV',
-        topic='tbl_motion',
-        units='mm',
-    ),
-    '/entry/instrument/small_slit_1_horizontal_gap/idle_flag': F144Stream(
-        nexus_path='/entry/instrument/small_slit_1_horizontal_gap/idle_flag',
-        source='TBL-Sl1:MC-Yg-01:Mtr.DMOV',
-        topic='tbl_motion',
-        units='dimensionless',
-    ),
-    '/entry/instrument/small_slit_1_horizontal_gap/target_value': F144Stream(
-        nexus_path='/entry/instrument/small_slit_1_horizontal_gap/target_value',
-        source='TBL-Sl1:MC-Yg-01:Mtr.VAL',
-        topic='tbl_motion',
-        units='mm',
-    ),
-    '/entry/instrument/small_slit_1_horizontal_gap/value': F144Stream(
-        nexus_path='/entry/instrument/small_slit_1_horizontal_gap/value',
-        source='TBL-Sl1:MC-Yg-01:Mtr.RBV',
-        topic='tbl_motion',
-        units='mm',
-    ),
-    '/entry/instrument/small_slit_1_left/idle_flag': F144Stream(
-        nexus_path='/entry/instrument/small_slit_1_left/idle_flag',
-        source='TBL-TBL:MC-Pos-403:Mtr.DMOV',
-        topic='tbl_motion',
-        units='dimensionless',
-    ),
-    '/entry/instrument/small_slit_1_left/target_value': F144Stream(
-        nexus_path='/entry/instrument/small_slit_1_left/target_value',
-        source='TBL-TBL:MC-Pos-403:Mtr.VAL',
-        topic='tbl_motion',
-        units='mm',
-    ),
-    '/entry/instrument/small_slit_1_left/value': F144Stream(
-        nexus_path='/entry/instrument/small_slit_1_left/value',
-        source='TBL-TBL:MC-Pos-403:Mtr.RBV',
-        topic='tbl_motion',
-        units='mm',
-    ),
-    '/entry/instrument/small_slit_1_lower/idle_flag': F144Stream(
-        nexus_path='/entry/instrument/small_slit_1_lower/idle_flag',
+    '/entry/instrument/small_slit_1/bottom/idle_flag': F144Stream(
+        nexus_path='/entry/instrument/small_slit_1/bottom/idle_flag',
         source='TBL-TBL:MC-Pos-405:Mtr.DMOV',
         topic='tbl_motion',
         units='dimensionless',
     ),
-    '/entry/instrument/small_slit_1_lower/target_value': F144Stream(
-        nexus_path='/entry/instrument/small_slit_1_lower/target_value',
+    '/entry/instrument/small_slit_1/bottom/target_value': F144Stream(
+        nexus_path='/entry/instrument/small_slit_1/bottom/target_value',
         source='TBL-TBL:MC-Pos-405:Mtr.VAL',
         topic='tbl_motion',
         units='mm',
     ),
-    '/entry/instrument/small_slit_1_lower/value': F144Stream(
-        nexus_path='/entry/instrument/small_slit_1_lower/value',
+    '/entry/instrument/small_slit_1/bottom/value': F144Stream(
+        nexus_path='/entry/instrument/small_slit_1/bottom/value',
         source='TBL-TBL:MC-Pos-405:Mtr.RBV',
         topic='tbl_motion',
         units='mm',
     ),
-    '/entry/instrument/small_slit_1_right/idle_flag': F144Stream(
-        nexus_path='/entry/instrument/small_slit_1_right/idle_flag',
+    '/entry/instrument/small_slit_1/horizontal_centre/idle_flag': F144Stream(
+        nexus_path='/entry/instrument/small_slit_1/horizontal_centre/idle_flag',
+        source='TBL-Sl1:MC-Yc-01:Mtr.DMOV',
+        topic='tbl_motion',
+        units='dimensionless',
+    ),
+    '/entry/instrument/small_slit_1/horizontal_centre/target_value': F144Stream(
+        nexus_path='/entry/instrument/small_slit_1/horizontal_centre/target_value',
+        source='TBL-Sl1:MC-Yc-01:Mtr.VAL',
+        topic='tbl_motion',
+        units='mm',
+    ),
+    '/entry/instrument/small_slit_1/horizontal_centre/value': F144Stream(
+        nexus_path='/entry/instrument/small_slit_1/horizontal_centre/value',
+        source='TBL-Sl1:MC-Yc-01:Mtr.RBV',
+        topic='tbl_motion',
+        units='mm',
+    ),
+    '/entry/instrument/small_slit_1/horizontal_gap/idle_flag': F144Stream(
+        nexus_path='/entry/instrument/small_slit_1/horizontal_gap/idle_flag',
+        source='TBL-Sl1:MC-Yg-01:Mtr.DMOV',
+        topic='tbl_motion',
+        units='dimensionless',
+    ),
+    '/entry/instrument/small_slit_1/horizontal_gap/target_value': F144Stream(
+        nexus_path='/entry/instrument/small_slit_1/horizontal_gap/target_value',
+        source='TBL-Sl1:MC-Yg-01:Mtr.VAL',
+        topic='tbl_motion',
+        units='mm',
+    ),
+    '/entry/instrument/small_slit_1/horizontal_gap/value': F144Stream(
+        nexus_path='/entry/instrument/small_slit_1/horizontal_gap/value',
+        source='TBL-Sl1:MC-Yg-01:Mtr.RBV',
+        topic='tbl_motion',
+        units='mm',
+    ),
+    '/entry/instrument/small_slit_1/left/idle_flag': F144Stream(
+        nexus_path='/entry/instrument/small_slit_1/left/idle_flag',
+        source='TBL-TBL:MC-Pos-403:Mtr.DMOV',
+        topic='tbl_motion',
+        units='dimensionless',
+    ),
+    '/entry/instrument/small_slit_1/left/target_value': F144Stream(
+        nexus_path='/entry/instrument/small_slit_1/left/target_value',
+        source='TBL-TBL:MC-Pos-403:Mtr.VAL',
+        topic='tbl_motion',
+        units='mm',
+    ),
+    '/entry/instrument/small_slit_1/left/value': F144Stream(
+        nexus_path='/entry/instrument/small_slit_1/left/value',
+        source='TBL-TBL:MC-Pos-403:Mtr.RBV',
+        topic='tbl_motion',
+        units='mm',
+    ),
+    '/entry/instrument/small_slit_1/right/idle_flag': F144Stream(
+        nexus_path='/entry/instrument/small_slit_1/right/idle_flag',
         source='TBL-TBL:MC-Pos-404:Mtr.DMOV',
         topic='tbl_motion',
         units='dimensionless',
     ),
-    '/entry/instrument/small_slit_1_right/target_value': F144Stream(
-        nexus_path='/entry/instrument/small_slit_1_right/target_value',
+    '/entry/instrument/small_slit_1/right/target_value': F144Stream(
+        nexus_path='/entry/instrument/small_slit_1/right/target_value',
         source='TBL-TBL:MC-Pos-404:Mtr.VAL',
         topic='tbl_motion',
         units='mm',
     ),
-    '/entry/instrument/small_slit_1_right/value': F144Stream(
-        nexus_path='/entry/instrument/small_slit_1_right/value',
+    '/entry/instrument/small_slit_1/right/value': F144Stream(
+        nexus_path='/entry/instrument/small_slit_1/right/value',
         source='TBL-TBL:MC-Pos-404:Mtr.RBV',
         topic='tbl_motion',
         units='mm',
     ),
-    '/entry/instrument/small_slit_1_upper/idle_flag': F144Stream(
-        nexus_path='/entry/instrument/small_slit_1_upper/idle_flag',
+    '/entry/instrument/small_slit_1/top/idle_flag': F144Stream(
+        nexus_path='/entry/instrument/small_slit_1/top/idle_flag',
         source='TBL-TBL:MC-Pos-406:Mtr.DMOV',
         topic='tbl_motion',
         units='dimensionless',
     ),
-    '/entry/instrument/small_slit_1_upper/target_value': F144Stream(
-        nexus_path='/entry/instrument/small_slit_1_upper/target_value',
+    '/entry/instrument/small_slit_1/top/target_value': F144Stream(
+        nexus_path='/entry/instrument/small_slit_1/top/target_value',
         source='TBL-TBL:MC-Pos-406:Mtr.VAL',
         topic='tbl_motion',
         units='mm',
     ),
-    '/entry/instrument/small_slit_1_upper/value': F144Stream(
-        nexus_path='/entry/instrument/small_slit_1_upper/value',
+    '/entry/instrument/small_slit_1/top/value': F144Stream(
+        nexus_path='/entry/instrument/small_slit_1/top/value',
         source='TBL-TBL:MC-Pos-406:Mtr.RBV',
         topic='tbl_motion',
         units='mm',
     ),
-    '/entry/instrument/small_slit_1_vertical_center/idle_flag': F144Stream(
-        nexus_path='/entry/instrument/small_slit_1_vertical_center/idle_flag',
+    '/entry/instrument/small_slit_1/vertical_centre/idle_flag': F144Stream(
+        nexus_path='/entry/instrument/small_slit_1/vertical_centre/idle_flag',
         source='TBL-Sl1:MC-Zc-01:Mtr.DMOV',
         topic='tbl_motion',
         units='dimensionless',
     ),
-    '/entry/instrument/small_slit_1_vertical_center/target_value': F144Stream(
-        nexus_path='/entry/instrument/small_slit_1_vertical_center/target_value',
+    '/entry/instrument/small_slit_1/vertical_centre/target_value': F144Stream(
+        nexus_path='/entry/instrument/small_slit_1/vertical_centre/target_value',
         source='TBL-Sl1:MC-Zc-01:Mtr.VAL',
         topic='tbl_motion',
         units='mm',
     ),
-    '/entry/instrument/small_slit_1_vertical_center/value': F144Stream(
-        nexus_path='/entry/instrument/small_slit_1_vertical_center/value',
+    '/entry/instrument/small_slit_1/vertical_centre/value': F144Stream(
+        nexus_path='/entry/instrument/small_slit_1/vertical_centre/value',
         source='TBL-Sl1:MC-Zc-01:Mtr.RBV',
         topic='tbl_motion',
         units='mm',
     ),
-    '/entry/instrument/small_slit_1_vertical_gap/idle_flag': F144Stream(
-        nexus_path='/entry/instrument/small_slit_1_vertical_gap/idle_flag',
+    '/entry/instrument/small_slit_1/vertical_gap/idle_flag': F144Stream(
+        nexus_path='/entry/instrument/small_slit_1/vertical_gap/idle_flag',
         source='TBL-Sl1:MC-Zg-01:Mtr.DMOV',
         topic='tbl_motion',
         units='dimensionless',
     ),
-    '/entry/instrument/small_slit_1_vertical_gap/target_value': F144Stream(
-        nexus_path='/entry/instrument/small_slit_1_vertical_gap/target_value',
+    '/entry/instrument/small_slit_1/vertical_gap/target_value': F144Stream(
+        nexus_path='/entry/instrument/small_slit_1/vertical_gap/target_value',
         source='TBL-Sl1:MC-Zg-01:Mtr.VAL',
         topic='tbl_motion',
         units='mm',
     ),
-    '/entry/instrument/small_slit_1_vertical_gap/value': F144Stream(
-        nexus_path='/entry/instrument/small_slit_1_vertical_gap/value',
+    '/entry/instrument/small_slit_1/vertical_gap/value': F144Stream(
+        nexus_path='/entry/instrument/small_slit_1/vertical_gap/value',
         source='TBL-Sl1:MC-Zg-01:Mtr.RBV',
         topic='tbl_motion',
         units='mm',
     ),
-    '/entry/instrument/small_slit_2_horizontal_center/idle_flag': F144Stream(
-        nexus_path='/entry/instrument/small_slit_2_horizontal_center/idle_flag',
-        source='TBL-Sl2:MC-Yc-01:Mtr.DMOV',
-        topic='tbl_motion',
-        units='dimensionless',
-    ),
-    '/entry/instrument/small_slit_2_horizontal_center/target_value': F144Stream(
-        nexus_path='/entry/instrument/small_slit_2_horizontal_center/target_value',
-        source='TBL-Sl2:MC-Yc-01:Mtr.VAL',
-        topic='tbl_motion',
-        units='mm',
-    ),
-    '/entry/instrument/small_slit_2_horizontal_center/value': F144Stream(
-        nexus_path='/entry/instrument/small_slit_2_horizontal_center/value',
-        source='TBL-Sl2:MC-Yc-01:Mtr.RBV',
-        topic='tbl_motion',
-        units='mm',
-    ),
-    '/entry/instrument/small_slit_2_horizontal_gap/idle_flag': F144Stream(
-        nexus_path='/entry/instrument/small_slit_2_horizontal_gap/idle_flag',
-        source='TBL-Sl2:MC-Yg-01:Mtr.DMOV',
-        topic='tbl_motion',
-        units='dimensionless',
-    ),
-    '/entry/instrument/small_slit_2_horizontal_gap/target_value': F144Stream(
-        nexus_path='/entry/instrument/small_slit_2_horizontal_gap/target_value',
-        source='TBL-Sl2:MC-Yg-01:Mtr.VAL',
-        topic='tbl_motion',
-        units='mm',
-    ),
-    '/entry/instrument/small_slit_2_horizontal_gap/value': F144Stream(
-        nexus_path='/entry/instrument/small_slit_2_horizontal_gap/value',
-        source='TBL-Sl2:MC-Yg-01:Mtr.RBV',
-        topic='tbl_motion',
-        units='mm',
-    ),
-    '/entry/instrument/small_slit_2_left/idle_flag': F144Stream(
-        nexus_path='/entry/instrument/small_slit_2_left/idle_flag',
-        source='TBL-TBL:MC-Pos-412:Mtr.DMOV',
-        topic='tbl_motion',
-        units='dimensionless',
-    ),
-    '/entry/instrument/small_slit_2_left/target_value': F144Stream(
-        nexus_path='/entry/instrument/small_slit_2_left/target_value',
-        source='TBL-TBL:MC-Pos-412:Mtr.VAL',
-        topic='tbl_motion',
-        units='mm',
-    ),
-    '/entry/instrument/small_slit_2_left/value': F144Stream(
-        nexus_path='/entry/instrument/small_slit_2_left/value',
-        source='TBL-TBL:MC-Pos-412:Mtr.RBV',
-        topic='tbl_motion',
-        units='mm',
-    ),
-    '/entry/instrument/small_slit_2_lower/idle_flag': F144Stream(
-        nexus_path='/entry/instrument/small_slit_2_lower/idle_flag',
+    '/entry/instrument/small_slit_2/bottom/idle_flag': F144Stream(
+        nexus_path='/entry/instrument/small_slit_2/bottom/idle_flag',
         source='TBL-TBL:MC-Pos-414:Mtr.DMOV',
         topic='tbl_motion',
         units='dimensionless',
     ),
-    '/entry/instrument/small_slit_2_lower/target_value': F144Stream(
-        nexus_path='/entry/instrument/small_slit_2_lower/target_value',
+    '/entry/instrument/small_slit_2/bottom/target_value': F144Stream(
+        nexus_path='/entry/instrument/small_slit_2/bottom/target_value',
         source='TBL-TBL:MC-Pos-414:Mtr.VAL',
         topic='tbl_motion',
         units='mm',
     ),
-    '/entry/instrument/small_slit_2_lower/value': F144Stream(
-        nexus_path='/entry/instrument/small_slit_2_lower/value',
+    '/entry/instrument/small_slit_2/bottom/value': F144Stream(
+        nexus_path='/entry/instrument/small_slit_2/bottom/value',
         source='TBL-TBL:MC-Pos-414:Mtr.RBV',
         topic='tbl_motion',
         units='mm',
     ),
-    '/entry/instrument/small_slit_2_right/idle_flag': F144Stream(
-        nexus_path='/entry/instrument/small_slit_2_right/idle_flag',
+    '/entry/instrument/small_slit_2/horizontal_centre/idle_flag': F144Stream(
+        nexus_path='/entry/instrument/small_slit_2/horizontal_centre/idle_flag',
+        source='TBL-Sl2:MC-Yc-01:Mtr.DMOV',
+        topic='tbl_motion',
+        units='dimensionless',
+    ),
+    '/entry/instrument/small_slit_2/horizontal_centre/target_value': F144Stream(
+        nexus_path='/entry/instrument/small_slit_2/horizontal_centre/target_value',
+        source='TBL-Sl2:MC-Yc-01:Mtr.VAL',
+        topic='tbl_motion',
+        units='mm',
+    ),
+    '/entry/instrument/small_slit_2/horizontal_centre/value': F144Stream(
+        nexus_path='/entry/instrument/small_slit_2/horizontal_centre/value',
+        source='TBL-Sl2:MC-Yc-01:Mtr.RBV',
+        topic='tbl_motion',
+        units='mm',
+    ),
+    '/entry/instrument/small_slit_2/horizontal_gap/idle_flag': F144Stream(
+        nexus_path='/entry/instrument/small_slit_2/horizontal_gap/idle_flag',
+        source='TBL-Sl2:MC-Yg-01:Mtr.DMOV',
+        topic='tbl_motion',
+        units='dimensionless',
+    ),
+    '/entry/instrument/small_slit_2/horizontal_gap/target_value': F144Stream(
+        nexus_path='/entry/instrument/small_slit_2/horizontal_gap/target_value',
+        source='TBL-Sl2:MC-Yg-01:Mtr.VAL',
+        topic='tbl_motion',
+        units='mm',
+    ),
+    '/entry/instrument/small_slit_2/horizontal_gap/value': F144Stream(
+        nexus_path='/entry/instrument/small_slit_2/horizontal_gap/value',
+        source='TBL-Sl2:MC-Yg-01:Mtr.RBV',
+        topic='tbl_motion',
+        units='mm',
+    ),
+    '/entry/instrument/small_slit_2/left/idle_flag': F144Stream(
+        nexus_path='/entry/instrument/small_slit_2/left/idle_flag',
+        source='TBL-TBL:MC-Pos-412:Mtr.DMOV',
+        topic='tbl_motion',
+        units='dimensionless',
+    ),
+    '/entry/instrument/small_slit_2/left/target_value': F144Stream(
+        nexus_path='/entry/instrument/small_slit_2/left/target_value',
+        source='TBL-TBL:MC-Pos-412:Mtr.VAL',
+        topic='tbl_motion',
+        units='mm',
+    ),
+    '/entry/instrument/small_slit_2/left/value': F144Stream(
+        nexus_path='/entry/instrument/small_slit_2/left/value',
+        source='TBL-TBL:MC-Pos-412:Mtr.RBV',
+        topic='tbl_motion',
+        units='mm',
+    ),
+    '/entry/instrument/small_slit_2/right/idle_flag': F144Stream(
+        nexus_path='/entry/instrument/small_slit_2/right/idle_flag',
         source='TBL-TBL:MC-Pos-411:Mtr.DMOV',
         topic='tbl_motion',
         units='dimensionless',
     ),
-    '/entry/instrument/small_slit_2_right/target_value': F144Stream(
-        nexus_path='/entry/instrument/small_slit_2_right/target_value',
+    '/entry/instrument/small_slit_2/right/target_value': F144Stream(
+        nexus_path='/entry/instrument/small_slit_2/right/target_value',
         source='TBL-TBL:MC-Pos-411:Mtr.VAL',
         topic='tbl_motion',
         units='mm',
     ),
-    '/entry/instrument/small_slit_2_right/value': F144Stream(
-        nexus_path='/entry/instrument/small_slit_2_right/value',
+    '/entry/instrument/small_slit_2/right/value': F144Stream(
+        nexus_path='/entry/instrument/small_slit_2/right/value',
         source='TBL-TBL:MC-Pos-411:Mtr.RBV',
         topic='tbl_motion',
         units='mm',
     ),
-    '/entry/instrument/small_slit_2_upper/idle_flag': F144Stream(
-        nexus_path='/entry/instrument/small_slit_2_upper/idle_flag',
+    '/entry/instrument/small_slit_2/top/idle_flag': F144Stream(
+        nexus_path='/entry/instrument/small_slit_2/top/idle_flag',
         source='TBL-TBL:MC-Pos-413:Mtr.DMOV',
         topic='tbl_motion',
         units='dimensionless',
     ),
-    '/entry/instrument/small_slit_2_upper/target_value': F144Stream(
-        nexus_path='/entry/instrument/small_slit_2_upper/target_value',
+    '/entry/instrument/small_slit_2/top/target_value': F144Stream(
+        nexus_path='/entry/instrument/small_slit_2/top/target_value',
         source='TBL-TBL:MC-Pos-413:Mtr.VAL',
         topic='tbl_motion',
         units='mm',
     ),
-    '/entry/instrument/small_slit_2_upper/value': F144Stream(
-        nexus_path='/entry/instrument/small_slit_2_upper/value',
+    '/entry/instrument/small_slit_2/top/value': F144Stream(
+        nexus_path='/entry/instrument/small_slit_2/top/value',
         source='TBL-TBL:MC-Pos-413:Mtr.RBV',
         topic='tbl_motion',
         units='mm',
     ),
-    '/entry/instrument/small_slit_2_vertical_center/idle_flag': F144Stream(
-        nexus_path='/entry/instrument/small_slit_2_vertical_center/idle_flag',
+    '/entry/instrument/small_slit_2/vertical_centre/idle_flag': F144Stream(
+        nexus_path='/entry/instrument/small_slit_2/vertical_centre/idle_flag',
         source='TBL-Sl2:MC-Zc-01:Mtr.DMOV',
         topic='tbl_motion',
         units='dimensionless',
     ),
-    '/entry/instrument/small_slit_2_vertical_center/target_value': F144Stream(
-        nexus_path='/entry/instrument/small_slit_2_vertical_center/target_value',
+    '/entry/instrument/small_slit_2/vertical_centre/target_value': F144Stream(
+        nexus_path='/entry/instrument/small_slit_2/vertical_centre/target_value',
         source='TBL-Sl2:MC-Zc-01:Mtr.VAL',
         topic='tbl_motion',
         units='mm',
     ),
-    '/entry/instrument/small_slit_2_vertical_center/value': F144Stream(
-        nexus_path='/entry/instrument/small_slit_2_vertical_center/value',
+    '/entry/instrument/small_slit_2/vertical_centre/value': F144Stream(
+        nexus_path='/entry/instrument/small_slit_2/vertical_centre/value',
         source='TBL-Sl2:MC-Zc-01:Mtr.RBV',
         topic='tbl_motion',
         units='mm',
     ),
-    '/entry/instrument/small_slit_2_vertical_gap/idle_flag': F144Stream(
-        nexus_path='/entry/instrument/small_slit_2_vertical_gap/idle_flag',
+    '/entry/instrument/small_slit_2/vertical_gap/idle_flag': F144Stream(
+        nexus_path='/entry/instrument/small_slit_2/vertical_gap/idle_flag',
         source='TBL-Sl2:MC-Zg-01:Mtr.DMOV',
         topic='tbl_motion',
         units='dimensionless',
     ),
-    '/entry/instrument/small_slit_2_vertical_gap/target_value': F144Stream(
-        nexus_path='/entry/instrument/small_slit_2_vertical_gap/target_value',
+    '/entry/instrument/small_slit_2/vertical_gap/target_value': F144Stream(
+        nexus_path='/entry/instrument/small_slit_2/vertical_gap/target_value',
         source='TBL-Sl2:MC-Zg-01:Mtr.VAL',
         topic='tbl_motion',
         units='mm',
     ),
-    '/entry/instrument/small_slit_2_vertical_gap/value': F144Stream(
-        nexus_path='/entry/instrument/small_slit_2_vertical_gap/value',
+    '/entry/instrument/small_slit_2/vertical_gap/value': F144Stream(
+        nexus_path='/entry/instrument/small_slit_2/vertical_gap/value',
         source='TBL-Sl2:MC-Zg-01:Mtr.RBV',
         topic='tbl_motion',
         units='mm',
@@ -1163,10 +1277,88 @@ PARSED_STREAMS: dict[str, F144Stream] = {
         topic='tbl_motion',
         units='degrees',
     ),
-    '/entry/instrument/timepix3_detector/intensifier': F144Stream(
-        nexus_path='/entry/instrument/timepix3_detector/intensifier',
+    '/entry/instrument/timepix3/intensifier_gain': F144Stream(
+        nexus_path='/entry/instrument/timepix3/intensifier_gain',
         source='TBL-DtTPX:NDet-ImgInt-001:AO0',
         topic='tbl_misc_devices',
         units='V',
+    ),
+    '/entry/sample/temperature': F144Stream(
+        nexus_path='/entry/sample/temperature',
+        source='simulated_sample_temperature',
+        topic='coda_nicos_devices',
+        units='K',
+    ),
+    '/entry/sample/temperature_env/heater/max_power': F144Stream(
+        nexus_path='/entry/sample/temperature_env/heater/max_power',
+        source='simulated_max_heater_power',
+        topic='coda_nicos_devices',
+        units='W',
+    ),
+    '/entry/sample/temperature_env/heater/output_level': F144Stream(
+        nexus_path='/entry/sample/temperature_env/heater/output_level',
+        source='simulated_heater_output',
+        topic='coda_nicos_devices',
+        units='percent',
+    ),
+    '/entry/sample/temperature_env/heater/output_power': F144Stream(
+        nexus_path='/entry/sample/temperature_env/heater/output_power',
+        source='simulated_heater_power',
+        topic='coda_nicos_devices',
+        units='W',
+    ),
+    '/entry/sample/temperature_env/heater/pid_controller/d_setting': F144Stream(
+        nexus_path='/entry/sample/temperature_env/heater/pid_controller/d_setting',
+        source='simulated_pid_d',
+        topic='coda_nicos_devices',
+        units='s',
+    ),
+    '/entry/sample/temperature_env/heater/pid_controller/i_setting': F144Stream(
+        nexus_path='/entry/sample/temperature_env/heater/pid_controller/i_setting',
+        source='simulated_pid_i',
+        topic='coda_nicos_devices',
+        units='1/s',
+    ),
+    '/entry/sample/temperature_env/heater/pid_controller/p_setting': F144Stream(
+        nexus_path='/entry/sample/temperature_env/heater/pid_controller/p_setting',
+        source='simulated_pid_p',
+        topic='coda_nicos_devices',
+        units='percent/K',
+    ),
+    '/entry/sample/temperature_env/heater/pid_controller/pv_sensor/value_log': F144Stream(  # noqa: E501
+        nexus_path='/entry/sample/temperature_env/heater/pid_controller/pv_sensor/value_log',
+        source='simulated_regulator_temperature',
+        topic='coda_nicos_devices',
+        units='K',
+    ),
+    '/entry/sample/temperature_env/heater/pid_controller/ramp': F144Stream(
+        nexus_path='/entry/sample/temperature_env/heater/pid_controller/ramp',
+        source='simulated_ramp',
+        topic='coda_nicos_devices',
+        units='K/min',
+    ),
+    '/entry/sample/temperature_env/heater/pid_controller/setpoint': F144Stream(
+        nexus_path='/entry/sample/temperature_env/heater/pid_controller/setpoint',
+        source='simulated_setpoint',
+        topic='coda_nicos_devices',
+        units='K',
+    ),
+    '/entry/sample/temperature_env/heater/pid_controller/target': F144Stream(
+        nexus_path='/entry/sample/temperature_env/heater/pid_controller/target',
+        source='simulated_target',
+        topic='coda_nicos_devices',
+        units='K',
+    ),
+    '/entry/scan_log/point': F144Stream(
+        nexus_path='/entry/scan_log/point',
+        source='scanlog/point',
+        topic='coda_nicos_devices',
+        units='dimensionless',
+    ),
+    '/entry/scan_log/scan': F144Stream(
+        nexus_path='/entry/scan_log/scan',
+        source='scanlog/scan',
+        topic='coda_nicos_devices',
+        units='dimensionless',
     ),
 }

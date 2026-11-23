@@ -4,22 +4,20 @@
 
 from __future__ import annotations
 
-from collections.abc import Iterable, Mapping
+from collections.abc import Collection, Iterable, Mapping
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     import graphviz
 
-    from ess.livedata.config.stream import ChainPatchBinding
-
 import sciline
 import sciline.typing
+import scipp as sc
 from ess.reduce import streaming
 
-from ess.livedata.config.value_log import ValueLog
 from ess.livedata.core.timestamp import Timestamp
 
-from .dynamic_transforms import wire_dynamic_transforms
+from .dynamic_transforms import find_live_transforms
 from .workflow_factory import Workflow
 
 
@@ -70,12 +68,11 @@ class StreamProcessorWorkflow(Workflow):
             gate is what guarantees this, delivering either a cached value or
             the binding's declared default before the job runs.
             A factory passes only its own internal context here (e.g. ROI);
-            instrument- and spec-scope bindings resolved by the routing layer
-            are merged in afterwards via :meth:`add_context_keys`, which is
-            why construction of the wrapped ``StreamProcessor`` is deferred
-            until :meth:`build`. The keys must be finalized
-            before the graph is built because ``StreamProcessor`` bakes them
-            into the pruned/precomputed pipeline at construction.
+            bindings resolved by the routing layer are merged in afterwards via
+            :meth:`add_context_keys`, which is why construction of the wrapped
+            ``StreamProcessor`` is deferred until :meth:`build`. The keys must be
+            finalized before the graph is built because ``StreamProcessor`` bakes
+            them into the pruned/precomputed pipeline at construction.
         target_keys:
             Mapping from output names to sciline keys for target outputs.
         window_outputs:
@@ -95,12 +92,15 @@ class StreamProcessorWorkflow(Workflow):
         self._current_end_time: Timestamp | None = None
         self._stream_processor: streaming.StreamProcessor | None = None
         self._requested_context_streams: set[str] = set()
+        # stream name -> the overrides entries its latest sample fills
+        self._live_transforms: dict[str, list[tuple[sciline.typing.Key, str]]] = {}
+        self._overrides: dict[sciline.typing.Key, dict[str, sc.Variable]] = {}
 
     def add_context_keys(self, context_keys: Mapping[str, sciline.typing.Key]) -> None:
         """Merge additional context bindings before the graph is built.
 
         Called by the routing layer (``WorkflowFactory.create``) to inject
-        instrument- and spec-scope context bindings resolved per job, so
+        spec-scope context bindings resolved per job, so
         factories need not thread ``context_keys`` through their signature.
 
         Raises if the wrapped ``StreamProcessor`` has already been built: its
@@ -113,39 +113,14 @@ class StreamProcessorWorkflow(Workflow):
         self._context_keys = {**self._context_keys, **context_keys}
 
     @property
-    def dynamic_keys(self) -> dict[str, sciline.typing.Key]:
-        """Mapping from canonical stream name to sciline key for dynamic inputs.
-
-        :meth:`build` reads it to match each stream name against a binding's
-        ``dependent_sources`` and derive the NeXus component type (the first
-        type-arg of a ``NeXusData[Component, Run]`` key) for f144-driven dynamic
-        transforms. See
-        :func:`ess.livedata.workflows.dynamic_transforms.wire_dynamic_transforms`.
-        """
-        return dict(self._dynamic_keys)
-
-    @property
-    def base_pipeline(self) -> sciline.Pipeline:
-        """The unbuilt base pipeline, exposed for pre-build patching.
-
-        Raises if the wrapped ``StreamProcessor`` has already been built: the
-        pipeline is baked into the pruned/precomputed graph at construction, so
-        patches must land before :meth:`build`.
-        """
-        if self._stream_processor is not None:
-            raise RuntimeError(
-                "Cannot patch the pipeline after the StreamProcessor is built."
-            )
-        return self._base_workflow
-
-    @property
     def requested_context_streams(self) -> frozenset[str]:
         """Offered context streams the built graph turned out to require.
 
         Empty before :meth:`build`. The routing layer reads this back off the
         workflow instead of predicting it: whether a job consumes the streamed
-        lookup table follows from the graph its params produce, and only the
-        graph knows (see :meth:`build`). Only *offered* streams appear here.
+        lookup table or a motor readback follows from the graph its params
+        produce, and only the graph knows (see :meth:`build`). Only *offered*
+        streams and motor streams appear here.
         Factory-supplied context (ROI requests) reaches the gate as a
         :class:`~ess.livedata.config.stream.ContextBinding` instead, carrying
         the default that keeps a job whose producer may never publish from
@@ -157,17 +132,28 @@ class StreamProcessorWorkflow(Workflow):
         self,
         *,
         context_keys: Mapping[str, sciline.typing.Key] | None = None,
-        chain_patch_bindings: Iterable[ChainPatchBinding] = (),
+        transform_streams: Mapping[str, str] | None = None,
         offered_context_streams: Mapping[sciline.typing.Key, str] | None = None,
     ) -> None:
         """Materialize the wrapped ``StreamProcessor`` from its inputs.
 
-        Injects the routing layer's per-job bindings — ``context_keys`` merge
-        into the ``set_context`` parameters and ``chain_patch_bindings`` wire as
-        f144-driven dynamic transforms — then constructs the ``StreamProcessor``,
+        Merges the routing layer's per-job ``context_keys`` into the
+        ``set_context`` parameters, then constructs the ``StreamProcessor``,
         baking them into the pruned/precomputed graph. Building eagerly (rather
         than on first ``accumulate``) keeps graph validation and the static-node
         precompute at job-creation time.
+
+        ``transform_streams`` maps a NeXus transform path to the stream carrying
+        its value, for the whole instrument. Each placeholder on a chain the
+        targets read (see
+        :func:`~ess.livedata.workflows.dynamic_transforms.find_live_transforms`)
+        becomes a context stream of this job, filling its entry of
+        ``TransformationOverrides``. A job that never computes a moving
+        component's position therefore does not wait for the motor, and a
+        stream can fill several component types. A placeholder with no stream
+        would never get a value, so it raises here. Nor does a job wait for a
+        motor on a chain read only by the provider of a key it gets from a stream
+        (see :meth:`_required_keys`).
 
         ``offered_context_streams`` are the instrument's offered context
         streams (key → wire name). Unlike ``context_keys``, which the routing
@@ -182,35 +168,46 @@ class StreamProcessorWorkflow(Workflow):
         Idempotent: a second call is a no-op and must not supply bindings, since
         they could no longer take effect once the graph is built.
         """
-        bindings = list(chain_patch_bindings)
         if self._stream_processor is not None:
-            if context_keys or bindings or offered_context_streams:
+            if context_keys or transform_streams or offered_context_streams:
                 raise RuntimeError(
                     "Cannot inject bindings: the StreamProcessor is already built."
                 )
             return
         if context_keys:
             self.add_context_keys(context_keys)
-        wire_dynamic_transforms(self, bindings)
-        # After wiring: chain patches add providers, so the graph is only
-        # complete here.
-        if offered_context_streams:
-            requested = self._required_keys() & set(offered_context_streams)
-            self._requested_context_streams = {
-                offered_context_streams[key] for key in requested
-            }
-            self.add_context_keys(
-                {offered_context_streams[key]: key for key in requested}
-            )
+        offered_context_streams = offered_context_streams or {}
+        required = self._required_keys(stop_at=offered_context_streams)
+        offered = {
+            name: key
+            for key, name in offered_context_streams.items()
+            if key in required
+        }
+        self.add_context_keys(offered)
+        pipeline = self._base_workflow.copy()
+        for key, paths in find_live_transforms(pipeline, required).items():
+            self._overrides[key] = {}
+            for path in paths:
+                stream = (transform_streams or {}).get(path)
+                if stream is None:
+                    raise ValueError(
+                        f"Transform {path!r} on a chain read by this workflow is a "
+                        "placeholder in the geometry artifact, and no stream of "
+                        "the instrument carries its value."
+                    )
+                self._live_transforms.setdefault(stream, []).append((key, path))
+        self._requested_context_streams = {*offered, *self._live_transforms}
         self._stream_processor = streaming.StreamProcessor(
-            self._base_workflow,
+            pipeline,
             dynamic_keys=tuple(self._dynamic_keys.values()),
-            context_keys=tuple(self._context_keys.values()),
+            context_keys=(*self._context_keys.values(), *self._overrides),
             target_keys=tuple(self._target_keys.values()),
             **self._kwargs,
         )
 
-    def _required_keys(self) -> set[sciline.typing.Key]:
+    def _required_keys(
+        self, *, stop_at: Collection[sciline.typing.Key]
+    ) -> set[sciline.typing.Key]:
         """Every key a target key depends on, directly or transitively.
 
         Walks the pipeline's data graph backwards from the targets. Keys with no
@@ -219,15 +216,32 @@ class StreamProcessorWorkflow(Workflow):
         supplies then fails the ``StreamProcessor`` construction below, naming
         it. Providers the targets cannot reach are excluded, matching the
         pruning ``StreamProcessor`` applies to the same targets.
+
+        The walk ends at dynamic and context keys and at ``stop_at``: the value of
+        such a key comes from a stream, so its provider is replaced and what only
+        that provider reads is not required.
+
+        Parameters
+        ----------
+        stop_at:
+            Further keys to treat as streamed if the targets reach them.
         """
         graph = self._base_workflow.underlying_graph
+        streamed = {
+            *self._dynamic_keys.values(),
+            *self._context_keys.values(),
+            *stop_at,
+        }
         required: set[sciline.typing.Key] = set()
         pending = [key for key in self._target_keys.values() if key in graph]
         while pending:
-            for key in graph.predecessors(pending.pop()):
-                if key not in required:
-                    required.add(key)
-                    pending.append(key)
+            key = pending.pop()
+            if key in streamed:
+                continue
+            for predecessor in graph.predecessors(key):
+                if predecessor not in required:
+                    required.add(predecessor)
+                    pending.append(predecessor)
         return required
 
     @property
@@ -257,20 +271,18 @@ class StreamProcessorWorkflow(Workflow):
         # the most recent set_context call. The context gate is what ensures
         # every key has been set by the time the job first runs. The
         # routing layer (JobFactory.create) delivers a stream only to the jobs
-        # whose bindings subscribe to it.
-        #
-        # ValueLog subclasses are typed wrappers around an NXlog DataArray;
-        # the raw payload (a DataArray) is wrapped as key(values=raw) so
-        # each chain-patch binding has a distinct Sciline node identity.
+        # whose bindings subscribe to it or whose graph requested it.
         context = {
-            sciline_key: (
-                sciline_key(values=data[key])
-                if isinstance(sciline_key, type) and issubclass(sciline_key, ValueLog)
-                else data[key]
-            )
+            sciline_key: data[key]
             for key, sciline_key in self._context_keys.items()
             if key in data
         }
+        for stream, entries in self._live_transforms.items():
+            if stream in data:
+                value = data[stream]['time', -1].data
+                for key, path in entries:
+                    self._overrides[key][path] = value
+                    context[key] = dict(self._overrides[key])
         dynamic = {
             sciline_key: data[key]
             for key, sciline_key in self._dynamic_keys.items()

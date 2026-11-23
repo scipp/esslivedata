@@ -65,7 +65,7 @@ class FakeProcessor(Workflow):
         self,
         *,
         context_keys: dict[str, Any] | None = None,
-        chain_patch_bindings=(),
+        transform_streams: dict[str, str] | None = None,
         offered_context_streams: dict[Any, str] | None = None,
     ) -> None:
         if context_keys:

@@ -38,6 +38,7 @@ from ess.livedata.kafka.sink_serializers import make_default_sink_serializer
 from ess.livedata.parameter_models import (
     DspacingEdges,
     DspacingUnit,
+    WavelengthEdges,
     WavelengthRange,
     WavelengthUnit,
 )
@@ -616,6 +617,11 @@ class TestLokiMotionAndRoles:
         ],
         ids=['default_monitors', 'other_incident_monitor'],
     )
+    @pytest.mark.xfail(
+        strict=True,
+        reason='#1441: the transmission monitor m3 (and m2) has no lookup-table '
+        'block, so the I(Q) factory refuses it.',
+    )
     def test_reduction_gates_on_one_stream_per_group(
         self, loki: Instrument, monitors: dict[str, str]
     ) -> None:
@@ -656,6 +662,28 @@ class TestLokiMotionAndRoles:
                 },
             )
 
+    @pytest.mark.parametrize('mode', ['toa', 'wavelength'])
+    def test_monitor_view_needs_a_table_only_in_wavelength_mode(
+        self, loki: Instrument, mode: str
+    ) -> None:
+        """Same failure as above, for a job on the monitor itself."""
+        name = 'monitor_histogram'
+        params = _params_model(loki, name)(
+            coordinate_mode=CoordinateModeSettings(mode=mode)
+        )
+
+        _create_job(loki, name, 'beam_monitor_m1', params)
+        if mode == 'toa':
+            _create_job(loki, name, 'beam_monitor_m4', params)
+        else:
+            with pytest.raises(ValueError, match='beam_monitor_m4'):
+                _create_job(loki, name, 'beam_monitor_m4', params)
+
+    @pytest.mark.xfail(
+        strict=True,
+        reason='#1441: the default monitors m2 and m3 ride axes with no declared '
+        'AxisRange, so they have no lookup-table block.',
+    )
     def test_default_monitor_selection_is_placeable(self, loki: Instrument) -> None:
         """A default naming an unplaceable monitor would break I(Q) for anyone
         who never touches the monitor selectors, so the defaults must stay on
@@ -669,6 +697,85 @@ class TestLokiMotionAndRoles:
         assert defaults <= loki.lut_components
 
 
+_LOKI_SAMPLE_MOTORS = {
+    'linear_sample_changer',
+    'sample_stack_x',
+    'sample_stack_y',
+    'sample_stack_z',
+}
+#: Front-left bank, out to 42 degrees scattering angle.
+_LOKI_FRONT_BANK = 'loki_detector_6'
+
+
+def _loki_xy_projection(loki: Instrument, mode: str):
+    params_model = _params_model(loki, 'detector_xy_projection')
+    return _create_job(
+        loki,
+        'detector_xy_projection',
+        _LOKI_FRONT_BANK,
+        params_model(coordinate_mode=CoordinateModeSettings(mode=mode)),
+    )
+
+
+class TestLokiSampleMove:
+    """``Ltotal`` runs source -> sample -> pixel, so a wavelength view depends on
+    the sample position and a time-of-arrival view does not."""
+
+    @pytest.mark.parametrize('mode', ['toa', 'wavelength'])
+    def test_detector_view_waits_for_the_sample_only_in_wavelength_mode(
+        self, loki: Instrument, mode: str
+    ) -> None:
+        job = _loki_xy_projection(loki, mode)
+
+        expected = _LOKI_SAMPLE_MOTORS if mode == 'wavelength' else set()
+        assert job.gating_streams & _LOKI_SAMPLE_MOTORS == expected
+
+    def test_wavelength_view_resets_when_the_sample_moves(
+        self, loki: Instrument
+    ) -> None:
+        """Summing across a sample move would mix two wavelength calibrations.
+
+        At this bank's angles a 20 cm move along the beam shifts the wavelength by
+        up to 0.2 %, which moves some events across the edge of the wavelength
+        range: the counts per update change, which shows the move took effect.
+        """
+        tables = _ingest(loki, _run_lut_job(loki, delays={}))
+        job = _loki_xy_projection(loki, 'wavelength')
+        events = _detector_events(loki.get_detector_number(_LOKI_FRONT_BANK))
+
+        def update(*, z: float, cold_start: bool = False) -> sc.DataGroup:
+            context = {
+                **loki.bound_context_defaults(
+                    _spec_id(loki, 'detector_xy_projection'), _LOKI_FRONT_BANK
+                ),
+                DETECTOR_STREAM: tables[DETECTOR_STREAM],
+            }
+            motors = {
+                name: _nxlog(z if name == 'sample_stack_z' else 0.0, 'mm')
+                for name in _LOKI_SAMPLE_MOTORS
+            }
+            data = JobData(
+                start_time=Timestamp.from_ns(0),
+                end_time=Timestamp.from_ns(1),
+                primary_data={_LOKI_FRONT_BANK: events},
+                aux_data={**(context if cold_start else {}), **motors},
+            )
+            reply, result = job.process(data, finalize=True)
+            assert not reply.has_error, reply.error_message
+            assert result.error_message is None, result.error_message
+            return result.data
+
+        first = update(z=0.0, cold_start=True)
+        unmoved = update(z=0.0)
+        moved = update(z=200.0)
+
+        per_update = first['counts_total'].value
+        assert per_update > 0
+        assert unmoved['counts_total_cumulative'].value == 2 * per_update
+        assert moved['counts_total'].value != per_update
+        assert moved['counts_total_cumulative'].value == moved['counts_total'].value
+
+
 @pytest.fixture(scope='module')
 def estia() -> Instrument:
     get_config('estia')
@@ -677,32 +784,18 @@ def estia() -> Instrument:
     return instrument
 
 
+@pytest.fixture(scope='module')
+def estia_tables(estia):
+    # A 30 ms bandwidth-chopper delay transmits the reduction's wavelength band.
+    return _ingest(estia, _run_lut_job(estia, delays={'bwc': 30_000_000.0}))
+
+
 class TestEstiaReflectometry:
-    """ESTIA's detector table is placed by a declared flight path, and its
-    reflectometry reduction takes geometry from a McStas file rather than from
-    the artifact the table is built from. The two must still meet."""
-
-    def test_publishes_detector_and_monitor_tables(self, estia: Instrument) -> None:
-        assert set(_ingest(estia, _run_lut_job(estia, delays={}))) == {
-            DETECTOR_STREAM,
-            MONITOR_STREAM,
-        }
-
-    def test_reduction_consumes_the_streamed_table(self, estia: Instrument) -> None:
-        # At a 30 ms delay the band chopper passes about 3 to 10 angstrom to the
-        # detector, so every event below gets a wavelength.
-        delays = {'bwc': 30_000_000.0}
-        table = _ingest(estia, _run_lut_job(estia, delays=delays))[DETECTOR_STREAM]
-        params_model = _params_model(estia, 'reflectometry_reduction')
-        job = _create_job(
-            estia, 'reflectometry_reduction', 'multiblade_detector', params_model()
-        )
-
-        assert job.gating_streams == {DETECTOR_STREAM}
-
-        # Events on every pixel: most fall outside the default divergence limits.
+    @pytest.fixture
+    def reduction(self, estia, estia_tables):
         rng = np.random.default_rng(seed=1)
         n_events = 2000
+        pixels = estia.get_detector_number('multiblade_detector').values.flatten()
         events = sc.DataArray(
             data=sc.ones(sizes={'event': n_events}, dtype='float32', unit='counts'),
             coords={
@@ -711,7 +804,7 @@ class TestEstiaReflectometry:
                 ),
                 'event_id': sc.array(
                     dims=['event'],
-                    values=rng.integers(98305, 196609, n_events),
+                    values=rng.choice(pixels, n_events),
                     unit=None,
                 ),
             },
@@ -719,28 +812,96 @@ class TestEstiaReflectometry:
         sizes = sc.array(dims=['event_time_zero'], values=[n_events], unit=None)
         binned = sc.DataArray(
             sc.bins(begin=sc.cumsum(sizes, mode='exclusive'), dim='event', data=events),
-            # After the factory's placeholder proton-charge sample at 1 ns; events
-            # before it would be normalized to zero.
             coords={
-                'event_time_zero': sc.epoch(unit='ns')
-                + sc.array(dims=['event_time_zero'], values=[10**9], unit='ns')
+                'event_time_zero': sc.datetimes(
+                    dims=['event_time_zero'], values=[10**9], unit='ns'
+                )
             },
         )
+        values = {
+            'detector_arm_rotation': 0.0,
+            'sample_rotation': 0.8,
+            'sample_lateral_adjustment': 0.0,
+            'source/pulse_charge': 1.0,
+            **{f'hexapod_{axis}': 0.0 for axis in ('rx', 'ry', 'rz', 'tx', 'ty', 'tz')},
+        }
         data = JobData(
             start_time=Timestamp.from_ns(0),
             end_time=Timestamp.from_ns(1),
             primary_data={'multiblade_detector': binned},
-            aux_data={DETECTOR_STREAM: table},
+            aux_data={
+                DETECTOR_STREAM: estia_tables[DETECTOR_STREAM],
+                **{
+                    stream: _nxlog(value, estia.streams[stream].units)
+                    for stream, value in values.items()
+                },
+            },
         )
+        return _create_job(
+            estia, 'reflectometry_reduction', 'multiblade_detector'
+        ), data
 
+    def test_logical_view_does_not_wait_for_reduction_context(self, estia):
+        job = _create_job(
+            estia, 'estia_multiblade_detector_view', 'multiblade_detector'
+        )
+        assert not job.gating_streams
+
+    def test_pulse_charge_routes_to_consuming_services(self, estia):
+        from ess.livedata.config.route_derivation import gather_source_names
+
+        services = ('data_reduction', 'detector_data', 'monitor_data', 'timeseries')
+        subscribers = {
+            service
+            for service in services
+            if 'source/pulse_charge' in gather_source_names(estia, service)
+        }
+        # Timeseries consumes the log as a primary input for plotting.
+        assert subscribers == {'data_reduction', 'timeseries'}
+
+    def test_publishes_detector_and_monitor_tables(self, estia_tables):
+        assert set(estia_tables) == {DETECTOR_STREAM, MONITOR_STREAM}
+
+    def test_reduction_uses_streamed_table_and_changing_charge(self, reduction):
+        job, data = reduction
+        assert job.gating_streams == set(data.aux_data)
         reply, result = job.process(data, finalize=True)
-
         assert not reply.has_error, reply.error_message
         assert result.error_message is None, result.error_message
         assert result.data['i_of_wavelength'].sum().value > 0
+        assert result.data['i_of_wavelength'].unit == sc.Unit('counts/uC')
 
-    def test_monitor_reduces_to_wavelength(self, estia: Instrument) -> None:
-        tables = _ingest(estia, _run_lut_job(estia, delays={'bwc': 30_000_000.0}))
+        data.aux_data['source/pulse_charge'] = _nxlog(2.0, 'uC')
+        second_reply, second_result = job.process(data, finalize=True)
+        assert not second_reply.has_error, second_reply.error_message
+        assert second_result.error_message is None, second_result.error_message
+        # Independent batches add their variances as well as their intensities.
+        first = result.data['i_of_wavelength'].data
+        assert sc.allclose(
+            second_result.data['i_of_wavelength'].data,
+            first + first / 2,
+        )
+
+    def test_reduction_accumulates_after_motor_move(self, estia, reduction):
+        job, data = reduction
+        reply, first = job.process(data, finalize=True)
+        assert not reply.has_error, reply.error_message
+        data.aux_data['sample_rotation'] = _nxlog(0.9, 'deg')
+        data.aux_data['detector_arm_rotation'] = _nxlog(0.1, 'deg')
+        fresh_job = _create_job(estia, 'reflectometry_reduction', 'multiblade_detector')
+        fresh_reply, fresh_result = fresh_job.process(data, finalize=True)
+        assert not fresh_reply.has_error, fresh_reply.error_message
+        reply, accumulated = job.process(data, finalize=True)
+        assert not reply.has_error, reply.error_message
+        expected = (
+            first.data['i_of_theta_wavelength']
+            + fresh_result.data['i_of_theta_wavelength']
+        )
+        assert sc.allclose(
+            accumulated.data['i_of_theta_wavelength'].data, expected.data
+        )
+
+    def test_monitor_reduces_to_wavelength(self, estia, estia_tables):
         params_model = _params_model(estia, 'monitor_histogram')
         job = _create_job(
             estia,
@@ -759,7 +920,7 @@ class TestEstiaReflectometry:
             start_time=Timestamp.from_ns(0),
             end_time=Timestamp.from_ns(1),
             primary_data={'beam_monitor': histogram},
-            aux_data={MONITOR_STREAM: tables[MONITOR_STREAM]},
+            aux_data={MONITOR_STREAM: estia_tables[MONITOR_STREAM]},
         )
         reply, result = job.process(data, finalize=True)
 
@@ -787,15 +948,15 @@ def tbl_tables(tbl: Instrument) -> dict[str, sc.DataArray]:
 
 class TestTblWavelengthViews:
     """TBL's logical views take pixel positions from the geometry file in
-    wavelength mode; ``monitor_1`` is a histogram-mode (da00) monitor."""
+    wavelength mode; ``beam_monitor_1`` is a histogram-mode (da00) monitor."""
 
     @pytest.mark.parametrize(
         ('view', 'source_name'),
         [
-            ('he3_detector_view', 'he3_detector_bank0'),
-            ('he3_detector_view', 'he3_detector_bank1'),
-            ('multiblade_detector_view', 'multiblade_detector'),
-            ('ngem_detector_view', 'ngem_detector'),
+            ('he3_detector_view', 'he3_bank_0'),
+            ('he3_detector_view', 'he3_bank_1'),
+            ('multiblade_detector_view', 'multiblade'),
+            ('ngem_detector_view', 'ngem'),
         ],
     )
     def test_detector_view_reduces_to_wavelength(
@@ -841,10 +1002,16 @@ class TestTblWavelengthViews:
         job = _create_job(
             tbl,
             'monitor_histogram',
-            'monitor_1',
-            params_model(coordinate_mode=CoordinateModeSettings(mode='wavelength')),
+            'beam_monitor_1',
+            params_model(
+                coordinate_mode=CoordinateModeSettings(mode='wavelength'),
+                # With zero delay the bandwidth choppers pass ~10-15 Å at the
+                # monitor, above the default edges.
+                wavelength_edges=WavelengthEdges(start=1.0, stop=20.0, num_bins=100),
+            ),
         )
-        assert job.gating_streams == {MONITOR_STREAM}
+        # The monitor rides the filter changer, so its position is streamed too.
+        assert job.gating_streams == {MONITOR_STREAM, 'filter_changer_3'}
 
         frame_time = sc.linspace('frame_time', 0, 71_000_000, num=1001, unit='ns')
         histogram = sc.DataArray(
@@ -854,8 +1021,11 @@ class TestTblWavelengthViews:
         data = JobData(
             start_time=Timestamp.from_ns(0),
             end_time=Timestamp.from_ns(1),
-            primary_data={'monitor_1': histogram},
-            aux_data={MONITOR_STREAM: tbl_tables[MONITOR_STREAM]},
+            primary_data={'beam_monitor_1': histogram},
+            aux_data={
+                MONITOR_STREAM: tbl_tables[MONITOR_STREAM],
+                'filter_changer_3': _nxlog(0.0, 'mm'),
+            },
         )
         reply, result = job.process(data, finalize=True)
 

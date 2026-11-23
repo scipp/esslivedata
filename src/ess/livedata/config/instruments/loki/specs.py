@@ -216,16 +216,16 @@ instrument = Instrument(
         'loki_detector_7': SourceMetadata(title='Front Bottom'),
         'loki_detector_8': SourceMetadata(title='Front Right'),
         'beam_monitor_m0': SourceMetadata(
-            title='Beam Monitor 0', description='Upstream, z = -16.8 m'
+            title='Beam Monitor 0', description='Upstream, z = -16.72 m'
         ),
         'beam_monitor_m1': SourceMetadata(
-            title='Beam Monitor 1', description='Upstream, z = -8.4 m'
+            title='Beam Monitor 1', description='Upstream, z = -8.26 m'
         ),
         'beam_monitor_m2': SourceMetadata(
-            title='Beam Monitor 2', description='Upstream, z = -2.04 m'
+            title='Beam Monitor 2', description='Upstream, z = -1.95 m'
         ),
         'beam_monitor_m3': SourceMetadata(
-            title='Beam Monitor 3', description='Downstream, z = +0.2 m'
+            title='Beam Monitor 3', description='Downstream, z = +0.29 m'
         ),
         'beam_monitor_m4': SourceMetadata(
             title='Beam Monitor 4',
@@ -233,7 +233,7 @@ instrument = Instrument(
         ),
         'detector_carriage': SourceMetadata(
             title='Rear Detector Carriage',
-            description='Rear detector carriage position w.r.t. its zero at z=5.098 m '
+            description='Rear detector carriage position w.r.t. its zero at z=5.052 m '
             'after the sample.',
         ),
     },

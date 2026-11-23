@@ -663,6 +663,27 @@ class TestKafkaToEv44Adapter:
         assert result.value.time_of_flight == [123456]
         assert result.timestamp == Timestamp.from_ns(1234)
 
+    @pytest.mark.parametrize("source_name", ["old_name", "new_name"])
+    def test_several_input_keys_can_map_to_one_stream(self, source_name: str) -> None:
+        payload = eventdata_ev44.serialise_ev44(
+            source_name=source_name,
+            message_id=0,
+            reference_time=[1234],
+            reference_time_index=0,
+            time_of_flight=[1],
+            pixel_id=[1],
+        )
+        adapter = KafkaToEv44Adapter(
+            stream_kind=StreamKind.DETECTOR_EVENTS,
+            stream_lut={
+                InputStreamKey(topic="events", source_name="old_name"): "detector",
+                InputStreamKey(topic="events", source_name="new_name"): "detector",
+            },
+        )
+        result = adapter.adapt(FakeKafkaMessage(value=payload, topic="events"))
+
+        assert result.stream.name == "detector"
+
     def test_no_reference_time_uses_message_timestamp(self) -> None:
         """Test that when reference_time is empty, the message timestamp is used."""
         empty_ref_time_ev44 = eventdata_ev44.serialise_ev44(
@@ -1226,6 +1247,28 @@ class TestAdapterLagRecording:
         assert (lag.topic, lag.source, lag.schema) == ("monitors", "monitor1", "ev44")
         assert lag.max_s == pytest.approx(8.0)
         assert lag.count == 1
+
+    def test_records_consumption_order_with_partition(self) -> None:
+        counter = StreamCounter()
+        adapter = KafkaToEv44Adapter(
+            stream_kind=StreamKind.MONITOR_EVENTS, stream_counter=counter
+        )
+        for reference_time_ns, partition in ((5_000_000_000, 0), (2_000_000_000, 7)):
+            adapter.adapt(
+                FakeKafkaMessage(
+                    value=self._ev44(reference_time_ns=reference_time_ns),
+                    topic="monitors",
+                    timestamp=10_000,
+                    timestamp_type=1,
+                    partition=partition,
+                )
+            )
+
+        report = counter.drain_lag()
+        assert report is not None
+        (lag,) = report.streams
+        assert lag.max_out_of_order_s == pytest.approx(3.0)
+        assert lag.out_of_order_partition == 7
 
     def test_skips_when_broker_timestamp_unavailable(self) -> None:
         counter = StreamCounter()

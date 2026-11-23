@@ -90,11 +90,13 @@ def resolve_downsampling(
 
     ``declared`` is consulted only for what a reconfiguration cannot change:
 
-    - that the ids are a contiguous row-major enumeration of a square grid,
-      which is the layout the remap assumes and the one property whose failure
-      would scramble the image rather than announce itself. The check can only
-      be made at the resolution the file happens to record, but a readout that
-      enumerates row-major at one resolution does so at all of them;
+    - that the ids are a contiguous enumeration of a square grid along one
+      axis, which is the layout the remap assumes and the one property whose
+      failure would scramble the image rather than announce itself. The check
+      can only be made at the resolution the file happens to record, but a
+      readout that enumerates this way at one resolution does so at all of
+      them. Which axis is slow is read from the file, and the target grid
+      lists its axes slow first;
     - which id the detector counts from, since detectors disagree and a wrong
       base does not merely shift the image by a pixel, it makes the inferred
       source resolution wrong;
@@ -165,13 +167,13 @@ def resolve_downsampling(
             f"{side}. Nothing corrects a fixed stride at runtime, so a "
             "disagreement here would scramble the image."
         )
-    first_id = _check_contiguous_row_major(name, declared)
+    row_major = _as_row_major(name, declared)
     return DetectorDownsampling(
         resolution=resolution,
         max_resolution=source_resolution,
         source_resolution=None if reconfigurable else source_resolution,
-        first_id=first_id,
-        grid=_target_grid(resolution, declared.dims),
+        first_id=int(row_major.values.reshape(-1)[0]),
+        grid=_target_grid(resolution, row_major.dims),
     )
 
 
@@ -182,23 +184,28 @@ def _target_grid(resolution: int, dims: tuple[str, ...]) -> sc.Variable:
     )
 
 
-def _check_contiguous_row_major(name: str, declared: sc.Variable) -> int:
-    """Return the first id, having checked the layout the remap assumes.
+def _as_row_major(name: str, declared: sc.Variable) -> sc.Variable:
+    """Return ``declared`` with its slow axis first, having checked its layout.
 
-    The remap decomposes an id as ``x * side + y``. That is only the inverse of
-    the file's own enumeration if ``detector_number`` runs contiguously in
-    row-major order, and a file that enumerated per readout chip instead --
-    plausible for a multi-chip panel -- would produce a scrambled image with
-    nothing to notice it by. The file is already in memory, so check it.
+    The remap decomposes an id as ``slow * side + fast``. That is only the
+    inverse of the file's own enumeration if ``detector_number`` runs
+    contiguously along one axis, and a file that enumerated per readout chip
+    instead -- plausible for a multi-chip panel -- would produce a scrambled
+    image with nothing to notice it by. The file is already in memory, so check
+    it.
+
+    Files differ in which axis is slow. Where the first dimension is the fast
+    one, the transposed grid is the row-major one, so the axes are swapped and
+    keep their names.
     """
     flat = declared.values.reshape(-1)
-    first_id = int(flat[0])
-    expected = np.arange(first_id, first_id + flat.size, dtype=flat.dtype)
-    if not np.array_equal(flat, expected):
-        raise ValueError(
-            f"Detector {name} is configured for downsampling, which maps event "
-            f"id to pixel as 'id = x * {declared.shape[0]} + y'. That requires "
-            "detector_number to enumerate the grid contiguously in row-major "
-            "order, which this one does not."
-        )
-    return first_id
+    expected = np.arange(flat[0], flat[0] + flat.size, dtype=flat.dtype)
+    for candidate in (declared, declared.transpose()):
+        if np.array_equal(candidate.values.reshape(-1), expected):
+            return candidate
+    raise ValueError(
+        f"Detector {name} is configured for downsampling, which maps event "
+        f"id to pixel as 'id = slow * {declared.shape[0]} + fast'. That requires "
+        "detector_number to enumerate the grid contiguously along one of its "
+        "axes, which this one does not."
+    )

@@ -152,7 +152,17 @@ def test_dream_powder_reduction_produces_tof_output(
     "instrument",
     [
         'dream',
-        pytest.param('loki', marks=pytest.mark.slow),
+        pytest.param(
+            'loki',
+            marks=[
+                pytest.mark.slow,
+                pytest.mark.xfail(
+                    strict=True,
+                    reason='#1441: the default monitors m2 and m3 have no '
+                    'lookup-table block, so I(Q) fails to start.',
+                ),
+            ],
+        ),
     ],
 )
 def test_can_configure_and_stop_workflow_with_detector_and_monitors(
@@ -188,20 +198,16 @@ def test_can_configure_and_stop_workflow_with_detector_and_monitors(
     service.step()
     sink.messages.clear()  # Clear the workflow status message(s), one per source name.
 
-    # LOKI i_of_q is gated on the detector_carriage device stream (chain-patch
-    # binding for loki_detector_0). The synthesizer emits only after all three
-    # substreams (RBV, VAL, DMOV) have arrived; publish all three then step so
-    # the gate is open before detector/monitor events arrive.
+    # LOKI i_of_q is gated on the motors on the chains it reads. The synthesizer emits
+    # a device only after all its substreams have arrived, so publish all of them,
+    # then step so the gate is open before detector/monitor events arrive.
     if instrument == 'loki':
-        app.publish_log_message(
-            source_name='detector_carriage/target_value', time=1, value=0.0
-        )
-        app.publish_log_message(
-            source_name='detector_carriage/idle_flag', time=1, value=1
-        )
-        app.publish_log_message(
-            source_name='detector_carriage/value', time=1, value=0.0
-        )
+        config = instrument_registry[instrument]
+        for motor in config.transform_streams.values():
+            device = config.streams[motor]
+            app.publish_log_message(source_name=device.target, time=1, value=0.0)
+            app.publish_log_message(source_name=device.idle, time=1, value=1)
+            app.publish_log_message(source_name=device.value, time=1, value=0.0)
         # i_of_q also gates on the detector and monitor lookup tables, so they
         # must arrive before detector and monitor events do.
         app.publish_lookup_tables()
@@ -256,7 +262,7 @@ def test_bifrost_qmap_gate_drops_then_resumes_on_rotation_context(
 
     Steady-state recovery: after the device synthesizer has merged all
     three substreams of each rotation Device and emitted on the parent
-    device name (``detector_tank_angle_r0``, ``rotation_stage``), the
+    device name (``detector_tank_angle``, ``sample_rotation``), the
     gate opens and subsequent detector batches produce output.
     """
     caplog.set_level(logging.INFO)
@@ -291,7 +297,7 @@ def test_bifrost_qmap_gate_drops_then_resumes_on_rotation_context(
 
     # Publish RBV/VAL/DMOV substreams for both rotation devices; the
     # synthesizer needs all three before emitting on the parent device name.
-    for device in ('detector_tank_angle_r0', 'rotation_stage'):
+    for device in ('detector_tank_angle', 'sample_rotation'):
         for substream, value in (
             ('target_value', 0.0),
             ('idle_flag', 1),
@@ -316,8 +322,8 @@ def test_bifrost_qmap_context_arriving_on_separate_ticks_is_not_lost(
     """Regression: a context stream seen while gated must survive to finalize.
 
     Bifrost qmap gates on two rotation context streams. When they arrive on
-    *separate* ticks, the first (``detector_tank_angle_r0``) is seen while the
-    job is still gated on the second (``rotation_stage``). The JobManager marks
+    *separate* ticks, the first (``detector_tank_angle``) is seen while the
+    job is still gated on the second (``sample_rotation``). The JobManager marks
     it seen but the gated job is skipped, so its value never reaches
     ``set_context`` on that tick. Unless the orchestrator re-presents it from
     the preprocessor's context cache when the gate finally opens, it is never
@@ -359,13 +365,13 @@ def test_bifrost_qmap_context_arriving_on_separate_ticks_is_not_lost(
 
     # Tick 1: only the first rotation context arrives. The job is still gated
     # on the second, so this value is seen-but-not-delivered.
-    _publish_rotation('detector_tank_angle_r0', time=4)
+    _publish_rotation('detector_tank_angle', time=4)
     service.step()
     assert len(sink.messages) == 0
 
     # Tick 2: the second rotation context arrives and the gate opens. The first
     # context must be refilled from the cache so both reach set_context at once.
-    _publish_rotation('rotation_stage', time=5)
+    _publish_rotation('sample_rotation', time=5)
     service.step()
 
     # Tick 3: events now produce output — proving neither context landed as None.

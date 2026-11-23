@@ -151,7 +151,7 @@ class DownsamplePixelIds(Accumulator[DetectorEvents, sc.DataArray]):
     the window before it is consulted, counted and reported, and they map
     outside the target grid so grouping drops them.
 
-    Ids are laid out as ``x * source + y`` with ``x`` the slow axis, which
+    Ids are laid out as ``slow * source + fast``, which
     :func:`~ess.livedata.config.detector_downsampling.resolve_downsampling`
     verifies against the geometry file. They are taken relative to
     ``downsampling.first_id`` because detectors disagree on where they start
@@ -238,12 +238,12 @@ class DownsamplePixelIds(Accumulator[DetectorEvents, sc.DataArray]):
         # forwards it and grouping drops it, as it would with any other stride.
         source = self._source_resolution or self._resolution
         block = source // self._resolution
-        # x is the slow axis: id = x * source + y. Ids at or beyond source**2
-        # give x // block >= resolution, so the remapped id falls outside the
+        # id = slow * source + fast. Ids at or beyond source**2
+        # give slow // block >= resolution, so the remapped id falls outside the
         # target grid and grouping drops it, as it already does for ids outside
         # the configured detector_number. Ids below first_id stay negative.
-        x, y = np.divmod(pixel_id, source)
-        remapped = (x // block) * self._resolution + (y // block)
+        slow, fast = np.divmod(pixel_id, source)
+        remapped = (slow // block) * self._resolution + (fast // block)
 
         return self._inner.add(timestamp, replace(data, pixel_id=remapped))
 

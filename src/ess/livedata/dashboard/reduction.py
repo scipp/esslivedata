@@ -1,7 +1,6 @@
 # SPDX-License-Identifier: BSD-3-Clause
 # Copyright (c) 2025 Scipp contributors (https://github.com/scipp)
 import argparse
-import os
 import threading
 import urllib.request
 from urllib.error import URLError
@@ -27,8 +26,9 @@ from .dashboard import (
 from .dashboard_services import DEFAULT_SESSION_STALE_TIMEOUT
 from .session_updater import SessionUpdater
 from .theme import DEFAULT_THEME, THEMES
+from .widgets.heartbeat_widget import DEFAULT_HIDDEN_TAB_GRACE
 from .widgets.log_producer_widget import LogProducerWidget
-from .widgets.plot_grid_tabs import PlotGridTabs
+from .widgets.plot_grid_tabs import TAB_QUERY_PARAM, PlotGridTabs
 from .widgets.system_status_widget import SystemStatusWidget
 from .widgets.workflow_status_widget import WorkflowStatusListWidget
 
@@ -134,11 +134,10 @@ class ReductionApp(DashboardBase):
         auto_start: bool = False,
         collapsed_sidebar: bool = True,
         fetch_announcements: bool = True,
-        basic_auth_password: str | None = None,
-        basic_auth_cookie_secret: str | None = None,
         theme: str = DEFAULT_THEME.name,
         session_stale_timeout_seconds: float = DEFAULT_SESSION_STALE_TIMEOUT,
         unused_session_lifetime_seconds: float = DEFAULT_UNUSED_SESSION_LIFETIME,
+        hidden_tab_grace_seconds: float = DEFAULT_HIDDEN_TAB_GRACE,
     ):
         super().__init__(
             instrument=instrument,
@@ -150,11 +149,10 @@ class ReductionApp(DashboardBase):
             config_dir=config_dir,
             auto_start=auto_start,
             collapsed_sidebar=collapsed_sidebar,
-            basic_auth_password=basic_auth_password,
-            basic_auth_cookie_secret=basic_auth_cookie_secret,
             theme=theme,
             session_stale_timeout_seconds=session_stale_timeout_seconds,
             unused_session_lifetime_seconds=unused_session_lifetime_seconds,
+            hidden_tab_grace_seconds=hidden_tab_grace_seconds,
         )
         self._fetch_announcements = fetch_announcements
         # Load (and validate) the NICOS derived-device contract once. Fails loud
@@ -223,6 +221,11 @@ class ReductionApp(DashboardBase):
             phone=phone,
             # ``?toolbars=hidden`` lets a screen be bookmarked with toolbars off.
             figure_toolbars=pn.state.session_args.get('toolbars') != [b'hidden'],
+            initial_tab=(
+                tab[0].decode(errors='replace')
+                if (tab := pn.state.session_args.get(TAB_QUERY_PARAM))
+                else None
+            ),
         )
 
         # PlotGridTabs registers its own two-tier teardown on the session
@@ -315,19 +318,6 @@ def get_arg_parser() -> argparse.ArgumentParser:
         help='Disable fetching announcements from external URL',
     )
     parser.add_argument(
-        '--basic-auth-password',
-        default=os.environ.get('LIVEDATA_BASIC_AUTH_PASSWORD'),
-        help='Password for basic authentication. '
-        'Any username will be accepted. '
-        'Can also be set via LIVEDATA_BASIC_AUTH_PASSWORD env var.',
-    )
-    parser.add_argument(
-        '--basic-auth-cookie-secret',
-        default=os.environ.get('LIVEDATA_BASIC_AUTH_COOKIE_SECRET'),
-        help='Cookie secret for basic authentication sessions. '
-        'Can also be set via LIVEDATA_BASIC_AUTH_COOKIE_SECRET env var.',
-    )
-    parser.add_argument(
         '--session-stale-timeout-seconds',
         type=float,
         default=DEFAULT_SESSION_STALE_TIMEOUT,
@@ -342,6 +332,16 @@ def get_arg_parser() -> argparse.ArgumentParser:
         help='Seconds Bokeh keeps a session with no connections left before '
         'dropping its document. Also the poll interval, so a closed session is '
         'released somewhere between one and two times this.',
+    )
+    parser.add_argument(
+        '--hidden-tab-grace-seconds',
+        type=float,
+        default=DEFAULT_HIDDEN_TAB_GRACE,
+        help='Seconds a browser tab may stay hidden before it stops sending '
+        'heartbeats. The session is then dropped after the stale timeout and '
+        'the tab reloads into a new session when shown again. Values above the '
+        'default are not honoured in Chrome, which throttles the heartbeat timer '
+        'of a tab hidden for five minutes.',
     )
     parser.add_argument(
         '--check',

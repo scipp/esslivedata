@@ -9,7 +9,7 @@ from collections.abc import Callable, Iterable, Iterator, Mapping
 from dataclasses import dataclass
 from typing import Any, Protocol, runtime_checkable
 
-from ess.livedata.config.stream import NO_DEFAULT, ChainPatchBinding, ContextBinding
+from ess.livedata.config.stream import NO_DEFAULT, ContextBinding
 from ess.livedata.config.workflow_spec import (
     NoParams,
     WorkflowConfig,
@@ -40,13 +40,14 @@ class SupportsContext(Protocol):
 
     Workflows wrapping ``ess.reduce.streaming.StreamProcessor`` defer building
     their graph so the routing layer (:meth:`WorkflowFactory.create`) can inject
-    per-job bindings the factory does not know: context streams (motion/geometry/
-    ROI) and f144-driven chain-patch transforms. :meth:`build` takes them and
+    per-job bindings the factory does not know: context streams (e.g. ROI) and
+    the streams carrying motor-driven transforms. :meth:`build` takes them and
     materializes the workflow in one call, so the caller need not sequence
     separate configuration steps and factories need not thread these through
     their signature. It also reports back, via
     :attr:`requested_context_streams`, which of the instrument's offered
-    context streams the finished graph asks for -- the routing layer cannot know
+    context streams and motor streams the finished graph asks for -- the routing
+    layer cannot know
     that before the graph exists. (Aux-role resolution is not among these:
     factories key ``dynamic_keys`` by canonical stream name directly, via the
     ``aux_source_names`` map passed to the factory.)
@@ -56,7 +57,7 @@ class SupportsContext(Protocol):
         self,
         *,
         context_keys: Mapping[str, Any] | None = None,
-        chain_patch_bindings: Iterable[ChainPatchBinding] = (),
+        transform_streams: Mapping[str, str] | None = None,
         offered_context_streams: Mapping[Any, str] | None = None,
     ) -> None: ...
 
@@ -69,9 +70,8 @@ class WorkflowRegistration:
     """Per-workflow record held by :class:`WorkflowFactory`.
 
     Bundles the declarative :class:`WorkflowSpec` with implementation-side
-    data: the factory callable, the owning service, spec-scope
-    :class:`ContextBinding` declarations, and the opt-out flag for
-    instrument-scope context bindings. Keeping these alongside the factory
+    data: the factory callable, the owning service, and spec-scope
+    :class:`ContextBinding` declarations. Keeping these alongside the factory
     (rather than on :class:`WorkflowSpec`) preserves the spec as a purely
     declarative model and keeps the workflow-key imports out of
     :mod:`config.workflow_spec`.
@@ -81,7 +81,6 @@ class WorkflowRegistration:
     service: str
     factory: Callable[..., Workflow] | None = None
     context_bindings: tuple[ContextBinding, ...] = ()
-    skip_instrument_contexts: bool = False
 
 
 @dataclass(frozen=True)
@@ -134,14 +133,6 @@ class SpecHandle:
         :attr:`ContextBinding.default`): the gate opens on the first tick
         with that value, and the producer's own overwrites it on arrival.
 
-        Chain-patch contexts (``workflow_key`` is a
-        :class:`~ess.livedata.config.value_log.ValueLog` subclass) must be
-        declared at instrument scope via
-        :meth:`Instrument.add_context_binding`:
-        :attr:`Instrument.chain_patch_bindings` reads only instrument-scope
-        records, so a spec-scope chain-patch context would route the f144
-        value to a Sciline parameter that no provider consumes — silent-wrong.
-
         A binding applies to every job on a dependent source. A stream only
         *some* of a spec's jobs consume — one a params model can switch on — is
         not a binding but an offered context stream on the instrument, which
@@ -155,26 +146,6 @@ class SpecHandle:
             dependent_sources=dependent_sources,
             default=default,
         )
-
-    def skip_instrument_contexts(self) -> None:
-        """Opt this spec out of all instrument-scope context-stream bindings.
-
-        Use when this spec consumes a source whose instrument declaration
-        carries context (motion, geometry, etc.) but this spec does not need
-        the value — e.g. a counts-only ratemeter on a moving detector. The
-        spec is removed from the gate and from the resolved context for those
-        streams. Spec-scope bindings (declared via :meth:`add_context_binding`)
-        are unaffected.
-
-        Call this from ``factories.py``, co-located with the
-        :meth:`Instrument.add_context_binding` it negates: the opt-out has no
-        meaning without the instrument-scope binding it cancels, and the
-        rationale (does this workflow consume the geometry value?) is
-        implementation knowledge that lives with the factory. The call needs
-        no workflow-key import, so the ``specs.py`` import constraint does not
-        apply.
-        """
-        self._factory._set_skip_instrument_contexts(self.workflow_id)
 
 
 class WorkflowFactory(Mapping[WorkflowId, WorkflowSpec]):
@@ -318,18 +289,6 @@ class WorkflowFactory(Mapping[WorkflowId, WorkflowSpec]):
         dependent_sources: Iterable[str] | None,
         default: Any,
     ) -> None:
-        # Chain-patch contexts (ValueLog-typed workflow_key) at spec scope
-        # would be silent-wrong: Instrument.chain_patch_bindings reads
-        # only instrument-scope records, so the f144 value would route to a
-        # Sciline parameter no provider consumes.
-        from ess.livedata.config.value_log import ValueLog
-
-        if isinstance(workflow_key, type) and issubclass(workflow_key, ValueLog):
-            raise ValueError(
-                f"workflow_key {workflow_key.__name__!r} is a ValueLog subclass; "
-                "chain-patch contexts must be declared at instrument scope via "
-                "Instrument.add_context_binding, not at spec scope"
-            )
         reg = self._registrations[workflow_id]
         if dependent_sources is None:
             sources = frozenset(reg.spec.source_names)
@@ -343,12 +302,6 @@ class WorkflowFactory(Mapping[WorkflowId, WorkflowSpec]):
         )
         self._registrations[workflow_id] = dataclasses.replace(
             reg, context_bindings=(*reg.context_bindings, new_input)
-        )
-
-    def _set_skip_instrument_contexts(self, workflow_id: WorkflowId) -> None:
-        reg = self._registrations[workflow_id]
-        self._registrations[workflow_id] = dataclasses.replace(
-            reg, skip_instrument_contexts=True
         )
 
     def validate_params(self, config: WorkflowConfig) -> Any:
@@ -376,7 +329,7 @@ class WorkflowFactory(Mapping[WorkflowId, WorkflowSpec]):
         params: Any,
         aux_source_names: dict[str, str] | None = None,
         context_keys: dict[str, Any] | None = None,
-        chain_patch_bindings: Iterable[ChainPatchBinding] = (),
+        transform_streams: Mapping[str, str] | None = None,
         offered_context_streams: Mapping[Any, str] | None = None,
     ) -> Workflow:
         """
@@ -400,12 +353,10 @@ class WorkflowFactory(Mapping[WorkflowId, WorkflowSpec]):
             Passed to :meth:`SupportsContext.build` *after* the factory returns
             the workflow, so factories do not declare ``context_keys`` in their
             signature.
-        chain_patch_bindings:
-            Pre-resolved instrument-scope chain-patch bindings (see
-            :attr:`Instrument.chain_patch_bindings`). Passed to
-            :meth:`SupportsContext.build`, which wires them as f144-driven
-            dynamic transforms while materializing the graph. Only applied to
-            workflows that defer their build (:class:`SupportsContext`).
+        transform_streams:
+            NeXus transform path -> stream carrying its value, for the whole
+            instrument (see :attr:`Instrument.transform_streams`). Passed to
+            ``workflow.build``, which reads off its graph which of them it needs.
         offered_context_streams:
             The instrument's offered context streams (workflow key → wire
             name). Passed to :meth:`SupportsContext.build`, which keeps the
@@ -466,15 +417,10 @@ class WorkflowFactory(Mapping[WorkflowId, WorkflowSpec]):
         if isinstance(workflow, SupportsContext):
             workflow.build(
                 context_keys=context_keys,
-                chain_patch_bindings=chain_patch_bindings,
+                transform_streams=transform_streams,
                 offered_context_streams=offered_context_streams,
             )
         elif context_keys:
-            # No symmetric check for chain_patch_bindings: context_keys are
-            # resolved per (spec, source) and non-empty means this job *must*
-            # consume them, whereas chain_patch_bindings is the instrument-wide
-            # list handed to every job — most workflows legitimately match
-            # none of it, so silently not wiring is the expected case.
             raise TypeError(
                 f"Workflow '{workflow_id}' resolved context bindings "
                 f"{sorted(context_keys)} but the produced workflow "

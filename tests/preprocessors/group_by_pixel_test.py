@@ -1,11 +1,14 @@
 # SPDX-License-Identifier: BSD-3-Clause
 # Copyright (c) 2025 Scipp contributors (https://github.com/scipp)
 import numpy as np
+import pytest
 import scipp as sc
+from ess.reduce.nexus.workflow import assemble_detector_data
 
 from ess.livedata.core.timestamp import Timestamp
 from ess.livedata.preprocessors.group_by_pixel import GroupByPixel
 from ess.livedata.preprocessors.to_nxevent_data import DetectorEvents, ToNXevent_data
+from ess.livedata.workflows.detector_view.data_source import create_empty_detector
 
 
 def _make_detector_number(n_pixels: int) -> sc.Variable:
@@ -103,3 +106,34 @@ class TestGroupByPixel:
 
         event_data = result.bins.constituents['data']
         assert 'event_time_offset' in event_data.coords
+
+
+class TestAssembleDetectorDataFromGroupedEvents:
+    """Pre-grouped events must line up with the workflow's EmptyDetector."""
+
+    @pytest.fixture
+    def grouped(self) -> sc.DataArray:
+        acc = GroupByPixel(ToNXevent_data(), _make_detector_number(4))
+        acc.add(
+            timestamp=Timestamp.from_ns(1000),
+            data=_make_events([1, 2, 2, 4], [100, 200, 300, 400]),
+        )
+        return acc.get()
+
+    def test_folds_to_workflow_shape(self, grouped):
+        detector_number = sc.array(dims=['y', 'x'], values=[[1, 2], [3, 4]], unit=None)
+        result = assemble_detector_data(create_empty_detector(detector_number), grouped)
+        assert sc.identical(result.coords['detector_number'], detector_number)
+        assert result.bins.size().values.tolist() == [[1, 2], [0, 1]]
+
+    def test_raises_if_workflow_orders_pixels_differently(self, grouped):
+        detector_number = sc.array(
+            dims=['detector_number'], values=[4, 3, 2, 1], unit=None
+        )
+        with pytest.raises(ValueError, match='differs from the workflow'):
+            assemble_detector_data(create_empty_detector(detector_number), grouped)
+
+    def test_raises_if_workflow_has_other_pixels(self, grouped):
+        detector_number = _make_detector_number(5)
+        with pytest.raises(ValueError, match='differs from the workflow'):
+            assemble_detector_data(create_empty_detector(detector_number), grouped)

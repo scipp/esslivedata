@@ -7,9 +7,9 @@ Extractors are the naming boundary: on the wire a value's upper bound is its
 ``time``, and every extractor turns the covered range into the scalar
 ``(start_time, end_time)`` pair the plotters read. The pair must reflect the
 actual range of the extracted data, not stale coordinates from the buffer
-reference, and must be pristine wall-clock time even where ``time`` itself is
-shifted for display. A series output has no such range: its ``time`` is the
-per-sample axis, so it is left alone.
+reference, and must stay integer epoch nanoseconds even where ``time`` itself
+is converted to ``datetime64`` for display. A series output has no such range:
+its ``time`` is the per-sample axis, so it is left alone.
 """
 
 import time
@@ -22,7 +22,6 @@ from ess.livedata.dashboard.extractors import (
     LatestValueExtractor,
     WindowAggregatingExtractor,
 )
-from ess.livedata.dashboard.time_utils import get_local_timezone_offset_ns
 
 
 def _make_buffered_data(
@@ -83,12 +82,8 @@ class TestFullHistoryExtractor:
         assert result.coords['end_time'].ndim == 0  # Scalar
         assert sc.identical(result.coords['end_time'], data.coords['time'][-1])
 
-    def test_end_time_is_pristine_wall_clock_despite_the_display_shift(self):
-        """The bounds are provenance, so the timezone shift must not reach them.
-
-        ``time`` is shifted into the local timezone for Bokeh's axis; taking the
-        bounds afterwards would misreport them by the UTC offset.
-        """
+    def test_bounds_stay_epoch_nanoseconds_despite_the_datetime_conversion(self):
+        """The bounds are taken before ``time`` is converted for Bokeh's axis."""
         data = _make_buffered_data(num_points=5, time_span_seconds=5.0)
 
         result = FullHistoryExtractor().extract(data)
@@ -113,17 +108,16 @@ class TestFullHistoryExtractor:
     def test_plotted_axis_is_the_window_close_not_its_start(self):
         """A window output's wall-clock x is its right edge.
 
-        The axis is the wire's ``time``, offset into the local timezone for
-        Bokeh and nothing else — in particular not the interval's ``start_time``.
+        The axis is the wire's ``time``, as a UTC ``datetime64`` for Bokeh, and
+        nothing else — in particular not the interval's ``start_time``.
         """
         data = _make_buffered_data(num_points=5, time_span_seconds=5.0)
-        origin = sc.epoch(unit='ns') + get_local_timezone_offset_ns().to_scipp().to(
-            unit='ns', dtype='int64'
-        )
 
         result = FullHistoryExtractor().extract(data)
 
-        assert sc.identical(result.coords['time'], origin + data.coords['time'])
+        assert sc.identical(
+            result.coords['time'], sc.epoch(unit='ns') + data.coords['time']
+        )
 
     def test_end_time_reflects_actual_data_range(self):
         """end_time should reflect the actual data, giving recent lag."""

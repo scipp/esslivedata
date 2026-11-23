@@ -95,14 +95,6 @@ class EstiaReflectometryReductionParams(pydantic.BaseModel):
             unit=parameter_models.AngleUnit.DEGREE,
         ),
     )
-    sample_rotation: parameter_models.Angle = pydantic.Field(
-        title='Sample rotation',
-        description='Define the sample rotation for the reflectometry workflow.',
-        default=parameter_models.Angle(
-            value=0.0,
-            unit=parameter_models.AngleUnit.DEGREE,
-        ),
-    )
     y_index_limits: IndexLimits = pydantic.Field(
         title='Y index limits',
         description=(
@@ -192,26 +184,12 @@ streams = name_streams(filter_authorized_streams(PARSED_STREAMS))
 #: ``make_common_stream_mapping_inputs`` in ``streams.py``).
 monitor_names = ['beam_monitor']
 
-#: The geometry artifact carries two hand repairs of the run file:
-#:
-#: - The run file places the ``NXsource`` at the origin, which is the sample
-#:   position, and labels it ``probe='proton'``. The artifact moves it to the
-#:   moderator position relative to the sample that essestia's McStas loader
-#:   uses (35.05 m upstream), and sets ``probe='neutron'``. Without this every
-#:   distance from the source is wrong, e.g., the chopper would sit 24 m instead
-#:   of 11 m from it.
-#: - The run file places ``beam_monitor`` 34 m *downstream* of the sample. Read
-#:   as 34 m upstream it would sit inside the target monolith, so the 34 m is
-#:   taken as measured from the moderator, in a frame with the origin at the
-#:   source. The artifact chains it onto the source at that distance along the
-#:   beam, 1.05 m before the sample.
-#:
+
 #: The detector arm rotates about the sample, which leaves the flight path to
 #: every pixel unchanged, but the lookup-table range derivation refuses live
-#: rotations. The range is therefore declared; the table pads it by 1%, at least
-#: 0.1 m. The declared range is what the repaired artifact gives at any arm
-#: angle, and agrees with the McStas geometry the reduction
-#: workflow uses to within 4 mm.
+#: rotations. The range is therefore declared, at the zero pose of the live axes
+#: as the geometry artifact gives it; the table pads it by 1%, at least 0.1 m,
+#: which covers sample travel. A test checks it against the artifact.
 instrument = Instrument(
     name='estia',
     detector_names=detector_names,
@@ -219,12 +197,12 @@ instrument = Instrument(
     choppers=['bwc'],
     declared_ltotal={
         'multiblade_detector': sc.array(
-            dims=['ltotal'], values=[39.057, 39.188], unit='m'
+            dims=['ltotal'], values=[39.002, 39.133], unit='m'
         )
     },
     streams=streams,
     source_metadata={
-        'detector_arm_rotation/value': SourceMetadata(
+        'detector_arm_rotation': SourceMetadata(
             title='Detector Rotation',
             description='Multiblade detector bank rotation angle.',
         ),
@@ -233,15 +211,7 @@ instrument = Instrument(
 
 instrument_registry.register(instrument)
 
-register_monitor_workflow_specs(
-    instrument,
-    monitor_names,
-    extra_description=(
-        '<b>Warning:</b> wavelength mode uses the monitor position from the'
-        ' geometry file, 34 m from the moderator, which is unconfirmed.'
-        ' Treat wavelengths as approximate.'
-    ),
-)
+register_monitor_workflow_specs(instrument, monitor_names)
 
 
 def _estia_spectrum_transform(histogram: sc.DataArray) -> sc.DataArray:

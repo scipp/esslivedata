@@ -243,18 +243,18 @@ def test_odin_cumulative_resets_when_the_readout_resolution_changes() -> None:
     n_out = _n_outputs('odin')
     # Only the first rows of the 4096x4096 panel light up, so the ids seen so
     # far are consistent with a much smaller readout.
-    app.publish_events(size=2000, time=2, id_range=(0, 100 * 4096))
+    app.publish_events(size=2000, time=2, id_range=(1, 100 * 4096))
     service.step()
     assert _data_messages(sink)[0].value.nansum().value == 2000  # cumulative
 
     # Still nothing above the inferred resolution -> plain accumulation.
-    app.publish_events(size=3000, time=4, id_range=(0, 100 * 4096))
+    app.publish_events(size=3000, time=4, id_range=(1, 100 * 4096))
     service.step()
     assert _data_messages(sink)[n_out].value.nansum().value == 5000  # cumulative
 
     # An id from the far corner proves the panel is the full 4096, so the
     # stride changes and the 5000 counts mapped with the old one are discarded.
-    app.publish_events(size=1000, time=6, id_range=(4000 * 4096, 4096 * 4096 - 1))
+    app.publish_events(size=1000, time=6, id_range=(4000 * 4096, 4096 * 4096))
     service.step()
     cumulative = _data_messages(sink)[2 * n_out].value
     current = _data_messages(sink)[2 * n_out + 1].value

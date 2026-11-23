@@ -16,6 +16,17 @@ essreduce for the very providers the consumer runs --
 the range and the lookup agree by construction rather than by review, in the
 producing service and in every consuming one.
 
+A component riding live (f144-driven) axes is evaluated at every corner of the
+box its declared :class:`~ess.livedata.config.stream.AxisRange` bounds span. A
+detector's ``Ltotal`` also passes through the sample, whose live axes are parked
+at zero, the nominal position in the beam. Real sample motion is left to the
+padding: moving the sample by ``d`` along the beam changes ``Ltotal`` by about
+``d * (1 - cos(two_theta))``, and the detectors share one block, so only the ends
+of the combined range count. On LOKI, the one instrument with live sample
+translations, moving the sample by 20 cm along the beam and 5 cm across it extends
+the combined range by 2.3 cm, against a padding of 10 cm. Sample changer positions
+that take the sample out of the beam are not covered: they are not measured at.
+
 Padding is applied on top and is deliberately generous: widening a range adds
 distance rows at fixed resolution, which costs recompute in the LUT job and
 nothing else, while a range that is too narrow blanks the component.
@@ -78,10 +89,8 @@ def _park(
     return chain
 
 
-def _axis_bounds(
-    chain: snx.TransformationChain, axis_ranges: Mapping[str, AxisRange]
-) -> dict[str, tuple[sc.Variable, sc.Variable]]:
-    """The declared bounds of every live axis the component rides.
+def _live_translations(chain: snx.TransformationChain) -> list[str]:
+    """The paths of every live axis on a ``depends_on`` chain.
 
     The artifact stores an f144-driven transform as an empty NXlog, so a
     component riding one has no position until something supplies a value.
@@ -93,9 +102,9 @@ def _axis_bounds(
     angle, so evaluating the bounds would silently under-cover the swing rather
     than bracket it. Refusing costs the component its table, which is the
     handled path; accepting would cost it a table that is wrong where it
-    matters. An axis nobody declared leaves the component unplaceable too.
+    matters.
     """
-    bounds = {}
+    paths = []
     for path, transform in chain.transformations.items():
         value = getattr(transform, 'value', None)
         if not (isinstance(value, sc.DataArray) and 'time' in value.dims):
@@ -105,6 +114,19 @@ def _axis_bounds(
                 f"transform {path!r} is a live rotation axis; deriving a range "
                 "from its bounds would under-cover the swing"
             )
+        paths.append(path)
+    return paths
+
+
+def _axis_bounds(
+    chain: snx.TransformationChain, axis_ranges: Mapping[str, AxisRange]
+) -> dict[str, tuple[sc.Variable, sc.Variable]]:
+    """The declared bounds of every live axis on a ``depends_on`` chain.
+
+    An axis nobody declared leaves the component unplaceable.
+    """
+    bounds = {}
+    for path in _live_translations(chain):
         if (axis := axis_ranges.get(path)) is None:
             raise LtotalRangeError(
                 f"transform {path!r} is driven by a live stream and the artifact "
@@ -123,11 +145,15 @@ def _ltotal(
 ) -> sc.Variable:
     """Compute a component's ``Ltotal`` over the full extent of its motion.
 
-    The geometry is evaluated at every corner of the box the declared axis
-    bounds span, and the results concatenated. Pixel positions are affine in a
-    translation's value, so ``Ltotal`` is convex and its maximum is attained at
-    a corner; the minimum can in principle lie inside the box, which the
-    padding in :func:`component_ltotal_range` absorbs.
+    The geometry is evaluated at every corner of the box the declared bounds of
+    the component's own axes span, and the results concatenated. Pixel
+    positions are affine in a translation's value, so ``Ltotal`` is convex and
+    its maximum is attained at a corner; the minimum can in principle lie
+    inside the box, which the padding in :func:`component_ltotal_range`
+    absorbs.
+
+    For a detector, the sample's live axes are parked at zero; see the module
+    docstring. A monitor's straight-line ``Ltotal`` does not involve the sample.
     """
     workflow = GenericUnwrapWorkflow(
         run_types=[SampleRun], monitor_types=[snx.NXmonitor]
@@ -140,6 +166,18 @@ def _ltotal(
         if is_monitor
         else DetectorLtotal[SampleRun]
     )
+
+    if not is_monitor:
+        sample_key = NeXusComponent[snx.NXsample, SampleRun]
+        sample_chain = workflow.compute(
+            NeXusTransformationChain[snx.NXsample, SampleRun]
+        )
+        if live_axes := _live_translations(sample_chain):
+            sample = copy.copy(workflow.compute(sample_key))
+            sample['depends_on'] = _park(
+                sample_chain, dict.fromkeys(live_axes, sc.scalar(0.0, unit='m'))
+            )
+            workflow[sample_key] = sample
 
     chain_key = NeXusTransformationChain[component_class, SampleRun]
     chain = workflow.compute(chain_key)
@@ -190,8 +228,9 @@ def component_ltotal_range(
     ------
     LtotalRangeError:
         If the component's position cannot be resolved. Either the component is
-        absent from the artifact, or it rides a live axis that has no declared
-        :class:`AxisRange` or is a rotation.
+        absent from the artifact, it rides a live axis that has no declared
+        :class:`AxisRange`, or it (or, for a detector, the sample) rides a live
+        rotation.
     """
     try:
         ltotal = _ltotal(

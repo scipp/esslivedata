@@ -1,6 +1,6 @@
 # ADR 0004: Key workflow inputs uniformly by canonical stream name
 
-- Status: accepted
+- Status: accepted (amended 2026-11-06)
 - Deciders: Simon
 - Date: 2026-06-02
 
@@ -75,6 +75,10 @@ Because the routing layer must inject per-job context and f144-driven transforms
 `SupportsContext.build(context_keys, chain_patch_bindings)`. The factory passes
 only its own internal context (e.g. ROI) to the constructor; `build` merges the
 routing-layer `context_keys`, wires `chain_patch_bindings`, and bakes the graph.
+
+> **Amended 2026-11-06.** `wire_dynamic_transforms` and `chain_patch_bindings` no longer
+> exist. `build` takes `transform_streams` and finds a job's motors in its graph, see
+> ADR 0003, "Amendment 2026-11-06". The deferred construction is unchanged.
 
 One-stream-to-many-roles multiplexing is dropped. It was unused and is
 incompatible with canonical-name keying: a single incoming `stream_name` maps to exactly

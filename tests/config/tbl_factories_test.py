@@ -26,11 +26,11 @@ def test_orca_view_processes_a_frame() -> None:
     registration = specs.instrument.workflow_factory.registration(
         specs.orca_view_handle.workflow_id
     )
-    workflow = registration.factory(source_name='orca_detector')
+    workflow = registration.factory(source_name='orca')
     frame = sc.DataArray(sc.ones(dims=['dim_0', 'dim_1'], shape=[2048, 2048]))
 
     workflow.accumulate(
-        {'orca_detector': frame},
+        {'orca': frame},
         start_time=Timestamp.from_ns(1000),
         end_time=Timestamp.from_ns(2000),
     )
