@@ -95,14 +95,6 @@ class EstiaReflectometryReductionParams(pydantic.BaseModel):
             unit=parameter_models.AngleUnit.DEGREE,
         ),
     )
-    sample_rotation: parameter_models.Angle = pydantic.Field(
-        title='Sample rotation',
-        description='Define the sample rotation for the reflectometry workflow.',
-        default=parameter_models.Angle(
-            value=0.0,
-            unit=parameter_models.AngleUnit.DEGREE,
-        ),
-    )
     y_index_limits: IndexLimits = pydantic.Field(
         title='Y index limits',
         description=(
@@ -192,28 +184,26 @@ streams = name_streams(filter_authorized_streams(PARSED_STREAMS))
 #: ``make_common_stream_mapping_inputs`` in ``streams.py``).
 monitor_names = ['beam_monitor']
 
-#: The detector arm rotates about the sample, which leaves the flight path to
-#: every pixel unchanged. The sample and the detector also ride live axes (the
-#: hexapod, ``sample_rotation``, ``sample_lateral_adjustment``), and the
-#: lookup-table range derivation refuses live rotations. The range is therefore
-#: declared; the table pads it by 1%, at least 0.1 m. The declared range is what
-#: the geometry artifact gives at any arm angle, with the sample at the origin;
-#: sample motion of centimetres changes it by well under a millimetre. The McStas
-#: geometry the reduction workflow uses puts the moderator 5 cm further upstream,
-#: so its flight paths are 51 mm longer, which the padding covers.
+
+def _reference_detector_ltotal(filename: str) -> sc.Variable:
+    from .live_geometry import reference_detector_ltotal
+
+    return reference_detector_ltotal(filename)
+
+
+#: The detector flight path is taken at the zero pose of the live axes (arm,
+#: hexapod, sample rotation), which the lookup-table range derivation would
+#: refuse; the table pads it. The reduction rejects live positions outside that
+#: coverage; see ADR 0011.
 instrument = Instrument(
     name='estia',
     detector_names=detector_names,
     monitors=monitor_names,
     choppers=['bwc'],
-    declared_ltotal={
-        'multiblade_detector': sc.array(
-            dims=['ltotal'], values=[39.002, 39.133], unit='m'
-        )
-    },
+    declared_ltotal={'multiblade_detector': _reference_detector_ltotal},
     streams=streams,
     source_metadata={
-        'detector_arm_rotation/value': SourceMetadata(
+        'detector_arm_rotation': SourceMetadata(
             title='Detector Rotation',
             description='Multiblade detector bank rotation angle.',
         ),

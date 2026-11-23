@@ -23,7 +23,6 @@ from ess.livedata.preprocessors.detector_data import get_nexus_geometry_filename
 def test_estia_reflectometry_reduction_default_limits_match_previous_literals():
     params = EstiaReflectometryReductionParams()
 
-    assert sc.identical(params.sample_rotation.get_value(), sc.scalar(0.0, unit='deg'))
     assert sc.identical(params.y_index_limits.get_limits()[0], sc.scalar(0))
     assert sc.identical(params.y_index_limits.get_limits()[1], sc.scalar(63))
     assert sc.identical(params.z_index_limits.get_limits()[0], sc.scalar(0))
@@ -40,13 +39,11 @@ def test_estia_reflectometry_reduction_default_limits_match_previous_literals():
 
 def test_estia_reflectometry_reduction_custom_limits_convert_to_scipp_scalars():
     params = EstiaReflectometryReductionParams(
-        sample_rotation={'value': 1.5, 'unit': 'deg'},
         y_index_limits={'start': 2, 'stop': 5},
         z_index_limits=IndexLimits(start=10, stop=20),
         beam_divergence_limits={'start': -0.1, 'stop': 0.2, 'unit': 'rad'},
     )
 
-    assert sc.identical(params.sample_rotation.get_value(), sc.scalar(1.5, unit='deg'))
     assert sc.identical(params.y_index_limits.get_limits()[0], sc.scalar(2))
     assert sc.identical(params.y_index_limits.get_limits()[1], sc.scalar(5))
     assert sc.identical(params.z_index_limits.get_limits()[0], sc.scalar(10))
@@ -86,10 +83,10 @@ def test_estia_beam_divergence_limits_reject_stop_less_than_start():
 
 
 @pytest.mark.parametrize('arm_angle', [-45.0, 0.0, 30.0, 90.0])
-def test_declared_detector_ltotal_covers_the_artifact_at_any_arm_angle(
+def test_reference_detector_ltotal_matches_the_artifact_at_any_arm_angle(
     arm_angle: float,
 ) -> None:
-    """The detector arm rotates about the sample, so the declared flight path is
+    """The detector arm rotates about the sample, so the reference flight path is
     the artifact's own at every angle. The sample and the other live axes are
     held at zero."""
 
@@ -104,7 +101,9 @@ def test_declared_detector_ltotal_covers_the_artifact_at_any_arm_angle(
     workflow[TimeFilter[snx.NXdetector, SampleRun]] = at_rest
     workflow[TimeFilter[snx.NXsample, SampleRun]] = at_rest
     ltotal = workflow.compute(DetectorLtotal[SampleRun]).to(unit='m')
-    low, high = instrument.declared_ltotal['multiblade_detector'].values
+    reference = instrument.declared_ltotal['multiblade_detector'](
+        str(get_nexus_geometry_filename('estia'))
+    )
 
-    assert low == pytest.approx(ltotal.min().value, abs=1e-3)
-    assert high == pytest.approx(ltotal.max().value, abs=1e-3)
+    assert reference.min().value == pytest.approx(ltotal.min().value, abs=1e-3)
+    assert reference.max().value == pytest.approx(ltotal.max().value, abs=1e-3)
