@@ -546,29 +546,25 @@ def create_wavelength_lut_workflow(
     return _make_workflow(pipeline, lut_keys)
 
 
-def neutron_source_position(nexus_filename: str) -> sc.Variable:
-    """Resolve the position flight distances are measured from.
+def _set_source_position(
+    pipeline: sciline.Pipeline, nexus_filename: str, offset: sc.Variable
+) -> None:
+    """Set the chopper-cascade source reference, shifted by ``offset``.
 
-    essreduce would take the unique ``NXsource``. BIFROST instead labels the
-    moderator ``NXmoderator`` and reserves ``NXsource`` for accelerator metadata
-    sitting at the origin, so essreduce would measure from the accelerator and
-    reject the upstream choppers as lying behind the source. The reference is
-    therefore the ``NXmoderator`` position when present, else the ``NXsource``
-    (e.g. LOKI).
+    essreduce would take the reference from the file's unique ``NXsource``.
+    BIFROST instead labels the moderator ``NXmoderator`` and reserves
+    ``NXsource`` for accelerator metadata sitting at the origin, so essreduce
+    would measure flight distance from the accelerator and reject the upstream
+    choppers as lying behind the source. The reference is therefore the
+    ``NXmoderator`` position when present, else the ``NXsource`` (e.g. LOKI).
+
+    ``offset`` is a beam-aligned displacement added to that reference; it is
+    zero by default, in which case this reproduces the position essreduce would
+    have loaded.
     """
     reference = _component_position(nexus_filename, snx.NXmoderator)
     if reference is None:
         reference = _component_position(nexus_filename, snx.NXsource)
-    if reference is None:
-        raise ValueError(f'No neutron source or moderator in {nexus_filename}')
-    return reference
-
-
-def _set_source_position(
-    pipeline: sciline.Pipeline, nexus_filename: str, offset: sc.Variable
-) -> None:
-    """Set the chopper-cascade source reference, shifted by ``offset``."""
-    reference = neutron_source_position(nexus_filename)
     pipeline[Position[snx.NXsource, AnyRun]] = reference + offset.to(
         unit=reference.unit
     )
@@ -659,8 +655,6 @@ def _derive_ltotal_ranges(
     ranges: dict[str, Range] = {}
     for name in components:
         if (ltotal := declared_ltotal.get(name)) is not None:
-            if callable(ltotal):
-                ltotal = ltotal(nexus_filename)
             ranges[name] = padded_ltotal_range(ltotal)
             continue
         try:

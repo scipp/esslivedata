@@ -3,20 +3,18 @@
 """Geometry-artifact inputs of ESTIA's reflectometry reduction.
 
 The artifact's transform chains are filled from the motor streams by the
-workflow build. This module adds what the build cannot derive: the moderator
-position and the two angles essestia reads as plain inputs.
+workflow build. This module adds what the build cannot derive: the two angles
+essestia reads as plain inputs, and the streamed lookup table.
 """
 
 from typing import NewType
 
 import sciline
 import scipp as sc
-from ess.reduce.nexus.types import Position, SampleRun
+from ess.reduce.nexus.types import SampleRun
 from ess.reflectometry.types import DetectorRotation, RawSampleRotation
-from scippnexus import NXsource
 
 from ess.livedata.workflows.lut_context import detector_lookup_table
-from ess.livedata.workflows.wavelength_lut_workflow import neutron_source_position
 
 #: Readback histories of the two angles essestia reads as scalars.
 SampleRotationLog = NewType('SampleRotationLog', sc.DataArray)
@@ -31,9 +29,8 @@ def detector_rotation(log: DetectorArmRotationLog) -> DetectorRotation[SampleRun
     return DetectorRotation[SampleRun](log['time', -1].data)
 
 
-def insert_live_geometry(workflow: sciline.Pipeline, filename: str) -> None:
-    """Place the moderator and read the angles and lookup table from context."""
-    workflow[Position[NXsource, SampleRun]] = neutron_source_position(filename)
+def insert_live_geometry(workflow: sciline.Pipeline) -> None:
+    """Read the angles and the lookup table from context."""
     workflow.insert(sample_rotation)
     workflow.insert(detector_rotation)
     workflow.insert(detector_lookup_table)

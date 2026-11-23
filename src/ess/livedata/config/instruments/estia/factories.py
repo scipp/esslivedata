@@ -70,7 +70,7 @@ def setup_factories(instrument: Instrument) -> None:
     ) -> StreamProcessorWorkflow:
         wf = EstiaWorkflow()
         wf[Filename[SampleRun]] = geometry_filename
-        insert_live_geometry(wf, geometry_filename)
+        insert_live_geometry(wf)
         wf[NeXusDetectorName] = source_name
         wf[LookupTableRelativeErrorThreshold] = {source_name: float('inf')}
         wf[WavelengthBins] = params.wavelength_edges.get_edges().to(unit='angstrom')
