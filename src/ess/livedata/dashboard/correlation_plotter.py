@@ -24,6 +24,8 @@ from ess.livedata.config.workflow_spec import DataKey
 
 from .data_roles import PRIMARY, X_AXIS, Y_AXIS
 from .plot_params import (
+    DetectorPixelMixin,
+    DetectorPixelNormalizationParams,
     LegendPosition,
     Line1dParams,
     Line1dRenderMode,
@@ -42,16 +44,17 @@ from .plots import (
 from .range_hook import Axis, RangeTargets
 
 
-class CorrelationNormalizationParams(pydantic.BaseModel):
+class CorrelationNormalizationParams(DetectorPixelNormalizationParams):
     per_second: bool = pydantic.Field(
         default=False,
+        title="Per Second",
         description="Divide data by time bin width to obtain a rate. When enabled, "
         "each histogram bin represents a rate (rather than counts), computed as a mean "
         "instead of a sum over all contributions.",
     )
 
 
-class _CorrelationHistogramBase(pydantic.BaseModel):
+class _CorrelationHistogramBase(DetectorPixelMixin):
     normalization: CorrelationNormalizationParams = pydantic.Field(
         default_factory=CorrelationNormalizationParams,
         title="Normalization",
@@ -142,10 +145,11 @@ class CorrelationHistogram2dParams(_CorrelationHistogramBase, PlotDisplayParams2
     )
 
 
-# Plotter names that are correlation histogram types
-CORRELATION_HISTOGRAM_PLOTTERS = frozenset(
-    {'correlation_histogram_1d', 'correlation_histogram_2d'}
-)
+CORRELATION_AXIS_ROLES: dict[str, tuple[str, ...]] = {
+    'correlation_histogram_1d': (X_AXIS,),
+    'correlation_histogram_2d': (X_AXIS, Y_AXIS),
+}
+"""Names of the correlation histogram plotters and the axis roles each requires."""
 
 
 @dataclass(frozen=True)
@@ -371,7 +375,10 @@ class CorrelationHistogram1dPlotter(CorrelationHistogramPlotter):
                 bins=params.bins.x_bins,
             )
         ]
-        renderer = LinePlotter.from_display_params(params)
+        renderer = LinePlotter.from_display_params(
+            params,
+            normalize_per_detector_pixel=params.normalization.per_detector_pixel,
+        )
         super().__init__(
             axes=axes, normalize=params.normalization.per_second, renderer=renderer
         )
@@ -401,7 +408,10 @@ class CorrelationHistogram2dPlotter(CorrelationHistogramPlotter):
                 bins=params.bins.x_bins,
             ),
         ]
-        renderer = ImagePlotter.from_display_params(params)
+        renderer = ImagePlotter.from_display_params(
+            params,
+            normalize_per_detector_pixel=params.normalization.per_detector_pixel,
+        )
         super().__init__(
             axes=axes, normalize=params.normalization.per_second, renderer=renderer
         )
