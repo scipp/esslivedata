@@ -215,6 +215,7 @@ class TestStreamUpdates:
             dynamic_keys={'det': NeXusData[NXdetector, SampleRun]},
             target_keys={'out': _Both},
             accumulators=(),
+            allow_bypass=True,
         )
         workflow.build(transform_streams=STREAMS)
 
