@@ -20,6 +20,7 @@ from .dashboard_services import (
 )
 from .design import LivedataDesign
 from .fake_backend import FakeBackendTransport
+from .favicon import instrument_favicon
 from .kafka_transport import DashboardKafkaTransport
 from .loop_monitor import start_loop_monitor
 from .session_paused import SESSION_PAUSED_PATH, SessionPausedHandler
@@ -364,6 +365,7 @@ class DashboardBase(ServiceBase, ABC):
 
         template = pn.template.MaterialTemplate(
             title=self.get_dashboard_title(),
+            favicon=instrument_favicon(self._instrument),
             design=LivedataDesign,
             sidebar=sidebar_with_heartbeat,
             collapsed_sidebar=self._collapsed_sidebar,
