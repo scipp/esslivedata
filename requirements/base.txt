@@ -35,7 +35,7 @@ email-validator==2.3.0
     # via scippneutron
 ess-streaming-data-types==0.27.0
     # via -r base.in
-essreduce==26.11.0
+essreduce==26.11.1
     # via -r base.in
 flatbuffers==25.12.19
     # via ess-streaming-data-types
@@ -124,7 +124,7 @@ pyyaml==6.0.3
     #   scippneutron
 requests==2.34.2
     # via pooch
-sciline==26.9.0
+sciline==26.11.0
     # via
     #   -r base.in
     #   essreduce
