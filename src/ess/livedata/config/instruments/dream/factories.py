@@ -19,6 +19,7 @@ def setup_factories(instrument: Instrument) -> None:
     # Lazy imports - all expensive imports go inside the function
     import ess.powder.types  # noqa: F401
     from ess.dream import DreamPowderWorkflow
+    from ess.powder.types import VanadiumRun
     from ess.reduce.nexus.types import (
         Filename,
         NeXusData,
@@ -26,7 +27,6 @@ def setup_factories(instrument: Instrument) -> None:
         RawDetector,
         RunType,
         SampleRun,
-        VanadiumRun,
     )
     from scippnexus import NXdetector
 
