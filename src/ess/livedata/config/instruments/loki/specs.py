@@ -198,11 +198,33 @@ instrument = Instrument(
     # after the sample. Axis range below is padded on both ends as final range will only
     # be known after calibration. There should be no downside to the padding aside from
     # a slightly larger wavelength LUT.
+    #
+    # The m2 and m3 positioner ranges are deliberately wide placeholders: their
+    # travel limits are not known (#1441). Too wide only widens the monitor's table
+    # block; too narrow would leave positions outside the range without a
+    # wavelength. Both positioners move vertically, across the beam, about 22-24 m
+    # from the moderator. A vertical offset y lengthens the straight
+    # source-to-monitor path by about y**2 / (2 L), so even 1 m of travel adds
+    # ~2.3 cm, well within the table's padding.
+    #
+    # The beamstop axes carrying m4 stay undeclared: beamstop_z moves along the
+    # beam, so its travel sets m4's block width, and m4 is not a default I(Q)
+    # monitor. Without a range m4 has no table, so wavelength-mode jobs reject it.
     axis_ranges={
         '/entry/instrument/detector_carriage/value': AxisRange(
             lower=sc.scalar(-0.5, unit='m'),
             upper=sc.scalar(5.5, unit='m'),
-        )
+        ),
+        **{
+            f'/entry/instrument/{positioner}/value': AxisRange(
+                lower=sc.scalar(-1000.0, unit='mm'),
+                upper=sc.scalar(1000.0, unit='mm'),
+            )
+            for positioner in (
+                'beam_monitor_m2_positioner',
+                'beam_monitor_m3_positioner',
+            )
+        },
     },
     streams=streams,
     source_metadata={

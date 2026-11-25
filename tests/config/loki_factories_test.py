@@ -37,19 +37,12 @@ def _create_job(
     return job_factory.create(job_id=job_id, config=config)
 
 
-_NO_MONITOR_TABLE = pytest.mark.xfail(
-    strict=True,
-    raises=ValueError,
-    reason="#1441: the default I(Q) monitors have no wavelength-table block",
-)
-
-
 @pytest.mark.parametrize(
     ('workflow_name', 'gated'),
     [
         ('tube_view', False),
         ('detector_xy_projection', True),
-        pytest.param('i_of_q', True, marks=_NO_MONITOR_TABLE),
+        ('i_of_q', True),
     ],
 )
 def test_job_gates_on_carriage_only_if_it_computes_bank_position(
@@ -67,7 +60,6 @@ def test_bank_off_the_carriage_does_not_gate_on_it() -> None:
     assert 'detector_carriage' not in job.gating_streams
 
 
-@_NO_MONITOR_TABLE
 @pytest.mark.parametrize('mode', ['constant', 'current_run'])
 def test_i_of_q_reads_transmission_monitor_position_only_in_current_run_mode(
     mode: str,
