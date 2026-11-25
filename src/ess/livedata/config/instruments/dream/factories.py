@@ -140,7 +140,7 @@ def setup_factories(instrument: Instrument) -> None:
     _reduction_workflow.insert(_total_counts)
     _reduction_workflow.insert(_fake_proton_charge)
     _reduction_workflow[powder.types.CalibrationData] = None
-    _reduction_workflow = powder.with_pixel_mask_filenames(_reduction_workflow, [])
+    _reduction_workflow[powder.types.PixelMaskFilenames] = []
     _reduction_workflow[powder.types.UncertaintyBroadcastMode] = (
         powder.types.UncertaintyBroadcastMode.drop
     )

@@ -69,14 +69,14 @@ bifrost = [
     "essspectroscopy==26.11.2",
 ]
 dream = [
-    "essdiffraction==26.10.0",
+    "essdiffraction==26.11.0",
 ]
 dummy = []
 estia = [
-    "essreflectometry==26.10.0",
+    "essreflectometry==26.11.1",
 ]
 freia = [
-    "essreflectometry==26.10.0",
+    "essreflectometry==26.11.1",
 ]
 loki = [
     "esssans==26.6.0",  # 26.10.0 imports ipywidgets at package import without depending on it (fix in progress upstream)
