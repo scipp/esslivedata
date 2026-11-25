@@ -257,3 +257,58 @@ class TestDataSubscriberReadyCondition:
 
         # Should return None
         assert result is None
+
+
+class TestDataSubscriberSelection:
+    """Test the per-role selection applied by assemble."""
+
+    @staticmethod
+    def _select_entry_4(data: dict[int, str]) -> str | None:
+        return data.get(4)
+
+    def test_selection_replaces_the_data_of_its_role_only(self, make_result_key):
+        primary_key = make_result_key('detector')
+        x_axis_key = make_result_key('position')
+        subscriber = DataSubscriber(
+            keys_by_role={'primary': [primary_key], 'x_axis': [x_axis_key]},
+            extractors={k: LatestValueExtractor() for k in [primary_key, x_axis_key]},
+            on_update=lambda: None,
+            select_by_role={'primary': self._select_entry_4},
+        )
+
+        result = subscriber.assemble({primary_key: {4: 'entry'}, x_axis_key: {4: 'x'}})
+
+        assert result == {
+            'primary': {primary_key: 'entry'},
+            'x_axis': {x_axis_key: {4: 'x'}},
+        }
+
+    def test_key_without_the_selected_part_is_left_out(self, make_result_key):
+        key1 = make_result_key('detector1')
+        key2 = make_result_key('detector2')
+        subscriber = DataSubscriber(
+            keys_by_role={'primary': [key1, key2]},
+            extractors={k: LatestValueExtractor() for k in [key1, key2]},
+            on_update=lambda: None,
+            select_by_role={'primary': self._select_entry_4},
+        )
+
+        result = subscriber.assemble({key1: {4: 'entry'}, key2: {0: 'other'}})
+
+        assert result == {'primary': {key1: 'entry'}}
+
+    def test_not_ready_when_no_key_of_a_role_has_the_selected_part(
+        self, make_result_key
+    ):
+        primary_key = make_result_key('detector')
+        x_axis_key = make_result_key('position')
+        subscriber = DataSubscriber(
+            keys_by_role={'primary': [primary_key], 'x_axis': [x_axis_key]},
+            extractors={k: LatestValueExtractor() for k in [primary_key, x_axis_key]},
+            on_update=lambda: None,
+            select_by_role={'primary': self._select_entry_4},
+        )
+
+        result = subscriber.assemble({primary_key: {0: 'other'}, x_axis_key: 'x'})
+
+        assert result is None

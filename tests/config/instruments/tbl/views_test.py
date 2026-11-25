@@ -24,7 +24,7 @@ def multiblade() -> sc.DataArray:
         snx.File(get_nexus_geometry_filename('tbl')) as f,
     ):
         warnings.filterwarnings('ignore', 'Failed to load', UserWarning)
-        dg = f['entry/instrument/multiblade_detector'][()]
+        dg = f['entry/instrument/multiblade'][()]
     pixels = sc.DataArray(
         dg['detector_number'],
         coords={
@@ -32,7 +32,7 @@ def multiblade() -> sc.DataArray:
             for axis in 'xyz'
         },
     )
-    return get_multiblade_view(pixels, 'multiblade_detector')
+    return get_multiblade_view(pixels, 'multiblade')
 
 
 def _along(coord: sc.Variable, dim: str) -> np.ndarray:

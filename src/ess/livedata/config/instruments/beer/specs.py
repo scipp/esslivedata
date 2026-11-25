@@ -64,10 +64,10 @@ instrument = Instrument(
     ),
     source_metadata={
         'beer_detector_s2': SourceMetadata(
-            title='South Bank', description='Detector bank at -90 degrees.'
+            title='South Bank', description='Detector bank at +90 degrees (+x).'
         ),
         'beer_detector_n2': SourceMetadata(
-            title='North Bank', description='Detector bank at +90 degrees.'
+            title='North Bank', description='Detector bank at -90 degrees (-x).'
         ),
         'cbm1': SourceMetadata(title='Beam Monitor 1'),
         'cbm2': SourceMetadata(title='Beam Monitor 2'),
