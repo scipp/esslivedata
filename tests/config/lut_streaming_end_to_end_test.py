@@ -113,16 +113,19 @@ def _create_job(
 
 
 #: A DREAM phasing whose cascade transmits, in nanoseconds of chopper delay at
-#: 14 Hz. Zero delay throughout closes the beam a few millimetres past the
-#: pulse-shaping pair, giving an all-NaN table under which every event is
-#: dropped, so the consumer half of this chain needs a cascade that actually
-#: lets neutrons through to show that events are converted. Found by scanning
-#: each chopper's delay over one rotation in beam order and keeping what
-#: maximised transmission downstream; re-run that scan if regenerating the
-#: geometry artifact moves a chopper and these stop working.
+#: 14 Hz. Zero delay throughout closes the beam, giving an all-NaN table under
+#: which every event is dropped, so the consumer half of this chain needs a
+#: cascade that actually lets neutrons through to show that events are
+#: converted. The phasing depends on each chopper's ``beam_position`` and axle
+#: position in the geometry artifact. If a new artifact changes either and these
+#: stop working, re-derive them by scanning each chopper's delay over one
+#: rotation in beam order and keeping what maximises transmission downstream.
 _DREAM_TRANSMITTING_DELAYS_NS = {
-    'pulse_shaping_chopper2': 45_600_000.0,
-    'overlap_chopper': 17_200_000.0,
+    'pulse_shaping_chopper2': 7_281_000.0,
+    'pulse_shaping_chopper1': 32_831_000.0,
+    'overlap_chopper': 14_462_000.0,
+    'band_chopper': 30_203_000.0,
+    'T0_chopper': 22_331_000.0,
 }
 
 
@@ -515,14 +518,15 @@ _DREAM_PROD_SPEEDS = {
 }
 
 #: A phasing that transmits at ``_DREAM_PROD_SPEEDS`` once the overlap chopper
-#: is brought into sync at 7 Hz, found by the same scan as
+#: is brought into sync at 7 Hz, derived the same way as
 #: ``_DREAM_TRANSMITTING_DELAYS_NS``. That phasing itself blocks the beam at
 #: these speeds, so a test using it would empty the table whatever the overlap
-#: chopper did.
+#: chopper did. The parked T0 chopper needs no delay.
 _DREAM_PROD_TRANSMITTING_DELAYS_NS = {
-    'pulse_shaping_chopper2': 45_600_000.0,
-    'overlap_chopper': 32_000_000.0,
-    'band_chopper': 46_000_000.0,
+    'pulse_shaping_chopper2': 40_389_000.0,
+    'pulse_shaping_chopper1': 137_092_000.0,
+    'overlap_chopper': 97_953_000.0,
+    'band_chopper': 4_775_000.0,
 }
 
 
