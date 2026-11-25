@@ -33,11 +33,6 @@ def setup_factories(instrument: Instrument) -> None:
     """Initialize BIFROST-specific factories and workflows."""
     # Lazy imports
     import sciline
-    import scippnexus as snx
-    from ess.bifrost.data import (
-        lookup_table_simulation,
-        simulated_elastic_incoherent_with_phonon,
-    )
     from ess.bifrost.live import (
         BifrostQCutWorkflow,
         CutAxis,
@@ -45,25 +40,24 @@ def setup_factories(instrument: Instrument) -> None:
         CutAxis2,
         CutData,
     )
-    from ess.bifrost.types import NeXusDetectorNames
     from ess.reduce.nexus.types import (
         Filename,
         NeXusData,
         SampleRun,
     )
     from ess.reduce.uncertainty import UncertaintyBroadcastMode
-    from ess.reduce.unwrap import LookupTableFilename
     from ess.reduce.unwrap.types import LookupTableRelativeErrorThreshold
     from ess.spectroscopy.types import (
-        InstrumentAngle,
-        PreopenNeXusFile,
+        NormalizationMonitor,
         ProtonCharge,
-        SampleAngle,
+        WavelengthMonitor,
     )
     from scippnexus import NXdetector
 
     from ess.livedata.preprocessors.accumulation_mode import Cumulative, Current
     from ess.livedata.preprocessors.accumulators import make_no_copy_accumulator_pair
+    from ess.livedata.preprocessors.detector_data import get_nexus_geometry_filename
+    from ess.livedata.workflows.lut_context import detector_lookup_table
     from ess.livedata.workflows.stream_processor_workflow import (
         StreamProcessorWorkflow,
     )
@@ -72,20 +66,6 @@ def setup_factories(instrument: Instrument) -> None:
 
     # Configure detector
     instrument.configure_detector('unified_detector', detector_number=detector_number)
-
-    # Bifrost device streams (merged RBV/VAL/DMOV) feeding typed Sciline keys
-    # on the cut-workflow graph. The keys are ordinary parameters of the cut
-    # workflow, so each job's gate follows from whether its graph reaches them —
-    # the Q-maps do, the detector view (sums over banks) and the ratemeter
-    # (counts-only) do not.
-    instrument.offer_context_stream(
-        stream_name='detector_tank_angle',
-        workflow_key=InstrumentAngle[SampleRun],
-    )
-    instrument.offer_context_stream(
-        stream_name='sample_rotation',
-        workflow_key=SampleAngle[SampleRun],
-    )
 
     # Create base reduction workflow
     (
@@ -120,26 +100,32 @@ def setup_factories(instrument: Instrument) -> None:
     # Q-map workflow factories
     @cache
     def _init_q_cut_workflow() -> sciline.Pipeline:
-        """Initialize a Bifrost Q-cut workflow with common parameters."""
-        fname = simulated_elastic_incoherent_with_phonon()
-        with snx.File(fname) as f:
-            detector_names = list(f['entry/instrument'][snx.NXdetector])
-            monitor_names = list(f['entry/instrument'][snx.NXmonitor])
+        """Initialize a Bifrost Q-cut workflow with common parameters.
+
+        Geometry comes from the artifact. The workflow build fills its
+        motor-driven transforms (tank angle, goniometers, sample rotation) from
+        the motor streams, and the incident wavelength comes from the streamed
+        detector lookup table.
+        """
         workflow = BifrostQCutWorkflow()
-        workflow[NeXusDetectorNames] = detector_names
-        workflow[Filename[SampleRun]] = fname
-        workflow[LookupTableFilename] = lookup_table_simulation()
+        workflow[Filename[SampleRun]] = str(get_nexus_geometry_filename('bifrost'))
+        workflow.insert(detector_lookup_table)
         # BifrostQCutWorkflow looks up the detector threshold under the hardcoded
-        # key 'detector' (NeXusDetectorName('detector')); monitors are looked up
-        # by their actual NeXus component name.
-        workflow[LookupTableRelativeErrorThreshold] = {
-            'detector': float('inf'),
-            **{name: float('inf') for name in monitor_names},
-        }
-        workflow[PreopenNeXusFile] = PreopenNeXusFile(True)
-        # ProtonCharge is not used in streaming normalization, set to 1. Revisit once
-        # there is a established stream for this.
-        workflow[ProtonCharge[SampleRun]] = sc.scalar(1.0, unit='pC')
+        # key 'detector' (NeXusDetectorName('detector')).
+        workflow[LookupTableRelativeErrorThreshold] = {'detector': float('inf')}
+        # How to normalize is undecided (#1364), so the Q-maps show counts scaled
+        # by a constant: a flat monitor spanning every incident wavelength makes
+        # the monitor term the inverse width of its range, and the proton-charge
+        # term is 1 pC. Neither is read from the file or streamed.
+        workflow[WavelengthMonitor[SampleRun, NormalizationMonitor]] = sc.DataArray(
+            sc.ones(dims=['incident_wavelength'], shape=[1], unit='counts'),
+            coords={
+                'incident_wavelength': sc.array(
+                    dims=['incident_wavelength'], values=[0.0, 100.0], unit='angstrom'
+                )
+            },
+        )
+        workflow[ProtonCharge[SampleRun]] = sc.DataArray(sc.scalar(1.0, unit='pC'))
         workflow[UncertaintyBroadcastMode] = UncertaintyBroadcastMode.drop
         return workflow
 

@@ -1034,3 +1034,95 @@ class TestTblWavelengthViews:
         cumulative = result.data['cumulative']
         assert 'wavelength' in cumulative.coords
         assert cumulative.sum().value > 0
+
+
+@pytest.fixture(scope='module')
+def bifrost() -> Instrument:
+    get_config('bifrost')
+    instrument = instrument_registry['bifrost']
+    instrument.load_factories()
+    return instrument
+
+
+#: Chopper setpoints of the CODA run file ``coda_bifrost_999999_00030899``
+#: (rotation-speed setpoints and median delay readbacks). Zero delay closes the
+#: cascade, leaving a table under which every event is dropped.
+_BIFROST_CODA_SPEEDS_HZ = {
+    'pulse_shaping_chopper_1': -112.0,
+    'pulse_shaping_chopper_2': -112.0,
+    'frame_overlap_chopper_1': -14.0,
+    'frame_overlap_chopper_2': -14.0,
+    'bandwidth_chopper_1': -14.0,
+    'bandwidth_chopper_2': 14.0,
+}
+_BIFROST_CODA_DELAYS_NS = {
+    'pulse_shaping_chopper_1': 12_604_489.4,
+    'pulse_shaping_chopper_2': 11_188_814.4,
+    'frame_overlap_chopper_1': 68_746_230.0,
+    'frame_overlap_chopper_2': 62_031_746.0,
+    'bandwidth_chopper_1': 41_865_079.4,
+    'bandwidth_chopper_2': 6_547_619.0,
+}
+
+_BIFROST_QMAP_MOTORS = (
+    'detector_tank_angle',
+    'goniometer_upper',
+    'goniometer_lower',
+    'sample_rotation',
+)
+
+
+@pytest.fixture(scope='module')
+def bifrost_tables(bifrost: Instrument) -> dict[str, sc.DataArray]:
+    return _ingest(
+        bifrost,
+        _run_lut_job(
+            bifrost, delays=_BIFROST_CODA_DELAYS_NS, speeds=_BIFROST_CODA_SPEEDS_HZ
+        ),
+    )
+
+
+class TestBifrostQMap:
+    """The Q-maps look the detector table up at L1, the moderator-to-sample
+    distance, which BIFROST declares as its detector block."""
+
+    def test_publishes_detector_and_monitor_tables(
+        self, bifrost_tables: dict[str, sc.DataArray]
+    ) -> None:
+        assert set(bifrost_tables) == {DETECTOR_STREAM, MONITOR_STREAM}
+
+    @pytest.mark.parametrize('spec_name', ['qmap', 'elastic_qmap'])
+    def test_qmap_reduces_from_the_streamed_table(
+        self,
+        bifrost: Instrument,
+        bifrost_tables: dict[str, sc.DataArray],
+        spec_name: str,
+    ) -> None:
+        job = _create_job(bifrost, spec_name, 'unified_detector')
+        assert job.gating_streams == {DETECTOR_STREAM, *_BIFROST_QMAP_MOTORS}
+
+        # essspectroscopy's wavelength conversion expects the pulse time, which
+        # ToNXevent_data provides.
+        events = _detector_events(
+            bifrost.get_detector_number('unified_detector')
+        ).assign_coords(
+            event_time_zero=sc.datetimes(
+                dims=['event_time_zero'], values=['2026-11-03T08:00:00'], unit='ns'
+            )
+        )
+        data = JobData(
+            start_time=Timestamp.from_ns(0),
+            end_time=Timestamp.from_ns(1),
+            primary_data={'unified_detector': events},
+            aux_data={
+                DETECTOR_STREAM: bifrost_tables[DETECTOR_STREAM],
+                **{motor: _nxlog(0.0, 'deg') for motor in _BIFROST_QMAP_MOTORS},
+            },
+        )
+        reply, result = job.process(data, finalize=True)
+
+        assert not reply.has_error, reply.error_message
+        assert result.error_message is None, result.error_message
+        cut = result.data['cut_data']
+        assert sc.isfinite(cut.data).all()
+        assert cut.sum().value > 0
