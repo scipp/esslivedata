@@ -2,8 +2,8 @@
     "sliders": [
         {
             "label": "Detector Tank Angle (deg)",
-            "min": 0.0,
-            "max": 90.0,
+            "min": -39.8,
+            "max": 4.0,
             "step": 0.1,
             "initial": 0.0,
             "value_stream": "detector_tank_angle/value",
