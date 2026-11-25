@@ -1,13 +1,14 @@
 # SPDX-License-Identifier: BSD-3-Clause
 # Copyright (c) 2025 Scipp contributors (https://github.com/scipp)
-"""BIFROST's rotation streams gate exactly the specs whose graphs use them.
+"""BIFROST's motor and lookup-table streams gate exactly the specs whose graphs
+use them.
 
-The tank and sample rotations are offered instrument-wide
-(``Instrument.offer_context_stream``), so which jobs wait on them is derived
-from the graph each job builds rather than declared per spec. These tests pin
-that derivation against the real BIFROST workflows: the Q-maps read the angles,
-the detector view (which sums over banks) and the ratemeter (counts only) do
-not.
+The motors are found on the transformation chains of the geometry artifact
+(``Instrument.transform_streams``) and the detector lookup table is offered
+instrument-wide, so which jobs wait on them is derived from the graph each job
+builds rather than declared per spec. These tests pin that derivation against
+the real BIFROST workflows: the Q-maps read the motors and the table, the
+detector view (which sums over banks) and the ratemeter (counts only) do not.
 """
 
 from __future__ import annotations
@@ -20,10 +21,20 @@ from ess.livedata.config.instrument import instrument_registry
 from ess.livedata.config.instruments import get_config
 from ess.livedata.config.workflow_spec import JobId, WorkflowConfig
 from ess.livedata.core.job_manager import JobFactory
+from ess.livedata.workflows.wavelength_lut_workflow_specs import (
+    DETECTOR_LUT_OUTPUT,
+    LUT_STREAM_NAMES,
+)
 
 pytestmark = pytest.mark.slow
 
-ROTATION_STREAMS = {'detector_tank_angle', 'sample_rotation'}
+QMAP_CONTEXT_STREAMS = {
+    'detector_tank_angle',
+    'goniometer_upper',
+    'goniometer_lower',
+    'sample_rotation',
+    LUT_STREAM_NAMES[DETECTOR_LUT_OUTPUT],
+}
 
 
 @pytest.fixture(scope='module')
@@ -53,11 +64,11 @@ def _gating_streams(bifrost, spec_name: str) -> set[str]:
 
 
 @pytest.mark.parametrize('spec_name', ['qmap', 'elastic_qmap', 'elastic_qmap_custom'])
-def test_qmap_specs_gate_on_both_rotations(bifrost, spec_name: str) -> None:
-    assert ROTATION_STREAMS <= _gating_streams(bifrost, spec_name)
+def test_qmap_specs_gate_on_motors_and_detector_table(bifrost, spec_name: str) -> None:
+    assert _gating_streams(bifrost, spec_name) == QMAP_CONTEXT_STREAMS
 
 
 @pytest.mark.parametrize('spec_name', ['unified_detector_view', 'detector_ratemeter'])
 def test_rotation_independent_specs_do_not_gate(bifrost, spec_name: str) -> None:
     """Without this, a fallback view would wait forever on a motionless axis."""
-    assert not ROTATION_STREAMS & _gating_streams(bifrost, spec_name)
+    assert not QMAP_CONTEXT_STREAMS & _gating_streams(bifrost, spec_name)

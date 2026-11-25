@@ -19,6 +19,7 @@ def setup_factories(instrument: Instrument) -> None:
     # Lazy imports - all expensive imports go inside the function
     import ess.powder.types  # noqa: F401
     from ess.dream import DreamPowderWorkflow
+    from ess.powder.types import VanadiumRun
     from ess.reduce.nexus.types import (
         Filename,
         NeXusData,
@@ -26,7 +27,6 @@ def setup_factories(instrument: Instrument) -> None:
         RawDetector,
         RunType,
         SampleRun,
-        VanadiumRun,
     )
     from scippnexus import NXdetector
 
@@ -140,7 +140,7 @@ def setup_factories(instrument: Instrument) -> None:
     _reduction_workflow.insert(_total_counts)
     _reduction_workflow.insert(_fake_proton_charge)
     _reduction_workflow[powder.types.CalibrationData] = None
-    _reduction_workflow = powder.with_pixel_mask_filenames(_reduction_workflow, [])
+    _reduction_workflow[powder.types.PixelMaskFilenames] = []
     _reduction_workflow[powder.types.UncertaintyBroadcastMode] = (
         powder.types.UncertaintyBroadcastMode.drop
     )
