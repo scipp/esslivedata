@@ -247,7 +247,7 @@ def build_disk_choppers_provider(
     setpoint context keys. At evaluation it overrides the static geometry's
     NXlog placeholders with the latest setpoint samples, then delegates the
     ``RawChoppers`` → ``DiskChoppers`` conversion (``DiskChopper.from_nexus`` per
-    chopper, including the default zero ``beam_position`` for ESS files) to
+    chopper, with ``beam_position`` defaulting to zero where the file has none) to
     essreduce's :func:`~ess.reduce.nexus.workflow.to_disk_choppers`. Producing
     ``DiskChoppers`` directly replaces the workflow's own call to that provider.
 
