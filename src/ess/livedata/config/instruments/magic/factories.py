@@ -8,16 +8,15 @@ import scipp as sc
 
 from ess.livedata.config import Instrument
 
-from .specs import detector_pixel_ranges
 from .views import DETECTOR_BANK_SIZES
 
 
 def setup_factories(instrument: Instrument) -> None:
     """Initialize MAGIC-specific factories and workflows.
 
-    Logical view factories are attached automatically by ``load_factories``;
-    here we supply the detector_number arrays the views fold over and the
-    cylinder-Y mantle projection factory.
+    Logical view factories are attached automatically by ``load_factories``,
+    which also reads each bank's ``detector_number`` from the geometry file;
+    here we supply the cylinder-Y mantle projection factory.
     """
     from ess.livedata.preprocessors.detector_data import get_nexus_geometry_filename
     from ess.livedata.workflows.detector_view import (
@@ -31,14 +30,6 @@ def setup_factories(instrument: Instrument) -> None:
     from ess.livedata.workflows.stream_processor_workflow import StreamProcessorWorkflow
 
     from . import specs
-
-    for name, (first, last) in detector_pixel_ranges.items():
-        instrument.configure_detector(
-            name,
-            detector_number=sc.arange(
-                'detector_number', first, last + 1, unit=None, dtype='int32'
-            ),
-        )
 
     _pixel_noise = sc.scalar(2.0, unit='mm')
     # One screen bin per strip and per segment. The banks are radially deep (32

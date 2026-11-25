@@ -132,13 +132,16 @@ class LivedataApp:
         )
         self.consumer.add_message(message)
 
-    def publish_lookup_tables(self, *, time: float = 1.0) -> None:
+    def publish_lookup_tables(
+        self, *, time: float = 1.0, wavelength: float = 1.0
+    ) -> None:
         """Publish the detector and monitor lookup tables on the context topic.
 
         Opens the gate of any job bound to either table. The tables themselves
         are a minimal placeholder: what these tests exercise is the routing and
         gating, not the wavelength values. One block spanning every component
-        is a legitimate table, so both streams carry the same array.
+        is a legitimate table, so both streams carry the same array, which
+        gives every event ``wavelength`` (in Å).
         """
         from ess.livedata.workflows.wavelength_lut_workflow_specs import (
             LUT_STREAM_NAMES,
@@ -147,11 +150,12 @@ class LivedataApp:
         table = sc.DataArray(
             # Variances are not optional: the uncertainty mask in the wavelength
             # conversion reads standard deviations unconditionally.
-            sc.ones(
+            sc.full(
                 dims=['distance', 'event_time_offset'],
                 shape=[2, 2],
+                value=wavelength,
+                variance=1.0,
                 unit='angstrom',
-                with_variances=True,
             ),
             coords={
                 'distance': sc.array(dims=['distance'], values=[0.0, 1e4], unit='m'),
