@@ -21,7 +21,7 @@ provider. The provider is synthesised at factory time (chopper count is known
 then) with one parameter per setpoint, see :func:`_synthesise_provider`.
 
 An instrument with no choppers simply supplies a geometry artifact whose
-``NXsource`` is present but that has no ``NXdisk_chopper`` groups: the empty
+``NXmoderator`` is present but that has no ``NXdisk_chopper`` groups: the empty
 ``RawChoppers`` yields empty ``DiskChoppers``.
 """
 
@@ -40,6 +40,7 @@ from ess.reduce.nexus.types import (
     AnyRun,
     DiskChoppers,
     Filename,
+    NeutronSourcePosition,
     Position,
     RawChoppers,
 )
@@ -100,6 +101,10 @@ MonitorLut = NewType('MonitorLut', sc.DataArray)
 #: plain module-level functions that read as what they compute.
 DetectorLtotalRanges = NewType('DetectorLtotalRanges', tuple)
 MonitorLtotalRanges = NewType('MonitorLtotalRanges', tuple)
+
+#: Beam-aligned displacement added to the artifact's ``NXmoderator`` position
+#: to give the chopper cascade's reference (see :class:`SourceOffset`).
+NeutronSourceOffset = NewType('NeutronSourceOffset', sc.Variable)
 
 #: Sciline key for the user-facing parameter bundle, used by the chopper-cascade
 #: bands provider for settings the upstream pipeline knows nothing about.
@@ -242,7 +247,7 @@ def build_disk_choppers_provider(
     setpoint context keys. At evaluation it overrides the static geometry's
     NXlog placeholders with the latest setpoint samples, then delegates the
     ``RawChoppers`` → ``DiskChoppers`` conversion (``DiskChopper.from_nexus`` per
-    chopper, including the default zero ``beam_position`` for ESS files) to
+    chopper, with ``beam_position`` defaulting to zero where the file has none) to
     essreduce's :func:`~ess.reduce.nexus.workflow.to_disk_choppers`. Producing
     ``DiskChoppers`` directly replaces the workflow's own call to that provider.
 
@@ -466,48 +471,6 @@ def _make_workflow(
     )
 
 
-def _component_position(filename: str, nx_class: type) -> sc.Variable | None:
-    """Position of the file's neutron component of ``nx_class``, or ``None``.
-
-    Returns ``None`` when the file has no such component. A file may hold more
-    than one group of a class: ESS files describe the accelerator in a second
-    ``NXsource`` (``probe='proton'``), and ODIN adds a lab ``xray_source``.
-    ``probe`` tells them apart where it is written, which is not everywhere, so
-    a group is a candidate unless it says it is something other than a neutron
-    source, and where several candidates remain only an explicit
-    ``probe='neutron'`` picks one out. Being the file's only group is not
-    enough on its own: some instruments put the accelerator ``NXsource`` under
-    ``entry/instrument`` and the beamline source elsewhere, and taking it would
-    measure the cascade from the origin.
-    """
-    with snx.File(filename, definitions=snx.base_definitions()) as f:
-        groups = f['entry/instrument'][nx_class]
-        if not groups:
-            return None
-        loaded = {name: group[...] for name, group in groups.items()}
-        candidates = {
-            name: dg
-            for name, dg in loaded.items()
-            if dg.get('probe', 'neutron') == 'neutron'
-        }
-        if len(candidates) > 1:
-            candidates = {
-                name: dg
-                for name, dg in candidates.items()
-                if dg.get('probe') == 'neutron'
-            }
-        if len(candidates) != 1:
-            raise ValueError(
-                f'Cannot identify the beamline {nx_class.__name__} in {filename}: '
-                f'of {len(loaded)} groups ({", ".join(sorted(loaded))}), '
-                f'{len(candidates)} could be it. Exactly one is needed; '
-                "probe='neutron' identifies the beamline source."
-            )
-        (data_group,) = candidates.values()
-        positions = snx.compute_positions(data_group, store_position='position')
-    return positions['position']
-
-
 def create_wavelength_lut_workflow(
     *,
     params: WavelengthLutParams,
@@ -522,8 +485,9 @@ def create_wavelength_lut_workflow(
     arrive on; the same keys must back the spec-scope ``ContextBinding``\\ s the
     instrument declares. ``nexus_filename`` is the geometry artifact carrying
     the static ``NXdisk_chopper`` groups (slit edges, radius, axle position)
-    and the source position; the pipeline loads both from it. A configured
-    chopper missing from the artifact surfaces as a ``KeyError`` at recompute.
+    and the ``NXmoderator`` (the neutron source); the pipeline loads both from
+    it. A configured chopper missing from the artifact surfaces as a
+    ``KeyError`` at recompute.
 
     ``detector_ranges`` and ``monitor_ranges`` are the flight-path ranges of the
     placeable components in each group; the group's table covers them as blocks.
@@ -532,7 +496,8 @@ def create_wavelength_lut_workflow(
     """
     pipeline = _build_pipeline(params)
     pipeline[Filename[AnyRun]] = nexus_filename
-    _set_source_position(pipeline, nexus_filename, params.source.get())
+    pipeline[NeutronSourceOffset] = params.source.get()
+    pipeline.insert(_offset_neutron_source)
     pipeline.insert(build_disk_choppers_provider(setpoint_keys))
     lut_keys: dict[str, Any] = {}
     if detector_ranges:
@@ -546,28 +511,14 @@ def create_wavelength_lut_workflow(
     return _make_workflow(pipeline, lut_keys)
 
 
-def _set_source_position(
-    pipeline: sciline.Pipeline, nexus_filename: str, offset: sc.Variable
-) -> None:
-    """Set the chopper-cascade source reference, shifted by ``offset``.
+def _offset_neutron_source(
+    moderator: Position[snx.NXmoderator, AnyRun], offset: NeutronSourceOffset
+) -> NeutronSourcePosition[AnyRun]:
+    """The artifact's ``NXmoderator`` position shifted by the user's offset.
 
-    essreduce would take the reference from the file's unique ``NXsource``.
-    BIFROST instead labels the moderator ``NXmoderator`` and reserves
-    ``NXsource`` for accelerator metadata sitting at the origin, so essreduce
-    would measure flight distance from the accelerator and reject the upstream
-    choppers as lying behind the source. The reference is therefore the
-    ``NXmoderator`` position when present, else the ``NXsource`` (e.g. LOKI).
-
-    ``offset`` is a beam-aligned displacement added to that reference; it is
-    zero by default, in which case this reproduces the position essreduce would
-    have loaded.
+    Replaces essreduce's provider, which takes the moderator position as is.
     """
-    reference = _component_position(nexus_filename, snx.NXmoderator)
-    if reference is None:
-        reference = _component_position(nexus_filename, snx.NXsource)
-    pipeline[Position[snx.NXsource, AnyRun]] = reference + offset.to(
-        unit=reference.unit
-    )
+    return NeutronSourcePosition[AnyRun](moderator + offset.to(unit=moderator.unit))
 
 
 def attach_wavelength_lut_factory(

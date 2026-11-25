@@ -2,10 +2,16 @@
 # Copyright (c) 2025 Scipp contributors (https://github.com/scipp)
 """Tests for DREAM logical detector view transforms."""
 
-import h5py
 import numpy as np
 import pytest
 import scipp as sc
+from ess.reduce.nexus.types import (
+    EmptyDetector,
+    Filename,
+    NeXusDetectorName,
+    SampleRun,
+)
+from ess.reduce.nexus.workflow import GenericNeXusWorkflow
 
 from ess.livedata.config.instruments.dream.views import (
     get_mantle_front_layer,
@@ -28,26 +34,26 @@ CUBOID_BANKS = ['high_resolution_detector', 'sans_detector']
 
 @pytest.fixture(scope='module')
 def geometry() -> dict[str, sc.DataArray]:
-    """Pixel positions per bank in mm, sorted by ``detector_number``.
+    """Lab-frame pixel positions per bank in mm, sorted by ``detector_number``.
 
-    The positions are lab-frame (``depends_on`` is ``.``) with the beam along +z.
+    The beam is along +z and the sample at the origin.
     """
+    workflow = GenericNeXusWorkflow(run_types=[SampleRun], monitor_types=[])
+    workflow[Filename[SampleRun]] = get_nexus_geometry_filename('dream')
     banks = {}
-    with h5py.File(get_nexus_geometry_filename('dream')) as f:
-        for bank in BANKS:
-            group = f['entry/instrument'][bank]
-            assert group['x_pixel_offset'].attrs['units'] == 'mm'
-            position = np.stack(
-                [group[f'{c}_pixel_offset'][()] for c in 'xyz'], axis=-1
-            )
-            banks[bank] = sc.DataArray(
-                sc.vectors(dims=['pixel'], values=position, unit='mm'),
-                coords={
-                    'detector_number': sc.array(
-                        dims=['pixel'], values=group['detector_number'][()]
-                    )
-                },
-            )
+    for bank in BANKS:
+        workflow[NeXusDetectorName] = bank
+        detector = workflow.compute(EmptyDetector[SampleRun])
+        banks[bank] = sc.DataArray(
+            detector.coords['position']
+            .to(unit='mm')
+            .rename_dims(detector_number='pixel'),
+            coords={
+                'detector_number': detector.coords['detector_number'].rename_dims(
+                    detector_number='pixel'
+                )
+            },
+        )
     return banks
 
 
