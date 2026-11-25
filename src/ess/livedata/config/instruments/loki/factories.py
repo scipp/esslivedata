@@ -19,11 +19,9 @@ def setup_factories(instrument: Instrument) -> None:
     import scipp as sc
     from ess.loki.workflow import LokiWorkflow
     from ess.reduce.nexus.types import (
-        EmptyBeamRun,
         NeXusData,
         NeXusDetectorName,
         SampleRun,
-        TransmissionRun,
     )
     from ess.sans import types as sans_types
     from ess.sans.types import (
@@ -31,6 +29,7 @@ def setup_factories(instrument: Instrument) -> None:
         CorrectForGravity,
         DetectorMasks,
         DirectBeam,
+        EmptyBeamRun,
         Filename,
         Incident,
         IntensityQ,
@@ -39,6 +38,7 @@ def setup_factories(instrument: Instrument) -> None:
         ReducedQ,
         ReturnEvents,
         Transmission,
+        TransmissionRun,
         UncertaintyBroadcastMode,
     )
     from scippnexus import NXdetector
