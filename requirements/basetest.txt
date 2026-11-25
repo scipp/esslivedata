@@ -82,7 +82,7 @@ essreduce==26.11.1
     #   essspectroscopy
 essreflectometry==26.11.1
     # via -r basetest.in
-esssans==26.6.0
+esssans==26.11.0
     # via -r basetest.in
 essspectroscopy==26.11.2
     # via -r basetest.in
@@ -155,6 +155,7 @@ kiwisolver==1.5.1
 lazy-loader==0.6
     # via
     #   essreduce
+    #   esssans
     #   plopp
     #   scippneutron
     #   tof
@@ -337,9 +338,7 @@ python-dateutil==3.0.0
     #   pandas
     #   scippneutron
 pythreejs==2.4.2
-    # via
-    #   esssans
-    #   plopp
+    # via plopp
 pyviz-comms==3.0.6
     # via
     #   holoviews
