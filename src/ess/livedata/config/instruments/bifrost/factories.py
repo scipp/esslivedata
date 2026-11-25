@@ -19,6 +19,7 @@ from .specs import (
     BifrostQMapParams,
     DetectorRatemeterParams,
     DetectorRatemeterRegionParams,
+    ElasticMonitorQMapParams,
 )
 
 # Q-vector basis for Q-map calculations
@@ -40,6 +41,12 @@ def setup_factories(instrument: Instrument) -> None:
         CutAxis2,
         CutData,
     )
+    from ess.bifrost.single_crystal import BifrostBraggPeakMonitorWorkflow
+    from ess.bifrost.single_crystal.types import (
+        IntensityQparQperp,
+        QParallelBins,
+        QPerpendicularBins,
+    )
     from ess.reduce.nexus.types import (
         Filename,
         NeXusData,
@@ -48,6 +55,7 @@ def setup_factories(instrument: Instrument) -> None:
     from ess.reduce.uncertainty import UncertaintyBroadcastMode
     from ess.reduce.unwrap.types import LookupTableRelativeErrorThreshold
     from ess.spectroscopy.types import (
+        ElasticMonitor,
         NormalizationMonitor,
         ProtonCharge,
         WavelengthMonitor,
@@ -202,6 +210,38 @@ def setup_factories(instrument: Instrument) -> None:
         wf[CutAxis1] = axis1
         wf[CutAxis2] = axis2
         return _make_cut_stream_processor(wf)
+
+    @specs.elastic_monitor_qmap_handle.attach_factory()
+    def _elastic_monitor_qmap_workflow(
+        params: ElasticMonitorQMapParams,
+    ) -> StreamProcessorWorkflow:
+        """Map the elastic monitor's events in Q.
+
+        The map is accumulated here rather than emitted as a scalar for the
+        dashboard's correlation histogram to bin: the full wavelength band puts
+        a distribution of Q in every update, not a scalar, and over a multi-day
+        run a timeseries would grow without bound where a histogram does not.
+
+        Geometry comes from the artifact, with the tank angle (which places the
+        monitor, and is a4) and the sample motors (a3) filled from the motor
+        streams. The workflow converts with the detector lookup table, looked
+        up at the monitor's own flight path, which BIFROST's declared detector
+        range covers.
+        """
+        wf = BifrostBraggPeakMonitorWorkflow()
+        wf[Filename[SampleRun]] = str(get_nexus_geometry_filename('bifrost'))
+        wf.insert(detector_lookup_table)
+        wf[LookupTableRelativeErrorThreshold] = {'detector': float('inf')}
+        wf[QParallelBins] = params.q_parallel_edges.get_edges().rename(Q='Q_parallel')
+        wf[QPerpendicularBins] = params.q_perpendicular_edges.get_edges().rename(
+            Q='Q_perpendicular'
+        )
+        return StreamProcessorWorkflow(
+            wf,
+            dynamic_keys={'elastic_monitor': NeXusData[ElasticMonitor, SampleRun]},
+            target_keys={'q_map': IntensityQparQperp[SampleRun]},
+            accumulators=(IntensityQparQperp[SampleRun],),
+        )
 
 
 def _create_base_reduction_workflow():

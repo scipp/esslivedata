@@ -243,6 +243,49 @@ class BifrostCustomElasticQMapParams(pydantic.BaseModel):
     )
 
 
+class ElasticMonitorQMapParams(pydantic.BaseModel):
+    """Q edges of the elastic monitor Q-map.
+
+    Q is in the sample-table frame, which rotates with the sample rotation a3, so
+    a crystal's reciprocal lattice stays fixed in the map over a rotation scan.
+    At a3 = 0 the frame is the lab frame: Q parallel is along the incident beam
+    and Q perpendicular is horizontal, across it.
+    """
+
+    q_parallel_edges: QEdges = pydantic.Field(
+        default=QEdges(start=-QMAX_DEFAULT, stop=QMAX_DEFAULT, num_bins=QBIN_DEFAULT),
+        description=(
+            "Bin edges for Q parallel (in 1/Å): the Q component along the sample "
+            "table's beam axis, which is the incident beam at zero sample rotation."
+        ),
+    )
+    q_perpendicular_edges: QEdges = pydantic.Field(
+        default=QEdges(start=-QMAX_DEFAULT, stop=QMAX_DEFAULT, num_bins=QBIN_DEFAULT),
+        description=(
+            "Bin edges for Q perpendicular (in 1/Å): the horizontal Q component "
+            "across the sample table's beam axis."
+        ),
+    )
+
+
+def _make_2d_template() -> sc.DataArray:
+    """Create an empty 2D template for 2D output data."""
+    return sc.DataArray(sc.zeros(dims=['dim_0', 'dim_1'], shape=[0, 0], unit='counts'))
+
+
+class ElasticMonitorQMapOutputs(WorkflowOutputsBase):
+    """Outputs for the elastic monitor Q-map workflow."""
+
+    q_map: sc.DataArray = pydantic.Field(
+        default_factory=_make_2d_template,
+        title='Q Map',
+        description=(
+            'Elastic intensity accumulated over a sample rotation scan, binned in '
+            'Q perpendicular vs Q parallel.'
+        ),
+    )
+
+
 class QMapOutputs(WorkflowOutputsBase):
     """Outputs for Bifrost Q-map workflows."""
 
@@ -266,18 +309,26 @@ monitors = [
 
 streams = name_streams(filter_authorized_streams(PARSED_STREAMS))
 
-#: The Q-maps shift event times back to the sample and look the table up at L1,
-#: the moderator-to-sample distance (see essspectroscopy's
-#: ``detector_ltotal_at_sample``), so the detector block is that one point rather
-#: than the flight paths to the pixels. The goniometers and the sample rotation
-#: rotate about the sample and leave L1 unchanged; the table pads it by 0.1 m. A
-#: test checks it against the artifact.
+#: The detector block spans the two flight paths at which BIFROST's workflows
+#: look the detector table up. The detector Q-maps shift event times back to the
+#: sample and look it up at L1 = 161.999 m, the moderator-to-sample distance (see
+#: essspectroscopy's ``detector_ltotal_at_sample``), not at the flight paths to
+#: the pixels. The elastic monitor Q-map looks it up at the monitor's own
+#: straight-line path, L1 + 0.8 m = 162.799 m: the monitor sees the sample
+#: directly, without an analyzer. The tank carrying the monitor, the goniometers
+#: and the sample rotation all rotate about the sample, so neither distance
+#: depends on a motor. The table pads the range by 0.1 m. A test checks both
+#: ends against the artifact.
 instrument = Instrument(
     name='bifrost',
     detector_names=['unified_detector'],
     monitors=monitors,
     choppers=BIFROST_CHOPPERS,
-    declared_ltotal={'unified_detector': sc.scalar(161.999, unit='m')},
+    declared_ltotal={
+        'unified_detector': sc.array(
+            dims=['ltotal'], values=[161.999, 162.799], unit='m'
+        )
+    },
     streams=streams,
 )
 
@@ -399,4 +450,23 @@ elastic_qmap_custom_handle = instrument.register_spec(
     source_names=['unified_detector'],
     params=BifrostCustomElasticQMapParams,
     outputs=QMapOutputs,
+)
+
+# cbm5, a single-pixel monitor riding the detector tank. Over a sample rotation
+# scan it maps elastic intensity in Q, to be compared against the expected
+# reciprocal lattice. Older material -- and upstream's
+# ``BifrostBraggPeakMonitorWorkflow`` -- calls it the Bragg peak monitor.
+# The title carries a source qualifier because the workflow chooser lists bare
+# titles within a group, next to the ``elastic_qmap`` detector workflow.
+elastic_monitor_qmap_handle = instrument.register_spec(
+    name='elastic_monitor_qmap',
+    version=1,
+    title='Elastic Q map (monitor)',
+    description=(
+        'Elastic intensity from the elastic monitor, accumulated over a sample '
+        'rotation scan and binned in Q perpendicular vs Q parallel.'
+    ),
+    source_names=['elastic_monitor'],
+    params=ElasticMonitorQMapParams,
+    outputs=ElasticMonitorQMapOutputs,
 )

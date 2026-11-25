@@ -63,7 +63,9 @@ def _gating_streams(bifrost, spec_name: str) -> set[str]:
     return job.missing_context(set())
 
 
-@pytest.mark.parametrize('spec_name', ['qmap', 'elastic_qmap', 'elastic_qmap_custom'])
+@pytest.mark.parametrize(
+    'spec_name', ['qmap', 'elastic_qmap', 'elastic_qmap_custom', 'elastic_monitor_qmap']
+)
 def test_qmap_specs_gate_on_motors_and_detector_table(bifrost, spec_name: str) -> None:
     assert _gating_streams(bifrost, spec_name) == QMAP_CONTEXT_STREAMS
 
