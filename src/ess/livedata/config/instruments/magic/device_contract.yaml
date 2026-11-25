@@ -4,13 +4,13 @@
 # GENERATED -- do not edit. NICOS derived-device list for magic.
 # Regenerate: python -m ess.livedata.config.device_contract
 devices:
-- device_name: beam_monitor_1_counts_total
+- device_name: cave_beam_monitor_counts_total
   workflow_id: magic/monitor_histogram/1
-  source_name: beam_monitor_1
+  source_name: cave_beam_monitor
   output_name: counts_total_cumulative
-- device_name: beam_monitor_1_histogram
+- device_name: cave_beam_monitor_histogram
   workflow_id: magic/monitor_histogram/1
-  source_name: beam_monitor_1
+  source_name: cave_beam_monitor
   output_name: cumulative
 - device_name: magic_detector_a_counts_total
   workflow_id: magic/detector_projection/1
