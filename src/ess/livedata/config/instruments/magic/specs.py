@@ -53,9 +53,9 @@ def _pixel_ranges() -> dict[str, tuple[int, int]]:
 detector_pixel_ranges = _pixel_ranges()
 detector_names = list(detector_pixel_ranges)
 
-#: The single beam monitor, the cave monitor (Kafka source ``cbm1``), named
-#: ``beam_monitor_1`` here.
-monitor_names = ['beam_monitor_1']
+#: The cave monitor, Kafka source ``cbm1``. The bunker monitor is not mapped: its
+#: Kafka source in the run files is the placeholder ``bbm1_todo``.
+monitor_names = ['cave_beam_monitor']
 
 
 instrument = Instrument(
@@ -72,7 +72,7 @@ instrument = Instrument(
             title='Polarization bank',
             description='Detector bank behind the analyzer (~130k voxels).',
         ),
-        'beam_monitor_1': SourceMetadata(title='Beam Monitor 1'),
+        'cave_beam_monitor': SourceMetadata(title='Cave Beam Monitor'),
     },
 )
 
@@ -104,12 +104,10 @@ strip_view_handle = instrument.add_logical_view(
 )
 
 # Both banks are vertical (Y-axis) cylinders; project onto the mantle. Pixel
-# positions come from a geometry file whose offsets are derived from the NeXus
-# NXoff_geometry voxel centroids (see scripts/make_geometry_nexus --off-active-face).
-# The registered artifact uses the inner (smaller-radius) radial face: a voxel is a
-# cuboid with only one active surface, and which of its two radial faces that is has
-# not been confirmed against the hardware. Using the outer face instead would move
-# every pixel ~16.5 mm outwards.
+# positions are the file's own ``[xyz]_pixel_offset``, which sit at the voxel
+# centroids, halfway between the inner and outer radial faces of each cuboid voxel
+# (8-10 mm from either). Which face is the active surface has not been
+# confirmed against the hardware.
 projection_handle = instrument.register_detector_view(
     name='detector_projection',
     title='Detector Projection',

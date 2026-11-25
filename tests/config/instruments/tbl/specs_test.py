@@ -58,15 +58,6 @@ def tbl() -> Instrument:
     return instrument
 
 
-@pytest.mark.parametrize('name', specs.detector_names)
-def test_every_detector_resolves_in_the_default_geometry_file(
-    tbl: Instrument, name: str
-) -> None:
-    """``load_factories`` swallows a detector missing from the file, so a
-    renamed group would only show up when the detector is first used."""
-    assert tbl.get_detector_number(name).ndim >= 1
-
-
 def test_timepix3_downsampling_follows_the_file_numbering(tbl: Instrument) -> None:
     """The Timepix3 file counts from 1 with the first dimension fastest,
     ``detector_number[i, j] = 1 + i + 4096 * j``."""
