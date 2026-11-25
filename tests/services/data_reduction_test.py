@@ -247,72 +247,96 @@ def test_can_configure_and_stop_workflow_with_detector_and_monitors(
     assert len(sink.messages) == 3 * n_target
 
 
-@pytest.mark.slow
-def test_bifrost_qmap_gate_drops_then_resumes_on_rotation_context(
-    caplog: pytest.LogCaptureFixture,
-) -> None:
-    """Bifrost qmap is gated on rotation context until both motion streams
-    have published, then resumes producing output.
+#: Motors on the chains a BIFROST Q-map reads: the tank angle moves the detector
+#: and analyzers, the goniometers and the rotation stage move the sample.
+BIFROST_QMAP_MOTORS = (
+    'detector_tank_angle',
+    'goniometer_upper',
+    'goniometer_lower',
+    'sample_rotation',
+)
 
-    The cut workflow consumes the f144 rotation streams inside the
-    accumulate chain. Without the JobManager-level context gate (ADR 0002),
-    the first detector batch would crash with
-    ``'NoneType' object has no attribute 'ndim'``; the gate instead keeps
-    the job in ``pending_context`` until rotation values arrive.
 
-    Steady-state recovery: after the device synthesizer has merged all
-    three substreams of each rotation Device and emitted on the parent
-    device name (``detector_tank_angle``, ``sample_rotation``), the
-    gate opens and subsequent detector batches produce output.
-    """
-    caplog.set_level(logging.INFO)
-    app = make_reduction_app(instrument='bifrost')
-    sink = app.sink
-    service = app.service
+def _start_bifrost_qmap(app: LivedataApp) -> None:
     workflow_id, spec = _get_workflow_from_registry('bifrost', 'qmap')
-
-    source_name = first_source_name['bifrost']
     aux_source_names = (
         spec.aux_sources.get_defaults() if spec.aux_sources is not None else {}
     )
     workflow_config = workflow_spec.WorkflowConfig(
         identifier=workflow_id,
         aux_source_names=aux_source_names,
-        job_id=_job_id(source_name),
+        job_id=_job_id(first_source_name['bifrost']),
     )
     app.publish_config_message(workflow_config)
-    service.step()
-    sink.messages.clear()
+    app.service.step()
+    app.sink.messages.clear()
 
-    # Events arrive before any rotation context — gate drops them. No crash,
-    # no output.
+
+def _publish_motor(app: LivedataApp, device: str, time: int) -> None:
+    # The device synthesizer emits on the parent device name only once all
+    # three substreams have arrived in a tick.
+    for substream, value in (('target_value', 0.0), ('idle_flag', 1), ('value', 0.0)):
+        app.publish_log_message(
+            source_name=f'{device}/{substream}', time=time, value=value
+        )
+
+
+def _publish_bifrost_qmap_lookup_table(app: LivedataApp, time: int) -> None:
+    # ``publish_events`` hits the first arc (2.7 meV). 5.5 Å is an incident energy
+    # of 2.7 meV, so its events land inside the default energy-transfer edges.
+    app.publish_lookup_tables(time=time, wavelength=5.5)
+
+
+def _assert_cut_data_has_counts(app: LivedataApp) -> None:
+    outputs = {
+        json.loads(msg.stream.name)['output_name']: msg.value
+        for msg in app.sink.messages
+    }
+    cut = outputs['cut_data']
+    assert cut.sizes['arc'] == 5
+    assert cut.sum().value > 0
+
+
+@pytest.mark.slow
+def test_bifrost_qmap_gate_drops_then_resumes_on_motor_and_table_context(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Bifrost qmap is gated on its context until every stream has published,
+    then produces output.
+
+    The Q-map reads the motors on its transformation chains and the streamed
+    detector lookup table. The JobManager-level context gate (ADR 0002) keeps
+    the job in ``pending_context`` until all of them have arrived, rather than
+    letting the first detector batch fail on a missing input.
+
+    The device synthesizer emits on the parent device name only after it has
+    merged all three substreams of a motor Device, so each motor publishes all
+    three.
+    """
+    caplog.set_level(logging.INFO)
+    app = make_reduction_app(instrument='bifrost')
+    _start_bifrost_qmap(app)
+
+    # Events arrive before any context — gate drops them. No crash, no output.
     app.publish_events(size=2000, time=2)
-    service.step()
-    assert len(sink.messages) == 0
+    app.service.step()
+    assert len(app.sink.messages) == 0
     # A second batch confirms the gate keeps firing rather than crashing on
     # the second pass.
     app.publish_events(size=2000, time=3)
-    service.step()
-    assert len(sink.messages) == 0
+    app.service.step()
+    assert len(app.sink.messages) == 0
 
-    # Publish RBV/VAL/DMOV substreams for both rotation devices; the
-    # synthesizer needs all three before emitting on the parent device name.
-    for device in ('detector_tank_angle', 'sample_rotation'):
-        for substream, value in (
-            ('target_value', 0.0),
-            ('idle_flag', 1),
-            ('value', 0.0),
-        ):
-            app.publish_log_message(
-                source_name=f'{device}/{substream}', time=4, value=value
-            )
-    service.step()
+    for device in BIFROST_QMAP_MOTORS:
+        _publish_motor(app, device, time=4)
+    _publish_bifrost_qmap_lookup_table(app, time=4)
+    app.service.step()
 
     # Gate has opened; events arriving now produce output.
-    sink.messages.clear()
+    app.sink.messages.clear()
     app.publish_events(size=2000, time=5)
-    service.step()
-    assert len(sink.messages) >= 1
+    app.service.step()
+    _assert_cut_data_has_counts(app)
 
 
 @pytest.mark.slow
@@ -321,64 +345,40 @@ def test_bifrost_qmap_context_arriving_on_separate_ticks_is_not_lost(
 ) -> None:
     """Regression: a context stream seen while gated must survive to finalize.
 
-    Bifrost qmap gates on two rotation context streams. When they arrive on
-    *separate* ticks, the first (``detector_tank_angle``) is seen while the
-    job is still gated on the second (``sample_rotation``). The JobManager marks
-    it seen but the gated job is skipped, so its value never reaches
-    ``set_context`` on that tick. Unless the orchestrator re-presents it from
-    the preprocessor's context cache when the gate finally opens, it is never
-    fed and the workflow raises at finalize — producing no output.
+    When Bifrost qmap's context streams arrive on *separate* ticks, the first
+    (``detector_tank_angle``) is seen while the job is still gated on the rest.
+    The JobManager marks it seen but the gated job is skipped, so its value
+    never reaches ``set_context`` on that tick. Unless the orchestrator
+    re-presents it from the preprocessor's context cache when the gate finally
+    opens, it is never fed and the workflow raises at finalize — producing no
+    output.
 
-    The sibling test publishes both streams in one tick and so never exercises
+    The sibling test publishes every stream in one tick and so never exercises
     this path. See :doc:`/developer/adr/0002-context-stream-gating-at-jobmanager`.
     """
     caplog.set_level(logging.INFO)
     app = make_reduction_app(instrument='bifrost')
-    sink = app.sink
-    service = app.service
-    workflow_id, spec = _get_workflow_from_registry('bifrost', 'qmap')
+    _start_bifrost_qmap(app)
 
-    source_name = first_source_name['bifrost']
-    aux_source_names = (
-        spec.aux_sources.get_defaults() if spec.aux_sources is not None else {}
-    )
-    workflow_config = workflow_spec.WorkflowConfig(
-        identifier=workflow_id,
-        aux_source_names=aux_source_names,
-        job_id=_job_id(source_name),
-    )
-    app.publish_config_message(workflow_config)
-    service.step()
-    sink.messages.clear()
+    # Tick 1: only the first motor arrives. The job is still gated on the rest,
+    # so this value is seen-but-not-delivered.
+    first, *rest = BIFROST_QMAP_MOTORS
+    _publish_motor(app, first, time=4)
+    app.service.step()
+    assert len(app.sink.messages) == 0
 
-    def _publish_rotation(device: str, time: int) -> None:
-        # The device synthesizer emits on the parent device name only once all
-        # three substreams have arrived in a tick.
-        for substream, value in (
-            ('target_value', 0.0),
-            ('idle_flag', 1),
-            ('value', 0.0),
-        ):
-            app.publish_log_message(
-                source_name=f'{device}/{substream}', time=time, value=value
-            )
+    # Tick 2: the remaining context arrives and the gate opens. The first motor
+    # must be refilled from the cache so every stream reaches set_context at once.
+    for device in rest:
+        _publish_motor(app, device, time=5)
+    _publish_bifrost_qmap_lookup_table(app, time=5)
+    app.service.step()
 
-    # Tick 1: only the first rotation context arrives. The job is still gated
-    # on the second, so this value is seen-but-not-delivered.
-    _publish_rotation('detector_tank_angle', time=4)
-    service.step()
-    assert len(sink.messages) == 0
-
-    # Tick 2: the second rotation context arrives and the gate opens. The first
-    # context must be refilled from the cache so both reach set_context at once.
-    _publish_rotation('sample_rotation', time=5)
-    service.step()
-
-    # Tick 3: events now produce output — proving neither context landed as None.
-    sink.messages.clear()
+    # Tick 3: events now produce output — proving no context landed as None.
+    app.sink.messages.clear()
     app.publish_events(size=2000, time=6)
-    service.step()
-    assert len(sink.messages) >= 1
+    app.service.step()
+    _assert_cut_data_has_counts(app)
 
 
 def test_can_clear_workflow_via_config(caplog: pytest.LogCaptureFixture) -> None:

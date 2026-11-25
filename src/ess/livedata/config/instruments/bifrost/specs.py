@@ -266,12 +266,18 @@ monitors = [
 
 streams = name_streams(filter_authorized_streams(PARSED_STREAMS))
 
-# Create instrument
+#: The Q-maps shift event times back to the sample and look the table up at L1,
+#: the moderator-to-sample distance (see essspectroscopy's
+#: ``detector_ltotal_at_sample``), so the detector block is that one point rather
+#: than the flight paths to the pixels. The goniometers and the sample rotation
+#: rotate about the sample and leave L1 unchanged; the table pads it by 0.1 m. A
+#: test checks it against the artifact.
 instrument = Instrument(
     name='bifrost',
     detector_names=['unified_detector'],
     monitors=monitors,
     choppers=BIFROST_CHOPPERS,
+    declared_ltotal={'unified_detector': sc.scalar(161.999, unit='m')},
     streams=streams,
 )
 

@@ -84,7 +84,7 @@ essreflectometry==26.11.1
     # via -r basetest.in
 esssans==26.11.0
     # via -r basetest.in
-essspectroscopy==26.11.2
+essspectroscopy==26.11.3
     # via -r basetest.in
 execnet==2.1.2
     # via pytest-xdist
