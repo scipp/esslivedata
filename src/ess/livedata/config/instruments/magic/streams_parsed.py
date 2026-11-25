@@ -5,7 +5,7 @@
 Do not edit by hand. Regenerate with
 ``python -m ess.livedata.nexus_helpers <geometry.nxs> --generate``.
 
-Source: coda_magic_999999_00030102.hdf
+Source: coda_magic_999999_00030904.hdf
 """
 
 from ess.livedata.config import F144Stream

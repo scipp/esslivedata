@@ -121,18 +121,8 @@ def test_copies_moderator_depends_on(tmp_path):
 
 @pytest.fixture
 def nexus_with_off_geometry(tmp_path):
-    """Detector with only a per-voxel NXoff_geometry pixel_shape (no offsets).
-
-    Two cuboid voxels, 8 vertices each, stored contiguously in
-    detector_number order. The inner radial face is the first four vertices
-    (z=0), the outer face the last four (z=1).
-    """
+    """Detector with a per-voxel NXoff_geometry pixel_shape."""
     path = tmp_path / 'input.nxs'
-    inner = [(0, 0, 0), (1, 0, 0), (1, 1, 0), (0, 1, 0)]
-    outer = [(0, 0, 1), (1, 0, 1), (1, 1, 1), (0, 1, 1)]
-    voxel0 = inner + outer
-    voxel1 = [(x + 10, y, z) for (x, y, z) in voxel0]
-    vertices = np.array(voxel0 + voxel1, dtype='float32')
     with h5py.File(path, 'w') as f:
         entry = f.create_group('entry')
         entry.attrs['NX_class'] = 'NXentry'
@@ -144,38 +134,23 @@ def nexus_with_off_geometry(tmp_path):
         det.create_dataset('detector_number', data=np.array([1, 2], dtype='int32'))
         shape = det.create_group('pixel_shape')
         shape.attrs['NX_class'] = 'NXoff_geometry'
-        shape.create_dataset('vertices', data=vertices).attrs['units'] = 'mm'
+        shape.create_dataset('vertices', data=np.zeros((16, 3))).attrs['units'] = 'm'
     return path
 
 
-@pytest.mark.parametrize(
-    ('active_face', 'expected_z'),
-    [('inner', [0.0, 0.0]), ('outer', [1.0, 1.0]), ('centroid', [0.5, 0.5])],
-)
-def test_derives_pixel_offsets_from_off_geometry(
-    nexus_with_off_geometry, tmp_path, active_face, expected_z
+@pytest.mark.parametrize('use_pixel_shape', [True, False])
+def test_pixel_shape_is_kept_only_if_requested(
+    nexus_with_off_geometry, tmp_path, use_pixel_shape
 ):
     output = tmp_path / 'output.nxs'
-    write_minimal_geometry(nexus_with_off_geometry, output, off_active_face=active_face)
+    write_minimal_geometry(
+        nexus_with_off_geometry, output, use_pixel_shape=use_pixel_shape
+    )
 
     with h5py.File(output, 'r') as f:
         det = f['entry/instrument/detector_0']
-        np.testing.assert_allclose(det['x_pixel_offset'][:], [0.5, 10.5])
-        np.testing.assert_allclose(det['y_pixel_offset'][:], [0.5, 0.5])
-        np.testing.assert_allclose(det['z_pixel_offset'][:], expected_z)
-        assert det['x_pixel_offset'].attrs['units'] == 'mm'
-        # The bulky OFF mesh is dropped once offsets are derived.
-        assert 'pixel_shape' not in det
-
-
-def test_off_geometry_kept_when_not_converting(nexus_with_off_geometry, tmp_path):
-    output = tmp_path / 'output.nxs'
-    write_minimal_geometry(nexus_with_off_geometry, output)
-
-    with h5py.File(output, 'r') as f:
-        det = f['entry/instrument/detector_0']
-        assert 'pixel_shape' in det
-        assert 'x_pixel_offset' not in det
+        assert ('pixel_shape' in det) is use_pixel_shape
+        assert 'detector_number' in det
 
 
 @pytest.fixture

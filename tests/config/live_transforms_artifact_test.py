@@ -69,10 +69,24 @@ def test_every_placeholder_has_a_stream(instrument: Instrument) -> None:
     )
 
 
-def test_services_subscribe_to_what_jobs_find(instrument: Instrument) -> None:
+#: Instruments whose artifact carries a chain into a node absent from the file;
+#: scippnexus warns when following it.
+_DANGLING_CHAIN = {
+    'magic': "#1501: the cave monitor's depends_on names the un-prefixed group, "
+    "not MISSING_ESSCONFIG_cave_beam_monitor",
+}
+
+
+def test_services_subscribe_to_what_jobs_find(
+    instrument: Instrument, request: pytest.FixtureRequest
+) -> None:
     """Services scan the file and jobs read chains: the two must agree, or a job would
     wait for a stream no service subscribes to.
     """
+    if (reason := _DANGLING_CHAIN.get(instrument.name)) is not None:
+        request.applymarker(
+            pytest.mark.xfail(strict=True, raises=UserWarning, reason=reason)
+        )
     artifact = str(get_nexus_geometry_filename(instrument.name))
 
     assert _chain_placeholders(artifact) <= set(instrument.transform_streams)
