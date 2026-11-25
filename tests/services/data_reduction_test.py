@@ -152,17 +152,7 @@ def test_dream_powder_reduction_produces_tof_output(
     "instrument",
     [
         'dream',
-        pytest.param(
-            'loki',
-            marks=[
-                pytest.mark.slow,
-                pytest.mark.xfail(
-                    strict=True,
-                    reason='#1441: the default monitors m2 and m3 have no '
-                    'lookup-table block, so I(Q) fails to start.',
-                ),
-            ],
-        ),
+        pytest.param('loki', marks=pytest.mark.slow),
     ],
 )
 def test_can_configure_and_stop_workflow_with_detector_and_monitors(

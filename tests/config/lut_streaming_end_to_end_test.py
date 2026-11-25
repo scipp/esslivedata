@@ -621,11 +621,6 @@ class TestLokiMotionAndRoles:
         ],
         ids=['default_monitors', 'other_incident_monitor'],
     )
-    @pytest.mark.xfail(
-        strict=True,
-        reason='#1441: the transmission monitor m3 (and m2) has no lookup-table '
-        'block, so the I(Q) factory refuses it.',
-    )
     def test_reduction_gates_on_one_stream_per_group(
         self, loki: Instrument, monitors: dict[str, str]
     ) -> None:
@@ -683,11 +678,6 @@ class TestLokiMotionAndRoles:
             with pytest.raises(ValueError, match='beam_monitor_m4'):
                 _create_job(loki, name, 'beam_monitor_m4', params)
 
-    @pytest.mark.xfail(
-        strict=True,
-        reason='#1441: the default monitors m2 and m3 ride axes with no declared '
-        'AxisRange, so they have no lookup-table block.',
-    )
     def test_default_monitor_selection_is_placeable(self, loki: Instrument) -> None:
         """A default naming an unplaceable monitor would break I(Q) for anyone
         who never touches the monitor selectors, so the defaults must stay on
