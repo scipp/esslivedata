@@ -381,6 +381,45 @@ def test_bifrost_qmap_context_arriving_on_separate_ticks_is_not_lost(
     _assert_cut_data_has_counts(app)
 
 
+@pytest.mark.slow
+def test_bifrost_elastic_monitor_qmap_maps_once_motors_and_table_arrive() -> None:
+    """The elastic monitor Q-map reduces monitor events, gated on its context.
+
+    Unlike the detector Q-maps its source is a monitor (``elastic_monitor``,
+    cbm5), so this exercises the monitor route into ``data_reduction``. The
+    tank angle places the monitor and is a4, the sample motors give a3, and the
+    detector lookup table converts the events to wavelength.
+    """
+    app = make_reduction_app(instrument='bifrost')
+    workflow_id, _ = _get_workflow_from_registry('bifrost', 'elastic_monitor_qmap')
+    app.publish_config_message(
+        workflow_spec.WorkflowConfig(
+            identifier=workflow_id, job_id=_job_id('elastic_monitor')
+        )
+    )
+    app.service.step()
+    app.sink.messages.clear()
+
+    app.publish_monitor_events(size=2000, time=2)
+    app.service.step()
+    assert len(app.sink.messages) == 0
+
+    for device in BIFROST_QMAP_MOTORS:
+        _publish_motor(app, device, time=4)
+    # At tank angle 0 the monitor scatters by about 149 deg, so 5.5 A gives
+    # |Q| = 4 pi sin(74.5 deg) / 5.5 A = 2.2 1/A: both components, and so every
+    # event, lie inside the default +-3 1/A edges.
+    app.publish_lookup_tables(time=4, wavelength=5.5)
+    app.service.step()
+
+    app.sink.messages.clear()
+    app.publish_monitor_events(size=2000, time=5)
+    app.service.step()
+    q_map = app.sink.messages[-1].value
+    assert q_map.dims == ('Q_perpendicular', 'Q_parallel')
+    assert q_map.sum().value == 2000
+
+
 def test_can_clear_workflow_via_config(caplog: pytest.LogCaptureFixture) -> None:
     caplog.set_level(logging.INFO)
     app = make_reduction_app(instrument='dummy')

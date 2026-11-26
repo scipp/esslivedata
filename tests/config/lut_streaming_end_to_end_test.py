@@ -1087,8 +1087,9 @@ def bifrost_tables(bifrost: Instrument) -> dict[str, sc.DataArray]:
 
 
 class TestBifrostQMap:
-    """The Q-maps look the detector table up at L1, the moderator-to-sample
-    distance, which BIFROST declares as its detector block."""
+    """The detector Q-maps look the detector table up at L1, the
+    moderator-to-sample distance, and the elastic monitor Q-map at the monitor's
+    own flight path. BIFROST's declared detector block spans both."""
 
     def test_publishes_detector_and_monitor_tables(
         self, bifrost_tables: dict[str, sc.DataArray]
@@ -1130,3 +1131,31 @@ class TestBifrostQMap:
         cut = result.data['cut_data']
         assert sc.isfinite(cut.data).all()
         assert cut.sum().value > 0
+
+    def test_elastic_monitor_qmap_reduces_from_the_streamed_table(
+        self, bifrost: Instrument, bifrost_tables: dict[str, sc.DataArray]
+    ) -> None:
+        job = _create_job(bifrost, 'elastic_monitor_qmap', 'elastic_monitor')
+        assert job.gating_streams == {DETECTOR_STREAM, *_BIFROST_QMAP_MOTORS}
+
+        events = _events_across_one_frame().assign_coords(
+            event_time_zero=sc.datetimes(
+                dims=['event_time_zero'], values=['2026-11-03T08:00:00'], unit='ns'
+            )
+        )
+        data = JobData(
+            start_time=Timestamp.from_ns(0),
+            end_time=Timestamp.from_ns(1),
+            primary_data={'elastic_monitor': events},
+            aux_data={
+                DETECTOR_STREAM: bifrost_tables[DETECTOR_STREAM],
+                **{motor: _nxlog(0.0, 'deg') for motor in _BIFROST_QMAP_MOTORS},
+            },
+        )
+        reply, result = job.process(data, finalize=True)
+
+        assert not reply.has_error, reply.error_message
+        assert result.error_message is None, result.error_message
+        q_map = result.data['q_map']
+        assert sc.isfinite(q_map.data).all()
+        assert q_map.sum().value > 0
