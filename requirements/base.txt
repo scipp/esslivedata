@@ -128,7 +128,7 @@ sciline==26.11.0
     # via
     #   -r base.in
     #   essreduce
-scipp==26.9.0
+scipp==26.11.0
     # via
     #   -r base.in
     #   essreduce

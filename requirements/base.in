@@ -12,7 +12,7 @@ jinja2
 numba
 pydantic>=2
 sciline>=26.11.0
-scipp>=26.9.0
+scipp>=26.11.0
 scippneutron>=26.9.1
 pooch
 structlog>=24.0.0
