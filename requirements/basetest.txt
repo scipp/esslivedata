@@ -366,13 +366,11 @@ sciline==26.11.0
     #   essnmx
     #   esspolarization
     #   essreduce
-    #   esssans
-scipp==26.9.0
+scipp==26.11.0
     # via
     #   essnmx
     #   esspolarization
     #   essreduce
-    #   esssans
     #   plopp
     #   scippneutron
     #   scippneutron-algorithms
@@ -392,7 +390,6 @@ scippnexus==26.1.1
     # via
     #   essnmx
     #   essreduce
-    #   esssans
     #   scippneutron
 scipy==1.18.1
     # via
